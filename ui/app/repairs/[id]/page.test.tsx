@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, act } from "@testing-library/react";
 
 vi.mock("swr", () => ({
   default: vi.fn(),
@@ -39,6 +39,7 @@ const mockDrift = {
 
 describe("RepairDetailPage", () => {
   beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
 
   it("shows loading when params is Promise", () => {
     mockedUseSWR.mockReturnValue({ data: undefined, error: undefined, isLoading: true, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
@@ -92,5 +93,76 @@ describe("RepairDetailPage", () => {
       .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("back-to-repairs")).toBeInTheDocument();
+  });
+
+  it("hides verdict and action while climbing without a patch", () => {
+    const climbingRepair = {
+      ...mockRepair,
+      id: "repair-climbing-1",
+      ladder_level_reached: 2,
+      rule_id: null,
+      candidate_patch: null,
+      visible_test_results: [],
+      verifier_report_id: null,
+    };
+    // Key-based mock: survives the re-renders that live updates cause.
+    mockedUseSWR.mockImplementation(
+      ((key: unknown) => {
+        const base = { error: undefined, isLoading: false, mutate: vi.fn() };
+        if (typeof key === "string" && key.startsWith("drift-for-repair")) return { ...base, data: [mockDrift] };
+        if (typeof key === "string" && key.startsWith("evidence-for-repair")) return { ...base, data: [] };
+        if (typeof key === "string" && key.startsWith("/repairs/")) return { ...base, data: climbingRepair };
+        return { ...base, data: undefined, isLoading: true };
+      }) as unknown as typeof useSWR,
+    );
+    render(<RepairDetailPage params={{ id: "repair-climbing-1" }} />);
+    expect(screen.getByTestId("repair-detail-page")).toHaveAttribute("data-state", "climbing");
+    expect(screen.getByTestId("repair-title")).toHaveTextContent("Climbing");
+    expect(screen.getByText(/Not run yet/)).toBeInTheDocument();
+    const approve = screen.getByTestId("repair-approve-btn");
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveTextContent("No patch to approve yet");
+    // 0 "so far" is not the verdict yet: no zero badge, counter holds at 0.
+    expect(screen.queryByTestId("model-usage-zero-frontier")).not.toBeInTheDocument();
+    expect(screen.getByTestId("model-usage-frontier-tokens")).toHaveTextContent("0");
+  });
+
+  it("advances the rung from live SSE ladder events", () => {
+    const listeners = new Map<string, Array<(e: { data: string }) => void>>();
+    class FakeEventSource {
+      onmessage: ((e: { data: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(public url: string) {
+        FakeEventSource.live.push(this);
+      }
+      addEventListener(type: string, fn: (e: { data: string }) => void) {
+        const arr = listeners.get(type) ?? [];
+        arr.push(fn);
+        listeners.set(type, arr);
+      }
+      removeEventListener() {}
+      close() {}
+      static live: FakeEventSource[] = [];
+    }
+    vi.stubGlobal("EventSource", FakeEventSource);
+    mockedUseSWR.mockImplementation(
+      ((key: unknown) => {
+        const base = { error: undefined, isLoading: false, mutate: vi.fn() };
+        if (typeof key === "string" && key.startsWith("drift-for-repair")) return { ...base, data: [mockDrift] };
+        if (typeof key === "string" && key.startsWith("evidence-for-repair")) return { ...base, data: [] };
+        if (typeof key === "string" && key.startsWith("/repairs/")) return { ...base, data: mockRepair };
+        return { ...base, data: undefined, isLoading: true };
+      }) as unknown as typeof useSWR,
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(FakeEventSource.live.length).toBeGreaterThan(0);
+    expect(FakeEventSource.live[0].url).toContain("/runs/sync-1/events");
+    expect(screen.getByTestId("ladder-level-badge")).toHaveTextContent("L1");
+    act(() => {
+      for (const fn of listeners.get("hypothesis") ?? []) {
+        fn({ data: JSON.stringify({ id: "h-1", kind: "hypothesis", payload: { prior: 0.4 }, run_id: "sync-1" }) });
+      }
+    });
+    expect(screen.getByTestId("ladder-level-badge")).toHaveTextContent("L2");
   });
 });

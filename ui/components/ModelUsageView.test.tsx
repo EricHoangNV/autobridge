@@ -42,4 +42,15 @@ describe("ModelUsageView", () => {
     render(<ModelUsageView modelUsage={{ frontier_tokens: 10, small_tokens: 0, calls: 1, total_cost: "0.002" }} />);
     expect(screen.getByTestId("model-usage-cost")).toHaveTextContent("0.002");
   });
+
+  it("hides the zero badge and shows the live counter while pending", () => {
+    render(<ModelUsageView modelUsage={{ frontier_tokens: 0, small_tokens: 10, calls: 1 }} pending liveFrontierTokens={0} />);
+    expect(screen.queryByTestId("model-usage-zero-frontier")).not.toBeInTheDocument();
+    expect(screen.getByTestId("model-usage-frontier-tokens")).toHaveTextContent("0");
+  });
+
+  it("shows the live tick value instead of the final total", () => {
+    render(<ModelUsageView modelUsage={{ frontier_tokens: 8412, small_tokens: 0, calls: 9 }} liveFrontierTokens={1200} />);
+    expect(screen.getByTestId("model-usage-frontier-tokens")).toHaveTextContent("1,200");
+  });
 });

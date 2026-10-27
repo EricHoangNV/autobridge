@@ -299,6 +299,10 @@ Theme (REQ-002, broadcast direction): dark-only on-air tokens in
 radius 0), mapped in `ui/tailwind.config.js`; Archivo (width axis) + Fragment
 Mono via `next/font/google`; shell top bar with LIVE, labelled "Demo: inject
 fault" button and healthz. Status is square-shape + word, never hue alone.
+On `/repairs/[id]` the ladder track advances from the source sync run's live
+SSE ladder events (polled record as fallback); the frontier counter ticks only
+at L3 and the verdict/action appear only once a patch has passed, all honoring
+`prefers-reduced-motion`.
 
 The UI talks to simulators/verifier **only via the control plane**:
 `compose.yaml` puts `ui` on `engine-net` alone (no `vendor-net`,

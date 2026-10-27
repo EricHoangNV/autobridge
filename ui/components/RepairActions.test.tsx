@@ -39,4 +39,20 @@ describe("RepairActions", () => {
     render(<RepairActions repairId="rep-1" decision="escalate" />);
     expect(screen.getByText(/Approve\/Reject available only when decision is/)).toBeInTheDocument();
   });
+
+  it("hides the action until a patch has passed", () => {
+    mockOperator("alice");
+    render(<RepairActions repairId="rep-1" decision="propose" patchReady={false} />);
+    const approve = screen.getByTestId("repair-approve-btn");
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveTextContent("No patch to approve yet");
+    expect(screen.getByText(/has not passed a patch yet/)).toBeInTheDocument();
+  });
+
+  it("enables the action once the patch is ready", () => {
+    mockOperator("alice");
+    render(<RepairActions repairId="rep-1" decision="propose" patchReady />);
+    expect(screen.getByTestId("repair-approve-btn")).not.toBeDisabled();
+    expect(screen.queryByText(/has not passed a patch yet/)).not.toBeInTheDocument();
+  });
 });

@@ -4,7 +4,7 @@
 
 ### REQ-002 — Redesign the UI to the broadcast direction (2026-10-27)
 Status: IN_PROGRESS (sbx1 since 2026-10-27 10:31)
-Progress: slice 2 done (2026-10-27 sbx1) — /repairs/[id]: call (rung, headline, story, drift trace, five-segment track) + scorebug (verifier score, frontier counter, Approve/Reject/Rollback), hypotheses/probes/tests/patch in broadcast tokens, climbing/escalated/error/loading states; unit 108 + e2e test_06 6/6 green. Next: slice 3 the climb on SSE.
+Progress: slice 3 done (2026-10-27 sbx1) — the climb on live SSE: track rung = max(polled level, SSE max) from the source sync run events (useRunEvents named-event fix, ladder-events mapping, poll fallback), frontier counter ticks only at L3 (900 ms ease-out, reduced-motion snap), verdict/action gated on patch passed (patchReady, climbing headlines), zero badge hidden while climbing; unit 124 + e2e test_06 6/6 green. Next: slice 4 /connectors + /connectors/[id].
 Restyle the four screens of `ui/` to the approved design: a dark "live broadcast graphic" look with
 one accent (broadcast yellow = "now / needs you"), Archivo (variable width) + Fragment Mono, radius 0.
 Desktop (1280 and 1440) is what gets demoed; phone only needs to not break.

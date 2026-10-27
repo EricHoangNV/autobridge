@@ -23,6 +23,10 @@ type Props = {
   compact?: boolean;
   /** Frontier budget the counter is measured against (default 40,000). */
   budget?: number;
+  /** Live display value for the big counter (the L3 tick); defaults to the final total. */
+  liveFrontierTokens?: number | null;
+  /** True while the repair is still climbing: the counter is "so far" and the zero badge stays hidden. */
+  pending?: boolean;
 };
 
 function toNumber(v: unknown, fallback = 0): number {
@@ -38,7 +42,7 @@ function formatInt(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-export function ModelUsageView({ modelUsage, title, compact, budget = 40000 }: Props) {
+export function ModelUsageView({ modelUsage, title, compact, budget = 40000, liveFrontierTokens = null, pending = false }: Props) {
   if (!modelUsage || Object.keys(modelUsage).length === 0) {
     return (
       <div data-testid="model-usage-empty" className="border border-dashed border-rule px-4 py-4 text-center text-sm text-ink-2">
@@ -67,18 +71,25 @@ export function ModelUsageView({ modelUsage, title, compact, budget = 40000 }: P
   const totalCost = modelUsage.total_cost != null ? String(modelUsage.total_cost) : null;
 
   const totalTokens = frontierTokens + smallTokens;
+  // The big counter is the L3 tick: it holds at 0 through L0–L2 and only
+  // counts up once the frontier model has run (REQ-002 slice 3).
+  const shownFrontier =
+    typeof liveFrontierTokens === "number" && Number.isFinite(liveFrontierTokens) && liveFrontierTokens >= 0
+      ? Math.round(liveFrontierTokens)
+      : frontierTokens;
 
   return (
     <div data-testid="model-usage-view">
-      <div data-testid="model-usage-frontier-tokens" className="repair-tok num" aria-label={`${formatInt(frontierTokens)} frontier tokens`}>
-        {formatInt(frontierTokens)}
+      <div data-testid="model-usage-frontier-tokens" className="repair-tok num" aria-label={`${formatInt(shownFrontier)} frontier tokens`}>
+        {formatInt(shownFrontier)}
       </div>
       <p className="repair-tok-l num">
-        {title ?? "frontier tokens"} of a {formatInt(budget)} budget
+        {pending ? "frontier tokens so far" : (title ?? "frontier tokens")} of a {formatInt(budget)} budget
       </p>
 
-      {/* Zero-frontier badge (important for W4/W6: known repairs show 0 frontier) */}
-      {frontierTokens === 0 ? (
+      {/* Zero-frontier badge (important for W4/W6: known repairs show 0 frontier).
+          Hidden while climbing: 0 "so far" is not the verdict yet. */}
+      {frontierTokens === 0 && !pending ? (
         <div className="mt-2">
           <span data-testid="model-usage-zero-frontier" className="inline-flex border border-rule px-2.5 py-0.5 text-xs font-medium text-ink">
             Zero frontier tokens — deterministic repair

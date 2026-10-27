@@ -14,9 +14,16 @@ type Props = {
   decision: string;
   candidatePatch?: unknown[] | null;
   onActionComplete?: () => void;
+  /**
+   * True once a patch has passed the verifier (report linked + candidate patch
+   * present). While the repair is still climbing the verdict and the action
+   * stay hidden: Approve/Reject are disabled with "No patch to approve yet"
+   * (REQ-002 slice 3). Defaults to true so existing callers are unaffected.
+   */
+  patchReady?: boolean;
 };
 
-export function RepairActions({ repairId, decision, candidatePatch: _candidatePatch, onActionComplete }: Props) {
+export function RepairActions({ repairId, decision, candidatePatch: _candidatePatch, onActionComplete, patchReady = true }: Props) {
   // Server-set operator (GET /operator); approvals are recorded under this name.
   const [operatorName, setOperatorName] = useState<string | null>(null);
   const [busy, setBusy] = useState<"approve" | "reject" | "rollback" | null>(null);
@@ -42,8 +49,10 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
     };
   }, []);
 
-  const canApprove = decision === "propose";
-  const canReject = decision === "propose";
+  const canApprove = decision === "propose" && patchReady;
+  const canReject = decision === "propose" && patchReady;
+  // The climb: no verdict and no action until a patch has passed.
+  const awaitingPatch = decision === "propose" && !patchReady;
   // Rollback is available when there was a prior release (we allow it always; backend validates)
   const canRollback = true;
 
@@ -133,9 +142,9 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
         data-testid="repair-approve-btn"
         onClick={doApprove}
         disabled={!canApprove || busy !== null}
-        className="btn"
+        className={awaitingPatch ? "btn quiet" : "btn"}
       >
-        {busy === "approve" ? "Approving…" : "Approve release"}
+        {busy === "approve" ? "Approving…" : awaitingPatch ? "No patch to approve yet" : "Approve release"}
       </button>
       <div className="more">
         <button
@@ -174,7 +183,11 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       </p>
 
       {!canApprove ? (
-        <p className="text-xs text-ink-2">Approve/Reject available only when decision is “propose” (current: {decision}).</p>
+        <p className="text-xs text-ink-2">
+          {awaitingPatch
+            ? "The verifier has not passed a patch yet — Approve/Reject unlock when it does."
+            : `Approve/Reject available only when decision is “propose” (current: ${decision}).`}
+        </p>
       ) : null}
 
       {msg ? (

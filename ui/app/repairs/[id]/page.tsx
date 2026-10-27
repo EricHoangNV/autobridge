@@ -11,6 +11,9 @@ import { VisibleTestsPanel } from "@/components/VisibleTestsPanel";
 import { VerifierVerdict } from "@/components/VerifierVerdict";
 import { RepairActions } from "@/components/RepairActions";
 import { InjectFaultDrawer } from "@/components/InjectFaultDrawer";
+import { useRunEvents } from "@/lib/sse";
+import { maxLadderLevel } from "@/lib/ladder-events";
+import { useFrontierTicker } from "@/lib/use-frontier-ticker";
 
 function getBaseUrl(): string {
   if (typeof window !== "undefined") {
@@ -163,6 +166,25 @@ export default function RepairDetailPage({ params }: PageProps) {
     },
   );
 
+  // The climb on live SSE: the source sync run's evidence stream carries the
+  // ladder events, and the track advances as they arrive — no replay timers
+  // (REQ-002 slice 3). Falls back to the polled record when SSE is unavailable.
+  const sseRunId = driftEvents?.[0]?.source_sync_run_id ?? null;
+  const runEvents = useRunEvents(sseRunId);
+  const sseLevel = maxLadderLevel(runEvents);
+
+  // These hooks run before the early returns below, so derive the ticker
+  // inputs from the possibly-still-loading repair with safe fallbacks.
+  const earlyMu = (repair?.model_usage ?? {}) as Record<string, unknown>;
+  const earlyFrontier = toNumber(
+    earlyMu["frontier_tokens"] ?? earlyMu["frontier_tokens_total"] ?? earlyMu["frontier_tokens_legacy"],
+  );
+  const earlyLevel = repair?.ladder_level_reached ?? 0;
+  const earlyTrack = Math.max(earlyLevel, sseLevel ?? earlyLevel);
+  const earlyReport = !!repair?.verifier_report_id;
+  // The frontier counter moves only at L3 (or once the verifier has run).
+  const tickingFrontier = useFrontierTicker(earlyFrontier, earlyTrack >= 3 || earlyReport);
+
   if (repairLoading || !repairId) {
     return (
       <div data-testid="repair-detail-page" data-state="loading" aria-busy="true">
@@ -218,20 +240,35 @@ export default function RepairDetailPage({ params }: PageProps) {
   const level = repair.ladder_level_reached ?? 0;
   const isEscalated = repair.decision === "escalate";
   const hasReport = !!repair.verifier_report_id;
-  const pageState = isEscalated ? "escalated" : !hasReport && repair.decision === "propose" ? "climbing" : "ready";
+  const climbingNow = !hasReport && repair.decision === "propose";
+  // Live rung: the polled record, raised by any newer SSE ladder event.
+  const trackLevel = Math.max(level, sseLevel ?? level);
+  const pageState = isEscalated ? "escalated" : climbingNow ? "climbing" : "ready";
 
   const shortId = repair.id.slice(0, 8);
   const primaryDrift = driftEvents?.[0] ?? null;
   const connectorLabel = primaryDrift ? primaryDrift.connector_id : "unknown connector";
   const driftClass = primaryDrift ? primaryDrift.drift_class : null;
 
+  // Rung headlines while the repair is still climbing (the prototype's climb
+  // frames). The final headline, the verdict and the action appear only once
+  // a patch has passed (REQ-002 slice 3).
+  const CLIMB_HEADLINES = [
+    "Checking known fixes for this change",
+    "Checking the rule registry",
+    "Climbing: the small model is ranking hypotheses",
+  ];
   const headline = isEscalated
-    ? `Needs you at L${level}`
-    : repair.rule_id && level <= 1
-      ? `Rule ${repair.rule_id} matched at L${level}`
-      : driftClass
-        ? `${humanizeDriftClass(driftClass)} at L${level}`
-        : `Repair ${shortId} at L${level}`;
+    ? `Needs you at L${trackLevel}`
+    : climbingNow && trackLevel <= 2
+      ? CLIMB_HEADLINES[trackLevel]
+      : climbingNow
+        ? "Frontier patch proposed — waiting for the verifier."
+        : repair.rule_id && trackLevel <= 1
+          ? `Rule ${repair.rule_id} matched at L${trackLevel}`
+          : driftClass
+            ? `${humanizeDriftClass(driftClass)} at L${trackLevel}`
+            : `Repair ${shortId} at L${trackLevel}`;
 
   const story = (() => {
     const since = primaryDrift ? shortTime(primaryDrift.created_at) : null;
@@ -247,14 +284,16 @@ export default function RepairDetailPage({ params }: PageProps) {
         `Repair ${shortId} links ${n} drift event${n === 1 ? "" : "s"}${sev ? ` at severity ${sev}` : ""}.`,
       );
     }
-    if (repair.rule_id && level <= 1) {
+    if (repair.rule_id && trackLevel <= 1) {
       bits.push(`Rule ${repair.rule_id} repairs it with zero frontier tokens.`);
     } else if (isEscalated) {
-      bits.push(`No rule repairs that without evidence, so the ladder stopped at L${level} and asks you.`);
-    } else if (!hasReport) {
-      bits.push(`The ladder is still climbing at L${level}; the verifier has not run yet.`);
+      bits.push(`No rule repairs that without evidence, so the ladder stopped at L${trackLevel} and asks you.`);
+    } else if (climbingNow) {
+      bits.push(`The ladder is still climbing at L${trackLevel}; the verifier has not run yet.`);
+    } else if (repair.decision === "reject") {
+      bits.push(`The ladder reached L${trackLevel} and the patch was rejected.`);
     } else {
-      bits.push(`The ladder reached L${level} and the verifier checked the candidate patch.`);
+      bits.push(`The ladder reached L${trackLevel} and the verifier checked the candidate patch.`);
     }
     return bits.join(" ");
   })();
@@ -268,8 +307,8 @@ export default function RepairDetailPage({ params }: PageProps) {
     0: "0 tokens",
     1: "0 tokens",
     2: smallTokens > 0 ? formatInt(smallTokens) : "—",
-    3: hasReport || frontierTokens > 0 ? formatInt(frontierTokens) : "0",
-    4: isEscalated ? "you" : "approve",
+    3: hasReport || frontierTokens > 0 ? formatInt(frontierTokens) : climbingNow ? "not yet" : "0",
+    4: isEscalated ? "you" : hasReport ? "approve" : "not yet",
   } as Partial<Record<0 | 1 | 2 | 3 | 4, string>>;
 
   const passedCount = repair.visible_test_results.filter((t) => {
@@ -322,11 +361,11 @@ export default function RepairDetailPage({ params }: PageProps) {
           </div>
 
           <div className="repair-rung">
-            <span className={`repair-big${frontierTokens === 0 && level <= 1 ? " is-zero" : ""}`} aria-hidden="true">
-              L{level}
+            <span className={`repair-big${frontierTokens === 0 && trackLevel <= 1 ? " is-zero" : ""}`} aria-hidden="true">
+              L{trackLevel}
             </span>
             <h1 data-testid="repair-title" id="repair-headline" className="repair-headline">
-              <span className="sr-only">L{level}: </span>
+              <span className="sr-only">L{trackLevel}: </span>
               {headline}
             </h1>
           </div>
@@ -342,7 +381,7 @@ export default function RepairDetailPage({ params }: PageProps) {
             {repair.id}
           </p>
           <p className="sr-only" data-testid="repair-ladder-level">
-            L{level}
+            L{trackLevel}
           </p>
 
           <figure
@@ -369,7 +408,7 @@ export default function RepairDetailPage({ params }: PageProps) {
           </figure>
 
           <LadderTrace
-            ladderLevelReached={repair.ladder_level_reached}
+            ladderLevelReached={trackLevel}
             ruleId={repair.rule_id}
             decision={repair.decision}
             escalationBundle={repair.escalation_bundle as Record<string, unknown> | null}
@@ -384,12 +423,13 @@ export default function RepairDetailPage({ params }: PageProps) {
             escalationBundle={repair.escalation_bundle as never}
             decision={repair.decision}
           />
-          <ModelUsageView modelUsage={repair.model_usage} />
+          <ModelUsageView modelUsage={repair.model_usage} liveFrontierTokens={tickingFrontier} pending={climbingNow} />
           <div id="repair-acts">
             <RepairActions
               repairId={repair.id}
               decision={repair.decision}
               candidatePatch={repair.candidate_patch as never}
+              patchReady={hasReport && (repair.candidate_patch?.length ?? 0) > 0}
               onActionComplete={() => mutateRepair()}
             />
           </div>
@@ -493,7 +533,7 @@ export default function RepairDetailPage({ params }: PageProps) {
       <div className="repair-dock" aria-label="Action">
         <span className="v num">
           {totalTests > 0 ? `${passedCount}/${totalTests}` : hasReport ? "checked" : "climbing"}
-          <small>{formatInt(frontierTokens)} tokens</small>
+          <small>{formatInt(tickingFrontier)} tokens</small>
         </span>
         <a className="btn" href="#repair-acts">
           Approve release
