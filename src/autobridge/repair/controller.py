@@ -89,6 +89,7 @@ class RepairController:
 
         # Persist RepairRun if session provided
         if session is not None:
+            bundle_dict = result.escalation_bundle.to_dict() if result.escalation_bundle else None
             run = RepairRun(
                 drift_event_ids=list(drift_event_ids or []),
                 ladder_level_reached=result.ladder_level_reached,
@@ -99,6 +100,7 @@ class RepairController:
                 verifier_report_id=None,
                 decision=result.decision,
                 model_usage=dict(result.model_usage),
+                escalation_bundle=bundle_dict,
             )
             session.add(run)
             session.flush()
@@ -294,6 +296,8 @@ def repair_job_handler(ctx: Any) -> dict[str, Any]:
         out["candidate_patch"] = result.candidate_patch
     if result.escalation_reason:
         out["escalation_reason"] = result.escalation_reason
+    if result.escalation_bundle is not None:
+        out["escalation_bundle"] = result.escalation_bundle.to_dict()
     # Persisted RepairRun id is in ctx.run_id after handle
     # Find the run we just created (last RepairRun in this session)
     # ctx.run_id is set by controller? No, controller creates RepairRun but doesn't set ctx.run_id.

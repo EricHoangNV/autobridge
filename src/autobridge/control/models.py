@@ -411,6 +411,14 @@ class RepairRun(Base):
     model_usage: Mapped[dict[str, Any]] = mapped_column(
         GenericJSON, nullable=False, default=dict
     )
+    #: Escalation bundle (L4): evidence + one precise question for a human.
+    #: Only set when decision == "escalate"; otherwise None. Stored as JSON
+    #: dict with keys ``reason``, ``question``, ``evidence_ids``,
+    #: ``evidence_payloads`` (optional), ``suggested_action`` (optional).
+    #: Every escalate must have exactly one non-empty question (ends with ?).
+    escalation_bundle: Mapped[dict[str, Any] | None] = mapped_column(
+        GenericJSON, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )

@@ -164,6 +164,40 @@ No `internal: true` — host ports are required for `make smoke`/`make e2e`.
 A dedicated unit test (`test_autobridge_compose.py`) asserts the intended
 attachments statically; smoke probes assert reachability and isolation live.
 
+## 8. Escalation bundle (L4)
+
+When no L0/L1 rule matches, the budget is exhausted, or the drift class is
+`CAPABILITY_REMOVED` / `AUTH_REVOKED`, the ladder emits an **escalation
+bundle** — never a silent guess (plan §2.5, W6.3).
+
+```
+EscalationBundle {
+  reason: str               // machine-readable, e.g. "CAPABILITY_REMOVED: …"
+  question: str             // exactly one precise question ending with "?"
+  evidence_ids: str[]       // EvidenceRecord ids supporting the question
+  evidence_payloads: dict[] // optional redacted payloads (already redacted)
+  suggested_action: str     // hint, e.g. "manual review" or "increase budget"
+}
+```
+
+Storage: `RepairRun.escalation_bundle` (JSON, nullable). Every row with
+`decision == "escalate"` has a non-null bundle whose `question` passes
+validation (`from_dict` checks: non-empty, exactly one `?`, ends with `?`).
+`decision == "propose"` has `escalation_bundle == null`.
+
+Producers:
+
+* `escalation_for_no_fix(reason, evidence_ids, question?)` — generic L4 path
+  and the two non-fixable classes (`CAPABILITY_REMOVED`, `AUTH_REVOKED`) plus
+  `AUTH_EXPIRED` when refresh is not permitted.
+* `escalation_from_budget_exhausted(exc, evidence_ids, context)` — L2/L3
+  `BudgetExhausted` (probe vs token wording, single question).
+
+Consumers: control API surfaces the bundle on `GET /repairs/{id}` and the
+`/repairs/[id]` screen renders the evidence bundle side-by-side with the
+question and Approve/Reject actions. The bundle never contains a credential
+value (redacted at the `EvidenceRecord` boundary, `evidence/redact.py`).
+
 W3–W10 extend this model with deterministic repair rules, the hypothesis
-engine, escalation bundles and the MCP compatibility gateway.
+engine and the MCP compatibility gateway.
 

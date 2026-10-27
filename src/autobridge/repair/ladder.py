@@ -677,6 +677,7 @@ def run_ladder(
                 "drift_class": drift_class,
             }
         )
+        bundle = escalation_for_no_fix(reason, evidence_ids=evidence_ids)
         return LadderResult(
             decision="escalate",
             ladder_level_reached=4,
@@ -688,6 +689,7 @@ def run_ladder(
             ladder_trace=trace,
             backoff_only=False,
             escalation_reason=reason,
+            escalation_bundle=bundle,
             requires_release=False,
         )
 
@@ -719,6 +721,7 @@ def run_ladder(
         # Not permitted -> escalate
         reason = "AUTH_EXPIRED: token refresh not permitted (non-oauth2 or missing token_url) — escalate"
         trace.append({"level": 4, "action": "escalate", "reason": reason, "drift_class": drift_class})
+        bundle = escalation_for_no_fix(reason, evidence_ids=evidence_ids)
         return LadderResult(
             decision="escalate",
             ladder_level_reached=4,
@@ -730,6 +733,7 @@ def run_ladder(
             ladder_trace=trace,
             backoff_only=False,
             escalation_reason=reason,
+            escalation_bundle=bundle,
             requires_release=False,
         )
 

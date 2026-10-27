@@ -22,6 +22,16 @@ if TYPE_CHECKING:
 class EscalationBundle:
     """Evidence bundle + one precise question for a human (L4).
 
+    Format stored on ``RepairRun.escalation_bundle`` (JSON):
+        {
+            "reason": "CAPABILITY_REMOVED: ...",
+            "question": "Which alternative endpoint should replace ...?",
+            "evidence_ids": ["ev-1", ...],
+            "suggested_action": "manual review",
+            "evidence_payloads": []  # optional redacted payloads
+        }
+    ``question`` is always a single precise question ending with '?'.
+
     Attributes:
         reason: machine-readable reason (e.g. "BudgetExhausted: max_probes").
         question: single precise question for a human operator.
@@ -36,6 +46,41 @@ class EscalationBundle:
     evidence_payloads: tuple[dict[str, Any], ...] = ()
     suggested_action: str = ""
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to JSON-safe dict for DB storage."""
+        return {
+            "reason": self.reason,
+            "question": self.question,
+            "evidence_ids": list(self.evidence_ids),
+            "evidence_payloads": list(self.evidence_payloads),
+            "suggested_action": self.suggested_action,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EscalationBundle:
+        """Deserialize from DB dict (validates one-question contract)."""
+        reason = str(data.get("reason", ""))
+        question = str(data.get("question", ""))
+        if not reason:
+            raise ValueError("EscalationBundle reason must be non-empty")
+        if not question.strip():
+            raise ValueError("EscalationBundle question must be non-empty")
+        if not question.strip().endswith("?"):
+            raise ValueError("EscalationBundle question must end with '?'")
+        # One precise question: count '?' - allow one, plus optional trailing
+        if question.count("?") != 1:
+            raise ValueError("EscalationBundle question must be exactly one question (single '?')")
+        evidence_ids = tuple(str(x) for x in (data.get("evidence_ids") or []))
+        evidence_payloads = tuple(dict(x) for x in (data.get("evidence_payloads") or []))
+        suggested_action = str(data.get("suggested_action", ""))
+        return cls(
+            reason=reason,
+            question=question,
+            evidence_ids=evidence_ids,
+            evidence_payloads=evidence_payloads,
+            suggested_action=suggested_action,
+        )
+
 
 def escalation_from_budget_exhausted(
     exc: BudgetExhausted,
@@ -49,7 +94,7 @@ def escalation_from_budget_exhausted(
     """
     reason = exc.reason if hasattr(exc, "reason") else str(exc)
     ctx = f" ({context})" if context else ""
-    question = f"Budget exhausted: {reason}{ctx}. How should the run proceed? Provide additional budget or approve manual resolution."
+    question = f"Budget exhausted: {reason}{ctx} — should the budget be increased or should this be manually resolved?"
     # Keep question precise and single-sentence for W6.3 contract
     # For probe budget, ask about increasing probe ceiling; for LLM budget, ask about token ceiling.
     if "probe" in reason.lower() or "request" in reason.lower() or "wall" in reason.lower():
