@@ -2,6 +2,8 @@
 
 ## Current State
 
+P1.W7.7 Screen /repairs/[id] done (2026-10-27): Drift evidence, ladder trace with L0-L4 badges, hypotheses+probes, JSON Patch diff old/new side by side, visible tests, verifier verdict, model usage, Approve/Reject/Rollback; labelled Inject Fault demo drawer (Demo/labelled badges, POST /demo/inject-fault); model-usage view (frontier/small/calls + zero-frontier badge + token bar); /repairs list; layout nav update; 10 new component test files + 2 page test files (103 Vitest pass, 23 files), next build 11 routes.
+
 P1.W7.6 Screen /connectors/[id] done (2026-10-27): SpecViewer (YAML with copy+JSON toggle), ReleaseHistory with active badge, SyncRunsTable with Complete/Degraded/Blocked + fingerprint_id + unmet_criteria, DependencyList, fingerprints section, Sync-now action; GET /connectors/{id}/sync-runs; 12 new component+page tests (52 Vitest pass), next build 9 routes.
 
 P1.W7.5 Screen /connectors/new done (2026-10-27): NewConnectorForm with docs upload/URL/paste, sandbox base URL, credential env-ref picker (known refs + custom), target entities, create+build two-step via control plane, 12 component tests + page test, next build 8 routes.
@@ -11,8 +13,6 @@ P1.W7.4 Next.js 15 scaffold + /connectors screen done (2026-10-27): Next.js 15 A
 P1.W7.3 OpenAPI → ui typed client done (2026-10-27): live FastAPI schema exported to `ui/openapi.json` (30 paths, 28 schemas) via `scripts/export_openapi.py`, `ui/lib/api/schema.d.ts` via openapi-typescript 7.13.0, typed `ui/lib/api/client.ts` via openapi-fetch with 25 wrappers + SSE helper, `make openapi-check`/`ui-typecheck` green, 5 new tests; 90.34% coverage.
 
 P1.W7.2 SSE run events done (2026-10-27): `src/autobridge/control/sse.py` streaming stored EvidenceRecords with credential redaction, `GET /runs/{id}/events` via sse_starlette, full-stream redaction test proving no secret value appears; 90.34% coverage.
-
-P1.W7.1 FastAPI control plane done (2026-10-27): all §2.11 endpoints (connectors CRUD, build/sync jobs, runs/events SSE, drift, repairs approve/reject, releases rollback, demo inject-fault labelled proxy, metrics/model-usage, bench/scorecards) with healthz/readyz DB check, OpenAPI contract 15 endpoints, secrets redacted; 90.28% coverage.
 
 P1.W6.5 Safety model complete + e2e test_05 done (2026-10-27): 5 scenarios via fake+live admin-oracle, regression gate, escalation bundle single '?', Decimal+04:00, secrets redacted, frontier 0; docs/safety-model.md §§3,7-12.
 
@@ -69,11 +69,11 @@ P1.W6.4 Regression gate done (2026-10-27): verify_spec POST /verify with regress
   - P1.W7.4: Next.js 15 scaffold + /connectors screen (health, active release, last sync outcome, open drift, sparkline) — App Router, TS, Tailwind, SWR polling + SSE, Vitest + RTL, readyz
   - P1.W7.5: /connectors/new screen (docs upload/URL/paste, sandbox base URL, credential env-ref picker, target entities, create & start build) — App Router, 12 component tests, next build 8 routes
   - P1.W7.6: /connectors/[id] screen (spec YAML, releases, sync runs, fingerprints, dependencies) — SWR, 12 component+page tests, next build 9 routes
-- Tests: 1722 pass / 0 fail (autobridge 90.34%, verifier 93.78%, simulators 96.55%; ui tsc green) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker) — ui: 52 Vitest pass + next build green
+  - P1.W7.7: /repairs/[id] screen (drift evidence, ladder trace L0-L4, hypotheses+probes, JSON Patch diff old/new, visible tests, verifier verdict, model usage, Approve/Reject/Rollback + Inject Fault drawer + model-usage view) — 103 Vitest pass, next build 11 routes
+- Tests: 1722 pass / 0 fail (autobridge 90.34%, verifier 93.78%, simulators 96.55%; ui tsc green) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker) — ui: 103 Vitest pass + next build green
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green / `make lint` + `make typecheck` + `make ui-typecheck` green
 
 ## Next tasks
-1. **P1.W7.7** — Screen /repairs/[id] + Inject Fault drawer + model-usage view
-2. **P1.W7.8** — Network test that UI never calls simulators/verifier; Playwright test_06_ui_journey
-3. **P1.W8.1** — bench/harness.py matched-budget harness
-
+1. **P1.W7.8** — Network test that UI never calls simulators/verifier; Playwright test_06_ui_journey
+2. **P1.W8.1** — bench/harness.py matched-budget harness
+3. **P1.W8.2** — Baseline drivers (claude_code_headless + codex_cli stub)

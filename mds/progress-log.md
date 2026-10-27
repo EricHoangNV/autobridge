@@ -1382,3 +1382,10 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - **Checks:** make lint green / make typecheck green / make test 1722 pass 90.34%/93.78%/96.55% / Vitest 52 pass (12 files: SpecViewer 5+ReleaseHistory 4+SyncRunsTable 4+DependencyList 3+detail page 5) / tsc green / next build 9 routes (was 8, +/connectors/[id] 4.52kB) / OpenAPI 31 paths 28 schemas
 
 Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+## 2026-10-27 — P1.W7.7 /repairs/[id] + Inject Fault drawer + model-usage view — sbx1
+- **Claim:** P1.W7.7 Screen /repairs/[id] with drift evidence, ladder trace, hypotheses+probes, JSON Patch diff, visible tests, verifier verdict, model usage, Approve/Reject/Rollback + labelled Inject Fault demo drawer + model-usage view
+- **Files:** LadderTrace (L0-L4 badges), PatchDiff (side-by-side ops+raw), ModelUsageView (frontier/small/calls + zero-frontier badge), DriftEvidenceSection, HypothesesPanel, VisibleTestsPanel, VerifierVerdict (escalation bundle), RepairActions (Approve/Reject/Rollback via control plane), InjectFaultDrawer (Demo/labelled POST /demo/inject-fault), /repairs list + /repairs/[id] detail (two-column, all 8 sections + sidebar), layout nav update; 10 new component test files + 2 page test files
+- **Decisions:** Detail page fetches drift+evidence via existing GET /drift/{id} and GET /evidence/{id} (no new endpoints); ladder trace synthesizes from level/rule/decision when trace array absent; ModelUsageView appears twice (full + compact) to satisfy spec; Inject Fault drawer on detail page with target/scenario/seed; rollback via existing POST /releases/{id}/rollback
+- **Checks:** make lint green / make typecheck green / make ui-typecheck green / npm test 103 pass (23 files) / next build 11 routes green. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+- **Next:** P1.W7.8 Network test that UI never calls simulators/verifier + Playwright test_06_ui_journey
