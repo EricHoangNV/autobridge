@@ -1,0 +1,43 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+ralph-logs/
+.worktrees/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# SQLite databases of local runs
+*.db
+*.sqlite
+
+# UI (Next.js)
+ui/node_modules/
+ui/.next/
+ui/out/
+ui/coverage/
+ui/playwright-report/
+ui/test-results/
+
+# Verifier: the heldout fixtures are frozen at W2; only their sha256 manifest is committed
+verifier/hidden_cases/heldout/*
+!verifier/hidden_cases/heldout/.gitkeep
+!verifier/hidden_cases/heldout/SHA256SUMS
+
+# Generated connectors and benchmark runs are build outputs; keep the folder, commit curated results only
+generated/connectors/*/
+!generated/connectors/.gitkeep
+experiments/benchmark_runs/*.jsonl
