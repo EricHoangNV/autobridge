@@ -31,6 +31,7 @@ services:
       dockerfile: Dockerfile.engine
     environment:
       APP_MODULE: autobridge.control.app:app
+      AUTOBRIDGE_OPERATOR: ${AUTOBRIDGE_OPERATOR:-operator}
     networks:
       - engine-net
       - verifier-net

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from autobridge.control.deps import get_db
+from autobridge.control.deps import approved_by_for_releases, get_db
 from autobridge.control.models import (
     Connector,
     ConnectorRelease,
@@ -45,7 +45,7 @@ def _connector_to_out(c: Connector) -> ConnectorOut:
     )
 
 
-def _release_to_out(r: ConnectorRelease) -> ReleaseOut:
+def _release_to_out(r: ConnectorRelease, approved_by: str | None = None) -> ReleaseOut:
     return ReleaseOut(
         id=r.id,
         connector_id=r.connector_id,
@@ -56,6 +56,7 @@ def _release_to_out(r: ConnectorRelease) -> ReleaseOut:
         provenance_repair_run_id=r.provenance_repair_run_id,
         verification_report_id=r.verification_report_id,
         signature=r.signature,
+        approved_by=approved_by,
         created_at=r.created_at,
     )
 
@@ -146,7 +147,8 @@ def get_connector(connector_id: str, db: Session = Depends(get_db)) -> Connector
     releases = db.execute(
         select(ConnectorRelease).where(ConnectorRelease.connector_id == connector_id).order_by(ConnectorRelease.version)
     ).scalars().all()
-    release_outs = [_release_to_out(r) for r in releases]
+    by_release = approved_by_for_releases(db, [r.id for r in releases])
+    release_outs = [_release_to_out(r, approved_by=by_release.get(r.id)) for r in releases]
 
     # Last sync via active release or latest release
     last_sync: SyncRunOut | None = None

@@ -35,6 +35,7 @@ export function ReleaseHistory({ releases, activeReleaseId }: Props) {
             <th className="px-4 py-2 font-medium">Version</th>
             <th className="px-4 py-2 font-medium">Release ID</th>
             <th className="px-4 py-2 font-medium">Signature</th>
+            <th className="px-4 py-2 font-medium">Approved by</th>
             <th className="px-4 py-2 font-medium">Created</th>
             <th className="px-4 py-2 font-medium">Status</th>
           </tr>
@@ -54,6 +55,13 @@ export function ReleaseHistory({ releases, activeReleaseId }: Props) {
                 </td>
                 <td className="px-4 py-2 font-mono text-xs text-zinc-500" title={r.signature}>
                   {r.signature.slice(0, 12)}…
+                </td>
+                <td className="px-4 py-2 text-xs text-zinc-600">
+                  {r.approved_by ? (
+                    <span data-testid={`release-approved-by-${r.id}`}>approved by {r.approved_by}</span>
+                  ) : (
+                    <span className="text-zinc-400">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-2 text-xs text-zinc-600">{formatDate(r.created_at)}</td>
                 <td className="px-4 py-2">

@@ -335,6 +335,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/operator": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Operator
+         * @description Return the server-configured operator name (REQ-001).
+         */
+        get: operations["get_operator_operator_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/readyz": {
         parameters: {
             query?: never;
@@ -943,8 +963,21 @@ export interface components {
             /** Total Output Tokens */
             total_output_tokens: number;
         };
+        /** OperatorOut */
+        OperatorOut: {
+            /**
+             * Name
+             * @description Server-configured operator name (AUTOBRIDGE_OPERATOR)
+             */
+            name: string;
+        };
         /** ReleaseOut */
         ReleaseOut: {
+            /**
+             * Approved By
+             * @description Actor of the latest approval for this release (REQ-001)
+             */
+            approved_by?: string | null;
             /** Connector Id */
             connector_id: string;
             /**
@@ -973,8 +1006,11 @@ export interface components {
         };
         /** RepairDecisionRequest */
         RepairDecisionRequest: {
-            /** Actor */
-            actor: string;
+            /**
+             * Actor
+             * @description Ignored; server sets the actor
+             */
+            actor?: string | null;
             /** Connector Id */
             connector_id?: string | null;
             /** From Release Id */
@@ -1030,9 +1066,9 @@ export interface components {
         RollbackRequest: {
             /**
              * Actor
-             * @description Human actor
+             * @description Ignored; server sets the actor
              */
-            actor: string;
+            actor?: string | null;
             /**
              * Repair Run Id
              * @description RepairRun for audit trail (any existing run)
@@ -1767,6 +1803,26 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    get_operator_operator_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorOut"];
                 };
             };
         };

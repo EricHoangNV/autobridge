@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 function getBaseUrl(): string {
   if (typeof window !== "undefined") {
@@ -17,10 +17,30 @@ type Props = {
 };
 
 export function RepairActions({ repairId, decision, candidatePatch: _candidatePatch, onActionComplete }: Props) {
-  const [actor, setActor] = useState("demo-operator");
+  // Server-set operator (GET /operator); approvals are recorded under this name.
+  const [operatorName, setOperatorName] = useState<string | null>(null);
   const [busy, setBusy] = useState<"approve" | "reject" | "rollback" | null>(null);
   const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [rollbackTarget, setRollbackTarget] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOperator() {
+      try {
+        const base = getBaseUrl().replace(/\/$/, "");
+        const res = await fetch(`${base}/operator`);
+        if (!res.ok) throw new Error(`operator lookup failed (${res.status})`);
+        const data = await res.json();
+        if (!cancelled) setOperatorName(typeof data?.name === "string" && data.name ? data.name : "operator");
+      } catch {
+        if (!cancelled) setOperatorName("operator");
+      }
+    }
+    loadOperator();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const canApprove = decision === "propose";
   const canReject = decision === "propose";
@@ -35,7 +55,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       const res = await fetch(`${base}/repairs/${encodeURIComponent(repairId)}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actor }),
+        body: JSON.stringify({}),
       });
       if (!res.ok) {
         const body = await res.text();
@@ -59,7 +79,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       const res = await fetch(`${base}/repairs/${encodeURIComponent(repairId)}/reject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actor }),
+        body: JSON.stringify({}),
       });
       if (!res.ok) {
         const body = await res.text();
@@ -90,7 +110,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       const res = await fetch(`${base}/releases/${encodeURIComponent(rollbackTarget.trim())}/rollback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_release_id: rollbackTarget.trim(), actor, repair_run_id: repairId }),
+        body: JSON.stringify({ target_release_id: rollbackTarget.trim(), repair_run_id: repairId }),
       });
       if (!res.ok) {
         const body = await res.text();
@@ -114,17 +134,6 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       </div>
 
       <div className="space-y-3 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-zinc-500">Actor</label>
-          <input
-            data-testid="repair-actor-input"
-            value={actor}
-            onChange={(e) => setActor(e.target.value)}
-            className="flex-1 rounded border border-zinc-300 px-2 py-1 text-xs"
-            placeholder="actor name"
-          />
-        </div>
-
         <div className="flex flex-wrap gap-2">
           <button
             data-testid="repair-approve-btn"
@@ -143,6 +152,9 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
             {busy === "reject" ? "Rejecting…" : "Reject"}
           </button>
         </div>
+        <p data-testid="approving-as" className="text-xs text-zinc-400">
+          Approving as {operatorName ?? "…"}
+        </p>
 
         {!canApprove ? (
           <p className="text-xs text-zinc-400">Approve/Reject available only when decision is “propose” (current: {decision}).</p>

@@ -6,10 +6,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from autobridge.control.deps import get_db
+from autobridge.control.deps import approved_by_for_releases, get_db, get_operator_name
 from autobridge.control.models import ConnectorRelease, RepairRun
 from autobridge.control.schemas import (
     ApprovalOut,
+    OperatorOut,
     ReleaseOut,
     RepairDecisionRequest,
     RollbackRequest,
@@ -17,6 +18,12 @@ from autobridge.control.schemas import (
 )
 
 router = APIRouter(tags=["repairs"])
+
+
+@router.get("/operator", response_model=OperatorOut)
+def get_operator() -> OperatorOut:
+    """Return the server-configured operator name (REQ-001)."""
+    return OperatorOut(name=get_operator_name())
 
 
 def _approval_to_out(a) -> ApprovalOut:
@@ -32,7 +39,7 @@ def _approval_to_out(a) -> ApprovalOut:
     )
 
 
-def _release_to_out(r: ConnectorRelease) -> ReleaseOut:
+def _release_to_out(r: ConnectorRelease, approved_by: str | None = None) -> ReleaseOut:
     return ReleaseOut(
         id=r.id,
         connector_id=r.connector_id,
@@ -43,6 +50,7 @@ def _release_to_out(r: ConnectorRelease) -> ReleaseOut:
         provenance_repair_run_id=r.provenance_repair_run_id,
         verification_report_id=r.verification_report_id,
         signature=r.signature,
+        approved_by=approved_by,
         created_at=r.created_at,
     )
 
@@ -75,6 +83,9 @@ def approve_repair(repair_id: str, body: RepairDecisionRequest, db: Session = De
         if conn:
             from_release_id = conn.active_release_id
 
+    # The server sets the actor from AUTOBRIDGE_OPERATOR (REQ-001);
+    # any client-sent actor is ignored.
+    actor = get_operator_name()
     # Perform approval via engine
     try:
         from autobridge.engine.releases import approve_release  # noqa: PLC0415
@@ -82,7 +93,7 @@ def approve_repair(repair_id: str, body: RepairDecisionRequest, db: Session = De
         approval = approve_release(
             db,
             repair_run_id=repair_id,
-            actor=body.actor,
+            actor=actor,
             from_release_id=from_release_id,
             to_release_id=to_release_id,
             connector_id=body.connector_id,
@@ -107,7 +118,7 @@ def reject_repair(repair_id: str, body: RepairDecisionRequest, db: Session = Dep
         approval = reject_release(
             db,
             repair_run_id=repair_id,
-            actor=body.actor,
+            actor=get_operator_name(),
             from_release_id=body.from_release_id,
             to_release_id=body.to_release_id,
         )
@@ -127,7 +138,8 @@ def list_releases(connector_id: str | None = None, db: Session = Depends(get_db)
     if connector_id:
         q = q.where(ConnectorRelease.connector_id == connector_id)
     rows = db.execute(q).scalars().all()
-    return [_release_to_out(r) for r in rows]
+    by_release = approved_by_for_releases(db, [r.id for r in rows])
+    return [_release_to_out(r, approved_by=by_release.get(r.id)) for r in rows]
 
 
 @router.get("/releases/{release_id}", response_model=ReleaseOut)
@@ -135,7 +147,8 @@ def get_release(release_id: str, db: Session = Depends(get_db)) -> ReleaseOut:
     r = db.get(ConnectorRelease, release_id)
     if r is None:
         raise HTTPException(status_code=404, detail=f"Release {release_id!r} not found")
-    return _release_to_out(r)
+    by_release = approved_by_for_releases(db, [r.id])
+    return _release_to_out(r, approved_by=by_release.get(r.id))
 
 
 @router.post("/releases/{release_id}/rollback", response_model=RollbackResponse)
@@ -160,13 +173,13 @@ def rollback_release_endpoint(release_id: str, body: RollbackRequest, db: Sessio
             db,
             connector_id=connector_id,
             target_release_id=body.target_release_id,
-            actor=body.actor,
+            actor=get_operator_name(),
             repair_run_id=body.repair_run_id,
         )
         db.commit()
         db.refresh(new_release)
         db.refresh(approval)
-        return RollbackResponse(new_release=_release_to_out(new_release), approval=_approval_to_out(approval))
+        return RollbackResponse(new_release=_release_to_out(new_release, approved_by=approval.actor), approval=_approval_to_out(approval))
     except Exception as exc:
         db.rollback()
         # Distinguish not found vs validation

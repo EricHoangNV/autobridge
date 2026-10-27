@@ -28,7 +28,12 @@ class ReleaseOut(BaseModel):
     provenance_repair_run_id: str | None = None
     verification_report_id: str | None = None
     signature: str
+    approved_by: str | None = Field(default=None, description="Actor of the latest approval for this release (REQ-001)")
     created_at: datetime
+
+
+class OperatorOut(BaseModel):
+    name: str = Field(description="Server-configured operator name (AUTOBRIDGE_OPERATOR)")
 
 
 class ApprovalOut(BaseModel):
@@ -44,7 +49,9 @@ class ApprovalOut(BaseModel):
 
 class RollbackRequest(BaseModel):
     target_release_id: str = Field(description="Release to rollback to (its spec is copied)")
-    actor: str = Field(min_length=1, description="Human actor")
+    # Accepted for backwards compatibility but ignored: the server always
+    # records Approval.actor from AUTOBRIDGE_OPERATOR (REQ-001).
+    actor: str | None = Field(default=None, description="Ignored; server sets the actor")
     repair_run_id: str = Field(description="RepairRun for audit trail (any existing run)")
 
     model_config = {"extra": "forbid"}
@@ -214,7 +221,9 @@ class EvidenceOut(BaseModel):
 
 
 class RepairDecisionRequest(BaseModel):
-    actor: str = Field(min_length=1)
+    # Accepted for backwards compatibility but ignored: the server always
+    # records Approval.actor from AUTOBRIDGE_OPERATOR (REQ-001).
+    actor: str | None = Field(default=None, description="Ignored; server sets the actor")
     from_release_id: str | None = None
     to_release_id: str | None = None
     connector_id: str | None = None

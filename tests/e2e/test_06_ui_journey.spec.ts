@@ -107,8 +107,8 @@ const mockConnectorDetail = {
     entities: {},
   },
   releases: [
-    { id: "rel-1", version: 1, connector_id: MOCK_CONNECTOR_ID, spec: {}, parent_release_id: null, created_at: new Date().toISOString() },
-    { id: "rel-2", version: 2, connector_id: MOCK_CONNECTOR_ID, spec: {}, parent_release_id: "rel-1", created_at: new Date().toISOString() },
+    { id: "rel-1", version: 1, connector_id: MOCK_CONNECTOR_ID, spec: { spec_version: 1, connector: { id: "atlaspms" } }, parent_release_id: null, signature: "sig-e2e-111", approved_by: null, created_at: new Date().toISOString() },
+    { id: "rel-2", version: 2, connector_id: MOCK_CONNECTOR_ID, spec: { spec_version: 1, connector: { id: "atlaspms" } }, parent_release_id: "rel-1", signature: "sig-e2e-222", approved_by: "e2e-operator", created_at: new Date().toISOString() },
   ],
   sync_runs: [
     { id: "sync-1", connector_id: MOCK_CONNECTOR_ID, outcome: "Complete", unmet_criteria: [], fingerprint_id: "fp-1", created_at: new Date().toISOString() },
@@ -243,6 +243,9 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
         if (url.includes("/releases")) {
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockConnectorDetail.releases) });
         }
+        if (url.includes("/operator")) {
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ name: "e2e-operator" }) });
+        }
         if (url.includes("/metrics/model-usage")) {
           return route.fulfill({
             status: 200,
@@ -320,6 +323,12 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
       });
       // Also intercept direct localhost:8101 when window.origin rewriting is used
       await page.route("**/localhost:8101/**", async (route) => {
+        if (route.request().method() === "GET") await mockGet(route);
+        else await mockPost(route);
+      });
+      // Compose UI bakes NEXT_PUBLIC_API_URL=http://control:8000 (Docker DNS,
+      // unreachable from the test browser) — route it to the same mocks
+      await page.route("**/control:8000/**", async (route) => {
         if (route.request().method() === "GET") await mockGet(route);
         else await mockPost(route);
       });
@@ -469,6 +478,11 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     const hasReleases = await page.getByTestId("release-history").isVisible().catch(() => false);
     const hasNoReleases = await page.getByTestId("no-releases").isVisible().catch(() => false);
     expect(hasReleases || hasNoReleases).toBeTruthy();
+    // Release history shows who approved each release (REQ-001)
+    if (hasReleases) {
+      await expect(page.getByText("Approved by", { exact: true })).toBeVisible();
+      await expect(page.getByTestId("release-approved-by-rel-2")).toContainText("approved by e2e-operator");
+    }
     // Sync runs table with outcomes Complete/Degraded/Blocked
     const hasSyncTable = await page.getByTestId("sync-runs-table").isVisible().catch(() => false);
     const hasNoSync = await page.getByTestId("no-sync-runs").isVisible().catch(() => false);
@@ -507,10 +521,13 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
 
     await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 10000 });
 
-    // Drift evidence
-    await expect(page.getByTestId("drift-evidence-section")).toBeVisible({ timeout: 5000 }).or(async () => {
-      await expect(page.getByText(/Drift evidence/)).toBeVisible();
-    });
+    // Drift evidence (section when linked events load, empty state otherwise)
+    await expect(
+      page.getByTestId("drift-evidence-section").or(page.getByTestId("drift-evidence-empty")),
+    ).toBeVisible({ timeout: 8000 });
+    const hasDriftSection = await page.getByTestId("drift-evidence-section").isVisible().catch(() => false);
+    const hasDriftText = await page.getByText(/Drift evidence/).isVisible().catch(() => false);
+    expect(hasDriftSection || hasDriftText).toBeTruthy();
 
     // Ladder trace with L0-L4 badges
     await expect(page.getByTestId("ladder-trace")).toBeVisible({ timeout: 5000 });
@@ -523,25 +540,29 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     expect(hasHypotheses || (await page.getByText(/Hypotheses/).isVisible().catch(() => false))).toBeTruthy();
 
     // JSON Patch diff old/new side by side
-    await expect(page.getByTestId("patch-diff")).toBeVisible({ timeout: 5000 }).or(async () => {
-      await expect(page.getByText(/JSON Patch diff/)).toBeVisible();
-    });
+    const hasPatchDiff = await page.getByTestId("patch-diff").isVisible().catch(() => false);
+    const hasPatchText = await page.getByText(/JSON Patch diff/).isVisible().catch(() => false);
+    expect(hasPatchDiff || hasPatchText).toBeTruthy();
 
     // Visible tests
-    await expect(page.getByText(/Visible tests/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Visible tests", exact: true })).toBeVisible();
 
     // Verifier verdict
     await expect(page.getByTestId("verifier-verdict")).toBeVisible({ timeout: 5000 });
 
     // Model usage (full + compact)
-    await expect(page.getByTestId("model-usage-view")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("model-usage-view").first()).toBeVisible({ timeout: 5000 });
     // Check zero-frontier badge when applicable
-    const modelUsageText = await page.getByTestId("model-usage-view").textContent();
+    const modelUsageText = await page.getByTestId("model-usage-view").first().textContent();
     expect(modelUsageText).toBeTruthy();
 
     // Approve / Reject / Rollback actions
     const hasActions = await page.getByTestId("repair-actions").isVisible().catch(() => false);
     expect(hasActions || (await page.getByText(/Approve/).isVisible().catch(() => false))).toBeTruthy();
+    // Server-set operator name next to the approval action (REQ-001)
+    if (hasActions) {
+      await expect(page.getByTestId("approving-as")).toContainText(/Approving as \S+/);
+    }
 
     // Inject Fault drawer — labelled demo action
     await expect(page.getByTestId("inject-fault-drawer")).toBeVisible({ timeout: 5000 });

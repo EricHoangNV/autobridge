@@ -45,6 +45,14 @@ describe("ReleaseHistory", () => {
     expect(screen.queryByTestId("release-active-rel-1")).not.toBeInTheDocument();
   });
 
+  it("shows who approved each release", () => {
+    const r1 = mkRelease({ id: "rel-1", version: 1, approved_by: "alice" });
+    const r2 = mkRelease({ id: "rel-2", version: 2, approved_by: null });
+    render(<ReleaseHistory releases={[r1, r2]} activeReleaseId="rel-2" />);
+    expect(screen.getByTestId("release-approved-by-rel-1")).toHaveTextContent("approved by alice");
+    expect(screen.queryByTestId("release-approved-by-rel-2")).not.toBeInTheDocument();
+  });
+
   it("shows no active badge when active id does not match", () => {
     const r1 = mkRelease({ id: "rel-1", version: 1 });
     render(<ReleaseHistory releases={[r1]} activeReleaseId="rel-99" />);

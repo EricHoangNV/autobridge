@@ -441,3 +441,111 @@ def test_evidence_redaction_in_sse(tmp_path: pathlib.Path, monkeypatch) -> None:
 
     app.dependency_overrides.clear()
     monkeypatch.delenv("REDACT_TEST_KEY", raising=False)
+
+
+def test_operator_actor_from_env(tmp_path: pathlib.Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """REQ-001: Approval.actor comes from AUTOBRIDGE_OPERATOR; body actor ignored."""
+    from autobridge.control.models import Base
+
+    monkeypatch.setenv("AUTOBRIDGE_OPERATOR", "alice")
+    engine = create_engine(f"sqlite:///{tmp_path}/operator.db")
+    Base.metadata.create_all(engine)
+    factory = session_factory(engine)
+
+    def override_db():  # type: ignore[no-untyped-def]
+        s = factory()
+        try:
+            yield s
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        client = TestClient(app)
+
+        # GET /operator exposes the server-configured name
+        assert client.get("/operator").json() == {"name": "alice"}
+
+        c = client.post("/connectors", json={"name": "OpTest", "base_url": "http://sim-harbor:8000", "credential_ref": "TEST_API_KEY", "target_entities": []}).json()
+        cid = c["id"]
+        docs = "# HarborPMS API\nBase URL: http://sim-harbor:8000\nGET /reservations\nGET /folios\n"
+        assert client.post(f"/connectors/{cid}/build", json={"docs_text": docs}).status_code == 200
+        rel_id = client.get("/releases").json()[0]["id"]
+
+        with factory() as s:
+            drift = DriftEvent(connector_id=cid, drift_class="FIELD_RENAMED", severity="medium", evidence_ids=[], status="open")
+            s.add(drift)
+            s.flush()
+            repair = RepairRun(drift_event_ids=[drift.id], ladder_level_reached=1, candidate_patch=[{"op": "replace", "path": "/source/base_url", "value": "http://new.example.com"}], rule_id="rename_field", decision="propose", model_usage={})
+            s.add(repair)
+            s.flush()
+            from autobridge.engine.releases import create_release_from_patch
+            new_rel = create_release_from_patch(s, connector_id=cid, base_release_id=rel_id, patch=repair.candidate_patch, provenance_repair_run_id=repair.id)
+            s.commit()
+            repair_id, new_rel_id = repair.id, new_rel.id
+
+        # Client-sent actor is ignored: approval records the env operator
+        r = client.post(f"/repairs/{repair_id}/approve", json={"actor": "mallory", "from_release_id": rel_id, "to_release_id": new_rel_id, "connector_id": cid})
+        assert r.status_code == 200, r.text
+        assert r.json()["actor"] == "alice"
+
+        # ReleaseOut carries who approved it (list, single, and connector detail)
+        assert client.get("/releases").json()[0]["approved_by"] == "alice"
+        assert client.get(f"/releases/{new_rel_id}").json()["approved_by"] == "alice"
+        detail = client.get(f"/connectors/{cid}").json()
+        assert [x for x in detail["releases"] if x["id"] == new_rel_id][0]["approved_by"] == "alice"
+
+        # Reject also records the env operator, ignoring the body actor
+        with factory() as s:
+            drift2 = DriftEvent(connector_id=cid, drift_class="PAGINATION_CHANGED", evidence_ids=[], status="open")
+            s.add(drift2)
+            s.flush()
+            repair2 = RepairRun(drift_event_ids=[drift2.id], ladder_level_reached=1, decision="propose", model_usage={})
+            s.add(repair2)
+            s.flush()
+            s.commit()
+            repair2_id = repair2.id
+        r2 = client.post(f"/repairs/{repair2_id}/reject", json={"actor": "mallory"})
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["actor"] == "alice"
+
+        # Rollback records the env operator too, even with no actor in the body
+        rb = client.post(f"/releases/{new_rel_id}/rollback", json={"target_release_id": rel_id, "repair_run_id": repair_id})
+        assert rb.status_code == 200, rb.text
+        assert rb.json()["approval"]["actor"] == "alice"
+        assert rb.json()["new_release"]["approved_by"] == "alice"
+    finally:
+        app.dependency_overrides.clear()
+        monkeypatch.delenv("AUTOBRIDGE_OPERATOR", raising=False)
+
+
+def test_operator_default_name(tmp_path: pathlib.Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """REQ-001: GET /operator defaults to 'operator' when the env var is unset."""
+    from autobridge.control.models import Base
+
+    monkeypatch.delenv("AUTOBRIDGE_OPERATOR", raising=False)
+    engine = create_engine(f"sqlite:///{tmp_path}/operator_default.db")
+    Base.metadata.create_all(engine)
+    factory = session_factory(engine)
+
+    def override_db():  # type: ignore[no-untyped-def]
+        s = factory()
+        try:
+            yield s
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        client = TestClient(app)
+        assert client.get("/operator").json() == {"name": "operator"}
+    finally:
+        app.dependency_overrides.clear()

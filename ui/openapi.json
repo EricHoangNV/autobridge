@@ -941,8 +941,34 @@
         "title": "ModelUsageResponse",
         "type": "object"
       },
+      "OperatorOut": {
+        "properties": {
+          "name": {
+            "description": "Server-configured operator name (AUTOBRIDGE_OPERATOR)",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "OperatorOut",
+        "type": "object"
+      },
       "ReleaseOut": {
         "properties": {
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Actor of the latest approval for this release (REQ-001)",
+            "title": "Approved By"
+          },
           "connector_id": {
             "title": "Connector Id",
             "type": "string"
@@ -1029,9 +1055,16 @@
         "additionalProperties": false,
         "properties": {
           "actor": {
-            "minLength": 1,
-            "title": "Actor",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ignored; server sets the actor",
+            "title": "Actor"
           },
           "connector_id": {
             "anyOf": [
@@ -1067,9 +1100,6 @@
             "title": "To Release Id"
           }
         },
-        "required": [
-          "actor"
-        ],
         "title": "RepairDecisionRequest",
         "type": "object"
       },
@@ -1192,10 +1222,16 @@
         "additionalProperties": false,
         "properties": {
           "actor": {
-            "description": "Human actor",
-            "minLength": 1,
-            "title": "Actor",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ignored; server sets the actor",
+            "title": "Actor"
           },
           "repair_run_id": {
             "description": "RepairRun for audit trail (any existing run)",
@@ -1210,7 +1246,6 @@
         },
         "required": [
           "target_release_id",
-          "actor",
           "repair_run_id"
         ],
         "title": "RollbackRequest",
@@ -2406,6 +2441,28 @@
         "summary": "Get Sync Metrics",
         "tags": [
           "metrics"
+        ]
+      }
+    },
+    "/operator": {
+      "get": {
+        "description": "Return the server-configured operator name (REQ-001).",
+        "operationId": "get_operator_operator_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Operator",
+        "tags": [
+          "repairs"
         ]
       }
     },

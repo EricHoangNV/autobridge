@@ -273,7 +273,10 @@ The control plane is a FastAPI app (`src/autobridge/control/app.py`) with
 `POST /connectors`, `GET /connectors`, `GET /connectors/{id}`,
 `POST /connectors/{id}/build|sync`, `GET /runs/{id}`, `GET /runs/{id}/events`
 (SSE, redacted), `GET /drift`, `POST /repairs/{id}/approve|reject`,
-`POST /releases/{id}/rollback`, `POST /demo/inject-fault` (labelled, proxies
+`POST /releases/{id}/rollback`, `GET /operator` (server-configured operator
+name from `AUTOBRIDGE_OPERATOR`; approve/reject/rollback always record
+`Approval.actor` from it and ignore any client-sent actor; `ReleaseOut`
+carries `approved_by`), `POST /demo/inject-fault` (labelled, proxies
 to simulator admin on `admin-net`), `GET /metrics/model-usage`,
 `GET /bench/scorecards`, plus `healthz`/`readyz`. Schemathesis contract tests
 run against the live OpenAPI.

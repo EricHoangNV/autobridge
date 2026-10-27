@@ -41,6 +41,7 @@ export type SyncRunOut = components["schemas"]["SyncRunOut"];
 export type RunOut = components["schemas"]["RunOut"];
 export type DependencyCreate = components["schemas"]["DependencyCreate"];
 export type DependencyOut = components["schemas"]["DependencyOut"];
+export type OperatorOut = components["schemas"]["OperatorOut"];
 
 // ---------------------------------------------------------------------------
 // Client factory
@@ -277,6 +278,10 @@ export async function getScorecard(
   return client.GET("/bench/scorecard", {
     params: { query: params ?? {} },
   });
+}
+
+export async function getOperator(client: ApiClient = api) {
+  return client.GET("/operator");
 }
 
 export async function getHealthz(client: ApiClient = api) {
