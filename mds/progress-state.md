@@ -2,7 +2,7 @@
 
 ## Current State
 
-W3.3 pagination + Degraded/no_loss done (2026-10-27): offset/cursor/page with stop_when guards, repeated_cursor → Degraded.
+W3.4 closed transforms + checks + checkpoint done (2026-10-27): 9 transforms Decimal end to end, date_local crosses boundary, unknown enum → Blocked.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -26,10 +26,11 @@ W3.3 pagination + Degraded/no_loss done (2026-10-27): offset/cursor/page with st
   - P1.W3.1: Runtime interpreter + http (retry/backoff, offset/cursor/page pagination, repeated_cursor flag, ModelCall 0)
   - P1.W3.2: Auth strategies (bearer, api-key header, basic, oauth2 client-credentials via credential_ref, never logged)
   - P1.W3.3: Pagination pagination.py (offset/cursor/page, null_cursor/repeated_cursor/empty_page/no_next/page_limit guards) + engine/sync_run Degraded/no_loss
-- Tests: 862 pass / 0 fail / 0 skip (autobridge 99.06%, verifier 93.67%, simulators 98.54%; ui –) + 17 e2e pass (8 test_00 + 9 test_01, skip when no Docker)
+  - P1.W3.4: Closed transform registry (date_local, money, enum_map, etc.), checks, checkpoint; money Decimal, date boundary, Blocked on unknown enum
+- Tests: 943 pass / 0 fail / 0 skip (autobridge 95.73%, verifier 93.67%, simulators 98.54%; ui –) + 17 e2e pass (8 test_00 + 9 test_01, skip when no Docker)
 - Stack: `make up` → all 8 readyz green (via TestClient) / `make smoke` green / `make e2e` green (17 pass, skip when no Docker) / `make lint` + `make typecheck` green
 
 ## Next tasks
 1. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check; owner freezes SHA256SUMS)
-2. **P1.W3.4** — Closed transform registry (date_local, money, enum_map, etc.), checks, checkpoint
-3. **P1.W3.5** — SyncRun outcome Complete|Degraded|Blocked + data_readiness + fingerprint
+2. **P1.W3.5** — SyncRun outcome Complete|Degraded|Blocked + data_readiness + fingerprint
+3. **P1.W3.6** — RuntimeTarget LocalProcess + DockerSandbox (network allowlist, negative test)

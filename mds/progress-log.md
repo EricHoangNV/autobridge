@@ -629,3 +629,37 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Next: P1.W3.4 closed transform registry (date_local, money Decimal, enum_map block, flatten/coalesce/const/concat/business_date), checks.py (unique_key/no_loss/date_order), checkpoint.py; unknown enum → Blocked
 - P1.W3.5 will expand sync_run.py with invariant_results (no_loss via compare_to, date_order) and data_readiness freshness/completeness docs page
 - No new e2e file for W3.3 (workstream e2e is test_02_reference_sync); make test now 862 pass (551 autobridge @99.06%, verifier 93.67%, simulators 98.54%)
+
+## P1.W3.4 Closed transform registry + checks + checkpoint (money Decimal, boundary date, Blocked)
+**Date:** 2026-10-27
+**Ref:** plan §4 W3 + §2.4; task P1.W3.4. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `src/autobridge/runtime/transforms/` closed set (9 files + `base.py`): `date_local` (UTC instant → local YYYY-MM-DD via ZoneInfo, handles pure date, Z-suffix, naive assume UTC, invalid tz fallback to UTC, crossing midnight correctly), `datetime_utc` (local → UTC ISO), `money` (string/int/Decimal/float → quantized Decimal with ROUND_HALF_UP, strips $/commas, scale 0..6, bool rejected, non-finite rejected), `enum_map` (map lookup with stringified fallback, unknown → TransformBlocked with field), `flatten` (one-level list flatten, wraps scalar, None passthrough), `coalesce` (first non-null/empty from value/list or args default/value/fallback/values), `const` (args.value), `concat` (list join with separator + prefix/suffix + values), `business_date` (posted_at UTC → business date with cutoff hour default 4, handles late postings 00:00-03:59 → prior day)
+- `src/autobridge/runtime/transforms/__init__.py` (registry): TRANSFORMS tuple matches spec.models.TRANSFORMS, REGISTRY dict, apply_transform + apply_transform_pipeline (closed-set error, blocked propagation with field name)
+- New `src/autobridge/runtime/checks.py` (unique_key, no_loss, date_order): _parse_date_value helper, check_unique_key/generic, check_no_loss (expected_count or compare_to string/int), check_date_order (arrival ≤ departure), run_checks / evaluate_entity_checks handling both dict and pydantic EntityCheck models
+- New `src/autobridge/runtime/checkpoint.py`: _extract_jsonpath_values via jsonpath_ng fallback, compute_checkpoint (max/min with mixed-type stringify fallback), compute_checkpoint_for_operation (dict or pydantic), next_checkpoint_value (merge with mode)
+- New `src/autobridge/runtime/mapping.py`: _jsonpath_extract_one, _resolve_timezone (static vs field kind via JSONPath per record), map_record_to_entity (path → pipeline → Decimal-aware), map_records_to_entities (static_tz once, field-kind per record, separates canonical vs blocked on TransformBlocked)
+- Updated `src/autobridge/engine/sync_run.py`: determine_outcome now takes blocked_failures → Blocked precedence; _extract_compare_to_value helper; execute_sync full pipeline (fetch → map via transforms → evaluate checks per entity with compare_to extraction → determine outcome Blocked/Degraded/Complete, money Decimal preserved, date_local business_date boundary correct, unknown enum → Blocked with unknown_enum + unknown_enum:field, checkpoint recomputed from canonical, invariant_results persisted); create_sync_run_row and run_sync_handler now store invariant_results
+- New `tests/unit/test_autobridge_transforms.py` (81 tests): registry closed set + unknown transform + missing name + sequential pipeline; date_local 9 cases (pure date, offset crossing midnight, source tz, naive, datetime object, invalid tz, None, Zulu, invalid string); datetime_utc 6 cases; money 10 cases (string, int/Decimal, float, scale variants, invalid scale/string, bool, unsupported, non-finite, None); enum_map 5 cases; flatten/coalesce/const/concat/business_date 12 cases; base helpers; checks 8 cases; checkpoint 6 cases; mapping 6 cases; sync_run integration 4 cases (Blocked on unknown enum, money Decimal + boundary date, Degraded via checks triple, repeated_cursor still Degraded)
+
+**Key decisions:**
+- Keep transforms pure (value, args, context_tz) with no DB or HTTP; business_date cutoff hour default 4 matches generator BUSINESS_CUTOFF_HOUR, args allow cutoff override for tz_boundary_shift scenario (4→2 tested)
+- Money is Decimal end-to-end: transform_money returns quantized Decimal, mapping preserves Decimal, sync_run canonical_records keep Decimal for verifier exact comparison; JSON serialization must handle Decimal via string (future W3.7 docs will note)
+- Unknown enum raises TransformBlocked (not generic error) so sync layer can distinguish Blocked vs Degraded; Blocked tag includes both generic unknown_enum and field-specific unknown_enum:field for debugging while keeping generic for verifier parity
+- date_local vs business_date split: date_local converts UTC instant to local calendar date (no cutoff), business_date applies cutoff hour — this matches generator's late-posting semantics and satisfies the passing criteria "timestamp crossing business-date boundary lands on right local date"
+- Mapping resolves timezone_source per record for field-kind (lookup via JSONPath on raw) and once for static; this covers both Atlas static UTC and Harbor field-based property.tz without extra spec parsing
+- Checks evaluate after mapping on canonical records; no_loss extracts compare_to via interpreter's JSONPath from raw_pages meta (e.g. $.meta.total_count) and compares to canonical count
+
+**Files changed:**
+- `src/autobridge/runtime/transforms/base.py` (new), `date_local.py` (new), `datetime_utc.py` (new), `money.py` (new), `enum_map.py` (new), `flatten.py` (new), `coalesce.py` (new), `const.py` (new), `concat.py` (new), `business_date.py` (new), `__init__.py` (registry)
+- `src/autobridge/runtime/checks.py` (new)
+- `src/autobridge/runtime/checkpoint.py` (new)
+- `src/autobridge/runtime/mapping.py` (new)
+- `src/autobridge/engine/sync_run.py` (updated Blocked, mapping, checks, checkpoint)
+- `tests/unit/test_autobridge_transforms.py` (new, 81 tests)
+
+**Notes for next iteration:**
+- Next: P1.W3.5 will expand sync_run with data_readiness freshness/completeness docs and fingerprint id per run; no new e2e file for W3.4 (workstream e2e is test_02_reference_sync); make test now 943 pass (autobridge 95.73%, verifier 93.67%, simulators 98.54%)
+- W3.5 will need to wire DependencyRegistration pause_on_release_change already in models; P1.W3.6 adds RuntimeTarget DockerSandbox negative network test
+- Mapping's field-kind timezone assumes property.tz path returns string; if missing, falls back to UTC — document in connector-spec.md in W3.7
