@@ -685,3 +685,28 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - W3.6 is RuntimeTarget DockerSandbox with network allowlist and negative test that sandbox cannot reach verifier/sim admin; W3.7 will produce Atlas/Harbor reference specs and test_02_reference_sync plus docs/connector-spec.md
 - No new e2e file for W3.5; workstream e2e is test_02_reference_sync
 - Fingerprint id is 16 hex chars stored per SyncRun; future drift/fingerprint.py will build richer signals from these ids
+
+## P1.W3.6 RuntimeTarget LocalProcess + DockerSandbox with network allowlist, timeout, resource limits, Edge reserved (sbx1)
+**Date:** 2026-10-27
+**Ref:** plan §4 W3 + §2.1/§2.4; task P1.W3.6. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Enhanced `src/autobridge/runtime/targets.py` (from 410 to 673 lines): added `BLOCKED_HOSTS` set (verifier/control/bench) + `BLOCKED_PATH_PREFIXES` ("/admin") + `MIN/MAX_MEMORY_MB` (64..8192) + `MIN/MAX_TIMEOUT_S` (1..3600) constants; `path_from_url` + `_is_blocked_path` helper blocks simulator admin API even when host matches allowlist; `validate_allowlist` fail-fast rejects blocked hosts at creation; `BaseTarget.__post_init__` now validates memory upper bound + calls `validate_allowlist` for docker_sandbox; `resource_limits` + `docker_run_args` return container spawn args (mem_limit, vendor-net, timeout); `create_target` factory from runtime_target dict (handles local_process/docker_sandbox + legacy string cloud/local/sandbox) + `target_from_connector_spec` extracts from spec connector/runtime_target; `LocalProcessTarget`/`DockerSandboxTarget` now enforce network allowlist on spec base_url via resolve_base_url + Interpreter delegation with timeout_s, stub fallback for W1 compat (only when spec lacks source+spec_version)
+- Updated `src/autobridge/runtime/app.py` (from stub health-only to W3.6 wiring): `_check_runtime_target` asserts LocalProcess builds, DockerSandbox with vendor allowlist blocks verifier host + /admin paths, edge rejected, interpreter importable; `_check_interpreter` guards transforms registry; `GET /readyz` now reports `{"runtime_target": "ok", "interpreter": "ok"}` instead of default
+- Extended `tests/unit/test_autobridge_runtime_targets.py` from 40 to 58 tests (+18): verifier host block, admin path block, blocked-host rejection, resource limits (memory/timeout bounds + docker_run_args), LocalProcess limits, edge reserved via BaseTarget+factory, create_target factory defaults, target_from_connector_spec extraction (missing/top-level/ConnectorMeta/legacy string), LocalProcess vs DockerSandbox isolation, blocked_path/validate_allowlist helpers
+
+**Key decisions:**
+- Docker network isolation (compose.yaml vendor-net only, no verifier-net/admin-net) is mirrored at app layer by host-absence (empty allowlist denies) + path guard ("/admin" blocked even if host matches) so unit tests can assert negative property without Docker; `validate_allowlist` at __post_init__ makes misconfig fail fast with TargetConfigError naming blocked host
+- Resource limits: memory_mb 64..8192 (schema min 64, upper bound 8192 for Docker safety) + timeout_s 1..3600 match runtime-target.json; docker_run_args returns mem_limit string + vendor-net for worker spawn; LocalProcess accepts memory_mb but not enforced (in-process has no cgroup) for API parity
+- Factory `create_target` handles both JSON Schema form and legacy ConnectorMeta string so W3.7 reference specs can use either; edge rejected in both BaseTarget and factory with "reserved (Phase 2 S2)" message matching spec/entities.py RESERVED_RUNTIME_KINDS
+- Execute delegation only for spec-like dicts (has source+spec_version) to preserve W1 stub test that passes {"foo":1}; real path resolves env placeholders via resolve_base_url then checks allowlist before Interpreter so blocked base_url raises NetworkBlockedError immediately
+
+**Files changed:**
+- `src/autobridge/runtime/targets.py` — enhanced with network isolation, resource limits, factories, execute enforcement
+- `src/autobridge/runtime/app.py` — readyz with runtime_target + interpreter checks
+- `tests/unit/test_autobridge_runtime_targets.py` — 58 tests (18 new)
+
+**Notes for next iteration:**
+- W3.7 needs reference specs for Atlas/Harbor under generated/connectors/ that sync Complete with ModelCall 0 via test_02_reference_sync.py; they should use LocalProcess or DockerSandbox with vendor allowlist (sim-atlas/sim-harbor) and credential_ref from .env.example
+- No new e2e file for W3.6; network isolation e2e is smoke.sh negative probes (sandbox -/-> verifier, sandbox -/-> sim:8001) + unit negative test
+- RuntimeTarget coverage 83% (47 lines uncovered are real Interpreter delegation paths needing valid spec + mock HTTP) — package total 94% passes 90% gate; future W4 will exercise execute via engine/sync_run

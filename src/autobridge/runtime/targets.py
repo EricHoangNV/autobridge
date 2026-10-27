@@ -1,12 +1,15 @@
-"""Runtime targets — real + fakes (P1.W1.9, plan §2.1, §2.4 W3.6).
+"""Runtime targets — real + fakes (P1.W1.9, P1.W3.6, plan §2.1, §2.4).
 
 The v1 engine executes :class:`ConnectorSpec` operations inside a
 :class:`RuntimeTarget`.  Real targets are:
 
-* :class:`LocalProcessTarget` — in-process, no network isolation.
+* :class:`LocalProcessTarget` — in-process, no network isolation.  Used for
+  local runs and unit tests; it can reach any host with a valid URL.
 * :class:`DockerSandboxTarget` — container with network allowlist, timeout
   and memory limits.  It cannot reach the verifier or simulator admin
-  (negative network test, W3.6).
+  (negative network test, W3.6).  Isolation is enforced at two layers:
+  Docker Compose network attachment (vendor-net only, no verifier-net/admin-net)
+  and in-process allowlist checks (host + ``/admin`` path guard).
 
 This module provides both the real minimal implementations and the
 in-memory fakes used to reach 90% coverage on the control/SSE layer
@@ -56,6 +59,36 @@ class TargetConfigError(ValueError):
 
 
 # ---------------------------------------------------------------------------
+# Constants — network isolation (W3.6)
+# ---------------------------------------------------------------------------
+
+# Hosts that must never appear in a DockerSandbox allowlist.  The runtime-
+# sandbox container has no Docker network route to verifier-net or admin-net
+# (see compose.yaml), but we also enforce it at the application layer so
+# a misconfigured spec cannot silently widen the sandbox.
+BLOCKED_HOSTS: frozenset[str] = frozenset(
+    {
+        "verifier",
+        "control",
+        "bench",
+        # Admin hosts are addressed by the same simulator hostname but on the
+        # admin port/path; the path guard below blocks /admin regardless of host.
+    }
+)
+
+# Paths that are always blocked for DockerSandbox (simulator admin API).
+BLOCKED_PATH_PREFIXES: tuple[str, ...] = ("/admin",)
+
+# Resource limits (plan §2.4 runtime-target.json + W3.6).
+MIN_MEMORY_MB = 64
+MAX_MEMORY_MB = 8192
+MIN_TIMEOUT_S = 1
+MAX_TIMEOUT_S = 3600
+DEFAULT_TIMEOUT_S = 60
+DEFAULT_MEMORY_MB = 512
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -67,6 +100,21 @@ def host_from_url(url: str) -> str:
         return (parsed.hostname or "").lower()
     except Exception:
         return ""
+
+
+def path_from_url(url: str) -> str:
+    """Extract path from *url* (empty string if unparseable)."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        return parsed.path or ""
+    except Exception:
+        return ""
+
+
+def _is_blocked_path(url: str) -> bool:
+    """Return True if *url* path is in the blocked admin prefix set."""
+    path = path_from_url(url)
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in BLOCKED_PATH_PREFIXES)
 
 
 def _host_allowed(host: str, allowlist: list[str]) -> bool:
@@ -88,6 +136,30 @@ def _host_allowed(host: str, allowlist: list[str]) -> bool:
         if h == e or h.endswith(f".{e}"):
             return True
     return False
+
+
+def validate_allowlist(allowlist: list[str]) -> None:
+    """Reject allowlists that contain blocked hosts.
+
+    Raises :class:`TargetConfigError` when a blocked host is present so a
+    misconfigured spec fails fast at creation time rather than at first fetch.
+    """
+    for entry in allowlist:
+        e_host = entry.lower().strip().split(":")[0].split("/")[0]
+        if not e_host:
+            continue
+        # Check exact blocked host or subdomain of blocked host
+        for blocked in BLOCKED_HOSTS:
+            if e_host == blocked or e_host == f"{blocked}.local" or e_host.endswith(f".{blocked}"):
+                raise TargetConfigError(
+                    f"network_allowlist must not contain blocked host {entry!r} "
+                    f"(verifier/admin isolation, W3.6)"
+                )
+            # Also check if allowlist entry is the blocked host itself
+            if e_host == blocked:
+                raise TargetConfigError(
+                    f"network_allowlist must not contain blocked host {entry!r}"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -127,15 +199,23 @@ class BaseTarget:
     network_allowlist: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if self.timeout_s < 1 or self.timeout_s > 3600:
-            raise TargetConfigError(f"timeout_s {self.timeout_s} must be 1..3600")
-        if self.memory_mb < 64:
-            raise TargetConfigError(f"memory_mb {self.memory_mb} must be >= 64")
+        if self.timeout_s < MIN_TIMEOUT_S or self.timeout_s > MAX_TIMEOUT_S:
+            raise TargetConfigError(f"timeout_s {self.timeout_s} must be {MIN_TIMEOUT_S}..{MAX_TIMEOUT_S}")
+        if self.memory_mb < MIN_MEMORY_MB:
+            raise TargetConfigError(f"memory_mb {self.memory_mb} must be >= {MIN_MEMORY_MB}")
+        if self.memory_mb > MAX_MEMORY_MB:
+            raise TargetConfigError(f"memory_mb {self.memory_mb} must be <= {MAX_MEMORY_MB}")
         if self.kind == "edge":
             raise TargetConfigError("RuntimeTarget kind 'edge' is reserved (Phase 2 S2)")
+        # DockerSandbox allowlist must not contain blocked hosts
+        if self.kind == "docker_sandbox" and self.network_allowlist:
+            validate_allowlist(self.network_allowlist)
 
     def can_reach(self, url: str) -> bool:
         """Return True if *url* host is allowed."""
+        # Admin path is always blocked for docker_sandbox, even if host matches
+        if self.kind == "docker_sandbox" and _is_blocked_path(url):
+            return False
         host = host_from_url(url)
         if not host:
             return False
@@ -148,59 +228,110 @@ class BaseTarget:
         """Raise :class:`NetworkBlockedError` if *url* is not allowed."""
         if not self.can_reach(url):
             host = host_from_url(url)
+            # Include path in host hint for admin blocks
+            if _is_blocked_path(url):
+                raise NetworkBlockedError(host or url, self.network_allowlist)
             raise NetworkBlockedError(host or url, self.network_allowlist)
+
+    def resource_limits(self) -> dict[str, Any]:
+        """Return resource limits for container creation (memory, timeout)."""
+        return {
+            "memory_mb": self.memory_mb,
+            "timeout_s": self.timeout_s,
+            "image": self.image,
+        }
 
 
 # ---------------------------------------------------------------------------
-# Real targets (minimal; W3.6 will wire the HTTP interpreter here)
+# Factory
+# ---------------------------------------------------------------------------
+
+
+def create_target(config: dict[str, Any]) -> BaseTarget:
+    """Create a :class:`BaseTarget` from a runtime_target config dict.
+
+    The dict is the ``connector.runtime_target`` value or the
+    ``runtime-target.json`` payload validated against its JSON Schema.
+    ``kind`` is required; ``edge`` is rejected; missing fields get defaults.
+    """
+    if not isinstance(config, dict):
+        raise TargetConfigError(f"runtime_target must be a mapping, got {type(config).__name__}")
+    kind = config.get("kind")
+    if not kind:
+        raise TargetConfigError("runtime_target missing required field 'kind'")
+    if kind == "edge":
+        raise TargetConfigError("RuntimeTarget kind 'edge' is reserved (Phase 2 S2)")
+    if kind == "local_process":
+        return LocalProcessTarget(
+            timeout_s=int(config.get("timeout_s", DEFAULT_TIMEOUT_S)),
+            workdir=config.get("workdir"),
+        )
+    if kind == "docker_sandbox":
+        return DockerSandboxTarget(
+            network_allowlist=list(config.get("network_allowlist", [])),
+            timeout_s=int(config.get("timeout_s", DEFAULT_TIMEOUT_S)),
+            memory_mb=int(config.get("memory_mb", DEFAULT_MEMORY_MB)),
+            image=config.get("image"),
+        )
+    raise TargetConfigError(f"unknown RuntimeTarget kind {kind!r}")
+
+
+def target_from_connector_spec(spec_dict: dict[str, Any]) -> BaseTarget | None:
+    """Extract and build a target from a ConnectorSpec dict.
+
+    Looks for ``connector.runtime_target`` (ConnectorMeta) and falls back to
+    ``runtime_target`` top-level key.  Returns None when no target is declared
+    so callers can default to LocalProcess.
+    """
+    # Try ConnectorMeta path
+    connector_meta = spec_dict.get("connector")
+    if isinstance(connector_meta, dict) and "runtime_target" in connector_meta:
+        raw = connector_meta["runtime_target"]
+        if isinstance(raw, dict):
+            return create_target(raw)
+        if isinstance(raw, str):
+            # Legacy string form: "cloud" / "local" / "sandbox"
+            mapping = {
+                "cloud": {"kind": "docker_sandbox"},
+                "local": {"kind": "local_process"},
+                "sandbox": {"kind": "docker_sandbox"},
+            }
+            if raw in mapping:
+                return create_target(mapping[raw])
+            if raw == "edge":
+                raise TargetConfigError("RuntimeTarget kind 'edge' is reserved (Phase 2 S2)")
+    # Top-level fallback
+    if "runtime_target" in spec_dict and isinstance(spec_dict["runtime_target"], dict):
+        return create_target(spec_dict["runtime_target"])
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Real targets
 # ---------------------------------------------------------------------------
 
 
 class LocalProcessTarget(BaseTarget):
-    """In-process execution for tests and local runs."""
+    """In-process execution for tests and local runs.
+
+    No network isolation; respects ``timeout_s`` via the underlying
+    :class:`autobridge.runtime.http.HttpClient` timeout.  ``memory_mb`` is
+    accepted but not enforced (in-process has no cgroup).
+    """
 
     def __init__(
         self,
         *,
         timeout_s: int = 60,
         workdir: str | None = None,
-    ) -> None:
-        super().__init__(
-            kind="local_process",
-            timeout_s=timeout_s,
-            workdir=workdir,
-        )
-
-    def execute(
-        self,
-        spec: dict[str, Any] | None = None,
-        operation: str | None = None,
-        params: dict[str, Any] | None = None,
-    ) -> ExecutionResult:
-        """Stub execute — real logic arrives in W3."""
-        _ = (spec, operation, params)
-        return ExecutionResult(status="ok", records=[], output={})
-
-    def health_check(self) -> dict[str, str]:
-        return {"status": "ok", "kind": self.kind}
-
-
-class DockerSandboxTarget(BaseTarget):
-    """Isolated container with allowlist, timeout and resource limits."""
-
-    def __init__(
-        self,
-        *,
-        network_allowlist: list[str] | None = None,
-        timeout_s: int = 60,
         memory_mb: int = 512,
         image: str | None = None,
     ) -> None:
         super().__init__(
-            kind="docker_sandbox",
-            network_allowlist=list(network_allowlist or []),
+            kind="local_process",
             timeout_s=timeout_s,
             memory_mb=memory_mb,
+            workdir=workdir,
             image=image,
         )
 
@@ -210,19 +341,158 @@ class DockerSandboxTarget(BaseTarget):
         operation: str | None = None,
         params: dict[str, Any] | None = None,
     ) -> ExecutionResult:
-        """Stub — validates network then returns empty ok."""
-        # In W3 this will spawn a container; for W1 it only validates.
+        """Execute via :class:`Interpreter` when spec provided, else stub ok."""
+        if (
+            spec is not None
+            and operation is not None
+            and isinstance(spec, dict)
+            and "source" in spec
+            and "spec_version" in spec
+        ):
+            try:
+                from autobridge.runtime.http import HttpClient
+                from autobridge.spec.models import load_spec_from_dict
+
+                spec_obj = load_spec_from_dict(spec)
+                http_client = HttpClient(
+                    base_url=spec_obj.source.base_url,
+                    auth=spec_obj.source.auth,
+                    retry=spec_obj.source.rate_limit.retry,
+                    timeout_s=float(self.timeout_s),
+                )
+                # Enforce network allowlist on the base_url
+                http_client_base = http_client.base_url
+                # For LocalProcess we allow all, so no check needed
+                _ = http_client_base
+                from autobridge.runtime.interpreter import Interpreter
+
+                interp = Interpreter(spec_obj, http_client=http_client)
+                result = interp.execute_operation(operation, max_pages=100)
+                return ExecutionResult(
+                    status="ok",
+                    records=result.records,
+                    output={"pages_fetched": result.pages_fetched, "stop_reason": result.stop_reason},
+                    elapsed_ms=0.0,
+                )
+            except Exception as exc:
+                return ExecutionResult(status="error", error=str(exc))
+        _ = (spec, operation, params)
+        return ExecutionResult(status="ok", records=[], output={})
+
+    def health_check(self) -> dict[str, str]:
+        return {"status": "ok", "kind": self.kind}
+
+
+class DockerSandboxTarget(BaseTarget):
+    """Isolated container with allowlist, timeout and resource limits.
+
+    In production this target spawns a container from ``image`` with
+    ``memory_mb`` memory limit, ``timeout_s`` wall-clock, and egress
+    restricted to ``network_allowlist`` (Docker network attachment to
+    vendor-net only).  The in-process implementation enforces the same
+    allowlist + admin-path guard so unit tests can assert the negative
+    network property without Docker.
+    """
+
+    def __init__(
+        self,
+        *,
+        network_allowlist: list[str] | None = None,
+        timeout_s: int = 60,
+        memory_mb: int = 512,
+        image: str | None = None,
+        workdir: str | None = None,
+    ) -> None:
+        super().__init__(
+            kind="docker_sandbox",
+            network_allowlist=list(network_allowlist or []),
+            timeout_s=timeout_s,
+            memory_mb=memory_mb,
+            image=image,
+            workdir=workdir,
+        )
+
+    def execute(
+        self,
+        spec: dict[str, Any] | None = None,
+        operation: str | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> ExecutionResult:
+        """Execute with network allowlist enforcement.
+
+        When *spec* and *operation* are provided, validates that the spec's
+        ``source.base_url`` is in the allowlist before delegating to the
+        interpreter.  Otherwise returns stub ok (backward compat for W1 tests).
+        """
+        if (
+            spec is not None
+            and operation is not None
+            and isinstance(spec, dict)
+            and "source" in spec
+            and "spec_version" in spec
+        ):
+            try:
+                from autobridge.runtime.http import HttpClient
+                from autobridge.spec.models import load_spec_from_dict
+
+                spec_obj = load_spec_from_dict(spec)
+                # Network check on base_url before any HTTP
+                base_url = spec_obj.source.base_url
+                # Resolve env placeholders if present (best-effort; missing env -> skip check)
+                try:
+                    from autobridge.runtime.http import resolve_base_url
+
+                    resolved = resolve_base_url(base_url)
+                    self.check_network(resolved)
+                except (KeyError, ValueError):
+                    # If env placeholder missing or URL invalid, let later code raise
+                    pass
+
+                http_client = HttpClient(
+                    base_url=base_url,
+                    auth=spec_obj.source.auth,
+                    retry=spec_obj.source.rate_limit.retry,
+                    timeout_s=float(self.timeout_s),
+                )
+                from autobridge.runtime.interpreter import Interpreter
+
+                interp = Interpreter(spec_obj, http_client=http_client)
+                result = interp.execute_operation(operation, max_pages=100)
+                return ExecutionResult(
+                    status="ok",
+                    records=result.records,
+                    output={"pages_fetched": result.pages_fetched, "stop_reason": result.stop_reason},
+                    elapsed_ms=0.0,
+                )
+            except NetworkBlockedError:
+                raise
+            except Exception as exc:
+                return ExecutionResult(status="error", error=str(exc))
         _ = (spec, operation, params)
         return ExecutionResult(status="ok", records=[], output={})
 
     def fetch(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Simulated fetch that enforces allowlist."""
+        """Simulated fetch that enforces allowlist + admin path guard."""
         self.check_network(url)
         _ = params
         return {"url": url, "data": []}
 
     def health_check(self) -> dict[str, str]:
         return {"status": "ok", "kind": self.kind}
+
+    def docker_run_args(self) -> dict[str, Any]:
+        """Return Docker run arguments for container creation.
+
+        Used by the worker when spawning the sandbox container.  Contains
+        memory limit, timeout, image, and network (vendor-net only).
+        """
+        return {
+            "image": self.image or "autobridge-runtime-sandbox",
+            "mem_limit": f"{self.memory_mb}m",
+            "network": "vendor-net",
+            "timeout_s": self.timeout_s,
+            "network_allowlist": list(self.network_allowlist),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -406,5 +676,6 @@ class FakeLocalProcess(FakeRuntimeTarget):
         )
 
     def can_reach(self, url: str) -> bool:
-        # Local process can reach anything with a valid host
+        # Local process can reach anything with a valid host (admin path not blocked)
         return bool(host_from_url(url))
+

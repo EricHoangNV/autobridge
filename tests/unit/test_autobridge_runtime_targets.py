@@ -384,3 +384,200 @@ def test_fake_local_process_invalid_timeout() -> None:
 def test_fake_docker_invalid_memory() -> None:
     with pytest.raises(TargetConfigError):
         FakeDockerSandbox(memory_mb=1)
+
+
+# ---------------------------------------------------------------------------
+# W3.6 — RuntimeTarget with network allowlist, timeout, resource limits,
+# Edge reserved, and negative network test (plan §2.1, §2.4)
+# ---------------------------------------------------------------------------
+
+
+def test_docker_sandbox_blocks_verifier_host() -> None:
+    """DockerSandbox with vendor allowlist must not reach verifier (W3.6 negative test)."""
+    from autobridge.runtime.targets import DockerSandboxTarget
+
+    target = DockerSandboxTarget(network_allowlist=["sim-atlas", "sim-harbor"])
+    # Public vendor hosts are reachable
+    assert target.can_reach("http://sim-atlas:8000/healthz")
+    assert target.can_reach("http://sim-harbor:8000/v1/reservations")
+    # Verifier must be blocked — host not in allowlist
+    assert not target.can_reach("http://verifier:8000/healthz")
+    assert not target.can_reach("http://verifier:8000/verify")
+    with pytest.raises(NetworkBlockedError) as ei:
+        target.fetch("http://verifier:8000/verify")
+    assert ei.value.host == "verifier"
+    # Also via check_network
+    with pytest.raises(NetworkBlockedError):
+        target.check_network("http://verifier:8000/healthz")
+
+
+def test_docker_sandbox_blocks_simulator_admin() -> None:
+    """DockerSandbox must not reach simulator admin API (W3.6, /admin guard)."""
+    from autobridge.runtime.targets import DockerSandboxTarget
+
+    target = DockerSandboxTarget(network_allowlist=["sim-atlas", "sim-harbor"])
+    # Admin paths are blocked even though host matches allowlist (path guard)
+    assert not target.can_reach("http://sim-atlas:8001/admin/scenario")
+    assert not target.can_reach("http://sim-atlas:8001/admin/reset")
+    assert not target.can_reach("http://sim-harbor:8001/admin/scenario")
+    assert not target.can_reach("http://sim-harbor:8000/admin/scenario")
+    with pytest.raises(NetworkBlockedError):
+        target.fetch("http://sim-atlas:8001/admin/scenario")
+    with pytest.raises(NetworkBlockedError):
+        target.check_network("http://sim-harbor:8001/admin/reset")
+
+
+def test_docker_sandbox_rejects_blocked_host_in_allowlist() -> None:
+    """Allowlist must not contain verifier or other blocked hosts (fail-fast)."""
+    from autobridge.runtime.targets import DockerSandboxTarget, TargetConfigError
+
+    with pytest.raises(TargetConfigError, match="blocked host"):
+        DockerSandboxTarget(network_allowlist=["verifier"])
+    with pytest.raises(TargetConfigError, match="blocked host"):
+        DockerSandboxTarget(network_allowlist=["verifier:8000"])
+    with pytest.raises(TargetConfigError, match="blocked host"):
+        DockerSandboxTarget(network_allowlist=["sim-atlas", "verifier"])
+
+
+def test_docker_sandbox_resource_limits() -> None:
+    """DockerSandbox enforces memory and timeout bounds (W3.6 resource limits)."""
+    from autobridge.runtime.targets import DockerSandboxTarget, TargetConfigError
+
+    # Valid resource limits
+    t = DockerSandboxTarget(network_allowlist=["a.example.com"], memory_mb=1024, timeout_s=30)
+    assert t.memory_mb == 1024
+    assert t.timeout_s == 30
+    limits = t.resource_limits()
+    assert limits["memory_mb"] == 1024
+    assert limits["timeout_s"] == 30
+    # Docker run args contain resource limits
+    args = t.docker_run_args()
+    assert args["mem_limit"] == "1024m"
+    assert args["timeout_s"] == 30
+    assert args["network"] == "vendor-net"
+
+    # Memory too low
+    with pytest.raises(TargetConfigError, match="memory_mb"):
+        DockerSandboxTarget(memory_mb=10)
+    # Memory too high
+    with pytest.raises(TargetConfigError, match="memory_mb"):
+        DockerSandboxTarget(memory_mb=9000)
+    # Timeout too low
+    with pytest.raises(TargetConfigError, match="timeout_s"):
+        DockerSandboxTarget(timeout_s=0)
+    # Timeout too high
+    with pytest.raises(TargetConfigError, match="timeout_s"):
+        DockerSandboxTarget(timeout_s=9999)
+
+
+def test_local_process_resource_limits_and_timeout() -> None:
+    """LocalProcess validates timeout and carries resource limits."""
+    from autobridge.runtime.targets import LocalProcessTarget, TargetConfigError
+
+    t = LocalProcessTarget(timeout_s=120, memory_mb=256)
+    assert t.timeout_s == 120
+    assert t.resource_limits()["memory_mb"] == 256
+    with pytest.raises(TargetConfigError, match="timeout_s"):
+        LocalProcessTarget(timeout_s=0)
+
+
+def test_edge_reserved_via_targets() -> None:
+    """Edge kind is reserved in both real and fake targets (Phase 2 S2)."""
+    from autobridge.runtime.targets import BaseTarget, TargetConfigError, create_target
+
+    with pytest.raises(TargetConfigError, match="reserved"):
+        BaseTarget(kind="edge", timeout_s=10)
+    with pytest.raises(TargetConfigError, match="reserved"):
+        create_target({"kind": "edge"})
+    with pytest.raises(TargetConfigError, match="reserved"):
+        create_target({"kind": "edge", "endpoint": "http://edge.local"})
+
+
+def test_create_target_factory() -> None:
+    """Factory creates correct target type from config dict."""
+    from autobridge.runtime.targets import DockerSandboxTarget, LocalProcessTarget, create_target
+
+    lp = create_target({"kind": "local_process", "timeout_s": 15})
+    assert isinstance(lp, LocalProcessTarget)
+    assert lp.timeout_s == 15
+
+    ds = create_target(
+        {"kind": "docker_sandbox", "network_allowlist": ["sim-atlas"], "memory_mb": 256, "timeout_s": 45}
+    )
+    assert isinstance(ds, DockerSandboxTarget)
+    assert ds.memory_mb == 256
+    assert ds.network_allowlist == ["sim-atlas"]
+
+    # Defaults
+    ds2 = create_target({"kind": "docker_sandbox"})
+    assert ds2.timeout_s == 60
+    assert ds2.memory_mb == 512
+
+
+def test_target_from_connector_spec() -> None:
+    """target_from_connector_spec extracts runtime_target from spec dict."""
+    from autobridge.runtime.targets import (
+        DockerSandboxTarget,
+        LocalProcessTarget,
+        target_from_connector_spec,
+    )
+
+    # No target -> None (caller defaults to LocalProcess)
+    assert target_from_connector_spec({"connector": {"id": "x"}}) is None
+    assert target_from_connector_spec({}) is None
+
+    # Top-level runtime_target
+    t = target_from_connector_spec({"runtime_target": {"kind": "local_process", "timeout_s": 20}})
+    assert isinstance(t, LocalProcessTarget)
+    assert t.timeout_s == 20
+
+    # ConnectorMeta runtime_target
+    t2 = target_from_connector_spec(
+        {"connector": {"runtime_target": {"kind": "docker_sandbox", "network_allowlist": ["sim-atlas"]}}}
+    )
+    assert isinstance(t2, DockerSandboxTarget)
+
+    # Legacy string form
+    t3 = target_from_connector_spec({"connector": {"runtime_target": "local"}})
+    assert isinstance(t3, LocalProcessTarget)
+    t4 = target_from_connector_spec({"connector": {"runtime_target": "sandbox"}})
+    assert isinstance(t4, DockerSandboxTarget)
+
+
+def test_local_process_can_reach_verifier_and_admin() -> None:
+    """LocalProcess has no isolation — can reach verifier and admin (vs DockerSandbox)."""
+    from autobridge.runtime.targets import DockerSandboxTarget, LocalProcessTarget
+
+    lp = LocalProcessTarget()
+    assert lp.can_reach("http://verifier:8000/healthz")
+    assert lp.can_reach("http://sim-atlas:8001/admin/scenario")
+
+    ds = DockerSandboxTarget(network_allowlist=["sim-atlas"])
+    assert not ds.can_reach("http://verifier:8000/healthz")
+    assert not ds.can_reach("http://sim-atlas:8001/admin/scenario")
+    # But vendor public API is reachable
+    assert ds.can_reach("http://sim-atlas:8000/healthz")
+
+
+def test_blocked_path_helper() -> None:
+    """_is_blocked_path correctly identifies admin prefixes."""
+    from autobridge.runtime.targets import _is_blocked_path
+
+    assert _is_blocked_path("http://host/admin/scenario")
+    assert _is_blocked_path("http://host/admin")
+    assert _is_blocked_path("http://host/admin/reset")
+    assert not _is_blocked_path("http://host/api/reservations")
+    assert not _is_blocked_path("http://host/healthz")
+    assert not _is_blocked_path("http://host/v1/admin_notes")
+
+
+def test_validate_allowlist_helper() -> None:
+    """validate_allowlist rejects blocked hosts."""
+    from autobridge.runtime.targets import TargetConfigError, validate_allowlist
+
+    validate_allowlist(["sim-atlas", "atlas.example.com"])  # ok
+    validate_allowlist([])  # ok — empty is allowed (blocks all by default)
+    with pytest.raises(TargetConfigError, match="blocked host"):
+        validate_allowlist(["verifier"])
+    with pytest.raises(TargetConfigError, match="blocked host"):
+        validate_allowlist(["VERIFIER"])  # case insensitive
