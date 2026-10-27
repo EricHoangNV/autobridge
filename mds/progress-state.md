@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W5.2 Classifiers done (2026-10-27): auth/pagination/date semantics/status vocabulary from docs+first probes; 45 tests.
+P1.W5.3 Hypothesis enumerator done (2026-10-27): `Hypothesis` model (frozen, evidence-linked, prior 0-1, candidate_mapping_fragment dict, to_evidence_payload) + 4 deterministic families (date 4: created/arrival/business/UTC, pagination 3 per paginated op offset/cursor/page, amount 3 per money field gross/net/tax_inclusive, status 2 clear/opaque) + `HypothesisEnumerator` (per-family + enumerate_all sorted, deduped provenance, fallback synthetic when docs lack evidence); every hypothesis carries ≥1 Provenance, IDs unique, harbor 24 / atlas 21 hypotheses verified.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -27,7 +27,7 @@ P1.W5.2 Classifiers done (2026-10-27): auth/pagination/date semantics/status voc
   - P1.W3.2: Auth strategies (bearer, api-key header, basic, oauth2 client-credentials via credential_ref, never logged)
   - P1.W3.3: Pagination pagination.py (offset/cursor/page, null_cursor/repeated_cursor/empty_page/no_next/page_limit guards) + engine/sync_run Degraded/no_loss
   - P1.W3.4: Closed transform registry (date_local, money, enum_map, etc.), checks, checkpoint; money Decimal, date boundary, Blocked on unknown enum
-  - P1.W3.5: SyncRun outcome Complete|Degraded|Blocked + data_readiness + fingerprint_id per run
+  - P1.W3.5: SyncRun outcome Complete|Degraded|Blocked + data_readiness + fingerprint id written per run
   - P1.W3.6: RuntimeTarget LocalProcess + DockerSandbox (network allowlist, timeout, resource limits), Edge reserved; negative network test that DockerSandbox cannot reach verifier or simulator admin
   - P1.W3.7: Reference specs for Atlas/Harbor under generated/connectors/ that sync Complete with ModelCall 0 via test_02 + docs/connector-spec.md
   - P1.W4.1: Fingerprinting (keys/types/pagination_shape delta) + drift signals from sync & canary (fingerprint.py 98% + signals.py 92% + sync_run delegation)
@@ -39,10 +39,11 @@ P1.W5.2 Classifiers done (2026-10-27): auth/pagination/date semantics/status voc
   - P1.W4.7: 4 known repairs verified with frontier_tokens==0 (rename_guest_id→rename_field, offset_to_cursor→offset_to_cursor, cursor_repeat_token→offset_to_cursor guard, nested_path_shift→nested_path_shift) + ledger + release + verifier pass
   - P1.W5.1: Docs reader (OpenAPI + Markdown → normalized InterfaceDescription with provenance per field, 42 tests, 93%)
   - P1.W5.2: Classifiers (auth/pagination/date semantics/status vocabulary from docs+first probes, 45 tests)
-- Tests: 1352 pass / 0 fail / 0 skip (autobridge 92.23%, verifier 93.78%, simulators 98.54%; ui –) + 26 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03, 19 skipped when no Docker)
+  - P1.W5.3: Hypothesis model + enumerator families (date 4 created/arrival/business/UTC, pagination 3 per op offset/cursor/page, amount 3 per money field gross/net/tax-inclusive, status 2 clear/opaque; every hypothesis ≥1 evidence Provenance; 52 tests, 94% on hypotheses.py)
+- Tests: 1404 pass / 0 fail / 0 skip (autobridge 92.23%, verifier 93.78%, simulators 98.54%; ui –) + 26 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03, 19 skipped when no Docker)
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (26 pass, 19 skipped) / `make lint` + `make typecheck` green
 
 ## Next tasks
-1. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check; owner freezes SHA256SUMS)
-2. **P1.W5.3** — Hypothesis model + enumerator families (date/pagination/amount/status, evidence-linked)
-3. **P1.W5.4** — ProbeSelector (picks GET that best splits hypotheses by information gain, budgeted)
+1. **P1.W5.4** — ProbeSelector (picks GET probe that best splits hypotheses by expected information gain; budget of probes/requests/wall-clock/tokens)
+2. **P1.W5.5** — Budgeted L2/L3 wiring (L3 only when enumerator yields <2 hypotheses; BudgetExhausted→L4 escalation bundle; surviving ambiguity→Degraded with open questions)
+3. **P1.W5.6** — Bootstrap (docs→draft spec→compile→visible tests→verify; Harbor connector from docs alone with no reference-spec access)

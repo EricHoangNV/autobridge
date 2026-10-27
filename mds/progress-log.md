@@ -993,3 +993,31 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 
 Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 
+
+## P1.W5.3 — Hypothesis model and enumerator families
+**Date:** 2026-10-27
+**Ref:** plan §4 W5 + §2.6 (Hypothesis engine); task P1.W5.3. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `src/autobridge/discovery/hypotheses.py` (750+ lines): `Hypothesis` frozen dataclass (id, family, claim, candidate_mapping_fragment, prior 0-1, evidence_for ≥1 Provenance, evidence_against, field, strategy; `__post_init__` validates family ∈ {date,pagination,amount,status}, non-empty id/claim/fragment, prior range, at least one evidence; `to_evidence_payload()` for EvidenceStore)
+- Four deterministic enumerators: `enumerate_date_hypotheses` (4 strategies created/arrival/business/UTC with transforms datetime_utc/date_local/business_date and 0.25 prior, provenance from date_notes + classification + schema), `enumerate_pagination_hypotheses` (3 strategies offset/cursor/page per paginated operation filtered by hint!=none or pagination_notes or classification strategy!=none; global fallback 3 when no ops, filtered Harbor 12 / Atlas 6), `enumerate_amount_hypotheses` (3 strategies gross/net/tax_inclusive per money field detected via _MONEY_FIELD_HINTS from schemas+operations or generic fallback amount, money transform dict), `enumerate_status_hypotheses` (2 strategies clear/opaque with enum_map fragments, priors 0.5/0.5 when opaque else 0.6/0.4, provenance from status evidence + status_notes + status-named schema fields)
+- Top-level `HypothesisEnumerator` aggregating all families: `enumerate_date/pagination/amount/status` + `enumerate_all` (sorted by family,id, deterministic, accepts probe_results forward-compat) + `enumerate_all_families` grouped dict
+- Provenance helpers: `_dedupe_provenance` (unique by source:line), `_fallback_provenance` (synthetic when docs lack evidence so invariant holds), per-family provenance pools ensuring every hypothesis has ≥1 evidence
+- New `tests/unit/test_autobridge_discovery_hypotheses.py` (52 tests): Hypothesis validation (empty id/family/claim/prior/fragment/evidence, to_payload), date family 4 strategies with ambiguous field and fallback, pagination per-op filtered vs global fallback and param-hint fallback, amount per-field vs generic fallback and required/op fields, status clear/opaque with kind-dependent priors and schema inference, enumerator top-level real fixtures harbor/atlas ≥10 hypotheses and families==4 and sorted and deterministic and unique IDs and every hypothesis links to ≥1 evidence
+
+**Key decisions:**
+- Hypothesis IDs are deterministic `family:field:strategy` (e.g. `date:date:business`, `pagination:/reservations:cursor`, `amount:amount:gross`, `status:status:opaque`) so ledger and UI can stable-key them; field carries the ambiguous source (date) or operation path (pagination) or money field (amount)
+- Pagination enumerator filters to paginated operations only (hint != none or pagination_notes mentions op or classification guess strategy != none) to avoid polluting with /properties/healthz; fallback to param-hint (offset/cursor/page/limit in params) then global 3 so generic docs still satisfy invariant
+- Amount enumerator scans schemas + operation response_fields for money hints (amount/total_amount/net_amount/gross_amount/charge_amount/price/total) and produces 3 hypotheses per field; generic fallback ensures single-field docs still have 3 strategies for probe selector
+- Status enumerator always produces both clear and opaque hypotheses even when docs say clear (null hypothesis for disambiguation); Harbor opaque map duplicated from classifiers but tested for sync; priors reflect kind (opaque→0.5/0.5, clear→0.6/0.4)
+- Candidate fragments are declarative dicts (field, strategy, transform name/mode, pagination details) consumable by bootstrap.py without code generation, per Directives Quick Reference 1
+
+**Files changed:**
+- `src/autobridge/discovery/hypotheses.py` (new, 781 lines, 94% coverage)
+- `tests/unit/test_autobridge_discovery_hypotheses.py` (new, 52 tests)
+
+**Notes for next iteration:**
+- Next: P1.W5.4 ProbeSelector (discovery/probes.py) picks allowed GET probe that best splits surviving hypotheses by expected information gain; budget of probes/requests/wall-clock/tokens per run
+- P1.W5.5 budgets L2/L3 wiring: L3 only when enumerator yields <2 hypotheses (asserted), BudgetExhausted→L4 escalation bundle, surviving ambiguity→Degraded with open questions
+- Keep amount hypotheses per money field: if bootstrap produces specs with multiple money fields (e.g. amount vs total_amount), the probe selector must handle per-field distinguishing probes
+- Gotchas: ruff SIM102 nested if→single if with and (fixed with --unsafe-fixes), mypy pool variable reuse (list[tuple] vs list[Provenance]) → renamed op_pool, Harbor pagination initially 21 (all ops) → filtered to 12 after fixing classification strategy!=none check. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
