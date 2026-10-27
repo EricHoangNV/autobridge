@@ -344,7 +344,16 @@ def _match_semantic(grouped: dict[str, list[DriftSignal]]) -> tuple[str, list[st
             uc = sig.details.get("unmet_criteria", [])
             text = " ".join(str(x) for x in uc) if isinstance(uc, list) else str(uc)
             # If it contains known invariant names, it's semantic
-            for key in ("money", "unique_key", "date_order", "transform_error", "duplicate"):
+            for key in (
+                "money",
+                "money_invariant",
+                "business_date_invariant",
+                "count_invariant",
+                "unique_key",
+                "date_order",
+                "transform_error",
+                "duplicate",
+            ):
                 if key in text.lower():
                     return ("SEMANTIC_VALUE_DRIFT", ["outcome_degraded"], f"Degraded with {key} invariant")
         # Generic degraded fallback

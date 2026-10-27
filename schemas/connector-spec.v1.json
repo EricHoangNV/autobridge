@@ -4,6 +4,16 @@
       "additionalProperties": false,
       "description": "Credentials by reference only \u2014 never inline values (DIRECTIVES \u00a76).",
       "properties": {
+        "type": {
+          "enum": [
+            "bearer",
+            "api_key_header",
+            "basic",
+            "oauth2_client_credentials"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
         "credential_ref": {
           "description": "Env key name holding the secret, never the value",
           "title": "Credential Ref",
@@ -21,12 +31,17 @@
           "default": null,
           "title": "Header Name"
         },
-        "scopes": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Scopes",
-          "type": "array"
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
         },
         "token_url": {
           "anyOf": [
@@ -40,27 +55,12 @@
           "default": null,
           "title": "Token Url"
         },
-        "type": {
-          "enum": [
-            "bearer",
-            "api_key_header",
-            "basic",
-            "oauth2_client_credentials"
-          ],
-          "title": "Type",
-          "type": "string"
-        },
-        "username": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Username"
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Scopes",
+          "type": "array"
         }
       },
       "required": [
@@ -77,15 +77,15 @@
           "title": "Every",
           "type": "string"
         },
+        "operation": {
+          "title": "Operation",
+          "type": "string"
+        },
         "max_pages": {
           "default": 1,
           "minimum": 1,
           "title": "Max Pages",
           "type": "integer"
-        },
-        "operation": {
-          "title": "Operation",
-          "type": "string"
         }
       },
       "required": [
@@ -98,19 +98,19 @@
     "Capabilities": {
       "additionalProperties": false,
       "properties": {
-        "action": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Action",
-          "type": "array"
-        },
         "read": {
           "items": {
             "type": "string"
           },
           "minItems": 1,
           "title": "Read",
+          "type": "array"
+        },
+        "action": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Action",
           "type": "array"
         }
       },
@@ -151,6 +151,11 @@
           "title": "Id",
           "type": "string"
         },
+        "vendor": {
+          "minLength": 1,
+          "title": "Vendor",
+          "type": "string"
+        },
         "runtime_target": {
           "default": "cloud",
           "enum": [
@@ -160,11 +165,6 @@
             "edge"
           ],
           "title": "Runtime Target",
-          "type": "string"
-        },
-        "vendor": {
-          "minLength": 1,
-          "title": "Vendor",
           "type": "string"
         }
       },
@@ -177,31 +177,19 @@
     },
     "EntityCheck": {
       "additionalProperties": false,
-      "description": "One invariant check on an entity's emitted records.",
+      "description": "One invariant check on an entity's emitted records.\n\nSemantic invariants (P1.W6.1):\n- money_invariant: money field must be present, positive Decimal (detects gross->net drift via business rule)\n- business_date_invariant: business_date must correctly derive from posted_at via cutoff\n- count_invariant: alias for no_loss with stricter counting (kept for semantic drift naming)",
       "properties": {
-        "after": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+        "kind": {
+          "enum": [
+            "unique_key",
+            "no_loss",
+            "date_order",
+            "money_invariant",
+            "business_date_invariant",
+            "count_invariant"
           ],
-          "default": null,
-          "title": "After"
-        },
-        "before": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Before"
+          "title": "Kind",
+          "type": "string"
         },
         "compare_to": {
           "anyOf": [
@@ -216,14 +204,65 @@
           "default": null,
           "title": "Compare To"
         },
-        "kind": {
-          "enum": [
-            "unique_key",
-            "no_loss",
-            "date_order"
+        "before": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Kind",
-          "type": "string"
+          "default": null,
+          "title": "Before"
+        },
+        "after": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field"
+        },
+        "reference_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference Field"
+        },
+        "cutoff": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cutoff"
         }
       },
       "required": [
@@ -236,21 +275,6 @@
       "additionalProperties": false,
       "description": "Mapping from one source operation to one canonical entity.",
       "properties": {
-        "checks": {
-          "items": {
-            "$ref": "#/$defs/EntityCheck"
-          },
-          "title": "Checks",
-          "type": "array"
-        },
-        "fields": {
-          "additionalProperties": {
-            "$ref": "#/$defs/FieldMapping"
-          },
-          "minProperties": 1,
-          "title": "Fields",
-          "type": "object"
-        },
         "from": {
           "description": "Source operation name",
           "title": "From",
@@ -260,6 +284,21 @@
           "description": "JSONPath subset, no expressions",
           "title": "Key",
           "type": "string"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/FieldMapping"
+          },
+          "minProperties": 1,
+          "title": "Fields",
+          "type": "object"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/EntityCheck"
+          },
+          "title": "Checks",
+          "type": "array"
         }
       },
       "required": [
@@ -301,14 +340,14 @@
           "title": "Keys",
           "type": "boolean"
         },
-        "pagination_shape": {
-          "default": true,
-          "title": "Pagination Shape",
-          "type": "boolean"
-        },
         "types": {
           "default": true,
           "title": "Types",
+          "type": "boolean"
+        },
+        "pagination_shape": {
+          "default": true,
+          "title": "Pagination Shape",
           "type": "boolean"
         }
       },
@@ -334,22 +373,22 @@
     "OperationSpec": {
       "additionalProperties": false,
       "properties": {
-        "checkpoint": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Checkpoint"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "method": {
           "const": "GET",
           "default": "GET",
           "title": "Method",
           "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Params",
+          "type": "object"
         },
         "pagination": {
           "anyOf": [
@@ -362,16 +401,16 @@
           ],
           "default": null
         },
-        "params": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "Params",
-          "type": "object"
-        },
-        "path": {
-          "title": "Path",
-          "type": "string"
+        "checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Checkpoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -383,6 +422,15 @@
     "Pagination": {
       "additionalProperties": false,
       "properties": {
+        "strategy": {
+          "enum": [
+            "offset",
+            "cursor",
+            "page"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        },
         "cursor_param": {
           "anyOf": [
             {
@@ -395,10 +443,29 @@
           "default": null,
           "title": "Cursor Param"
         },
-        "items_path": {
-          "description": "JSONPath subset, no expressions",
-          "title": "Items Path",
-          "type": "string"
+        "offset_param": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset Param"
+        },
+        "page_param": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Param"
         },
         "limit_param": {
           "anyOf": [
@@ -425,29 +492,10 @@
           "default": null,
           "title": "Next Path"
         },
-        "offset_param": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Offset Param"
-        },
-        "page_param": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Page Param"
+        "items_path": {
+          "description": "JSONPath subset, no expressions",
+          "title": "Items Path",
+          "type": "string"
         },
         "stop_when": {
           "items": {
@@ -463,15 +511,6 @@
           "minItems": 1,
           "title": "Stop When",
           "type": "array"
-        },
-        "strategy": {
-          "enum": [
-            "offset",
-            "cursor",
-            "page"
-          ],
-          "title": "Strategy",
-          "type": "string"
         }
       },
       "required": [
@@ -501,6 +540,13 @@
     "RetryPolicy": {
       "additionalProperties": false,
       "properties": {
+        "statuses": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Statuses",
+          "type": "array"
+        },
         "backoff": {
           "default": "exponential",
           "enum": [
@@ -517,13 +563,6 @@
           "minimum": 1,
           "title": "Max Attempts",
           "type": "integer"
-        },
-        "statuses": {
-          "items": {
-            "type": "integer"
-          },
-          "title": "Statuses",
-          "type": "array"
         }
       },
       "title": "RetryPolicy",
@@ -532,12 +571,12 @@
     "SourceSpec": {
       "additionalProperties": false,
       "properties": {
-        "auth": {
-          "$ref": "#/$defs/AuthSpec"
-        },
         "base_url": {
           "title": "Base Url",
           "type": "string"
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthSpec"
         },
         "rate_limit": {
           "$ref": "#/$defs/RateLimit"
@@ -565,6 +604,18 @@
           "title": "Kind",
           "type": "string"
         },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
         "path": {
           "anyOf": [
             {
@@ -577,18 +628,6 @@
           ],
           "default": null,
           "title": "Path"
-        },
-        "value": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Value"
         }
       },
       "required": [
@@ -601,11 +640,6 @@
       "additionalProperties": false,
       "description": "One closed-set transform call with its arguments.",
       "properties": {
-        "args": {
-          "additionalProperties": true,
-          "title": "Args",
-          "type": "object"
-        },
         "name": {
           "description": "Closed transform name (plan \u00a72.4)",
           "enum": [
@@ -621,6 +655,11 @@
           ],
           "title": "Name",
           "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
         }
       },
       "required": [
@@ -633,22 +672,16 @@
   "additionalProperties": false,
   "description": "The declarative connector document (spec_version 1).",
   "properties": {
-    "capabilities": {
-      "$ref": "#/$defs/Capabilities"
+    "spec_version": {
+      "const": 1,
+      "title": "Spec Version",
+      "type": "integer"
     },
     "connector": {
       "$ref": "#/$defs/ConnectorMeta"
     },
-    "entities": {
-      "additionalProperties": {
-        "$ref": "#/$defs/EntitySpec"
-      },
-      "minProperties": 1,
-      "title": "Entities",
-      "type": "object"
-    },
-    "health": {
-      "$ref": "#/$defs/HealthSpec"
+    "source": {
+      "$ref": "#/$defs/SourceSpec"
     },
     "operations": {
       "additionalProperties": {
@@ -658,13 +691,19 @@
       "title": "Operations",
       "type": "object"
     },
-    "source": {
-      "$ref": "#/$defs/SourceSpec"
+    "entities": {
+      "additionalProperties": {
+        "$ref": "#/$defs/EntitySpec"
+      },
+      "minProperties": 1,
+      "title": "Entities",
+      "type": "object"
     },
-    "spec_version": {
-      "const": 1,
-      "title": "Spec Version",
-      "type": "integer"
+    "capabilities": {
+      "$ref": "#/$defs/Capabilities"
+    },
+    "health": {
+      "$ref": "#/$defs/HealthSpec"
     }
   },
   "required": [

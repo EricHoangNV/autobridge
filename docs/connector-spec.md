@@ -177,7 +177,15 @@ Keyed by canonical name (`Reservation`, `FolioCharge` in v1; PascalCase).
     - { kind: unique_key }                               # no duplicate keys
     - { kind: no_loss, compare_to: $.total }             # produced count ≥ $.total from first raw page
     - { kind: date_order, before: arrival_date, after: departure_date }  # departure ≥ arrival
+    - { kind: money_invariant, field: total_amount }     # money field present + positive Decimal (semantic)
+    - { kind: business_date_invariant, field: business_date, reference_field: posted_at, cutoff: 4 }  # business_date derives from posted_at
+    - { kind: count_invariant, compare_to: $.total }     # strict count match (semantic drift alias)
   ```
+
+  The last three are **semantic invariants** (P1.W6.1): schema-valid but
+  value-wrong drift. They fail with `Degraded` and the invariant name in
+  `unmet_criteria` (e.g. `money_invariant`). The drift classifier maps
+  `invariant_failure` + `money_invariant` etc. to `SEMANTIC_VALUE_DRIFT`.
 
 ### 2.5 `capabilities` and `health`
 

@@ -267,7 +267,14 @@ def signals_from_sync(
                     source_run_id=source_run_id,
                 )
             )
-        elif crit in {"unique_key", "date_order", "transform_error"}:
+        elif crit in {
+            "unique_key",
+            "date_order",
+            "transform_error",
+            "money_invariant",
+            "business_date_invariant",
+            "count_invariant",
+        }:
             signals.append(
                 DriftSignal(
                     kind="invariant_failure",

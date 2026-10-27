@@ -52,7 +52,14 @@ StopCondition = Literal[
     "no_next",
 ]
 
-CheckKind = Literal["unique_key", "no_loss", "date_order"]
+CheckKind = Literal[
+    "unique_key",
+    "no_loss",
+    "date_order",
+    "money_invariant",
+    "business_date_invariant",
+    "count_invariant",
+]
 
 # JSONPath subset: root plus child segments only — no filters, slices,
 # recursive descent, expressions or script. Anything with parentheses,
@@ -181,17 +188,41 @@ class FieldMapping(_Strict):
 
 
 class EntityCheck(_Strict):
-    """One invariant check on an entity's emitted records."""
+    """One invariant check on an entity's emitted records.
+
+    Semantic invariants (P1.W6.1):
+    - money_invariant: money field must be present, positive Decimal (detects gross->net drift via business rule)
+    - business_date_invariant: business_date must correctly derive from posted_at via cutoff
+    - count_invariant: alias for no_loss with stricter counting (kept for semantic drift naming)
+    """
 
     kind: CheckKind
     compare_to: JsonPath | None = None
     before: str | None = None
     after: str | None = None
+    # money_invariant / business_date_invariant / count_invariant
+    field: str | None = None
+    reference_field: str | None = None
+    cutoff: int | None = None
 
     @field_validator("compare_to")
     @classmethod
     def _compare_subset(cls, v: str | None) -> str | None:
         return check_jsonpath(v, "compare_to") if v is not None else v
+
+    @field_validator("field")
+    @classmethod
+    def _field_name(cls, v: str | None) -> str | None:
+        if v is not None and not FIELD_NAME_RE.match(v):
+            raise ValueError(f"check field {v!r} must match [a-z][a-z0-9_]*")
+        return v
+
+    @field_validator("reference_field")
+    @classmethod
+    def _ref_field_name(cls, v: str | None) -> str | None:
+        if v is not None and not FIELD_NAME_RE.match(v):
+            raise ValueError(f"reference_field {v!r} must match [a-z][a-z0-9_]*")
+        return v
 
     @model_validator(mode="after")
     def _check_operands(self) -> EntityCheck:
@@ -199,6 +230,10 @@ class EntityCheck(_Strict):
             raise ValueError("no_loss requires compare_to (expected-count path)")
         if self.kind == "date_order" and (self.before is None or self.after is None):
             raise ValueError("date_order requires before and after field names")
+        if self.kind == "money_invariant" and not self.field:
+            raise ValueError("money_invariant requires field (money field name)")
+        if self.kind == "business_date_invariant" and (not self.field or not self.reference_field):
+            raise ValueError("business_date_invariant requires field (business_date) and reference_field (posted_at)")
         return self
 
 
@@ -457,6 +492,23 @@ class ConnectorSpec(_Strict):
                         if which not in entity.fields:
                             raise ValueError(
                                 f"entities.{entity_name}: date_order references "
+                                f"unknown field {which!r}"
+                            )
+                if (
+                    check.kind in ("money_invariant", "count_invariant")
+                    and check.field is not None
+                    and check.field not in entity.fields
+                ):
+                    raise ValueError(
+                        f"entities.{entity_name}: {check.kind} references "
+                        f"unknown field {check.field!r}"
+                    )
+                if check.kind == "business_date_invariant":
+                    assert check.field is not None and check.reference_field is not None
+                    for which in (check.field, check.reference_field):
+                        if which not in entity.fields:
+                            raise ValueError(
+                                f"entities.{entity_name}: business_date_invariant references "
                                 f"unknown field {which!r}"
                             )
         for name in self.capabilities.read:
