@@ -1636,3 +1636,16 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Status:** [~] codeable done, owner freeze pending (no code changed)
 **Verification:** heldout/sha unit subset 8 passed + w85 14 passed; live `check_heldout_sha()` no-op pass (no SHA256SUMS = gate open); directives §2/§8 clean (harness has no verifier/simulator imports, HTTP only); docs runbook (docs/benchmark.md #Heldout-freeze-runbook) accurate — `cd verifier/hidden_cases/heldout && sha256sum ./*.yaml > SHA256SUMS && git add SHA256SUMS`; .gitkeep placeholders tracked in dev/ + heldout/.
 **Owner step:** populate `verifier/hidden_cases/heldout/` then freeze SHA256SUMS per runbook and commit. Task left [~] with that exact command on its tracking line.
+
+## 2026-10-27 — P1.W10.3 codeable done (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+Claimed P1.W10.3 (only unclaimed Phase 1 item; HUMAN-gated). Codeable work:
+`make demo` step added to CI after e2e-ui (live, post-e2e so fault injection
+cannot contaminate the suite); README + docs/architecture.md CI order synced.
+Found + fixed clean-clone blocker: W7.4 never committed `ui/public/`, so the
+`ui` image build (`COPY --from=builder ... /public`) failed and `make up`
+broke on any fresh clone — restored via `ui/public/.gitkeep` (learning §5).
+Verified live: up green (8 readyz), demo 6/6 twice, sims reset to baseline,
+smoke OK, test_00 8/8, demo unit 22/22, lint+typecheck green, make test 2026
+pass (90.83/93.78/96.55%), stack down afterwards. Task left [~]: owner confirms
+CI green on main + records the labelled demo (docs/demo.md), then flips [x].

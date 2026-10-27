@@ -39,3 +39,12 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed by adding a quiet two-column label line (`Release` / `Approved by`) above the broadcast list — same grammar as the design's `.clbl` labels, keeps the journey green without reintroducing the table.
 
 - **Rule:** Before converting a table to a list, grep the e2e specs for exact-text assertions that the table headers satisfy; carry each one over as a visible label in the new markup and re-run the journey spec before committing.
+
+## 5. A Dockerfile `COPY` of a scaffold dir that was never committed breaks `make up` on every clean clone
+
+**Context:** P1.W10.3 (2026-10-27) — `make up` failed in a fresh worktree at the `ui` image build: `COPY --from=builder /srv/ui/public ./public: not found`. W7.4's Next.js scaffold never created `ui/public/`, and no prior run caught it because existing checkouts/sandbox images either had the dir incidentally or built with cache.
+
+- Docker `COPY` has no tolerate-missing flag: one absent scaffold path fails the whole `docker compose up --build`, so no service starts and the W10 passing chain (`up → test → e2e → demo`) never runs.
+- Fixed by committing the scaffold dir itself (`ui/public/.gitkeep`) rather than editing the Dockerfile — the Dockerfile was written against the standard Next.js layout, the layout was what drifted.
+
+- **Rule:** When a Dockerfile `COPY`s a scaffold path, that path must exist in git (add `.gitkeep` for intentionally-empty dirs); after touching any `COPY` source or scaffold task, verify with a clean-context build (`docker compose build --no-cache <svc>` or a fresh worktree), not an incremental one.

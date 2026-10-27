@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W2.8 CODEABLE DONE (2026-10-27): heldout sha gate + runbook verified, awaiting owner freeze; Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+P1.W10.3 CODEABLE DONE (2026-10-27): demo in CI chain + clean-clone `make up` fix verified live, awaiting owner demo recording; Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -50,7 +50,7 @@ P1.W2.8 CODEABLE DONE (2026-10-27): heldout sha gate + runbook verified, awaitin
   - P1.W6.4: Regression gate
   - P1.W6.5: Safety model + test_05
   - P1.W7.1: FastAPI control plane + OpenAPI + redaction
-  - P1.W7.2: SSE run events with redaction
+  - P1.W7.2: SSE run events with redacted event stream
   - P1.W7.3: OpenAPI → ui typed client
   - P1.W7.4: Next.js scaffold + /connectors screen
   - P1.W7.5: /connectors/new screen
@@ -66,11 +66,12 @@ P1.W2.8 CODEABLE DONE (2026-10-27): heldout sha gate + runbook verified, awaitin
   - P1.W9.2: make e2e + CI job (unit → smoke → e2e from clean clone)
   - P1.W10.1: README + docs/ pages + .env.example
   - P1.W10.2: make demo six steps via control API + local evidence
+  - P1.W10.3 codeable: demo step in CI chain + ui/public/.gitkeep (clean-clone make up fix); verified live 6/6 twice
   - REQ-001: operator name on approvals (server-set actor, GET /operator, UI lines, compose var)
   - REQ-002: broadcast redesign, all 5 slices (tokens/shell, repair call+scorebug, live climb, rundown+masthead, new run-sheet + drawer)
-- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.86%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 128 + e2e test_06 4/6 in sandbox (2 detail-page fails pre-existing: no control plane; touched journeys green) + W2.8 gate re-verified 2026-10-27 (8 heldout/sha + 14 w85 pass, no-op live check pass)
-- Stack: compose down in sbx1 this run (unit gate checks only, no e2e stack)
+- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.83%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 128 + demo unit 22 + test_00 8/8 live + smoke OK + make demo 6/6 live x2 (sbx1 2026-10-27)
+- Stack: compose down in sbx1 after verification (clean)
 
 ## Next tasks
-1. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)
+1. **P1.W10.3** — [~] awaiting OWNER: confirm CI green on main with demo step + record labelled demo (docs/demo.md, plan §6); then flip to [x]
 2. **P1.W2.8** — [~] awaiting OWNER freeze: populate verifier/hidden_cases/heldout/ then sha256sum > SHA256SUMS (runbook docs/benchmark.md)

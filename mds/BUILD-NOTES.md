@@ -475,3 +475,37 @@ Agent: opencode meta/muse-spark-1.3 (escalation)
 - Remote for `next/font/google`: no new runtime deps; no build-step network change beyond the fonts added in slice 1.
 - Checks: ui unit 128/128 (3 new), `tsc --noEmit` clean, no `zinc-/red-/amber-/emerald-/rounded/shadow-` left in touched files, `make test` green (python untouched), directives §7 clean (no API change; drawer still posts only to `/demo/inject-fault`).
 - E2E (dev server :8107, no compose/control plane in sandbox): test_06 4/6 — the /connectors/new journey (test 3) and the inject-fault/network-isolation walk (test 6) pass. Tests 4–5 (detail pages) fail identically on the clean tree (verified via `git stash`): they need the control API, pre-existing environmental failure, unrelated to this slice.
+
+### P1.W10.3 — clean-clone chain: codeable part (CI demo step + `make up` fix), HUMAN step left for owner
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+Files: `.github/workflows/ci.yml` (new `make demo` step after e2e-ui, before
+always-teardown; header comment updated), `ui/public/.gitkeep` (new),
+`README.md` + `docs/architecture.md` (CI order now ends `→ make demo`).
+
+Decisions: (1) Demo runs after e2e in CI so labelled fault injection
+(`POST /demo/inject-fault`) cannot contaminate the suite; demo is
+best-effort-live (falls back to local evidence) with 3–10s HTTP timeouts, so
+it cannot hang the 30-min job. (2) Fixed the Dockerfile rather than working
+around it: `ui/Dockerfile` `COPY --from=builder /srv/ui/public ./public`
+failed on any clean clone because W7.4 never committed `ui/public/` —
+`make up` (the first link of the W10 passing chain) was broken on main.
+Restored the scaffold dir instead of editing the Dockerfile. Kept the CI job
+name `unit → smoke → e2e` unchanged to avoid breaking required-check config.
+
+Gotchas: none new. Pre-existing note (W10.2, still true): `POST /demo/reset`
+proxies without the `X-Admin-Network` header → 403; sim resets in this task
+used the admin ports directly (`:8109/:8110 /admin/reset` → baseline).
+
+Verification (sbx1, live stack): `make up` green (all 8 readyz) after the
+fix; `make demo` 6/6 `live-control-api` twice (idempotent, incl. connector
+reuse by name); sims reset to baseline afterwards; `make smoke` OK (incl.
+negative network probes); `tests/e2e/test_00_stack_up.py` 8/8 live;
+`tests/unit/test_autobridge_demo.py` 22/22; `make lint` + `make typecheck`
+green; `make test` 2026 pass / 0 fail (autobridge 1715 @ 90.83%, verifier 92
+@ 93.78%, simulators 219 @ 96.55%); stack `make down` afterwards (clean).
+Learning §5 (Docker COPY of uncommitted scaffold dirs) added.
+
+Leftover OWNER STEP: (a) confirm the CI run on main is green with the new
+demo step, (b) record the labelled 3–4 min demo (script: docs/demo.md, plan
+§6); then flip P1.W10.3 to [x].
