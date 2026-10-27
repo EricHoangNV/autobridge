@@ -67,6 +67,15 @@ next_tier() {
     final) echo "" ;;
   esac
 }
+# Tiers whose provider ran out of credit (or hit its usage limit) during this run. The ladder skips them
+# until the loop is restarted; there is no point retrying a provider that has no balance.
+EXHAUSTED_TIERS=" "
+tier_exhausted() { case "$EXHAUSTED_TIERS" in *" $1 "*) return 0 ;; esac; return 1; }
+usable_tier() {  # <tier> → that tier, or the first tier above it that is not exhausted ("" if none)
+  local t="$1"
+  while [ -n "$t" ] && tier_exhausted "$t"; do t=$(next_tier "$t"); done
+  echo "$t"
+}
 model_for() {  # <provider> → model id
   case "$1" in
     baseten) echo "$BASETEN_MODEL" ;;
@@ -293,6 +302,9 @@ trailer_for() {  # <agent> <model id>
 classify_run() {  # <log> → prints class
   local log="$1" last_err
   last_err=$(jq -Rrs '[split("\n")[] | fromjson? | select(.type == "result" or .type == "error")] | last | if (.is_error // (.type == "error")) then ((.result // .error // .message // .) | tostring) else empty end' "$log" 2>/dev/null)
+  # Out of credit is checked before auth: some providers answer a billing failure with 401/403 and
+  # "unauthorized", which would otherwise stop the whole loop as a bad key.
+  if printf '%s' "$last_err" | grep -qiE 'insufficient.{0,20}(credit|balance|fund)|out of credit|no credits?( left| remaining)?|credits? (exhausted|depleted)|credit balance|billing|payment required|\b402\b|exceeded your (current )?quota|quota exceeded|usage limit|spend(ing)? limit'; then echo credit; return; fi
   if printf '%s' "$last_err" | grep -qiE 'authenticat|not logged in|invalid api key|unauthorized|401'; then echo auth; return; fi
   if [ -n "$last_err" ] || [ -z "$(get_final_summary "$log")" ]; then
     if printf '%s' "$last_err" | grep -qiE 'rate.?limit|429|overloaded|quota|insufficient|timeout|timed out|ECONN|ENOTFOUND|unavailable|5[0-9][0-9]|provider|model .*not found|context.*(length|window)'; then echo provider; return; fi
@@ -465,6 +477,19 @@ Hackathon window Oct 26 – Nov 4, 2026: Phase 2 stop-rule checkpoint end of Nov
   AGENT_NOTE="## Your runtime
 You are ${AGENT_LABEL}, chosen by the loop's ladder (worker → backup → escalation → final). Record it in your build note and progress-log entry as \"Agent: ${AGENT_LABEL}\" so the owner can compare runtimes. If you hit a provider error you cannot work around (rate limit, model unavailable), say so plainly in your final summary and stop; the loop will switch tier.
 Every commit you make (claim commits included) ends with this trailer, verbatim, on its own last line: ${COMMIT_TRAILER}"
+  # OpenCode only: its edit tool needs a full read of the file first, and the agents were reading the whole
+  # bookkeeping files (~18% of cached tokens) just to append to them. Claude Code's prompt is unchanged.
+  if [ "$AGENT" = opencode ]; then
+    AGENT_NOTE="${AGENT_NOTE}
+
+## Bookkeeping without reading (OpenCode)
+Never open mds/BUILD-NOTES.md, mds/progress-log.md or mds/PRD-TRACKING.md with the read tool, and never edit them with the edit tool: both pull the whole file into your context, and every later step pays for it again.
+- Append a build note or a progress-log entry with a shell heredoc: cat >> mds/BUILD-NOTES.md <<'NOTE' ... NOTE (same for mds/progress-log.md).
+- Change one task line in mds/PRD-TRACKING.md with sed on that line only, e.g. sed -i 's/^- \\[>\\] P1.W2.3 \\(.*\\) — in progress: .*/- [x] P1.W2.3 \\1/' mds/PRD-TRACKING.md, then check it with grep -n 'P1.W2.3' mds/PRD-TRACKING.md.
+- To look something up in them, grep -n for the task id or keyword and sed -n the few lines you need.
+- mds/progress-state.md is small: rewrite it with cat > mds/progress-state.md <<'STATE' ... STATE.
+- Run tests and checks through make where a target exists: the loop has set them to print only the summary, the failures and the uncovered lines."
+  fi
 
   # Build prompt based on mode
   if [ "$MODE" = "validate" ]; then
@@ -663,7 +688,9 @@ ${LATEST_VERDICTS}
     # OPENCODE_PERMISSION keeps edits/bash/webfetch allowed even if opencode.json is missing in the worktree.
     PROVIDER_KEY_VAR=$(provider_env "$PROVIDER")
     export "$PROVIDER_KEY_VAR"
-    sbx exec -e GH_TOKEN "${GIT_ID_ENV[@]}" -e "$PROVIDER_KEY_VAR" -e 'OPENCODE_PERMISSION={"edit":"allow","bash":"allow","webfetch":"allow","doom_loop":"allow","external_directory":"allow"}' \
+    # COV_REPORT: the Makefile's coverage report style. Fully covered files are left out for OpenCode;
+    # the Makefile default (used by Claude Code and by hand) is unchanged.
+    sbx exec -e GH_TOKEN "${GIT_ID_ENV[@]}" -e COV_REPORT=term-missing:skip-covered -e "$PROVIDER_KEY_VAR" -e 'OPENCODE_PERMISSION={"edit":"allow","bash":"allow","webfetch":"allow","doom_loop":"allow","external_directory":"allow"}' \
       -w "$WT_DIR" "$SANDBOX_NAME" \
       bash -c 'echo $$ > /tmp/ralph-agent.pid; export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"; exec opencode run --format json --auto --model "$2" "$1"' _ "$PROMPT" "$PROVIDER/$MODEL" \
       < /dev/null 2>&1 | tee "$iter_log" | \
@@ -700,6 +727,15 @@ $final_summary"
     exit 1
   fi
 
+  if [ "$run_class" = credit ] && [ -n "$FIXED_TIER" ]; then
+    if [ "$AGENT" = claude ]; then
+      lnotify "❌ Claude hit its usage limit. Stopping: a fixed --agent claude does not switch. Rerun later, or without --agent to use the ladder"
+    else
+      lnotify "❌ $PROVIDER is out of credit. Stopping: a fixed --provider does not switch. Top up $PROVIDER, or rerun with another --provider or without --agent to use the ladder"
+    fi
+    exit 1
+  fi
+
   # What reached origin/main during this iteration (from any loop), and anything left behind
   git -C "$SCRIPT_DIR" fetch -q origin
   commits=$(git -C "$SCRIPT_DIR" log --oneline "${head_before}..origin/main" --format="%h %s" 2>/dev/null | head -10)
@@ -724,22 +760,29 @@ $left"
 
   lnotify "✅ Iteration $i completed ($run_class)"
 
-  # Auto ladder (choose_tier): a provider failure or an empty run moves one tier up; the same task left
+  # Auto ladder (choose_tier): out of credit marks the tier exhausted for this run and moves up past it;
+  # a provider failure or an empty run moves one tier up; the same task left
   # unfinished ESCALATE_AFTER times in a row moves to the escalation tier; a clean, merged iteration drops
-  # back to the worker tier. A fixed --agent/--provider never switches.
+  # back to the lowest tier that still has credit. A fixed --agent/--provider never switches.
   if [ -z "$FIXED_TIER" ]; then
     if [ -n "$left" ]; then UNFINISHED_STREAK=$((UNFINISHED_STREAK + 1)); else UNFINISHED_STREAK=0; fi
     new_tier="$TIER"
     case "$run_class" in
+      credit)
+        EXHAUSTED_TIERS="$EXHAUSTED_TIERS$TIER "
+        new_tier=$(usable_tier "$(next_tier "$TIER")")
+        if [ -z "$new_tier" ]; then lnotify "❌ Tier $TIER (${PROVIDER:-claude}) is out of credit and no tier above it has any left. Stopping."; exit 1; fi
+        lnotify "💳 Tier $TIER (${PROVIDER:-claude}) is out of credit: skipping it for the rest of this run; next iteration runs on tier $new_tier" ;;
       provider|empty)
-        new_tier=$(next_tier "$TIER")
+        new_tier=$(usable_tier "$(next_tier "$TIER")")
         if [ -z "$new_tier" ]; then lnotify "❌ Tier $TIER failed ($run_class) and there is no tier above it. Stopping."; exit 1; fi
         lnotify "⬆️ Tier $TIER failed ($run_class): next iteration runs on tier $new_tier" ;;
       ok)
         if [ "$UNFINISHED_STREAK" -ge "$ESCALATE_AFTER" ] && [ "$TIER" != escalation ] && [ "$TIER" != final ]; then
-          new_tier="escalation"; lnotify "⬆️ Task unfinished for $UNFINISHED_STREAK iterations: next iteration runs on tier $new_tier"
-        elif [ -z "$left" ] && [ "$TIER" != worker ] && [ "$MODE" = work ]; then
-          new_tier="worker"; lnotify "⬇️ Clean iteration: back to tier $new_tier"
+          new_tier=$(usable_tier escalation); [ -n "$new_tier" ] || new_tier="$TIER"
+          [ "$new_tier" != "$TIER" ] && lnotify "⬆️ Task unfinished for $UNFINISHED_STREAK iterations: next iteration runs on tier $new_tier"
+        elif [ -z "$left" ] && [ "$MODE" = work ] && [ "$(usable_tier worker)" != "$TIER" ]; then
+          new_tier=$(usable_tier worker); lnotify "⬇️ Clean iteration: back to tier $new_tier"
         fi ;;
     esac
     if [ "$new_tier" != "$TIER" ]; then TIER="$new_tier"; select_tier "$TIER"; fi

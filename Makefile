@@ -1,3 +1,6 @@
+# Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
+COV_REPORT ?= term-missing
+
 .PHONY: up down test smoke e2e bench demo lint typecheck lint-fix
 
 # ---- Docker ----
@@ -10,11 +13,11 @@ down:
 # ---- Tests ----
 test:
 	@echo ">> test: autobridge package (90% gate)"
-	uv run --extra dev pytest tests/unit/test_autobridge_*.py tests/unit/test_health_*.py --cov=autobridge --cov-report=term-missing --cov-fail-under=90 -q
+	uv run --extra dev pytest tests/unit/test_autobridge_*.py tests/unit/test_health_*.py --cov=autobridge --cov-report=$(COV_REPORT) --cov-fail-under=90 -q
 	@echo ">> test: verifier package (90% gate)"
-	uv run --extra dev pytest tests/unit/test_verifier_*.py --cov=verifier --cov-report=term-missing --cov-fail-under=90 -q
+	uv run --extra dev pytest tests/unit/test_verifier_*.py --cov=verifier --cov-report=$(COV_REPORT) --cov-fail-under=90 -q
 	@echo ">> test: simulators package (90% gate)"
-	uv run --extra dev pytest tests/unit/test_simulators_*.py --cov=simulators --cov-report=term-missing --cov-fail-under=90 -q
+	uv run --extra dev pytest tests/unit/test_simulators_*.py --cov=simulators --cov-report=$(COV_REPORT) --cov-fail-under=90 -q
 	@echo ">> test: all green"
 
 smoke:
