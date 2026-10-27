@@ -1,27 +1,44 @@
-"""Fake CLI helpers (P1.W1.9, plan §9).
+"""Fake CLI helpers (P1.W1.9 + P1.W8.2, plan §9).
 
-Re-exports the fake driver and output builders from
+Re-exports the fake drivers and output builders from
 :mod:`autobridge.bench.baseline_coding_agent` under a stable import
 path ``autobridge.bench.fake_cli`` so bench tests can do::
 
     from autobridge.bench.fake_cli import FakeClaudeDriver, build_fake_claude_output
 
-The standalone executable ``scripts/fake_claude.py`` is the subprocess
-counterpart (used when the harness spawns ``claude -p`` as a child).
+Standalone executables ``scripts/fake_claude.py`` and
+``scripts/fake_codex.py`` are the subprocess counterparts (used when the
+harness spawns ``claude -p`` / ``codex exec`` as children).
 """
 
 from __future__ import annotations
 
 from autobridge.bench.baseline_coding_agent import (
+    BaselineLLMDriver,
+    ClaudeCliError,
     ClaudeCliResult,
+    CodexCliDriver,
+    CodexCliError,
     FakeClaudeDriver,
+    FakeCodexDriver,
     build_fake_claude_output,
+    build_fake_codex_output,
+    get_baseline_driver,
     parse_claude_output,
+    parse_codex_output,
 )
 
 __all__ = [
+    "BaselineLLMDriver",
+    "ClaudeCliError",
     "ClaudeCliResult",
+    "CodexCliDriver",
+    "CodexCliError",
     "FakeClaudeDriver",
+    "FakeCodexDriver",
     "build_fake_claude_output",
+    "build_fake_codex_output",
+    "get_baseline_driver",
     "parse_claude_output",
+    "parse_codex_output",
 ]

@@ -27,6 +27,37 @@ Design notes
 * ``make bench`` idempotency (W8.5) is prepared here: results are written to
   ``experiments/benchmark_runs/<scenario>--<trial>.jsonl`` with the
   ``seed`` in the payload, and ``check_heldout_sha`` guards the heldout split.
+
+Baseline drivers (P1.W8.2, plan §2.10 + §9)
+--------------------------------------------
+The baseline arm is pluggable via the drivers in
+:mod:`autobridge.bench.baseline_coding_agent`:
+
+* ``claude_code_headless`` — :class:`ClaudeCodeDriver` drives
+  ``claude -p <prompt> --output-format json`` with usage/token capture
+  (``input_tokens`` / ``output_tokens`` / ``cost_usd`` / ``model``).
+  Unit tests use :class:`FakeClaudeDriver` and ``scripts/fake_claude.py``
+  (W1 fake) so ``make test`` never needs a real API key.
+* ``codex_cli`` — :class:`CodexCliDriver` adapter stub for
+  ``codex exec --json <prompt>`` with identical usage capture
+  (``output`` / ``usage`` / ``model``).  Mirrors the Claude driver API;
+  tests use :class:`FakeCodexDriver` / ``scripts/fake_codex.py``.
+* **Fallback (documented, plan §9)** — when neither CLI is available
+  (no binary, no key, offline CI) the baseline is routed through
+  :class:`autobridge.llm.provider.LLMProvider` with an equivalent
+  single-turn agent loop: ``BaselineLLMDriver`` (or
+  :func:`run_baseline_via_llm_provider`) wraps the provider in a
+  :class:`Budget` using the same ``token_ceiling`` / ``wall_clock_s``
+  as AutoBridge, so the matched-budget self-test still holds.
+  ``make bench`` selects the driver via ``BASELINE_DRIVER`` env
+  (``claude`` | ``codex`` | ``llm``) or the ``get_baseline_driver()``
+  factory — documented in ``docs/benchmark.md``.
+
+  Both arms therefore receive identical
+  ``docs_volume`` / ``sandbox_url`` / ``sandbox_image`` / ``credential_refs``
+  / ``visible_tests`` / ``token_ceiling`` / ``wall_clock_s``, asserted by
+  :func:`assert_inputs_equal` pre-run and :func:`verify_matched_trial`
+  post-run.
 """
 
 from __future__ import annotations

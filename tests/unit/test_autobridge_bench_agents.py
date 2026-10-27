@@ -16,6 +16,7 @@ from autobridge.bench.baseline_coding_agent import (
     ClaudeCliResult,
     ClaudeCodeDriver,
     CodexCliDriver,
+    CodexCliError,
     FakeClaudeDriver,
     build_fake_claude_output,
     parse_claude_output,
@@ -391,7 +392,9 @@ def test_fake_driver_cwd_captured() -> None:
 def test_codex_driver_stub() -> None:
     d = CodexCliDriver()
     assert d.cli_path == "codex"
-    with pytest.raises(NotImplementedError, match="stub"):
+    # Adapter stub is present (P1.W8.2); when binary missing it raises CodexCliError
+    # with fallback hint (plan §9) instead of NotImplementedError.
+    with pytest.raises(CodexCliError, match="fallback|not found|codex"):
         d.run("prompt")
 
 
