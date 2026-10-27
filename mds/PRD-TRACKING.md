@@ -36,7 +36,7 @@
 - [x] P1.W2.5 Scenario catalog `simulators/scenarios/*.yaml` (plan §2.8 list) tagged `dev|heldout` and `fixable|escalate`; test that each scenario applied to the reference spec fails in exactly its intended drift class and no other
 - [x] P1.W2.6 Verifier service (`verifier/app.py`): `POST /verify {release_id, spec, scenario_id, mode}` → `{verdict, score, failed_checks, regression}`; oracle regenerating ground truth from the scenario seed; canonical checks (record set by key, money exact as `Decimal`, business-date dates, status mapping, no duplicates, no loss); response-schema test that hidden mode never returns fixture rows
 - [x] P1.W2.7 Regression runner (every previously verified scenario re-runs on a candidate release), mutation tests (flip a transform or drop a check → fail), invalid-patch trap set (e.g. `net` → `total_amount` after gross→net) rejected
-- [~] P1.W2.8 HUMAN — codeable done (sha gate + runbook + tests green); OWNER STEP: populate verifier/hidden_cases/heldout/ then cd verifier/hidden_cases/heldout && sha256sum ./*.yaml > SHA256SUMS && git add SHA256SUMS (docs/benchmark.md #Heldout-freeze-runbook)
+- [~] P1.W2.8 HUMAN — owner chose private heldout seeds (REQ-007): OWNER STEP done when `~/autobridge-heldout/*.yaml` exists and its `verifier/hidden_cases/heldout/SHA256SUMS` is committed; codeable part (bench reads `HELDOUT_DIR`, verifies the manifest, uses the private seeds) is REQ-007
 - [x] P1.W2.9 `tests/e2e/test_01_simulators_and_oracle.py`: applies every scenario via the admin API and checks verifier verdicts against the catalog's expected outcome; `docs/safety-model.md` first pass
 
 #### W3 — Runtime / interpreter (plan §4 W3, §2.4)
