@@ -5,7 +5,9 @@ import useSWR from "swr";
 import { LadderTrace } from "@/components/LadderTrace";
 import { PatchDiff } from "@/components/PatchDiff";
 import { ModelUsageView } from "@/components/ModelUsageView";
+import { ModelUsageChart } from "@/components/ModelUsageChart";
 import { DriftEvidenceSection } from "@/components/DriftEvidenceSection";
+import { EvidenceGraph } from "@/components/EvidenceGraph";
 import { HypothesesPanel } from "@/components/HypothesesPanel";
 import { VisibleTestsPanel } from "@/components/VisibleTestsPanel";
 import { VerifierVerdict } from "@/components/VerifierVerdict";
@@ -63,6 +65,30 @@ type EvidenceOut = {
   parent_ids: string[];
   run_id: string;
   created_at: string;
+};
+
+type ModelUsageEntryOut = {
+  provider: string;
+  model: string;
+  tier: string;
+  total_calls: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost: string;
+  by_run?: Array<{ run_id?: string; purpose?: string; tokens?: unknown; [key: string]: unknown }>;
+};
+
+type ModelUsageResponseOut = {
+  total_calls: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost: string;
+  frontier_tokens: number;
+  small_tokens: number;
+  by_tier: Record<string, number>;
+  by_provider: Record<string, number>;
+  entries?: ModelUsageEntryOut[];
+  by_purpose?: Record<string, number>;
 };
 
 type PageProps = {
@@ -165,6 +191,13 @@ export default function RepairDetailPage({ params }: PageProps) {
       return records;
     },
   );
+
+  // P2.S6.1 — fleet-wide per-run usage (existing endpoint, no new API
+  // surface); runs linked to this repair's evidence are highlighted.
+  const { data: modelUsageResponse } = useSWR<ModelUsageResponseOut>("/metrics/model-usage", fetcher, {
+    refreshInterval: 15000,
+  });
+  const relatedRunIds = (evidenceRecords ?? []).map((e) => e.run_id).filter(Boolean);
 
   // The climb on live SSE: the source sync run's evidence stream carries the
   // ladder events, and the track advances as they arrive — no replay timers
@@ -501,6 +534,32 @@ export default function RepairDetailPage({ params }: PageProps) {
           evidenceRecords={evidenceRecords}
           loading={!driftEvents && !!repair.drift_event_ids.length}
         />
+      </section>
+
+      {/* P2.S6.1 — evidence graph: drift→evidence and evidence→parent links */}
+      <section className="mt-6" aria-label="Evidence graph">
+        <h2 className="sec">Evidence graph</h2>
+        <EvidenceGraph
+          driftEvents={(driftEvents ?? []).map((d) => ({
+            id: d.id,
+            connector_id: d.connector_id,
+            drift_class: d.drift_class,
+            evidence_ids: d.evidence_ids,
+          }))}
+          evidenceRecords={(evidenceRecords ?? []).map((e) => ({
+            id: e.id,
+            kind: e.kind,
+            parent_ids: e.parent_ids,
+            run_id: e.run_id,
+          }))}
+          loading={!driftEvents && !!repair.drift_event_ids.length}
+        />
+      </section>
+
+      {/* P2.S6.1 — per-run token chart from GET /metrics/model-usage */}
+      <section className="mt-6" aria-label="Model usage per run">
+        <h2 className="sec">Model usage per run</h2>
+        <ModelUsageChart usage={modelUsageResponse} highlightRunIds={relatedRunIds} />
       </section>
 
       {/* Repair meta (compact, real data) */}

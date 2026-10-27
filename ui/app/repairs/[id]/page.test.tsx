@@ -52,7 +52,8 @@ describe("RepairDetailPage", () => {
     mockedUseSWR
       .mockReturnValueOnce({ data: mockRepair, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
       .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-detail-page")).toBeInTheDocument();
     expect(screen.getByTestId("repair-title")).toBeInTheDocument();
@@ -60,13 +61,18 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("patch-diff")).toBeInTheDocument();
     expect(screen.getByTestId("repair-actions")).toBeInTheDocument();
     expect(screen.getByTestId("inject-fault-drawer")).toBeInTheDocument();
+    // P2.S6.1 richer views: graph renders from drift links, chart shows its
+    // empty state until /metrics/model-usage resolves.
+    expect(screen.getByTestId("evidence-graph")).toBeInTheDocument();
+    expect(screen.getByTestId("model-usage-chart-empty")).toBeInTheDocument();
   });
 
   it("shows drift evidence section", () => {
     mockedUseSWR
       .mockReturnValueOnce({ data: mockRepair, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
       .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("drift-evidence-section")).toBeInTheDocument();
   });
@@ -75,7 +81,8 @@ describe("RepairDetailPage", () => {
     mockedUseSWR
       .mockReturnValueOnce({ data: mockRepair, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
       .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getAllByTestId("model-usage-zero-frontier").length).toBeGreaterThanOrEqual(1);
   });
@@ -90,7 +97,8 @@ describe("RepairDetailPage", () => {
     mockedUseSWR
       .mockReturnValueOnce({ data: mockRepair, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
       .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("back-to-repairs")).toBeInTheDocument();
   });

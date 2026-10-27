@@ -345,7 +345,13 @@ rejected with 422. Acceptance: `tests/e2e/test_s4_mcp_gateway.py`
 4. `/repairs/[id]` — drift evidence, ladder trace L0-L4 badges, hypotheses +
    probes, JSON Patch diff old/new side by side, visible tests, verifier
    verdict, model usage, Approve/Reject/Rollback + Inject Fault drawer +
-   model-usage view; list at `/repairs`.
+   model-usage view; list at `/repairs`. P2.S6.1 adds two read-only views on
+   this page with no new API surface: a per-run model-usage chart
+   (`ModelUsageChart`, stacked frontier/small bars from
+   `GET /metrics/model-usage` `entries[].by_run`, repair-linked runs
+   highlighted) and an evidence graph (`EvidenceGraph`, SVG nodes for drift
+   events + evidence records with drift→evidence and evidence→parent edges,
+   dangling parents as stub nodes).
 
 Theme (REQ-002, broadcast direction): dark-only on-air tokens in
 `ui/app/globals.css` (`--ground/--band/--ink/--ink-2/--rule/--off/--live/--stop`,
@@ -375,12 +381,20 @@ captures every request, and asserts none target
 Compose stack is up it walks live data; when it is not it intercepts
 `/api/*` and `localhost:8101` with mocks so the journey is still green and the
 network invariant is still checked. `playwright.config.ts` (root) and
-`ui/playwright.config.ts` target that single spec:
+`ui/playwright.config.ts` target both UI specs:
 
 ```
 npx playwright test tests/e2e/test_06_ui_journey.spec.ts
 E2E_UI_BASE=http://localhost:3000 npx playwright test
 ```
+
+P2.S6.1 adds `tests/e2e/test_s6_richer_ui.spec.ts`: same mock-when-down
+pattern, asserting the per-run chart renders stacked frontier/small rows and
+the evidence graph renders drift/evidence nodes with parent-link edges, plus
+screenshots of both views (`test-results/s6/*.png`, asserted written and
+non-empty). Run from the repo root as
+`E2E_UI_BASE=http://localhost:3000 NODE_PATH=ui/node_modules ui/node_modules/.bin/playwright test --config=playwright.config.ts test_s6_richer_ui.spec.ts`
+(the spec lives in `tests/e2e`, outside `ui/` module resolution).
 
 `make test` covers the same invariant without a browser via
 `tests/unit/test_autobridge_ui_isolation.py` (compose + source + spec
