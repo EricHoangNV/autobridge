@@ -1360,3 +1360,10 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - Why: plan §2.11 requires UI client generated from live OpenAPI via openapi-typescript and compiling in CI; never hand-write API types.
 - Tests: `make test` 1722 pass (autobridge 90.34%, verifier 93.78%, simulators 96.55%) / `make openapi-check` ok / `make ui-typecheck` ok / `make lint` + `make typecheck` green / `test_autobridge_ui_client` 5 pass.
 - Files: `scripts/export_openapi.py`, `ui/openapi.json`, `ui/lib/api/schema.d.ts`, `ui/lib/api/client.ts`, `ui/lib/api/index.ts`, `ui/tsconfig.json`, `ui/package.json`, `ui/package-lock.json`, `Makefile`, `tests/unit/test_autobridge_ui_client.py`
+### P1.W7.4 — Next.js 15 scaffold + /connectors screen (2026-10-27 07:57 UTC)
+- **What:** App Router scaffold (Next 15.3 + React 19 + Tailwind 3.4 + SWR 2.3 + SSE hook via lib/sse.ts), readyz/healthz route handlers, /connectors table with 6 columns (health badge, active release vN, last sync outcome + unmet_criteria, open drift, sparkline from model-usage), New connector link, polling 5s/10s.
+- **Why:** Plan §4 W7 deliverable 1 + §2.11 UI spec — first of four screens, proves OpenAPI → typed client → UI contract and engine-net isolation.
+- **How verified:** `npm run build` 7 routes (/connectors 11.2kB, /healthz, /readyz) green; `npx tsc --noEmit` green; `vitest run` 15/15 green (5 files: HealthBadge, SyncOutcomeBadge, Sparkline, ConnectorsTable, page); `make test` 1411/92/219 pass (90% gate); `make lint` + `make typecheck` + `make ui-typecheck` + `make openapi-check` green; manual fetcher generic TSX fix <T,>.
+- **Impact:** UI is no longer a stub — `make up` will build Next.js image (multi-stage), /connectors renders live data from control, readyz gates on control, foundation for /connectors/new and detail screens.
+- **Next:** P1.W7.5 /connectors/new (docs upload/URL, sandbox base URL, credential env-ref picker, target entities, start build).
+- **Agent:** opencode baseten/meta-models/muse-spark-open-1026 (worker)
