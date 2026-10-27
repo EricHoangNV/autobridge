@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W5.4 ProbeSelector done (2026-10-27): `ProbeSpec` (GET-only, key/params/provenance) + `ProbeBudget` (max probes/requests/wall/tokens, BudgetExhausted) + `ProbeSelector` (enumerates allowed GET probes, scores by EIG H_before-E[H_after], picks best not-attempted with lexicographic tie-break, budget pre-check, rank_probes, wrappers for llm Budget compat); 75 tests, 98% on probes.py.
+P1.W5.5 Budgeted L2/L3 done (2026-10-27): L2 small-model ranking + L3 frontier generation with BudgetExhausted→L4 escalation bundle and surviving ambiguity→Degraded open_questions; L3 assert <2 hypotheses, EscalationBundle/Degraded helpers, resolver probe loop; 42 new tests (escalation 9, budgeted_ladder 17, resolver 16), escalation 100% resolver 83% ladder 81% but package 92%.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -41,10 +41,10 @@ P1.W5.4 ProbeSelector done (2026-10-27): `ProbeSpec` (GET-only, key/params/prove
   - P1.W5.2: Classifiers (auth/pagination/date semantics/status vocabulary from docs+first probes, 45 tests)
   - P1.W5.3: Hypothesis model + enumerator families (date 4 created/arrival/business/UTC, pagination 3 per op offset/cursor/page, amount 3 per money field gross/net/tax_inclusive, status 2 clear/opaque; every hypothesis ≥1 evidence Provenance; 52 tests, 94% on hypotheses.py)
   - P1.W5.4: ProbeSelector (GET-only probes, EIG scoring, ProbeBudget with 4 ceilings, budget-exhausted escalation; 75 tests, 98% on probes.py)
-- Tests: 1479 pass / 0 fail / 0 skip (autobridge 92.44%, verifier 93.78%, simulators 98.54%; ui –) + 26 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03, 19 skipped when no Docker)
+  - P1.W5.5: Budgeted L2/L3 wiring (L3 assert <2 hypotheses, BudgetExhausted→L4 escalation bundle, surviving ambiguity→Degraded; 42 tests)
+- Tests: 1521 pass / 0 fail / 0 skip (autobridge 92%, verifier 93.78%, simulators 98.54%; ui –) + 26 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03, 19 skipped when no Docker)
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (26 pass, 19 skipped) / `make lint` + `make typecheck` green
 
 ## Next tasks
-1. **P1.W5.5** — Budgeted L2/L3 wiring (L3 only when <2 hypotheses; BudgetExhausted→L4 escalation; surviving ambiguity→Degraded)
-2. **P1.W5.6** — Bootstrap (docs→draft spec→compile→visible tests→verify; Harbor connector from docs alone)
-3. **P1.W5.7** — e2e test_04_bootstrap_unfamiliar_api (no verifier/simulators path; date ambiguity resolved or Degraded)
+1. **P1.W5.6** — Bootstrap (docs→draft spec→compile→visible tests→verify; Harbor connector from docs alone)
+2. **P1.W5.7** — e2e test_04_bootstrap_unfamiliar_api (no verifier/simulators path; date ambiguity resolved or Degraded)

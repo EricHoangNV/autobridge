@@ -1046,3 +1046,37 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - No e2e file for W5.4 (workstream e2e is test_04_bootstrap_unfamiliar_api); probes.py trust boundary respected (no verifier/simulators imports)
 
 Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+## P1.W5.5 — Budgeted L2/L3 wiring in the ladder
+**Date:** 2026-10-27
+**Ref:** plan §4 W5 + §2.5/§2.6/§2.9 Budgeted L2/L3 (P1.W5.5)
+
+**What was done:**
+- New `src/autobridge/repair/escalation.py` (39 lines, 100%): `EscalationBundle` (reason, question, evidence_ids, evidence_payloads, suggested_action) + `escalation_from_budget_exhausted` (probe vs token vs call wording, reason preserved, never silent guess) + `escalation_for_no_fix` + `AmbiguityResult` + `degraded_from_ambiguity` (group by family → one open question per family, surviving ids, reason)
+- Extended `src/autobridge/repair/ladder.py` (330→~1050 lines): `LadderResult` added `open_questions`, `escalation_bundle`, `degradation_reason`; new helpers `_call_small_model_rank` (L2 small-model ranking via BudgetedProvider, JSON parse ranked ids, merge usage small_tokens) + `_call_frontier_generate` (L3 frontier hypothesis generation, asserts `enumerator_yield_count < 2`, parses JSON dict/list into Hypothesis, merge frontier_tokens) + `_patch_from_hypothesis` (family-specific patch translation to valid spec paths: pagination strategy, date transform, amount money, status enum_map, generic health fallback) + `_merge_model_usage` + `_try_budgeted_ladder` (probe budget pre-check → escalate bundle, L3 when count<2 with trace, L2 ranking when ≥2 with equal-prior ambiguity→Degraded, patch generation from single surviving hypothesis, surviving ambiguity→Degraded with open_questions, BudgetExhausted→escalate bundle never patch); `run_ladder` signature extended with `hypotheses`, `enumerator_yield_count`, `provider`, `budget`, `session`, `run_id`, `probe_budget` and both L1-no-match paths now try budgeted ladder before final escalate (with bundle)
+- New `src/autobridge/discovery/resolver.py` (144 lines, 83%): `ResolutionResult` (resolved/degraded/escalate, hypothesis, open_questions, escalation_bundle, ambiguity, model_usage, trace) + `_filter_hypotheses_by_observation` (eliminated_ids/surviving_ids/strategy hooks) + `resolve_hypotheses` (enumerator count L3 assert, L3 frontier generation with budget, probe loop with ProbeSelector EIG + ProbeBudget pre-check + executor filtering + record_probe, L2 small rank, single→resolved else degraded via degraded_from_ambiguity, BudgetExhausted→escalate bundle) + `assert_l3_precondition` + `budget_exhausted_to_escalation`
+- New tests: `tests/unit/test_autobridge_repair_escalation.py` (9 tests, escalation/budget/ambiguity), `tests/unit/test_autobridge_budgeted_ladder.py` (17 tests, L3 assert <2, L3 allowed 1/0/skipped, probe/token budget→escalate bundle no patch, surviving ambiguity→Degraded with open_questions, single→patch, known repair frontier 0, degraded fields), `tests/unit/test_autobridge_discovery_resolver.py` (16 tests, single resolved, ambiguity degraded, probe budget escalate, executor budget, discriminating probe, L3 required/skipped/budget, L2 ranking, assert helper, no hypotheses, no selector, eliminated/surviving ids)
+
+**Key decisions:**
+- L3 assert is inside `_call_frontier_generate` (not at call site) so any direct L3 invocation with ≥2 fails fast; `run_ladder` with ≥2 skips L3 and records `l3_skipped` trace, satisfying "asserted in tests" via both direct helper and ladder trace
+- BudgetExhausted always maps to `EscalationBundle` with precise question ("Probe budget exhausted…" vs "Model budget exhausted…") and never produces `candidate_patch`; probe and LLM budgets both handled via same `BudgetExhausted` class from `llm/provider.py`
+- Surviving ambiguity heuristic: after L2 ranking, if priors are all equal and >1 hypothesis remains → Degraded with `open_questions` (one per family via `degraded_from_ambiguity`); patch generation only for single hypothesis to avoid guessing
+- Patch generation from hypothesis fragment is best-effort mapping to valid spec paths (pagination → /operations/.../pagination/strategy, date → /entities/Reservation/fields/arrival_date/transform, etc.) validated via `apply_patch`; generic fallback uses health.canary.every to keep patch valid when family unknown
+- Resolver probe filtering uses observation hooks (`eliminated_ids`, `surviving_ids`, `strategy`) for deterministic tests without HTTP; real executor will provide strategy from API response
+- Both ladder and resolver emit ladder_trace with level badges (2 for L2, 3 for L3, 4 for escalate) for UI `/repairs/[id]` display
+
+**Files changed:**
+- `src/autobridge/repair/escalation.py` — new, escalation bundle and ambiguity helpers
+- `src/autobridge/repair/ladder.py` — extended with L2/L3 budgeted wiring, Degraded handling, BudgetExhausted→L4
+- `src/autobridge/discovery/resolver.py` — new, hypothesis resolution with probe budgets and Degraded
+- `tests/unit/test_autobridge_repair_escalation.py` — new, 9 tests
+- `tests/unit/test_autobridge_budgeted_ladder.py` — new, 17 tests
+- `tests/unit/test_autobridge_discovery_resolver.py` — new, 16 tests
+
+**Notes for next iteration:**
+- Next: P1.W5.6 Bootstrap (discovery/bootstrap.py + engine/build_run.py) will consume HypothesisEnumerator, ProbeSelector, and resolver to produce Harbor connector from docs alone without verifier/simulators access; L2/L3 wiring already provides the budget-aware hypothesis path it needs
+- P1.W5.7 e2e will verify no workspace path to verifier/simulators and that date ambiguity resolves within probe budget or reports Degraded — resolver's Degraded with open_questions satisfies that
+- Coverage: autobridge 92% (ladder 81%, resolver 83% — missing lines are error branches and synthetic pagination fallback not hit by real fixtures; still above 90% gate)
+- Trust boundaries respected: no imports of verifier/simulators in new files; all model calls via LLMProvider+Budget → ModelCall ledger
+
+Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
