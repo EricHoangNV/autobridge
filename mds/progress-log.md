@@ -1790,3 +1790,26 @@ Reserved `DiscoveryResult` (`schemas/discovery-result.v0.json`) static import: `
 
 ## 2026-10-27 — P2.S4.1 MCP Guardian (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). Mock HotelToolsV1 → V2 migration with declarative catalog snapshot/diff, pinned-mapping compatibility gateway, and pinned-consumer workflow replay vs plain rediscovery. Pinned consumer stays Complete through the gateway while rediscovery goes Blocked on the first renamed tool; unsafe mappings (dropped money, money→non-money) rejected 422/Blocked. New `mcp-hotel :8115` service on engine-net only (isolated, negative probe green). Verified: unit 25/25, make test all green (autobridge 1826 @ 91.15%, verifier 93.78%, simulators 96.66%, ui 130), lint + typecheck green, e2e test_s4 6/6 live, smoke OK.
+
+## 2026-10-27 — P2.S5.1 OpenAI provider (sbx1)
+**Date:** 2026-10-27
+**Ref:** plan §5 S5 (entry: W8) — fill the stub behind `LLMProvider`; one dev scenario reaches an identical ladder outcome on both providers
+
+**What was done:**
+- Filled `OpenAIProvider` with a Chat Completions adapter behind the same `LLMProvider` contract (env model ids, lazy client, unknown-tier `ValueError` before network, system passthrough, Anthropic→OpenAI tool normalization, usage mapping)
+- Added `tests/e2e/test_s5_provider_parity.py`: rename_guest_id on the Atlas reference spec reaches identical ladder outcome (propose / rename_field / same patch / same trace levels) on both providers; L2 rank identical; ledger labels per provider
+- Replaced the stub unit test with 10 real adapter tests; updated `docs/architecture.md` §6
+
+**Key decisions:**
+- Chat Completions (not Responses API) to mirror the Anthropic adapter's contract
+- Both SDKs mocked via `sys.modules` — no keys, no Docker, no paid calls; live parity is an explicit owner opt-in skip
+
+**Files changed:**
+- `src/autobridge/llm/provider.py` — OpenAIProvider implementation + `_to_openai_tool`
+- `tests/unit/test_autobridge_llm.py` — 10 OpenAI adapter tests (67/67 file green)
+- `tests/e2e/test_s5_provider_parity.py` — new (4 pass + 1 live-opt-in skip)
+- `docs/architecture.md` — §6 stub wording updated
+
+**Notes for next iteration:**
+- `make test` autobridge arm has 5 pre-existing failures on origin/main (verified via stash): heldout-gate bench tests stale since the W2 freeze — REQ-007/P1.W2.8 scope, the natural next pickup alongside P2.S6.1
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation)
