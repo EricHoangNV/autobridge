@@ -4,7 +4,7 @@
 
 ### REQ-002 — Redesign the UI to the broadcast direction (2026-10-27)
 Status: IN_PROGRESS (sbx1 since 2026-10-27 10:31)
-Progress: slice 1 done (2026-10-27 sbx1) — tokens + shell: globals.css vars, Tailwind mapping, Archivo/Fragment Mono, TopBar (LIVE/demo/healthz), zinc-red-rounded removed. Next: slice 2 /repairs/[id].
+Progress: slice 2 done (2026-10-27 sbx1) — /repairs/[id]: call (rung, headline, story, drift trace, five-segment track) + scorebug (verifier score, frontier counter, Approve/Reject/Rollback), hypotheses/probes/tests/patch in broadcast tokens, climbing/escalated/error/loading states; unit 108 + e2e test_06 6/6 green. Next: slice 3 the climb on SSE.
 Restyle the four screens of `ui/` to the approved design: a dark "live broadcast graphic" look with
 one accent (broadcast yellow = "now / needs you"), Archivo (variable width) + Fragment Mono, radius 0.
 Desktop (1280 and 1440) is what gets demoed; phone only needs to not break.

@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-002 slice 1 done (2026-10-27): broadcast tokens + shell in `ui/` — `globals.css` variables, Tailwind color/font mapping, Archivo (wdth axis) + Fragment Mono via `next/font/google`, new `TopBar` (AUTOBRIDGE wordmark, Connectors/Repairs nav, LIVE from UI `/healthz`, labelled "Demo: inject fault" button, healthz link); all `zinc-*`/`red-*`/`rounded-*` removed (mechanical token swap, shapes + `data-testid`s kept); docs/architecture.md §9.2 theme note.
+REQ-002 slice 2 done (2026-10-27): /repairs/[id] broadcast call (rung numeral, headline, story, drift trace, five-segment track) + scorebug (verifier score, frontier counter, Approve/Reject/Rollback) with hypotheses confidence bars, numbered probes, square-shape visible tests, side-by-side patch diff; states climbing/escalated/error/loading + phone dock; all emerald/amber/sky/violet/blue removed from the repair path; every data-testid kept.
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -68,10 +68,11 @@ REQ-002 slice 1 done (2026-10-27): broadcast tokens + shell in `ui/` — `global
   - P1.W10.2: make demo six steps via control API + local evidence
   - REQ-001: operator name on approvals (server-set actor, GET /operator, UI lines, compose var)
   - REQ-002 slice 1: broadcast tokens + shell (TopBar, fonts, token swap, docs §9.2 note)
-- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.83%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 108 + e2e test_06 6/6 (mocked, chromium)
-- Stack: compose down in sbx1 this run (no live e2e; SSR render of new shell verified via dev server curl) / make lint + ui typecheck + ui build green
+  - REQ-002 slice 2: /repairs/[id] call + scorebug in broadcast tokens
+- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.86%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 108 + e2e test_06 6/6 (mocked, chromium)
+- Stack: compose down in sbx1 this run (no live e2e; mocked e2e via dev server on :3000 green) / make lint + make typecheck + ui typecheck + ui build green
 
 ## Next tasks
-1. **REQ-002 slices 2–5** — /repairs/[id] call+scorebug, the climb on SSE, /connectors + /connectors/[id], /connectors/new + drawer (IN_PROGRESS sbx1)
+1. **REQ-002 slices 3–5** — the climb on SSE, /connectors + /connectors/[id], /connectors/new + drawer (IN_PROGRESS sbx1)
 2. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)
 3. **P1.W2.8** — HUMAN heldout freeze (manifest + sha check ready; owner freezes)
