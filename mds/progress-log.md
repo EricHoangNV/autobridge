@@ -1846,3 +1846,30 @@ Per-run model-usage chart + evidence graph view on /repairs/[id], no new API sur
 - `make test` autobridge arm: 1856 pass / 5 fail — all 5 pre-existing REQ-007 heldout-gate bench failures on files this task did not touch (also failing on clean main per prior runs); verifier/simulators/ui arms not rerun (make stops at first failing arm)
 - Phase 2 (S1–S7) is now complete; remaining work is owner steps (P1.W10.3 demo, P1.W2.8/REQ-007 heldout seeds + codeable bench-HELDOUT_DIR flow)
 - Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+## 2026-10-27 — REQ-007 private heldout seeds, codeable part (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD REQ-007.
+
+**What was done:**
+- `check_heldout_sha` now verifies `$HELDOUT_DIR` files against the committed manifest (exit 2 on missing env/file/mismatch); dev runs skip the gate; heldout/all runs load private seeds, push them to the simulator admin plane, and verify with the verifier `seed` override.
+- Verifier `POST /verify` + oracle accept `seed_override` (never echoed/logged); scoring wraps fns with per-scenario seeds; scorecard header states `Heldout seeds: private (manifest <sha>)`.
+- 26 new contract tests incl. no-leak sweeps (seed in sim/verify calls, absent from JSONL/summary/scorecards/stdout); stale freeze-era tests updated (gate no longer blocks dev runs).
+- `docs/benchmark.md` runbook rewritten; `make bench-heldout` refuses without `HELDOUT_DIR`.
+- Request moved to Resolved/DONE; owner step (private seeds in `~/autobridge-heldout/`) stays P1.W2.8 [~].
+
+**Key decisions:**
+- Simulator seed push failure is fatal (exit 1), not a warning — scoring must never judge data the arms didn't see.
+- Seed override rides the HTTP body (no compose/volume changes needed); regression gate keeps public seeds (baseline isn't heldout).
+- Structural trust-boundary tests generalized to a named gate-function set rather than weakened — same no-leak property, wider allowlist.
+
+**Files changed:**
+- `src/autobridge/bench/harness.py` — gate rework + seed load/push + main wiring + score_and_report seeds
+- `src/autobridge/bench/scoring.py` — seed-aware verify, wrapper, scorecard heldout fields + schema check
+- `src/autobridge/bench/report.py` — heldout scorecard header
+- `verifier/app.py`, `verifier/oracle.py` — `seed` override end to end
+- `tests/unit/test_autobridge_bench_heldout.py` (new), `test_autobridge_bench_harness.py`, `test_autobridge_bench_w85.py`, `test_verifier_oracle.py`, `test_verifier_app.py`
+- `tests/e2e/test_04_bootstrap_unfamiliar_api.py`, `test_05_safety_and_semantic.py`, `test_07_benchmark_matched_budget.py`
+- `Makefile`, `docs/benchmark.md`, `mds/REQUESTS.MD` (resolved)
+
+**Notes for next iteration:**
+- None — owner runs `make bench-heldout HELDOUT_DIR=~/autobridge-heldout` on Nov 3 after placing the 4 private seed files matching the committed SHA256SUMS.
