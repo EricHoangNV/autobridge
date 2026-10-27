@@ -21,9 +21,9 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
   })();
 
   return (
-    <div data-testid="verifier-verdict" className="overflow-hidden rounded-lg border bg-white">
-      <div className="border-b bg-zinc-50 px-4 py-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-600">Verifier verdict</h3>
+    <div data-testid="verifier-verdict" className="overflow-hidden border bg-band">
+      <div className="border-b bg-ground px-4 py-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-2">Verifier verdict</h3>
       </div>
 
       <div className="px-4 py-3">
@@ -31,20 +31,20 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
           <span
             data-testid="verifier-verdict-badge"
             data-verdict={verdict}
-            className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+            className={`inline-flex items-center border px-2.5 py-0.5 text-xs font-medium ${
               verdict === "pass"
                 ? "bg-emerald-100 text-emerald-800 border-emerald-200"
                 : verdict === "fail"
-                  ? "bg-red-100 text-red-800 border-red-200"
+                  ? "bg-band text-stop border-stop"
                   : verdict === "pending"
-                    ? "bg-zinc-100 text-zinc-600 border-zinc-200"
+                    ? "bg-ground text-ink-2 border-rule"
                     : "bg-amber-100 text-amber-800 border-amber-200"
             }`}
           >
             {verdict}
           </span>
           {hasReport ? (
-            <span data-testid="verifier-report-id" className="font-mono text-xs text-zinc-500">
+            <span data-testid="verifier-report-id" className="font-mono text-xs text-ink-2">
               report {verifierReportId!.slice(0, 8)}
             </span>
           ) : null}
@@ -54,9 +54,9 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
         </div>
 
         {verifierReportId ? (
-          <div className="mt-2 text-xs text-zinc-600">
+          <div className="mt-2 text-xs text-ink-2">
             Verifier report{" "}
-            <span className="font-mono text-zinc-800" title={verifierReportId}>
+            <span className="font-mono text-ink" title={verifierReportId}>
               {verifierReportId.slice(0, 12)}…
             </span>{" "}
             linked to this repair. Full fixture rows are never returned in API responses.
@@ -66,7 +66,7 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
         {escalationBundle ? (
           <div
             data-testid="escalation-bundle"
-            className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5"
+            className="mt-3 border border-amber-200 bg-amber-50 px-3 py-2.5"
           >
             <div className="text-xs font-medium text-amber-900">Escalation bundle</div>
             {escalationBundle.reason ? (
@@ -83,7 +83,7 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
               <div className="mt-1 text-xs text-amber-700">Action: {String(escalationBundle.suggested_action)}</div>
             ) : null}
             {Array.isArray(escalationBundle.evidence_ids) && escalationBundle.evidence_ids.length ? (
-              <div className="mt-1 text-xs text-zinc-600">
+              <div className="mt-1 text-xs text-ink-2">
                 Evidence: {(escalationBundle.evidence_ids as string[]).map((eid) => eid.slice(0, 8)).join(", ")}
               </div>
             ) : null}
@@ -91,7 +91,7 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
         ) : null}
 
         {visibleTestResults?.length ? (
-          <div className="mt-3 text-xs text-zinc-500">
+          <div className="mt-3 text-xs text-ink-2">
             {visibleTestResults.length} visible test(s) — see “Visible tests” below.
           </div>
         ) : null}

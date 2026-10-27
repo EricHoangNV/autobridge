@@ -13,12 +13,12 @@ const LEVEL_COLORS: Record<number, string> = {
   1: "bg-emerald-100 text-emerald-800 border-emerald-200",
   2: "bg-violet-100 text-violet-800 border-violet-200",
   3: "bg-amber-100 text-amber-800 border-amber-200",
-  4: "bg-red-100 text-red-800 border-red-200",
+  4: "bg-band text-stop border-stop",
 };
 
 function levelBadge(level: number) {
   const label = LEVEL_LABELS[level] ?? `L${level}`;
-  const color = LEVEL_COLORS[level] ?? "bg-zinc-100 text-zinc-700 border-zinc-200";
+  const color = LEVEL_COLORS[level] ?? "bg-ground text-ink-2 border-rule";
   return { label, color };
 }
 
@@ -65,39 +65,39 @@ export function LadderTrace({ ladderLevelReached, ruleId, decision, escalationBu
   })();
 
   return (
-    <div data-testid="ladder-trace" className="rounded-lg border bg-white">
+    <div data-testid="ladder-trace" className="border bg-band">
       {/* Header badge */}
-      <div className="flex items-center justify-between border-b bg-zinc-50 px-4 py-3">
+      <div className="flex items-center justify-between border-b bg-ground px-4 py-3">
         <h3 className="text-sm font-semibold">Ladder trace</h3>
         <span
           data-testid="ladder-level-badge"
           data-level={String(level)}
-          className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${badge.color}`}
+          className={`inline-flex items-center border px-2.5 py-0.5 text-xs font-medium ${badge.color}`}
         >
           {badge.label}
         </span>
       </div>
 
       {/* Decision + rule summary */}
-      <div className="border-b bg-white px-4 py-2.5">
+      <div className="border-b bg-band px-4 py-2.5">
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-zinc-500">Decision:</span>
+          <span className="text-ink-2">Decision:</span>
           <span
             data-testid="ladder-decision"
-            className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+            className={`inline-flex border px-2 py-0.5 text-xs font-medium ${
               decision === "propose"
                 ? "bg-emerald-50 text-emerald-800 border-emerald-200"
                 : decision === "escalate"
-                  ? "bg-red-50 text-red-800 border-red-200"
+                  ? "bg-band text-stop border-stop"
                   : decision === "reject"
-                    ? "bg-zinc-100 text-zinc-700 border-zinc-200"
+                    ? "bg-ground text-ink-2 border-rule"
                     : "bg-amber-50 text-amber-800 border-amber-200"
             }`}
           >
             {decision}
           </span>
           {ruleId ? (
-            <span data-testid="ladder-rule-id" className="font-mono text-xs text-zinc-600">
+            <span data-testid="ladder-rule-id" className="font-mono text-xs text-ink-2">
               rule: {ruleId}
             </span>
           ) : null}
@@ -110,7 +110,7 @@ export function LadderTrace({ ladderLevelReached, ruleId, decision, escalationBu
       </div>
 
       {/* Step list */}
-      <ol className="divide-y">
+      <ol className="divide-y divide-rule">
         {steps.map((step, idx) => {
           const lvl = typeof step.level === "number" ? step.level : level;
           const b = levelBadge(lvl);
@@ -123,37 +123,37 @@ export function LadderTrace({ ladderLevelReached, ruleId, decision, escalationBu
             >
               <span
                 data-testid={`ladder-step-badge-${idx}`}
-                className={`mt-0.5 inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${b.color}`}
+                className={`mt-0.5 inline-flex shrink-0 items-center border px-2 py-0.5 text-[11px] font-medium ${b.color}`}
               >
                 {b.label}
               </span>
               <div className="min-w-0 flex-1">
                 {step.action ? (
-                  <div data-testid={`ladder-step-action-${idx}`} className="text-xs font-medium text-zinc-800">
+                  <div data-testid={`ladder-step-action-${idx}`} className="text-xs font-medium text-ink">
                     {step.action}
                   </div>
                 ) : null}
                 {step.reason ? (
-                  <div data-testid={`ladder-step-reason-${idx}`} className="text-xs text-zinc-500">
+                  <div data-testid={`ladder-step-reason-${idx}`} className="text-xs text-ink-2">
                     {step.reason}
                   </div>
                 ) : null}
                 {step.rule_id && step.rule_id !== ruleId ? (
-                  <div className="font-mono text-[11px] text-zinc-500">rule: {String(step.rule_id)}</div>
+                  <div className="font-mono text-[11px] text-ink-2">rule: {String(step.rule_id)}</div>
                 ) : null}
                 {step.drift_class ? (
-                  <div className="text-[11px] text-zinc-400">drift: {String(step.drift_class)}</div>
+                  <div className="text-[11px] text-ink-2">drift: {String(step.drift_class)}</div>
                 ) : null}
               </div>
               {/* Level number marker */}
-              <span className="shrink-0 font-mono text-[11px] text-zinc-400">L{lvl}</span>
+              <span className="shrink-0 font-mono text-[11px] text-ink-2">L{lvl}</span>
             </li>
           );
         })}
       </ol>
 
       {/* All level badges legend (for visual completeness per spec: level badges) */}
-      <div className="flex flex-wrap gap-1.5 border-t bg-zinc-50 px-4 py-2">
+      <div className="flex flex-wrap gap-1.5 border-t bg-ground px-4 py-2">
         {[0, 1, 2, 3, 4].map((l) => {
           const b = levelBadge(l);
           const isReached = l === level;
@@ -162,7 +162,7 @@ export function LadderTrace({ ladderLevelReached, ruleId, decision, escalationBu
               key={l}
               data-testid={`ladder-legend-L${l}`}
               data-reached={isReached ? "true" : "false"}
-              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${b.color} ${isReached ? "ring-1 ring-zinc-900 ring-offset-1" : "opacity-60"}`}
+              className={`inline-flex items-center border px-2 py-0.5 text-[11px] font-medium ${b.color} ${isReached ? "ring-1 ring-live" : "opacity-60"}`}
             >
               {b.label}
             </span>

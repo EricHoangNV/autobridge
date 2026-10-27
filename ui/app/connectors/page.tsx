@@ -57,23 +57,23 @@ export default function ConnectorsPage() {
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Connectors</h1>
-          <p className="mt-1 text-sm text-zinc-500">Health, active release, last sync outcome, open drift, and model usage.</p>
+          <p className="mt-1 text-sm text-ink-2">Health, active release, last sync outcome, open drift, and model usage.</p>
         </div>
         <a
           href="/connectors/new"
           data-testid="new-connector-link"
-          className="rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+          className="bg-live px-3 py-2 text-sm font-medium text-live-ink hover:opacity-90"
         >
           New connector
         </a>
       </div>
 
       {connLoading ? (
-        <p data-testid="connectors-loading" className="py-8 text-center text-sm text-zinc-500">Loading connectors…</p>
+        <p data-testid="connectors-loading" className="py-8 text-center text-sm text-ink-2">Loading connectors…</p>
       ) : connError ? (
         <div
           data-testid="connectors-error"
-          className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          className="border border-stop bg-band px-4 py-3 text-sm text-stop"
         >
           Failed to load connectors: {(connError as Error).message}
         </div>
@@ -82,7 +82,7 @@ export default function ConnectorsPage() {
       )}
 
       {connectors?.length ? (
-        <p data-testid="connectors-count" className="mt-3 text-xs text-zinc-400">
+        <p data-testid="connectors-count" className="mt-3 text-xs text-ink-2">
           {connectors.length} connector{connectors.length === 1 ? "" : "s"} · polling every 5s
         </p>
       ) : null}

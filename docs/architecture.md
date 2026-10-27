@@ -294,6 +294,12 @@ run against the live OpenAPI.
    verdict, model usage, Approve/Reject/Rollback + Inject Fault drawer +
    model-usage view; list at `/repairs`.
 
+Theme (REQ-002, broadcast direction): dark-only on-air tokens in
+`ui/app/globals.css` (`--ground/--band/--ink/--ink-2/--rule/--off/--live/--stop`,
+radius 0), mapped in `ui/tailwind.config.js`; Archivo (width axis) + Fragment
+Mono via `next/font/google`; shell top bar with LIVE, labelled "Demo: inject
+fault" button and healthz. Status is square-shape + word, never hue alone.
+
 The UI talks to simulators/verifier **only via the control plane**:
 `compose.yaml` puts `ui` on `engine-net` alone (no `vendor-net`,
 `verifier-net`, `admin-net`); `next.config.mjs` rewrites `/api/*` to

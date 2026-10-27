@@ -8,7 +8,7 @@ type Props = {
 export function Sparkline({ values, width = 80, height = 24, label }: Props) {
   if (!values.length) {
     return (
-      <span data-testid="sparkline" className="text-xs text-zinc-400">
+      <span data-testid="sparkline" className="text-xs text-ink-2">
         {label ?? "no data"}
       </span>
     );
@@ -41,7 +41,7 @@ export function Sparkline({ values, width = 80, height = 24, label }: Props) {
         strokeWidth={1.5}
         strokeLinejoin="round"
         strokeLinecap="round"
-        className="text-zinc-700"
+        className="text-ink-2"
         points={points}
       />
     </svg>

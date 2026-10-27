@@ -138,7 +138,7 @@ export default function RepairDetailPage({ params }: PageProps) {
 
   if (repairLoading || !repairId) {
     return (
-      <div data-testid="repair-detail-page" className="py-8 text-center text-sm text-zinc-500">
+      <div data-testid="repair-detail-page" className="py-8 text-center text-sm text-ink-2">
         Loading repair…
       </div>
     );
@@ -147,12 +147,12 @@ export default function RepairDetailPage({ params }: PageProps) {
   if (repairError) {
     return (
       <div data-testid="repair-detail-page">
-        <a href="/repairs" data-testid="back-to-repairs" className="text-xs text-zinc-500 hover:text-zinc-900 hover:underline">
+        <a href="/repairs" data-testid="back-to-repairs" className="text-xs text-ink-2 hover:text-ink hover:underline">
           ← Back to repairs
         </a>
         <div
           data-testid="repair-detail-error"
-          className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          className="mt-4 border border-stop bg-band px-4 py-3 text-sm text-stop"
         >
           Failed to load repair {(repairError as Error).message}
         </div>
@@ -162,7 +162,7 @@ export default function RepairDetailPage({ params }: PageProps) {
 
   if (!repair) {
     return (
-      <div data-testid="repair-detail-page" className="py-8 text-center text-sm text-zinc-500">
+      <div data-testid="repair-detail-page" className="py-8 text-center text-sm text-ink-2">
         Repair not found.
       </div>
     );
@@ -184,12 +184,12 @@ export default function RepairDetailPage({ params }: PageProps) {
           <a
             href="/repairs"
             data-testid="back-to-repairs"
-            className="text-xs text-zinc-500 hover:text-zinc-900 hover:underline"
+            className="text-xs text-ink-2 hover:text-ink hover:underline"
           >
             ← Back to repairs
           </a>
-          <span className="text-xs text-zinc-400">·</span>
-          <a href="/connectors" className="text-xs text-zinc-500 hover:text-zinc-900 hover:underline">
+          <span className="text-xs text-ink-2">·</span>
+          <a href="/connectors" className="text-xs text-ink-2 hover:text-ink hover:underline">
             Connectors
           </a>
         </div>
@@ -198,21 +198,21 @@ export default function RepairDetailPage({ params }: PageProps) {
             <h1 data-testid="repair-title" className="text-xl font-semibold tracking-tight">
               Repair {repair.id.slice(0, 8)}
             </h1>
-            <p className="mt-1 font-mono text-xs text-zinc-500">{repair.id}</p>
+            <p className="mt-1 font-mono text-xs text-ink-2">{repair.id}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span
                 data-testid="repair-decision-badge"
-                className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                className={`inline-flex border px-2.5 py-0.5 text-xs font-medium ${
                   repair.decision === "propose"
                     ? "bg-emerald-100 text-emerald-800 border-emerald-200"
                     : repair.decision === "escalate"
-                      ? "bg-red-100 text-red-800 border-red-200"
-                      : "bg-zinc-100 text-zinc-700 border-zinc-200"
+                      ? "bg-band text-stop border-stop"
+                      : "bg-ground text-ink-2 border-rule"
                 }`}
               >
                 {repair.decision}
               </span>
-              <span data-testid="repair-id-short" className="font-mono text-xs text-zinc-400">
+              <span data-testid="repair-id-short" className="font-mono text-xs text-ink-2">
                 {repair.created_at ? new Date(repair.created_at).toLocaleString() : ""}
               </span>
             </div>
@@ -289,35 +289,35 @@ export default function RepairDetailPage({ params }: PageProps) {
           <InjectFaultDrawer onInjected={() => mutateRepair()} />
 
           {/* Repair meta */}
-          <div className="rounded-lg border bg-zinc-50 px-4 py-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Repair meta</h3>
+          <div className="border bg-ground px-4 py-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-2">Repair meta</h3>
             <dl className="mt-2 space-y-2 text-xs">
               <div>
-                <dt className="text-zinc-500">Repair ID</dt>
-                <dd className="font-mono text-zinc-700 break-all">{repair.id}</dd>
+                <dt className="text-ink-2">Repair ID</dt>
+                <dd className="font-mono text-ink-2 break-all">{repair.id}</dd>
               </div>
               <div>
-                <dt className="text-zinc-500">Ladder level</dt>
+                <dt className="text-ink-2">Ladder level</dt>
                 <dd data-testid="repair-ladder-level">L{repair.ladder_level_reached}</dd>
               </div>
               <div>
-                <dt className="text-zinc-500">Rule</dt>
-                <dd className="font-mono text-zinc-700">{repair.rule_id ?? "—"}</dd>
+                <dt className="text-ink-2">Rule</dt>
+                <dd className="font-mono text-ink-2">{repair.rule_id ?? "—"}</dd>
               </div>
               <div>
-                <dt className="text-zinc-500">Drift events</dt>
+                <dt className="text-ink-2">Drift events</dt>
                 <dd>{repair.drift_event_ids.length} linked</dd>
               </div>
               <div>
-                <dt className="text-zinc-500">Hypotheses</dt>
+                <dt className="text-ink-2">Hypotheses</dt>
                 <dd>{repair.hypothesis_ids.length} ids</dd>
               </div>
               <div>
-                <dt className="text-zinc-500">Verifier report</dt>
-                <dd className="font-mono text-zinc-700 break-all">{repair.verifier_report_id ?? "—"}</dd>
+                <dt className="text-ink-2">Verifier report</dt>
+                <dd className="font-mono text-ink-2 break-all">{repair.verifier_report_id ?? "—"}</dd>
               </div>
               <div>
-                <dt className="text-zinc-500">Created</dt>
+                <dt className="text-ink-2">Created</dt>
                 <dd>{repair.created_at ? new Date(repair.created_at).toLocaleString() : "—"}</dd>
               </div>
             </dl>

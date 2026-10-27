@@ -7,16 +7,16 @@ export default function NewConnectorPage() {
         <a
           href="/connectors"
           data-testid="back-to-connectors"
-          className="text-xs text-zinc-500 hover:text-zinc-900 hover:underline"
+          className="text-xs text-ink-2 hover:text-ink hover:underline"
         >
           ← Back to connectors
         </a>
         <h1 className="mt-1 text-xl font-semibold tracking-tight">New connector</h1>
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="mt-1 text-sm text-ink-2">
           Point at a sandbox, pick a credential env-ref, choose entities and attach vendor docs to start a build.
         </p>
       </div>
-      <div className="max-w-2xl rounded-lg border bg-white p-6 shadow-sm">
+      <div className="max-w-2xl border bg-band p-6 shadow-sm">
         <NewConnectorForm />
       </div>
     </div>

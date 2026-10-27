@@ -2,11 +2,112 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Broadcast tokens (REQ-002 slice 1). Values per the approved direction:
+ * dark on-air ground, one accent (live yellow = "now / needs you"),
+ * stop red for critical only, radius 0.
+ */
 :root {
-  --border: 214 32% 91%;
-  --muted: 210 40% 96%;
+  color-scheme: dark;
+  --ground: oklch(19% 0.04 262);
+  --band: oklch(23.5% 0.045 262);
+  --ink: oklch(97% 0.008 262);
+  --ink-2: oklch(80% 0.025 262);
+  --rule: oklch(34% 0.04 262);
+  --off: oklch(42% 0.035 262);
+  --live: oklch(88% 0.17 96);
+  --live-ink: oklch(20% 0.04 262);
+  --stop: oklch(70% 0.19 25);
 }
 
 body {
+  background: var(--ground);
+  color: var(--ink);
   font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+:focus-visible {
+  outline: 3px solid var(--live);
+  outline-offset: 3px;
+}
+
+/* Tabular figures for every number on screen. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Archivo width axis steps (variable font loaded in layout). */
+.font-wide {
+  font-variation-settings: "wdth" 125;
+}
+.font-headline {
+  font-variation-settings: "wdth" 112;
+}
+
+/*
+ * Square-shape status: Complete = ink word + filled square,
+ * Degraded = live word + half square, Blocked = stop word + hollow square.
+ * Never hue alone: the shape always differs too.
+ */
+.st {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.st::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  flex: none;
+}
+.st-ok::before {
+  background: var(--ink);
+}
+.st-deg {
+  color: var(--live);
+}
+.st-deg::before {
+  background: linear-gradient(90deg, var(--live) 50%, transparent 50%);
+  outline: 1.5px solid var(--live);
+  outline-offset: -1.5px;
+}
+.st-blk {
+  color: var(--stop);
+}
+.st-blk::before {
+  outline: 1.5px solid var(--stop);
+  outline-offset: -1.5px;
+}
+
+/* On-air dot for the top bar LIVE indicator. */
+.live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--live);
+  flex: none;
+}
+.live-dot.is-off {
+  background: var(--stop);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .live-dot {
+    animation: live-blink 2.4s steps(1) infinite;
+  }
+}
+@keyframes live-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Labelled demo button: dashed because it is demo-only chrome. */
+.demo-btn {
+  border: 1.5px dashed var(--off);
+  background: none;
+  color: var(--ink);
+  white-space: nowrap;
+  cursor: pointer;
 }

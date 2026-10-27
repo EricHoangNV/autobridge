@@ -111,7 +111,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
 
   if (detailLoading) {
     return (
-      <div data-testid="connector-detail-page" className="py-8 text-center text-sm text-zinc-500">
+      <div data-testid="connector-detail-page" className="py-8 text-center text-sm text-ink-2">
         Loading connector…
       </div>
     );
@@ -120,12 +120,12 @@ export default function ConnectorDetailPage({ params }: PageProps) {
   if (detailError) {
     return (
       <div data-testid="connector-detail-page">
-        <a href="/connectors" data-testid="back-to-connectors" className="text-xs text-zinc-500 hover:text-zinc-900 hover:underline">
+        <a href="/connectors" data-testid="back-to-connectors" className="text-xs text-ink-2 hover:text-ink hover:underline">
           ← Back to connectors
         </a>
         <div
           data-testid="connector-detail-error"
-          className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          className="mt-4 border border-stop bg-band px-4 py-3 text-sm text-stop"
         >
           Failed to load connector {(detailError as Error).message}
         </div>
@@ -135,7 +135,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
 
   if (!detail) {
     return (
-      <div data-testid="connector-detail-page" className="py-8 text-center text-sm text-zinc-500">
+      <div data-testid="connector-detail-page" className="py-8 text-center text-sm text-ink-2">
         Connector not found.
       </div>
     );
@@ -148,7 +148,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
         <a
           href="/connectors"
           data-testid="back-to-connectors"
-          className="text-xs text-zinc-500 hover:text-zinc-900 hover:underline"
+          className="text-xs text-ink-2 hover:text-ink hover:underline"
         >
           ← Back to connectors
         </a>
@@ -157,18 +157,18 @@ export default function ConnectorDetailPage({ params }: PageProps) {
             <h1 data-testid="connector-name" className="text-xl font-semibold tracking-tight">
               {detail.name}
             </h1>
-            <p className="mt-1 text-sm text-zinc-500">{detail.base_url}</p>
+            <p className="mt-1 text-sm text-ink-2">{detail.base_url}</p>
             <div className="mt-2 flex items-center gap-2">
               <HealthBadge status={detail.health_status} />
               {detail.last_sync ? <SyncOutcomeBadge outcome={detail.last_sync.outcome} /> : null}
-              <span className="text-xs text-zinc-400">{detail.id.slice(0, 8)}</span>
+              <span className="text-xs text-ink-2">{detail.id.slice(0, 8)}</span>
             </div>
           </div>
           <button
             data-testid="trigger-sync-btn"
             onClick={handleSync}
             disabled={syncState === "sending"}
-            className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+            className="bg-live px-4 py-2 text-sm font-medium text-live-ink hover:opacity-90 disabled:opacity-50"
           >
             {syncState === "sending" ? "Starting sync…" : "Sync now"}
           </button>
@@ -176,7 +176,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
         {syncMsg ? (
           <div
             data-testid={syncState === "error" ? "sync-error" : "sync-success"}
-            className={`mt-3 rounded-lg border px-4 py-2 text-sm ${syncState === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}
+            className={`mt-3 border px-4 py-2 text-sm ${syncState === "error" ? "border-stop bg-band text-stop" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}
           >
             {syncMsg}
           </div>
@@ -184,37 +184,37 @@ export default function ConnectorDetailPage({ params }: PageProps) {
       </div>
 
       {/* Connector meta */}
-      <section className="mb-8 rounded-lg border bg-zinc-50 px-4 py-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Connector info</h2>
+      <section className="mb-8 border bg-ground px-4 py-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-2">Connector info</h2>
         <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
           <div>
-            <dt className="text-xs text-zinc-500">Credential ref</dt>
+            <dt className="text-xs text-ink-2">Credential ref</dt>
             <dd data-testid="connector-credential-ref" className="font-mono text-xs">
               {detail.credential_ref}
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-zinc-500">Target entities</dt>
+            <dt className="text-xs text-ink-2">Target entities</dt>
             <dd data-testid="connector-target-entities" className="text-xs">
               {(detail.target_entities ?? []).join(", ") || "—"}
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-zinc-500">Vendor docs ref</dt>
-            <dd className="text-xs text-zinc-600">{detail.vendor_docs_ref ?? "—"}</dd>
+            <dt className="text-xs text-ink-2">Vendor docs ref</dt>
+            <dd className="text-xs text-ink-2">{detail.vendor_docs_ref ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-xs text-zinc-500">Runtime target</dt>
+            <dt className="text-xs text-ink-2">Runtime target</dt>
             <dd className="font-mono text-xs">{JSON.stringify(detail.runtime_target)}</dd>
           </div>
           <div>
-            <dt className="text-xs text-zinc-500">Active release</dt>
+            <dt className="text-xs text-ink-2">Active release</dt>
             <dd data-testid="connector-active-release" className="font-mono text-xs">
               {detail.active_release_id ? detail.active_release_id.slice(0, 8) : "—"}
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-zinc-500">Open drift</dt>
+            <dt className="text-xs text-ink-2">Open drift</dt>
             <dd data-testid="connector-open-drift-count" className="text-xs">
               {(detail.open_drift ?? []).length} open
             </dd>
@@ -231,7 +231,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
               data-testid="release-selector"
               value={specRelease?.id ?? ""}
               onChange={(e) => setSelectedReleaseId(e.target.value || null)}
-              className="rounded border border-zinc-300 px-2 py-1 text-xs"
+              className="border border-rule px-2 py-1 text-xs"
               aria-label="Select release for spec viewer"
             >
               {(detail.releases ?? []).map((r) => (
@@ -245,7 +245,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
         {specRelease ? (
           <SpecViewer spec={specRelease.spec as Record<string, unknown>} title={`Spec — v${specRelease.version} (${specRelease.id.slice(0, 8)})`} />
         ) : (
-          <div data-testid="spec-viewer-empty" className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-zinc-500">
+          <div data-testid="spec-viewer-empty" className="border border-dashed px-4 py-6 text-center text-sm text-ink-2">
             No releases yet. Build a connector to see its spec.
           </div>
         )}
@@ -273,23 +273,23 @@ export default function ConnectorDetailPage({ params }: PageProps) {
       {(syncRuns ?? []).length > 0 || detail.last_sync?.fingerprint_id ? (
         <section className="mb-8">
           <h2 className="mb-2 text-sm font-semibold">Fingerprints</h2>
-          <div data-testid="fingerprints-section" className="rounded-lg border bg-white px-4 py-3">
+          <div data-testid="fingerprints-section" className="border bg-band px-4 py-3">
             {(syncRuns ?? (detail.last_sync ? [detail.last_sync] : [])).length ? (
               <ul className="space-y-1 text-xs">
                 {(syncRuns ?? (detail.last_sync ? [detail.last_sync] : [])).map((run: SyncRunOut | typeof detail.last_sync) =>
                   run?.fingerprint_id ? (
-                    <li key={run.id} data-testid={`fingerprint-entry-${run.id}`} className="font-mono text-zinc-700">
+                    <li key={run.id} data-testid={`fingerprint-entry-${run.id}`} className="font-mono text-ink-2">
                       {run.id.slice(0, 8)} → {run.fingerprint_id}
-                      <span className="ml-2 text-zinc-500">({run.outcome})</span>
+                      <span className="ml-2 text-ink-2">({run.outcome})</span>
                     </li>
                   ) : null,
                 )}
                 {!(syncRuns ?? (detail.last_sync ? [detail.last_sync] : [])).some((r: SyncRunOut | typeof detail.last_sync) => r?.fingerprint_id) ? (
-                  <li className="text-zinc-500">No fingerprints recorded yet.</li>
+                  <li className="text-ink-2">No fingerprints recorded yet.</li>
                 ) : null}
               </ul>
             ) : (
-              <p className="text-xs text-zinc-500">No fingerprints recorded yet.</p>
+              <p className="text-xs text-ink-2">No fingerprints recorded yet.</p>
             )}
           </div>
         </section>

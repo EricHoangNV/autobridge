@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-001 operator name complete (2026-10-27): server sets `Approval.actor` from `AUTOBRIDGE_OPERATOR` (default `operator`), `GET /operator` exposes it, `ReleaseOut.approved_by` populated; UI `RepairActions` shows "Approving as <name>", `ReleaseHistory` shows approver per release; W7.8 Playwright journey 6/6 green (mock stabilization); compose forwards the var.
+REQ-002 slice 1 done (2026-10-27): broadcast tokens + shell in `ui/` — `globals.css` variables, Tailwind color/font mapping, Archivo (wdth axis) + Fragment Mono via `next/font/google`, new `TopBar` (AUTOBRIDGE wordmark, Connectors/Repairs nav, LIVE from UI `/healthz`, labelled "Demo: inject fault" button, healthz link); all `zinc-*`/`red-*`/`rounded-*` removed (mechanical token swap, shapes + `data-testid`s kept); docs/architecture.md §9.2 theme note.
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -67,9 +67,11 @@ REQ-001 operator name complete (2026-10-27): server sets `Approval.actor` from `
   - P1.W10.1: README + docs/ pages + .env.example
   - P1.W10.2: make demo six steps via control API + local evidence
   - REQ-001: operator name on approvals (server-set actor, GET /operator, UI lines, compose var)
-- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.83%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 105 + e2e test_06 6/6 (mocked, chromium)
-- Stack: compose up in sbx1 (control verified live: GET /operator default + override) / lint + typecheck green
+  - REQ-002 slice 1: broadcast tokens + shell (TopBar, fonts, token swap, docs §9.2 note)
+- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.83%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 108 + e2e test_06 6/6 (mocked, chromium)
+- Stack: compose down in sbx1 this run (no live e2e; SSR render of new shell verified via dev server curl) / make lint + ui typecheck + ui build green
 
 ## Next tasks
-1. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)
-2. **P1.W2.8** — HUMAN heldout freeze (manifest + sha check ready; owner freezes)
+1. **REQ-002 slices 2–5** — /repairs/[id] call+scorebug, the climb on SSE, /connectors + /connectors/[id], /connectors/new + drawer (IN_PROGRESS sbx1)
+2. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)
+3. **P1.W2.8** — HUMAN heldout freeze (manifest + sha check ready; owner freezes)

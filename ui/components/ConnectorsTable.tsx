@@ -59,13 +59,13 @@ function sparklineValues(modelUsage: ModelUsageResponse | null | undefined, conn
 
 export function ConnectorsTable({ connectors, detailsById, modelUsage }: Props) {
   if (!connectors.length) {
-    return <p data-testid="connectors-empty" className="py-8 text-center text-sm text-zinc-500">No connectors yet. Create one to get started.</p>;
+    return <p data-testid="connectors-empty" className="py-8 text-center text-sm text-ink-2">No connectors yet. Create one to get started.</p>;
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border bg-white">
+    <div className="overflow-x-auto border bg-band">
       <table data-testid="connectors-table" className="w-full text-left text-sm">
-        <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500">
+        <thead className="bg-ground text-xs uppercase tracking-wide text-ink-2">
           <tr>
             <th className="px-4 py-3 font-medium">Connector</th>
             <th className="px-4 py-3 font-medium">Health</th>
@@ -75,17 +75,17 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage }: Props) 
             <th className="px-4 py-3 font-medium">Model usage</th>
           </tr>
         </thead>
-        <tbody className="divide-y">
+        <tbody className="divide-y divide-rule">
           {connectors.map((c) => {
             const detail = detailsById?.[c.id] ?? null;
             return (
-              <tr key={c.id} data-testid={`connector-row-${c.id}`} className="hover:bg-zinc-50">
+              <tr key={c.id} data-testid={`connector-row-${c.id}`} className="hover:bg-ground">
                 <td className="px-4 py-3">
-                  <Link href={`/connectors/${encodeURIComponent(c.id)}`} className="font-medium text-zinc-900 hover:underline">
+                  <Link href={`/connectors/${encodeURIComponent(c.id)}`} className="font-medium text-ink hover:underline">
                     {c.name}
                   </Link>
-                  <div className="text-xs text-zinc-500">{c.base_url}</div>
-                  <div className="text-[11px] text-zinc-400">{c.id.slice(0, 8)}</div>
+                  <div className="text-xs text-ink-2">{c.base_url}</div>
+                  <div className="text-[11px] text-ink-2">{c.id.slice(0, 8)}</div>
                 </td>
                 <td className="px-4 py-3">
                   <HealthBadge status={c.health_status ?? "unknown"} />
@@ -94,19 +94,19 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage }: Props) 
                 <td className="px-4 py-3">
                   <SyncOutcomeBadge outcome={lastSyncOutcome(detail)} />
                   {detail?.last_sync?.unmet_criteria?.length ? (
-                    <div className="mt-1 text-[11px] text-zinc-500">{detail.last_sync.unmet_criteria.join(", ")}</div>
+                    <div className="mt-1 text-[11px] text-ink-2">{detail.last_sync.unmet_criteria.join(", ")}</div>
                   ) : null}
                 </td>
                 <td className="px-4 py-3">
                   {driftCount(detail) > 0 ? (
                     <span
                       data-testid={`drift-count-${c.id}`}
-                      className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                      className="inline-flex items-center bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
                     >
                       {driftCount(detail)} open
                     </span>
                   ) : (
-                    <span data-testid={`drift-count-${c.id}`} className="text-xs text-zinc-400">0</span>
+                    <span data-testid={`drift-count-${c.id}`} className="text-xs text-ink-2">0</span>
                   )}
                 </td>
                 <td className="px-4 py-3">

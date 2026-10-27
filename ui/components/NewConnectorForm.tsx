@@ -176,8 +176,8 @@ export function NewConnectorForm() {
       <form data-testid="new-connector-form" onSubmit={handleSubmit} noValidate className="space-y-6">
         {/* Name */}
         <div>
-          <label htmlFor="connector-name" className="block text-sm font-medium text-zinc-700">
-            Connector name <span className="text-red-500">*</span>
+          <label htmlFor="connector-name" className="block text-sm font-medium text-ink-2">
+            Connector name <span className="text-stop">*</span>
           </label>
           <input
             id="connector-name"
@@ -186,12 +186,12 @@ export function NewConnectorForm() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Atlas PMS — Staging"
-            className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm shadow-sm focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+            className="mt-1 w-full border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
             aria-invalid={Boolean(fieldErrors.name)}
             aria-describedby={fieldErrors.name ? "error-name" : undefined}
           />
           {fieldErrors.name ? (
-            <p id="error-name" data-testid="error-name" className="mt-1 text-xs text-red-600">
+            <p id="error-name" data-testid="error-name" className="mt-1 text-xs text-stop">
               {fieldErrors.name}
             </p>
           ) : null}
@@ -199,8 +199,8 @@ export function NewConnectorForm() {
 
         {/* Sandbox base URL */}
         <div>
-          <label htmlFor="connector-base-url" className="block text-sm font-medium text-zinc-700">
-            Sandbox base URL <span className="text-red-500">*</span>
+          <label htmlFor="connector-base-url" className="block text-sm font-medium text-ink-2">
+            Sandbox base URL <span className="text-stop">*</span>
           </label>
           <input
             id="connector-base-url"
@@ -210,7 +210,7 @@ export function NewConnectorForm() {
             onChange={(e) => setBaseUrl(e.target.value)}
             placeholder="http://sim-atlas:8000"
             list="base-url-suggestions"
-            className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm shadow-sm focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+            className="mt-1 w-full border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
             aria-invalid={Boolean(fieldErrors.base_url)}
             aria-describedby={fieldErrors.base_url ? "error-base-url" : undefined}
           />
@@ -219,11 +219,11 @@ export function NewConnectorForm() {
               <option key={u} value={u} />
             ))}
           </datalist>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-ink-2">
             Points at the vendor sandbox. Suggestions: {BASE_URL_SUGGESTIONS.join(", ")}
           </p>
           {fieldErrors.base_url ? (
-            <p id="error-base-url" data-testid="error-base-url" className="mt-1 text-xs text-red-600">
+            <p id="error-base-url" data-testid="error-base-url" className="mt-1 text-xs text-stop">
               {fieldErrors.base_url}
             </p>
           ) : null}
@@ -231,10 +231,10 @@ export function NewConnectorForm() {
 
         {/* Credential env-ref picker */}
         <div>
-          <label htmlFor="connector-credential-ref" className="block text-sm font-medium text-zinc-700">
-            Credential env-ref <span className="text-red-500">*</span>
+          <label htmlFor="connector-credential-ref" className="block text-sm font-medium text-ink-2">
+            Credential env-ref <span className="text-stop">*</span>
           </label>
-          <p className="mt-1 text-xs text-zinc-500">Env key name whose value holds the secret; the secret value is never stored in the spec.</p>
+          <p className="mt-1 text-xs text-ink-2">Env key name whose value holds the secret; the secret value is never stored in the spec.</p>
           <div className="mt-1 flex gap-2">
             <select
               id="connector-credential-ref"
@@ -248,7 +248,7 @@ export function NewConnectorForm() {
                   setCredentialRef(e.target.value);
                 }
               }}
-              className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm shadow-sm focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+              className="flex-1 border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
               aria-describedby={fieldErrors.credential_ref ? "error-credential-ref" : undefined}
             >
               {KNOWN_CREDENTIAL_REFS.map((k) => (
@@ -266,13 +266,13 @@ export function NewConnectorForm() {
                 onChange={(e) => setCustomCredential(e.target.value)}
                 placeholder="e.g. MY_API_KEY"
                 pattern="^[A-Z][A-Z0-9_]*$"
-                className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm shadow-sm focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                className="flex-1 border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
                 aria-label="Custom credential env-ref"
               />
             ) : null}
           </div>
           {fieldErrors.credential_ref ? (
-            <p id="error-credential-ref" data-testid="error-credential-ref" className="mt-1 text-xs text-red-600">
+            <p id="error-credential-ref" data-testid="error-credential-ref" className="mt-1 text-xs text-stop">
               {fieldErrors.credential_ref}
             </p>
           ) : null}
@@ -280,10 +280,10 @@ export function NewConnectorForm() {
 
         {/* Target entities */}
         <fieldset>
-          <legend className="block text-sm font-medium text-zinc-700">
-            Target entities <span className="text-red-500">*</span>
+          <legend className="block text-sm font-medium text-ink-2">
+            Target entities <span className="text-stop">*</span>
           </legend>
-          <p className="mt-1 text-xs text-zinc-500">Canonical entities this connector will sync.</p>
+          <p className="mt-1 text-xs text-ink-2">Canonical entities this connector will sync.</p>
           <div className="mt-2 flex gap-4">
             {ENTITY_OPTIONS.map((entity) => (
               <label key={entity} className="inline-flex items-center gap-2 text-sm">
@@ -292,27 +292,27 @@ export function NewConnectorForm() {
                   type="checkbox"
                   checked={targetEntities.includes(entity)}
                   onChange={() => toggleEntity(entity)}
-                  className="rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
+                  className="border-rule text-ink focus:ring-live"
                 />
                 {entity}
               </label>
             ))}
           </div>
           {fieldErrors.target_entities ? (
-            <p data-testid="error-target-entities" className="mt-1 text-xs text-red-600">
+            <p data-testid="error-target-entities" className="mt-1 text-xs text-stop">
               {fieldErrors.target_entities}
             </p>
           ) : null}
         </fieldset>
 
         {/* Docs section */}
-        <fieldset className="rounded-lg border border-zinc-200 p-4">
-          <legend className="px-1 text-sm font-medium text-zinc-700">Vendor docs</legend>
-          <p className="text-xs text-zinc-500">Provide at least one: file upload, URL, or pasted text. File content takes precedence.</p>
+        <fieldset className="border border-rule p-4">
+          <legend className="px-1 text-sm font-medium text-ink-2">Vendor docs</legend>
+          <p className="text-xs text-ink-2">Provide at least one: file upload, URL, or pasted text. File content takes precedence.</p>
 
           {/* File upload */}
           <div className="mt-3">
-            <label htmlFor="docs-file" className="block text-xs font-medium text-zinc-700">
+            <label htmlFor="docs-file" className="block text-xs font-medium text-ink-2">
               Docs file upload
             </label>
             <div className="mt-1 flex items-center gap-2">
@@ -323,10 +323,10 @@ export function NewConnectorForm() {
                 type="file"
                 accept=".md,.txt,.json,.yaml,.yml,.html,.pdf"
                 onChange={handleFileChange}
-                className="block text-sm text-zinc-600 file:mr-3 file:rounded-md file:border file:border-zinc-300 file:bg-zinc-50 file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-zinc-100"
+                className="block text-sm text-ink-2 file:mr-3 file:border file:border-rule file:bg-ground file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
               />
               {fileName ? (
-                <span data-testid="file-name" className="text-xs text-zinc-600">
+                <span data-testid="file-name" className="text-xs text-ink-2">
                   {fileName} {fileContent ? `(${fileContent.length} chars)` : ""}
                 </span>
               ) : null}
@@ -339,7 +339,7 @@ export function NewConnectorForm() {
                     setFileContent(null);
                     if (fileInputRef.current) fileInputRef.current.value = "";
                   }}
-                  className="text-xs text-zinc-500 hover:text-zinc-800 underline"
+                  className="text-xs text-ink-2 hover:text-ink underline"
                 >
                   Clear
                 </button>
@@ -349,7 +349,7 @@ export function NewConnectorForm() {
 
           {/* Docs URL */}
           <div className="mt-3">
-            <label htmlFor="docs-url" className="block text-xs font-medium text-zinc-700">
+            <label htmlFor="docs-url" className="block text-xs font-medium text-ink-2">
               Docs URL
             </label>
             <input
@@ -359,13 +359,13 @@ export function NewConnectorForm() {
               value={docsUrl}
               onChange={(e) => setDocsUrl(e.target.value)}
               placeholder="https://docs.example.com/api"
-              className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm shadow-sm focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+              className="mt-1 w-full border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
             />
           </div>
 
           {/* Docs text */}
           <div className="mt-3">
-            <label htmlFor="docs-text" className="block text-xs font-medium text-zinc-700">
+            <label htmlFor="docs-text" className="block text-xs font-medium text-ink-2">
               Docs text (paste)
             </label>
             <textarea
@@ -375,13 +375,13 @@ export function NewConnectorForm() {
               onChange={(e) => setDocsText(e.target.value)}
               placeholder="Paste vendor API documentation here…"
               rows={6}
-              className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs shadow-sm focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+              className="mt-1 w-full border border-rule px-3 py-2 font-mono text-xs shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
             />
-            {docsText ? <p className="mt-1 text-xs text-zinc-500">{docsText.length} characters</p> : null}
+            {docsText ? <p className="mt-1 text-xs text-ink-2">{docsText.length} characters</p> : null}
           </div>
 
           {fieldErrors.docs ? (
-            <p data-testid="error-docs" className="mt-2 text-xs text-red-600">
+            <p data-testid="error-docs" className="mt-2 text-xs text-stop">
               {fieldErrors.docs}
             </p>
           ) : null}
@@ -393,7 +393,7 @@ export function NewConnectorForm() {
             type="submit"
             data-testid="submit-build"
             disabled={isBusy}
-            className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-live px-4 py-2 text-sm font-medium text-live-ink hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitState === "creating"
               ? "Creating connector…"
@@ -404,12 +404,12 @@ export function NewConnectorForm() {
           <a
             href="/connectors"
             data-testid="cancel-link"
-            className="text-sm text-zinc-600 hover:text-zinc-900 hover:underline"
+            className="text-sm text-ink-2 hover:text-ink hover:underline"
           >
             Cancel
           </a>
           {isBusy ? (
-            <span data-testid="busy-indicator" className="text-xs text-zinc-500">
+            <span data-testid="busy-indicator" className="text-xs text-ink-2">
               Please wait…
             </span>
           ) : null}
@@ -418,11 +418,11 @@ export function NewConnectorForm() {
 
       {/* Error */}
       {errorMsg ? (
-        <div data-testid="submit-error" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <div data-testid="submit-error" className="mt-4 border border-stop bg-band px-4 py-3 text-sm text-stop">
           {errorMsg}
           {result?.connectorId ? (
             <div className="mt-2">
-              Connector <code className="rounded bg-white px-1 py-0.5 text-xs">{result.connectorId}</code> was created.{" "}
+              Connector <code className="bg-band px-1 py-0.5 text-xs">{result.connectorId}</code> was created.{" "}
               <a href={`/connectors/${result.connectorId}`} className="underline">
                 View connector
               </a>
@@ -433,14 +433,14 @@ export function NewConnectorForm() {
 
       {/* Success */}
       {submitState === "done" && result ? (
-        <div data-testid="submit-success" className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <div data-testid="submit-success" className="mt-4 border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
           <p className="font-medium">Connector created and build started.</p>
           <p className="mt-1">
-            Connector: <code className="rounded bg-white px-1 py-0.5 text-xs">{result.connectorId}</code>
+            Connector: <code className="bg-band px-1 py-0.5 text-xs">{result.connectorId}</code>
             {result.jobId ? (
               <>
                 {" "}
-                · Job <code className="rounded bg-white px-1 py-0.5 text-xs">{result.jobId}</code>
+                · Job <code className="bg-band px-1 py-0.5 text-xs">{result.jobId}</code>
               </>
             ) : null}
           </p>
@@ -448,7 +448,7 @@ export function NewConnectorForm() {
             <a
               data-testid="success-view-connector"
               href={`/connectors/${result.connectorId}`}
-              className="rounded bg-emerald-900 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-800"
+              className="bg-emerald-900 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-800"
             >
               View connector
             </a>

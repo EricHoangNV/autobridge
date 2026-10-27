@@ -84,7 +84,7 @@ export function InjectFaultDrawer({ defaultOpen, onInjected }: Props) {
   }
 
   return (
-    <div data-testid="inject-fault-drawer" className="rounded-lg border bg-white">
+    <div data-testid="inject-fault-drawer" className="border bg-band">
       <button
         data-testid="inject-fault-toggle"
         onClick={() => setOpen((v) => !v)}
@@ -92,34 +92,34 @@ export function InjectFaultDrawer({ defaultOpen, onInjected }: Props) {
         aria-expanded={open}
       >
         <span className="flex items-center gap-2">
-          <span className="inline-flex rounded bg-amber-200 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-900">
+          <span className="inline-flex bg-amber-200 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-900">
             Demo
           </span>
-          <span className="text-sm font-semibold text-zinc-800">Inject Fault</span>
-          <span className="rounded border border-amber-200 bg-white px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+          <span className="text-sm font-semibold text-ink">Inject Fault</span>
+          <span className="border border-amber-200 bg-band px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
             labelled demo action
           </span>
         </span>
-        <span className="text-xs text-zinc-500">{open ? "Hide" : "Show"}</span>
+        <span className="text-xs text-ink-2">{open ? "Hide" : "Show"}</span>
       </button>
 
       {open ? (
         <div data-testid="inject-fault-panel" className="space-y-3 px-4 py-4">
-          <p className="text-xs text-zinc-500">
-            Proxies to the simulator admin <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px]">POST /admin/scenario</code> via the
-            control plane <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px]">POST /demo/inject-fault</code>. Every request is
-            labelled <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px]">demo: true</code> and{" "}
-            <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px]">labelled: true</code>.
+          <p className="text-xs text-ink-2">
+            Proxies to the simulator admin <code className="bg-ground px-1 py-0.5 font-mono text-[11px]">POST /admin/scenario</code> via the
+            control plane <code className="bg-ground px-1 py-0.5 font-mono text-[11px]">POST /demo/inject-fault</code>. Every request is
+            labelled <code className="bg-ground px-1 py-0.5 font-mono text-[11px]">demo: true</code> and{" "}
+            <code className="bg-ground px-1 py-0.5 font-mono text-[11px]">labelled: true</code>.
           </p>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <label className="space-y-1">
-              <span className="text-xs font-medium text-zinc-700">Target</span>
+              <span className="text-xs font-medium text-ink-2">Target</span>
               <select
                 data-testid="inject-fault-target"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs"
+                className="w-full border border-rule px-2 py-1.5 text-xs"
               >
                 {TARGET_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -130,12 +130,12 @@ export function InjectFaultDrawer({ defaultOpen, onInjected }: Props) {
             </label>
 
             <label className="space-y-1">
-              <span className="text-xs font-medium text-zinc-700">Scenario</span>
+              <span className="text-xs font-medium text-ink-2">Scenario</span>
               <select
                 data-testid="inject-fault-scenario"
                 value={scenarioId}
                 onChange={(e) => setScenarioId(e.target.value)}
-                className="w-full rounded border border-zinc-300 px-2 py-1.5 text-xs"
+                className="w-full border border-rule px-2 py-1.5 text-xs"
               >
                 {SCENARIO_OPTIONS.map((s) => (
                   <option key={s} value={s}>
@@ -146,13 +146,13 @@ export function InjectFaultDrawer({ defaultOpen, onInjected }: Props) {
             </label>
 
             <label className="space-y-1">
-              <span className="text-xs font-medium text-zinc-700">Seed (optional)</span>
+              <span className="text-xs font-medium text-ink-2">Seed (optional)</span>
               <input
                 data-testid="inject-fault-seed"
                 value={seed}
                 onChange={(e) => setSeed(e.target.value)}
                 placeholder="e.g. 42"
-                className="w-full rounded border border-zinc-300 px-2 py-1.5 font-mono text-xs"
+                className="w-full border border-rule px-2 py-1.5 font-mono text-xs"
               />
             </label>
           </div>
@@ -161,7 +161,7 @@ export function InjectFaultDrawer({ defaultOpen, onInjected }: Props) {
             data-testid="inject-fault-submit"
             onClick={handleInject}
             disabled={busy}
-            className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+            className="bg-live px-4 py-2 text-sm font-medium text-live-ink hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Injecting…" : "Inject fault"}
           </button>
@@ -169,9 +169,9 @@ export function InjectFaultDrawer({ defaultOpen, onInjected }: Props) {
           {result ? (
             <div
               data-testid={result.ok ? "inject-fault-success" : "inject-fault-error"}
-              className={`rounded-lg border px-3 py-2 ${result.ok ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}
+              className={`border px-3 py-2 ${result.ok ? "border-emerald-200 bg-emerald-50" : "border-stop bg-band"}`}
             >
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-zinc-800">
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-ink">
                 {result.text}
               </pre>
             </div>
