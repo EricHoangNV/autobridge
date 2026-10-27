@@ -1545,3 +1545,18 @@ Agent: opencode meta/muse-spark-1.3 (escalation)
 **Notes for next iteration:**
 - Playwright spec itself was NOT run here (browsers not installed in sandbox; CI installs chromium) — owner should confirm the new CI workflow goes green on first push to main.
 - PRE-EXISTING (unchanged): `lint-imports` contract still broken on main by W8 harness (`bench/harness.py` simulators import) — CI deliberately does not gate on it; needs owner decision.
+
+## 2026-10-27 — P1.W10.1 README + docs/ + .env.example (sbx1)
+
+Agent: opencode meta/muse-spark-1.3 (escalation)
+
+**What was done (plan §4 W10):**
+- README.md rewritten from the W1 skeleton stub ("Status: skeleton only") to the full reference: clean-clone quickstart, connect→execute→detect→repair→verify→ship flow, principles, layout, docs index, autonomous-loop runbook, mds/ table
+- docs/demo.md written from the 3-line skeleton to the full six-step plan §6 script: per-step control API calls, rendered UI evidence, trap/rejection wording, reproducibility (seeds + release ids + `make demo`)
+- docs/architecture.md §1 note + §10 promoted from "What's next (W2…W10 future)" to W10 final-state index; docs/safety-model.md §1/§12 promoted from "updated again in W10" to final reference; connector-spec.md and benchmark.md verified complete, untouched
+- .env.example extended with every runtime key found via env grep (VERIFIER_URL, SIMULATOR_ADMIN_URL, ADMIN_NET_HOST, BASELINE_DRIVER, BENCH_SCENARIOS/SEED/TRIALS/VISIBILITY/NO_SCORE, CLAUDE/CODEX_CLI_PATH, E2E_SKIP_STACK/KEEP_STACK/TIMEOUT); secrets stay empty, non-secret defaults kept
+
+**Verification:** make lint + typecheck green; make test 2002 pass (1691+92+219, gates hold); no test pins README/docs/.env.example content (only incidental mentions); directives-for §6 checked (credential_ref-only, .env git-ignored, every key listed). Docs-only change: no e2e file for W10 yet (W10.2 adds `make demo`), stack left down.
+
+**Notes for next iteration:**
+- P1.W10.2 (make demo) is next; `make demo` currently prints "not yet implemented" — docs/demo.md already describes the target behavior it must implement.

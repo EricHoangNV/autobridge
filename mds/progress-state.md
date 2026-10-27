@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W9.2 make e2e + CI complete (2026-10-27): `make e2e` enforces random order (`-p randomly`, fail-fast if pytest-randomly missing) with env knobs + 300s budget documented; new `make e2e-ui` runs the Playwright UI journey (test_06, independent of the pytest harness by design); `.github/workflows/ci.yml` is one ordered job from a clean clone — make test (coverage gate) → make up → make smoke → make e2e → make e2e-ui, `make down` unconditional (`if: always()`); `tests/unit/test_autobridge_ci_e2e.py` pins the contract statically (7 tests); suite 66/66 green live via the hardened target (~56s incl. bring-up); `docs/architecture.md` §7/§8 + README ladder updated.
+P1.W10.1 docs pass complete (2026-10-27): README rewritten from skeleton stub to full reference (quickstart, ladder, layout, docs index, loop runbook); docs/demo.md written with the six plan §6 steps via control API calls + rendered evidence; docs/architecture.md §10 and docs/safety-model.md §§1/12 promoted from W1/W6 drafts to W10 final reference; .env.example extended with VERIFIER_URL, SIMULATOR_ADMIN_URL, ADMIN_NET_HOST, BASELINE_DRIVER, BENCH_*, CLAUDE/CODEX_CLI_PATH, E2E_* keys; connector-spec.md and benchmark.md verified complete, untouched.
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -64,9 +64,9 @@ P1.W9.2 make e2e + CI complete (2026-10-27): `make e2e` enforces random order (`
   - P1.W8.5: make bench idempotent + heldout sha + test_07 + docs/benchmark.md
   - P1.W9.1: e2e harness complete (verified reset, env isolation, budget, random order)
   - P1.W9.2: make e2e + CI job (unit → smoke → e2e from clean clone)
+  - P1.W10.1: README + docs/ pages + .env.example
 - Tests: 2002 pass / 0 fail (autobridge 1691 @ 90.63%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + e2e 66/66 live
-- Stack: compose down in sbx1 (hardened make e2e green live; smoke green) / lint + typecheck green
+- Stack: compose down in sbx1 (docs-only change; unit suite re-run green) / lint + typecheck green
 
 ## Next tasks
-1. **P1.W10.1** — README + docs/ pages + .env.example
-2. **P1.W10.2** — make demo (six demo steps via control API)
+1. **P1.W10.2** — make demo (six demo steps via control API)

@@ -360,3 +360,25 @@ Checks: make test 1670+92+219 green (90.59/93.78/96.55%), ruff + mypy green; e2e
 - `docs/architecture.md` §7 (e2e-ui row, §8 CI paragraph naming the workflow file) + `README.md` ladder (e2e-ui row, CI order line).
 - Gotchas: `on:` parses as boolean `True` in YAML 1.1 — test reads `data.get(True, ...)`; Playwright browsers not installed in sandbox so test_06 itself runs only in CI/local with `npx playwright install`.
 - Verified: make test 2002 pass (gates 90.63/93.78/96.55), make e2e 66/66 live (~56s), lint + typecheck green.
+
+### P1.W10.1 — README + docs/ + .env.example complete (plan §4 W10, §6)
+
+Agent: opencode meta/muse-spark-1.3 (escalation)
+
+Files: `README.md` (rewrite, 83→~110 lines), `docs/demo.md` (3 lines→full six-step script),
+`docs/architecture.md` (§1 note + §10 final-state index), `docs/safety-model.md` (§§1/12 final reference),
+`.env.example` (41→~70 lines, all runtime keys).
+
+Decisions: (1) README quickstart lists the full verification ladder in dependency order
+(test→up→smoke→e2e→e2e-ui→bench→demo) matching CI; (2) demo.md specifies exact API calls per
+step (build/sync/verify/approve/inject-fault/model-usage) with the trap wording
+(`invalid_patch_trap` on the net→total_amount patch) so W10.2 implements to the doc;
+(3) kept non-secret URL/model defaults in .env.example (prior accepted style) with empty
+values for all secrets/overrides; (4) connector-spec.md + benchmark.md left untouched —
+both already complete per their workstream build notes.
+
+Gotchas: `make demo` target still stubs to "not yet implemented" (P1.W10.2 owns it);
+`BASELINE_DRIVER` is only documented via comment in harness.py (no os.environ read yet) —
+listed in .env.example anyway so W10.2/W8 follow-ups wire it without a docs change.
+
+Verification: lint + typecheck green; make test 2002/0 (gates 90.63/93.78/96.55).
