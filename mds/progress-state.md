@@ -22,7 +22,7 @@ P2.S4.1 done (sbx1 2026-10-27): MCP Guardian — mock HotelToolsV1 → V2 (3 ren
 
 ## Next tasks
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
-2. **P1.W2.8** — [~] OWNER: populate verifier/hidden_cases/heldout/, sha256sum > SHA256SUMS (docs/benchmark.md)
+2. **P1.W2.8** — [~] OWNER (REQ-007): place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS
 3. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 + P2.S2.1 + P2.S3.1 + P2.S4.1 DONE; next P2.S5.1 OpenAI provider, in plan §5 order
 
 ## Open Requests
