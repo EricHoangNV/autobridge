@@ -2,7 +2,7 @@
 
 ## Current State
 
-P2.S3.1 done (sbx1 2026-10-27): DiscoveryResult static import — reserved schema + `POST /discovery/import`; connectors page lists `discovered / needs confirmation / authorized / connected / healing` from a static fixture; state moves only via explicit endpoints (422 otherwise). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+P2.S4.1 done (sbx1 2026-10-27): MCP Guardian — mock HotelToolsV1 → V2 (3 renames + 1 addition), declarative catalog snapshot/diff, pinned-mapping compatibility gateway, pinned-consumer replay Complete via gateway vs Blocked via plain rediscovery, unsafe mappings rejected. New mcp-hotel :8115 on engine-net only. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - W1 Foundations: scaffold, compose, ConnectorSpec, schemas, DB models, jobs, evidence, LLMProvider, fakes, e2e harness base
@@ -16,14 +16,14 @@ P2.S3.1 done (sbx1 2026-10-27): DiscoveryResult static import — reserved schem
   - W9 E2E: full harness, make e2e, CI unit→smoke→e2e→demo chain
   - W10 Packaging: README/docs complete, make demo 6/6 live; P1.W10.3 codeable done (owner step below)
   - REQ-001 operator name on approvals; REQ-002 broadcast UI (5 slices); REQ-003 trust-boundary wording + contracts; REQ-004 schemathesis contract; REQ-005 model-id literals; REQ-006 money float rejection — all DONE
-  - P2.S1.1 LegacyStay third vendor (bootstrap + rename repair, frontier 0); P2.S2.1 Simulated Edge target (signed-only edge worker, isolated edge-net, live negative + signed execution green); P2.S3.1 DiscoveryResult static import (reserved schema, explicit-endpoint lifecycle, 2 live e2e green)
-- Tests: 2125 pass / 0 fail (autobridge 1792 @ 90%+ gate, verifier 92 @ ~93.8%, simulators 241 @ ~96.7%) + ui 130 pass; make lint (ruff+import-linter, 2 contracts KEPT) + typecheck green; e2e test_s3 5/5 (2 live) green against compose stack this run
+  - P2.S1.1 LegacyStay third vendor (bootstrap + rename repair, frontier 0); P2.S2.1 Simulated Edge target (signed-only edge worker, isolated edge-net, live negative + signed execution green); P2.S3.1 DiscoveryResult static import (reserved schema, explicit-endpoint lifecycle, 2 live e2e green); P2.S4.1 MCP Guardian (pinned gateway replay Complete vs rediscovery Blocked, unsafe mappings rejected, 2 live e2e green)
+- Tests: 2159 pass / 0 fail (autobridge 1826 @ 91.15% gate, verifier 92 @ ~93.8%, simulators 241 @ ~96.7%) + ui 130 pass; make lint (ruff+import-linter, 2 contracts KEPT) + typecheck green; e2e test_s4 6/6 (2 live) green against compose stack this run
 - Stack: compose stack up (e2e fixture used the live stack green)
 
 ## Next tasks
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: populate verifier/hidden_cases/heldout/, sha256sum > SHA256SUMS (docs/benchmark.md)
-3. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 + P2.S2.1 + P2.S3.1 DONE; next P2.S4.1 MCP Guardian, in plan §5 order
+3. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 + P2.S2.1 + P2.S3.1 + P2.S4.1 DONE; next P2.S5.1 OpenAI provider, in plan §5 order
 
 ## Open Requests
 None — REQ-006 was the last open request (resolved 2026-10-27).
