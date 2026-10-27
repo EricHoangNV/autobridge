@@ -96,7 +96,7 @@
 
 #### W10 — Packaging + demo (plan §4 W10, §6)
 - [x] P1.W10.1 README complete, `docs/` pages complete (`architecture`, `connector-spec`, `safety-model`, `benchmark`, `demo`), `.env.example` complete
-- [ ] P1.W10.2 `make demo` driving the six demo steps of plan §6 through the control API; its output is the same evidence the UI renders
+- [>] P1.W10.2 `make demo` — in progress: sbx1 since 2026-10-27 09:52 driving the six demo steps of plan §6 through the control API; its output is the same evidence the UI renders
 - [ ] P1.W10.3 HUMAN — Clean-clone check (`git clone && make up && make test && make e2e && make demo` on a machine with only Docker and `uv`) and the labelled demo recording
 
 ### Phase 2 — Stretch (plan §5; entry only after W1–W6 green and the stop rule holds at end of Nov 1)
