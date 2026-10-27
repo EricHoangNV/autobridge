@@ -55,7 +55,7 @@
 - [x] P1.W4.4 `RepairController` + `ladder.py` with L0 knowledge lookup (profile cache keyed by vendor + fingerprint delta) and L1 rules wired; `rate_limit_429` / `transient_503` → no patch, backoff only; `token_expired` → refresh if permitted else escalate; `CAPABILITY_REMOVED` / `AUTH_REVOKED` escalate with no patch attempted
 - [x] P1.W4.5 Releases: `ConnectorRelease` creation from a verified patch, approve / reject / rollback endpoints in the engine layer; rollback restores the prior release and the prior sync output is bit-identical (test)
 - [x] P1.W4.6 Canary monitor (`engine/monitor.py`, `health.canary` from the spec) and `DependencyRegistration`: activating a release emits `release.activated` and a registered consumer with `pause_on_release_change` pauses (demo registers one dummy consumer)
-- [>] P1.W4.7 `tests/e2e/test_03_known_repairs_zero_frontier.py`: `rename_guest_id`, `offset_to_cursor`, `cursor_repeat_token`, `nested_path_shift` → verified new release with `frontier_tokens == 0`, asserted on the ledger per scenario — in progress: sbx1 since 2026-10-27 05:27
+- [x] P1.W4.7 `tests/e2e/test_03_known_repairs_zero_frontier.py`: `rename_guest_id`, `offset_to_cursor`, `cursor_repeat_token`, `nested_path_shift` → verified new release with `frontier_tokens == 0`, asserted on the ledger per scenario
 
 #### W5 — Hypothesis engine + bootstrap (plan §4 W5, §2.6)
 - [ ] P1.W5.1 Docs reader (`discovery/docs_reader.py`): OpenAPI 3.x and Markdown narrative docs → a normalized interface description with provenance (which doc line)

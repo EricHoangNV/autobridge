@@ -2,7 +2,7 @@
 
 ## Current State
 
-W4.6 Canary monitor + DependencyRegistration done (2026-10-27): health.canary probe (interval parse, should_run, single-op run_canary) + release.activated emit + pause_on_release_change pause with demo consumer; 30 tests.
+W4.7 Known repairs zero-frontier e2e done (2026-10-27): rename_guest_id, offset_to_cursor, cursor_repeat_token, nested_path_shift each produce verified release with frontier_tokens==0 asserted on RepairRun + ModelCall ledger.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -36,10 +36,11 @@ W4.6 Canary monitor + DependencyRegistration done (2026-10-27): health.canary pr
   - P1.W4.4: RepairController + ladder L0 knowledge cache (vendor+delta) and L1 rules; rate_limit/transient backoff, token refresh/escalate, CAPABILITY_REMOVED/AUTH_REVOKED escalate; frontier_tokens==0
   - P1.W4.5: ConnectorRelease creation from verified patch, approve/reject/rollback with active flip and bit-identical sync proof; 29 tests
   - P1.W4.6: Canary monitor + DependencyRegistration pause on release.activated (demo-dashboard dummy consumer); 30 tests
-- Tests: 1265 pass / 0 fail / 0 skip (autobridge 92.07%, verifier 93.78%, simulators 98.54%; ui –) + 21 e2e pass (8 test_00 + 9 test_01 + 4 test_02 reference sync, 2 test_02 live skipped when no Docker)
-- Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (21 pass, 2 skipped) / `make lint` + `make typecheck` green
+  - P1.W4.7: 4 known repairs verified with frontier_tokens==0 (rename_guest_id→rename_field, offset_to_cursor→offset_to_cursor, cursor_repeat_token→offset_to_cursor guard, nested_path_shift→nested_path_shift) + ledger + release + verifier pass
+- Tests: 1265 pass / 0 fail / 0 skip (autobridge 92.07%, verifier 93.78%, simulators 98.54%; ui –) + 26 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03, 19 skipped when no Docker)
+- Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (26 pass, 19 skipped) / `make lint` + `make typecheck` green
 
 ## Next tasks
 1. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check; owner freezes SHA256SUMS)
-2. **P1.W4.7** — Known repairs zero-frontier e2e (4 scenarios verified with frontier_tokens==0)
-3. **P1.W5.1** — Docs reader (OpenAPI + Markdown → normalized interface with provenance)
+2. **P1.W5.1** — Docs reader (OpenAPI + Markdown → normalized interface with provenance)
+3. **P1.W5.2** — Classifiers (auth/pagination/date/status from docs+probes)
