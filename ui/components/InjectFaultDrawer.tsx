@@ -10,8 +10,8 @@ function getBaseUrl(): string {
 }
 
 const TARGET_OPTIONS = [
-  { value: "sim-atlas", label: "sim-atlas (AtlasPMS)" },
-  { value: "sim-harbor", label: "sim-harbor (HarborPMS)" },
+  { value: "sim-atlas", label: "AtlasPMS (sim-atlas)" },
+  { value: "sim-harbor", label: "HarborPMS (sim-harbor)" },
   { value: "atlas", label: "atlas" },
   { value: "harbor", label: "harbor" },
 ];
@@ -29,7 +29,12 @@ const SCENARIO_OPTIONS = [
   "token_revoked",
   "rate_limit_429",
   "transient_503",
+  "invalid_patch_trap",
 ];
+
+// Scenarios the deterministic ladder is not expected to fix on its own:
+// auth is revoked or the endpoint is gone, so the run escalates to a human.
+const ESCALATING_SCENARIOS = new Set(["endpoint_removed", "token_revoked"]);
 
 type Props = {
   defaultOpen?: boolean;
@@ -84,42 +89,42 @@ export function InjectFaultDrawer({ defaultOpen, onInjected }: Props) {
   }
 
   return (
-    <div data-testid="inject-fault-drawer" className="border bg-band">
+    <div data-testid="inject-fault-drawer" className="border-[1.5px] border-dashed border-off bg-band">
       <button
         data-testid="inject-fault-toggle"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between border-b bg-amber-50 px-4 py-3 text-left hover:bg-amber-100/70"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
         aria-expanded={open}
       >
-        <span className="flex items-center gap-2">
-          <span className="inline-flex bg-amber-200 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-900">
+        <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span className="border border-rule px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-ink-2">
             Demo
           </span>
-          <span className="text-sm font-semibold text-ink">Inject Fault</span>
-          <span className="border border-amber-200 bg-band px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
-            labelled demo action
-          </span>
+          <span className="text-[15px] font-bold text-ink">Inject fault</span>
+          <span className="font-mono text-xs text-ink-2">labelled demo action</span>
         </span>
-        <span className="text-xs text-ink-2">{open ? "Hide" : "Show"}</span>
+        <span className="shrink-0 font-mono text-xs text-ink-2">{open ? "Hide" : "Show"}</span>
       </button>
 
       {open ? (
-        <div data-testid="inject-fault-panel" className="space-y-3 px-4 py-4">
-          <p className="text-xs text-ink-2">
-            Proxies to the simulator admin <code className="bg-ground px-1 py-0.5 font-mono text-[11px]">POST /admin/scenario</code> via the
-            control plane <code className="bg-ground px-1 py-0.5 font-mono text-[11px]">POST /demo/inject-fault</code>. Every request is
-            labelled <code className="bg-ground px-1 py-0.5 font-mono text-[11px]">demo: true</code> and{" "}
-            <code className="bg-ground px-1 py-0.5 font-mono text-[11px]">labelled: true</code>.
+        <div data-testid="inject-fault-panel" className="space-y-4 border-t border-rule px-4 py-4">
+          <p className="text-[15px] font-bold text-ink">Inject a fault</p>
+          <p className="text-sm text-ink-2">
+            Demo only. This changes the simulator, never the engine. Proxies to the simulator admin{" "}
+            <code className="bg-ground px-1 py-0.5 font-mono text-xs">POST /admin/scenario</code> via the
+            control plane <code className="bg-ground px-1 py-0.5 font-mono text-xs">POST /demo/inject-fault</code>.
+            Every request is labelled <code className="bg-ground px-1 py-0.5 font-mono text-xs">demo: true</code> and{" "}
+            <code className="bg-ground px-1 py-0.5 font-mono text-xs">labelled: true</code>.
           </p>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-ink-2">Target</span>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-bold text-ink">Target</span>
               <select
                 data-testid="inject-fault-target"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                className="w-full border border-rule px-2 py-1.5 text-xs"
+                className="w-full appearance-none border-[1.5px] border-off bg-ground px-3 py-2.5 font-mono text-sm text-ink focus:border-live focus:outline-none"
               >
                 {TARGET_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -129,49 +134,62 @@ export function InjectFaultDrawer({ defaultOpen, onInjected }: Props) {
               </select>
             </label>
 
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-ink-2">Scenario</span>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-bold text-ink">Scenario</span>
               <select
                 data-testid="inject-fault-scenario"
                 value={scenarioId}
                 onChange={(e) => setScenarioId(e.target.value)}
-                className="w-full border border-rule px-2 py-1.5 text-xs"
+                className="w-full appearance-none border-[1.5px] border-off bg-ground px-3 py-2.5 font-mono text-sm text-ink focus:border-live focus:outline-none"
               >
                 {SCENARIO_OPTIONS.map((s) => (
                   <option key={s} value={s}>
                     {s}
+                    {ESCALATING_SCENARIOS.has(s) ? " · escalates" : ""}
                   </option>
                 ))}
               </select>
             </label>
 
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-ink-2">Seed (optional)</span>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-bold text-ink">Seed (optional)</span>
               <input
                 data-testid="inject-fault-seed"
                 value={seed}
                 onChange={(e) => setSeed(e.target.value)}
                 placeholder="e.g. 42"
-                className="w-full border border-rule px-2 py-1.5 font-mono text-xs"
+                className="w-full border-[1.5px] border-off bg-ground px-3 py-2.5 font-mono text-sm text-ink placeholder:text-ink-2/60 focus:border-live focus:outline-none"
               />
             </label>
           </div>
+
+          <p className="font-mono text-xs text-ink-2">
+            {ESCALATING_SCENARIOS.has(scenarioId)
+              ? `${scenarioId} usually escalates to a human.`
+              : `${scenarioId} is a deterministic repair: expect rung L0/L1 and 0 frontier tokens.`}
+          </p>
 
           <button
             data-testid="inject-fault-submit"
             onClick={handleInject}
             disabled={busy}
-            className="bg-live px-4 py-2 text-sm font-medium text-live-ink hover:opacity-90 disabled:opacity-50"
+            className="btn w-full text-center !text-base disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           >
-            {busy ? "Injecting…" : "Inject fault"}
+            {busy ? "Injecting…" : `Inject ${scenarioId}`}
           </button>
 
           {result ? (
             <div
               data-testid={result.ok ? "inject-fault-success" : "inject-fault-error"}
-              className={`border px-3 py-2 ${result.ok ? "border-emerald-200 bg-emerald-50" : "border-stop bg-band"}`}
+              className={`border px-3 py-2 ${
+                result.ok ? "border-ink bg-ground" : "border-stop bg-band"
+              }`}
             >
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-ink">
+              <pre
+                className={`max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs ${
+                  result.ok ? "text-ink" : "text-stop"
+                }`}
+              >
                 {result.text}
               </pre>
             </div>

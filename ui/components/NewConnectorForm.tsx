@@ -29,6 +29,12 @@ export type CreateConnectorPayload = {
 
 type SubmitState = "idle" | "creating" | "building" | "done" | "error";
 
+const FIELD_LABEL = "block text-[15px] font-bold text-ink";
+const FIELD_HINT = "mt-1.5 block text-sm text-ink-2";
+const TEXT_INPUT =
+  "mt-2 w-full border-[1.5px] border-off bg-ground px-3.5 py-3 font-mono text-base text-ink placeholder:text-ink-2/60 focus:border-live focus:outline-none";
+const FIELD_ERROR = "mt-1.5 text-sm text-stop";
+
 export function NewConnectorForm() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -173,11 +179,17 @@ export function NewConnectorForm() {
 
   return (
     <div data-testid="new-connector-form-wrap">
-      <form data-testid="new-connector-form" onSubmit={handleSubmit} noValidate className="space-y-6">
-        {/* Name */}
+      <form
+        id="build-connector-form"
+        data-testid="new-connector-form"
+        onSubmit={handleSubmit}
+        noValidate
+        className="space-y-7"
+      >
+        {/* Vendor name */}
         <div>
-          <label htmlFor="connector-name" className="block text-sm font-medium text-ink-2">
-            Connector name <span className="text-stop">*</span>
+          <label htmlFor="connector-name" className={FIELD_LABEL}>
+            Vendor name <span className="text-live" aria-hidden="true">*</span>
           </label>
           <input
             id="connector-name"
@@ -185,22 +197,95 @@ export function NewConnectorForm() {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Atlas PMS — Staging"
-            className="mt-1 w-full border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
+            placeholder="e.g. LegacyStay"
+            autoComplete="off"
+            className={TEXT_INPUT}
             aria-invalid={Boolean(fieldErrors.name)}
             aria-describedby={fieldErrors.name ? "error-name" : undefined}
           />
           {fieldErrors.name ? (
-            <p id="error-name" data-testid="error-name" className="mt-1 text-xs text-stop">
+            <p id="error-name" data-testid="error-name" className={FIELD_ERROR}>
               {fieldErrors.name}
+            </p>
+          ) : null}
+        </div>
+
+        {/* Docs */}
+        <div>
+          <label htmlFor="docs-url" className={FIELD_LABEL}>
+            Docs <span className="text-live" aria-hidden="true">*</span>
+          </label>
+          <div className="mt-2 grid grid-cols-1 gap-2.5">
+            <div className="flex items-center gap-2.5">
+              <input
+                id="docs-url"
+                data-testid="input-docs-url"
+                type="url"
+                value={docsUrl}
+                onChange={(e) => setDocsUrl(e.target.value)}
+                placeholder="http://docs.vendor.local/api.md"
+                className={TEXT_INPUT + " mt-0 flex-1"}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="btn quiet shrink-0 !px-4 !py-3 !text-[15px]"
+              >
+                Upload a file
+              </button>
+            </div>
+            <input
+              id="docs-file"
+              data-testid="input-docs-file"
+              ref={fileInputRef}
+              type="file"
+              accept=".md,.txt,.json,.yaml,.yml,.html,.pdf"
+              onChange={handleFileChange}
+              className="sr-only"
+              aria-label="Docs file upload"
+            />
+            {fileName ? (
+              <p className="flex items-center gap-3 font-mono text-sm text-ink">
+                <span data-testid="file-name">
+                  {fileName} {fileContent ? `(${fileContent.length} chars)` : ""}
+                </span>
+                <button
+                  type="button"
+                  data-testid="clear-file"
+                  onClick={() => {
+                    setFileName(null);
+                    setFileContent(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  className="link !text-[13px]"
+                >
+                  Clear
+                </button>
+              </p>
+            ) : null}
+            <textarea
+              id="docs-text"
+              data-testid="input-docs-text"
+              value={docsText}
+              onChange={(e) => setDocsText(e.target.value)}
+              placeholder="Or paste the vendor API documentation here…"
+              rows={5}
+              className={TEXT_INPUT + " mt-0 text-sm"}
+            />
+          </div>
+          <span className={FIELD_HINT}>Markdown, or OpenAPI 3 as YAML or JSON. Docs can be wrong; probes check them.</span>
+          {docsText ? <p className="mt-1 font-mono text-xs text-ink-2">{docsText.length} characters</p> : null}
+          {fieldErrors.docs ? (
+            <p data-testid="error-docs" className={FIELD_ERROR}>
+              {fieldErrors.docs}
             </p>
           ) : null}
         </div>
 
         {/* Sandbox base URL */}
         <div>
-          <label htmlFor="connector-base-url" className="block text-sm font-medium text-ink-2">
-            Sandbox base URL <span className="text-stop">*</span>
+          <label htmlFor="connector-base-url" className={FIELD_LABEL}>
+            Sandbox base URL <span className="text-live" aria-hidden="true">*</span>
           </label>
           <input
             id="connector-base-url"
@@ -208,9 +293,9 @@ export function NewConnectorForm() {
             type="url"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="http://sim-atlas:8000"
+            placeholder="http://sim-legacystay:8000"
             list="base-url-suggestions"
-            className="mt-1 w-full border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
+            className={TEXT_INPUT}
             aria-invalid={Boolean(fieldErrors.base_url)}
             aria-describedby={fieldErrors.base_url ? "error-base-url" : undefined}
           />
@@ -219,11 +304,8 @@ export function NewConnectorForm() {
               <option key={u} value={u} />
             ))}
           </datalist>
-          <p className="mt-1 text-xs text-ink-2">
-            Points at the vendor sandbox. Suggestions: {BASE_URL_SUGGESTIONS.join(", ")}
-          </p>
           {fieldErrors.base_url ? (
-            <p id="error-base-url" data-testid="error-base-url" className="mt-1 text-xs text-stop">
+            <p id="error-base-url" data-testid="error-base-url" className={FIELD_ERROR}>
               {fieldErrors.base_url}
             </p>
           ) : null}
@@ -231,11 +313,10 @@ export function NewConnectorForm() {
 
         {/* Credential env-ref picker */}
         <div>
-          <label htmlFor="connector-credential-ref" className="block text-sm font-medium text-ink-2">
-            Credential env-ref <span className="text-stop">*</span>
+          <label htmlFor="connector-credential-ref" className={FIELD_LABEL}>
+            Credential <span className="text-live" aria-hidden="true">*</span>
           </label>
-          <p className="mt-1 text-xs text-ink-2">Env key name whose value holds the secret; the secret value is never stored in the spec.</p>
-          <div className="mt-1 flex gap-2">
+          <div className="mt-2 flex gap-2.5">
             <select
               id="connector-credential-ref"
               data-testid="input-credential-ref"
@@ -248,7 +329,7 @@ export function NewConnectorForm() {
                   setCredentialRef(e.target.value);
                 }
               }}
-              className="flex-1 border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
+              className={TEXT_INPUT + " mt-0 flex-1 appearance-none"}
               aria-describedby={fieldErrors.credential_ref ? "error-credential-ref" : undefined}
             >
               {KNOWN_CREDENTIAL_REFS.map((k) => (
@@ -266,13 +347,16 @@ export function NewConnectorForm() {
                 onChange={(e) => setCustomCredential(e.target.value)}
                 placeholder="e.g. MY_API_KEY"
                 pattern="^[A-Z][A-Z0-9_]*$"
-                className="flex-1 border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
+                className={TEXT_INPUT + " mt-0 flex-1"}
                 aria-label="Custom credential env-ref"
               />
             ) : null}
           </div>
+          <span className={FIELD_HINT}>
+            An environment variable name. The value never reaches the browser or a model prompt.
+          </span>
           {fieldErrors.credential_ref ? (
-            <p id="error-credential-ref" data-testid="error-credential-ref" className="mt-1 text-xs text-stop">
+            <p id="error-credential-ref" data-testid="error-credential-ref" className={FIELD_ERROR}>
               {fieldErrors.credential_ref}
             </p>
           ) : null}
@@ -280,136 +364,57 @@ export function NewConnectorForm() {
 
         {/* Target entities */}
         <fieldset>
-          <legend className="block text-sm font-medium text-ink-2">
-            Target entities <span className="text-stop">*</span>
+          <legend className={FIELD_LABEL}>
+            Entities <span className="text-live" aria-hidden="true">*</span>
           </legend>
-          <p className="mt-1 text-xs text-ink-2">Canonical entities this connector will sync.</p>
-          <div className="mt-2 flex gap-4">
-            {ENTITY_OPTIONS.map((entity) => (
-              <label key={entity} className="inline-flex items-center gap-2 text-sm">
-                <input
-                  data-testid={`checkbox-entity-${entity}`}
-                  type="checkbox"
-                  checked={targetEntities.includes(entity)}
-                  onChange={() => toggleEntity(entity)}
-                  className="border-rule text-ink focus:ring-live"
-                />
-                {entity}
-              </label>
-            ))}
+          <div className="mt-2 flex flex-wrap gap-2.5">
+            {ENTITY_OPTIONS.map((entity) => {
+              const checked = targetEntities.includes(entity);
+              return (
+                <label
+                  key={entity}
+                  className={`flex cursor-pointer items-center gap-2.5 border-[1.5px] px-4 py-2.5 font-mono text-[15px] ${
+                    checked ? "border-ink text-ink" : "border-off text-ink-2"
+                  }`}
+                >
+                  <input
+                    data-testid={`checkbox-entity-${entity}`}
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleEntity(entity)}
+                    className="h-4 w-4 accent-live"
+                  />
+                  {entity}
+                </label>
+              );
+            })}
           </div>
           {fieldErrors.target_entities ? (
-            <p data-testid="error-target-entities" className="mt-1 text-xs text-stop">
+            <p data-testid="error-target-entities" className={FIELD_ERROR}>
               {fieldErrors.target_entities}
             </p>
           ) : null}
         </fieldset>
 
-        {/* Docs section */}
-        <fieldset className="border border-rule p-4">
-          <legend className="px-1 text-sm font-medium text-ink-2">Vendor docs</legend>
-          <p className="text-xs text-ink-2">Provide at least one: file upload, URL, or pasted text. File content takes precedence.</p>
-
-          {/* File upload */}
-          <div className="mt-3">
-            <label htmlFor="docs-file" className="block text-xs font-medium text-ink-2">
-              Docs file upload
-            </label>
-            <div className="mt-1 flex items-center gap-2">
-              <input
-                id="docs-file"
-                data-testid="input-docs-file"
-                ref={fileInputRef}
-                type="file"
-                accept=".md,.txt,.json,.yaml,.yml,.html,.pdf"
-                onChange={handleFileChange}
-                className="block text-sm text-ink-2 file:mr-3 file:border file:border-rule file:bg-ground file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
-              />
-              {fileName ? (
-                <span data-testid="file-name" className="text-xs text-ink-2">
-                  {fileName} {fileContent ? `(${fileContent.length} chars)` : ""}
-                </span>
-              ) : null}
-              {fileName ? (
-                <button
-                  type="button"
-                  data-testid="clear-file"
-                  onClick={() => {
-                    setFileName(null);
-                    setFileContent(null);
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                  }}
-                  className="text-xs text-ink-2 hover:text-ink underline"
-                >
-                  Clear
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          {/* Docs URL */}
-          <div className="mt-3">
-            <label htmlFor="docs-url" className="block text-xs font-medium text-ink-2">
-              Docs URL
-            </label>
-            <input
-              id="docs-url"
-              data-testid="input-docs-url"
-              type="url"
-              value={docsUrl}
-              onChange={(e) => setDocsUrl(e.target.value)}
-              placeholder="https://docs.example.com/api"
-              className="mt-1 w-full border border-rule px-3 py-2 text-sm shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
-            />
-          </div>
-
-          {/* Docs text */}
-          <div className="mt-3">
-            <label htmlFor="docs-text" className="block text-xs font-medium text-ink-2">
-              Docs text (paste)
-            </label>
-            <textarea
-              id="docs-text"
-              data-testid="input-docs-text"
-              value={docsText}
-              onChange={(e) => setDocsText(e.target.value)}
-              placeholder="Paste vendor API documentation here…"
-              rows={6}
-              className="mt-1 w-full border border-rule px-3 py-2 font-mono text-xs shadow-sm focus:border-live focus:outline-none focus:ring-1 focus:ring-live"
-            />
-            {docsText ? <p className="mt-1 text-xs text-ink-2">{docsText.length} characters</p> : null}
-          </div>
-
-          {fieldErrors.docs ? (
-            <p data-testid="error-docs" className="mt-2 text-xs text-stop">
-              {fieldErrors.docs}
-            </p>
-          ) : null}
-        </fieldset>
-
         {/* Submit */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-4 border-t border-rule pt-6">
           <button
             type="submit"
             data-testid="submit-build"
             disabled={isBusy}
-            className="bg-live px-4 py-2 text-sm font-medium text-live-ink hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitState === "creating"
               ? "Creating connector…"
               : submitState === "building"
                 ? "Starting build…"
-                : "Create & start build"}
+                : "Start build"}
           </button>
-          <a
-            href="/connectors"
-            data-testid="cancel-link"
-            className="text-sm text-ink-2 hover:text-ink hover:underline"
-          >
+          <a href="/connectors" data-testid="cancel-link" className="link">
             Cancel
           </a>
           {isBusy ? (
-            <span data-testid="busy-indicator" className="text-xs text-ink-2">
+            <span data-testid="busy-indicator" className="font-mono text-sm text-ink-2">
               Please wait…
             </span>
           ) : null}
@@ -418,11 +423,11 @@ export function NewConnectorForm() {
 
       {/* Error */}
       {errorMsg ? (
-        <div data-testid="submit-error" className="mt-4 border border-stop bg-band px-4 py-3 text-sm text-stop">
+        <div data-testid="submit-error" className="mt-6 border border-stop bg-band px-4 py-3 text-[15px] text-stop">
           {errorMsg}
           {result?.connectorId ? (
             <div className="mt-2">
-              Connector <code className="bg-band px-1 py-0.5 text-xs">{result.connectorId}</code> was created.{" "}
+              Connector <code className="bg-ground px-1 py-0.5 font-mono text-xs">{result.connectorId}</code> was created.{" "}
               <a href={`/connectors/${result.connectorId}`} className="underline">
                 View connector
               </a>
@@ -433,26 +438,21 @@ export function NewConnectorForm() {
 
       {/* Success */}
       {submitState === "done" && result ? (
-        <div data-testid="submit-success" className="mt-4 border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          <p className="font-medium">Connector created and build started.</p>
-          <p className="mt-1">
-            Connector: <code className="bg-band px-1 py-0.5 text-xs">{result.connectorId}</code>
-            {result.jobId ? (
-              <>
-                {" "}
-                · Job <code className="bg-band px-1 py-0.5 text-xs">{result.jobId}</code>
-              </>
-            ) : null}
+        <div data-testid="submit-success" className="mt-6 border border-ink bg-band px-5 py-4 text-[15px] text-ink">
+          <p className="font-bold">Connector created and build started.</p>
+          <p className="mt-1 font-mono text-sm text-ink-2">
+            Connector {result.connectorId}
+            {result.jobId ? <> · job {result.jobId}</> : null}
           </p>
-          <div className="mt-2 flex gap-3">
+          <div className="mt-3 flex flex-wrap gap-4">
             <a
               data-testid="success-view-connector"
               href={`/connectors/${result.connectorId}`}
-              className="bg-emerald-900 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-800"
+              className="btn !px-4 !py-2.5 !text-[15px]"
             >
               View connector
             </a>
-            <a data-testid="success-view-connectors" href="/connectors" className="text-xs underline">
+            <a data-testid="success-view-connectors" href="/connectors" className="link self-center">
               Back to list
             </a>
           </div>

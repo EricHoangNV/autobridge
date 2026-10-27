@@ -36,4 +36,19 @@ describe("InjectFaultDrawer", () => {
     render(<InjectFaultDrawer defaultOpen />);
     expect(screen.getByTestId("inject-fault-seed")).toBeInTheDocument();
   });
+
+  it("uses the dashed broadcast drawer with demo-only copy", () => {
+    render(<InjectFaultDrawer defaultOpen />);
+    const drawer = screen.getByTestId("inject-fault-drawer");
+    expect(drawer.className).toMatch(/border-dashed/);
+    expect(screen.getByText("Inject a fault")).toBeInTheDocument();
+    expect(screen.getByTestId("inject-fault-panel").textContent).toContain("never the engine");
+  });
+
+  it("labels the submit button with the chosen scenario", () => {
+    render(<InjectFaultDrawer defaultOpen />);
+    expect(screen.getByTestId("inject-fault-submit").textContent).toContain("rename_guest_id");
+    const select = screen.getByTestId("inject-fault-scenario") as HTMLSelectElement;
+    expect(select.textContent).toContain("invalid_patch_trap");
+  });
 });
