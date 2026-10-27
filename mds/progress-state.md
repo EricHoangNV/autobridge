@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W5.1 Docs reader done (2026-10-27): OpenAPI 3.x + Markdown → InterfaceDescription with per-field provenance; 42 tests, 93% coverage.
+P1.W5.2 Classifiers done (2026-10-27): auth/pagination/date semantics/status vocabulary from docs+first probes; 45 tests.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -38,10 +38,11 @@ P1.W5.1 Docs reader done (2026-10-27): OpenAPI 3.x + Markdown → InterfaceDescr
   - P1.W4.6: Canary monitor + DependencyRegistration pause on release.activated (demo-dashboard dummy consumer); 30 tests
   - P1.W4.7: 4 known repairs verified with frontier_tokens==0 (rename_guest_id→rename_field, offset_to_cursor→offset_to_cursor, cursor_repeat_token→offset_to_cursor guard, nested_path_shift→nested_path_shift) + ledger + release + verifier pass
   - P1.W5.1: Docs reader (OpenAPI + Markdown → normalized InterfaceDescription with provenance per field, 42 tests, 93%)
-- Tests: 1307 pass / 0 fail / 0 skip (autobridge 92.2%, verifier 93.78%, simulators 98.54%; ui –) + 26 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03, 19 skipped when no Docker)
+  - P1.W5.2: Classifiers (auth/pagination/date semantics/status vocabulary from docs+first probes, 45 tests)
+- Tests: 1352 pass / 0 fail / 0 skip (autobridge 92.23%, verifier 93.78%, simulators 98.54%; ui –) + 26 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03, 19 skipped when no Docker)
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (26 pass, 19 skipped) / `make lint` + `make typecheck` green
 
 ## Next tasks
 1. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check; owner freezes SHA256SUMS)
-2. **P1.W5.2** — Classifiers (auth/pagination/date/status from docs+probes)
-3. **P1.W5.3** — Hypothesis model + enumerator families
+2. **P1.W5.3** — Hypothesis model + enumerator families (date/pagination/amount/status, evidence-linked)
+3. **P1.W5.4** — ProbeSelector (picks GET that best splits hypotheses by information gain, budgeted)

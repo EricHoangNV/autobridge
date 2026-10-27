@@ -968,3 +968,28 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 
 Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 
+## P1.W5.2 Classifiers
+
+**Date:** 2026-10-27
+**Ref:** plan §4 W5, §2.6 Hypothesis engine (P1.W5.2)
+
+**What was done:**
+- Created `src/autobridge/discovery/classifiers.py` (730 lines): deterministic classifiers for auth (bearer/api_key/none/unknown with probe 401/200 refinement), pagination per operation (offset/cursor/page/none from docs hint + probe response keys, Harbor wrong-example override), date semantics (arrival_date/property_local_date, business_date cutoff 04:00, utc_instant, ambiguous `date` high-confidence flag, probe duplication check), status vocabulary (clear vs opaque H1..H5 with harbor map, enum parsing from schema/status_notes + probe samples), plus DiscoveryClassification bundle and classify_all
+- Created `tests/unit/test_autobridge_discovery_classifiers.py` (45 tests): auth bearer/api_key/none/unknown/basic/oauth2 + probe 401/200/unauthorized paths, pagination cursor/offset/page/none/probe override/probe confirm/real fixtures, date Harbor ambiguous+cutoff+business_date high+probe confirm+real fixtures, status clear/opaque/probe/schema/high-conf/real fixtures, classify_all bundle+probe, helpers
+
+**Key decisions:**
+- Docs-first with probe override (not replacement): pagination probe response keys `next_cursor`/`next_offset` authoritative for Harbor offset→cursor correction; auth probe 401 only marks probe_refined when docs already none, unknown→bearer promotion kept; date probe confirms ambiguous duplication but docs already flag it
+- Evidence as tuple[Provenance] per classification so W5.3 hypotheses can link to ≥1 evidence record (plan §2.6 requirement)
+- No LLM, no verifier/simulators imports; model follows docs_reader provenance pattern; all classifiers deterministic with high/medium/low confidence
+
+**Files changed:**
+- `src/autobridge/discovery/classifiers.py` — new
+- `tests/unit/test_autobridge_discovery_classifiers.py` — new, 45 tests
+
+**Notes for next iteration:**
+- Next: P1.W5.3 Hypothesis model + HypothesisEnumerator families (date/pagination/amount/status, every hypothesis links to evidence); classifiers provide evidence for enumerator input
+- Directives §3 ladder satisfied (no frontier calls, deterministic), §5 coverage 92.23% passes gate; no e2e file for W5.2 (workstream e2e is P1.W5.7 test_04_bootstrap)
+- Real fixtures validated: Atlas bearer/offset/clear, Harbor none/cursor/opaque H1..H5
+
+Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
