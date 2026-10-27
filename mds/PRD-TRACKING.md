@@ -26,7 +26,7 @@
 - [x] P1.W1.7 `EvidenceStore` (SQLite/JSONL, `src/autobridge/evidence/`) with `EvidenceRecord` kinds and `parent_ids[]` chains; `redact.py` that strips every credential-ref value from a fixture prompt (test with planted secrets)
 - [x] P1.W1.8 `LLMProvider` Protocol (`src/autobridge/llm/provider.py`), `AnthropicProvider` with frontier and small tiers (model ids in config), `OpenAIProvider` stub behind the same interface, `Budget(max_frontier_tokens, max_small_tokens, max_calls, max_wall)` raising `BudgetExhausted` at the ceiling, `ModelCall` ledger with purpose; a fake provider for tests
 - [x] P1.W1.9 Test fakes for the Docker sandbox (`RuntimeTarget` fake) and the coding-agent CLI (fake `claude -p` with usage output) so the control/SSE layer and bench drivers can reach 90% later (plan §9)
-- [>] P1.W1.10 `tests/e2e/conftest.py` first cut (compose up, wait on `readyz`, teardown) + `tests/e2e/test_00_stack_up.py`; `docs/architecture.md` first pass — in progress: sbx1 since 2026-10-27 03:00
+- [x] P1.W1.10 `tests/e2e/conftest.py` first cut (compose up, wait on `readyz`, teardown) + `tests/e2e/test_00_stack_up.py`; `docs/architecture.md` first pass
 
 #### W2 — Simulators + verifier / oracle (plan §4 W2, §2.7, §2.8)
 - [ ] P1.W2.1 `simulators/common`: seeded generator for properties, reservations, folios with late postings across the business date, duplicates / at-least-once delivery, nullable fields; same seed → byte-identical dataset (test)

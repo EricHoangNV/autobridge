@@ -297,3 +297,29 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Next: P1.W1.10 `tests/e2e/conftest.py` + `test_00_stack_up.py` + `docs/architecture.md` — will use `FakeDockerSandbox.can_reach` negative check as pattern for real sandbox test
 - W1.10 should add `make smoke` negative probes for bench harness later; no new Python package coverage risk
 - Learned: fake allowlist must be explicit in tests — document in BUILD-NOTES so W3.6 doesn't reintroduce permissive default
+
+## P1.W1.10 e2e harness + stack acceptance + architecture docs
+**Date:** 2026-10-27
+**Ref:** plan §4 W1 + §2.1/§2.2/§2.3/§3; task P1.W1.10. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `tests/e2e/conftest.py` (first cut): `SERVICE_PORTS` (8101–8108) and `SIM_ADMIN_PORTS`, `service_url`/`is_stack_up`/`wait_for_readyz`/`_docker_available`/`_compose_up`/`_compose_down` helpers, `e2e_stack` session fixture (compose up → wait readyz → yield → down, with `E2E_SKIP_STACK=1`/`E2E_KEEP_STACK=1`/`E2E_TIMEOUT` env, skips when Docker unavailable), `reset_simulator_state` autouse fixture (best-effort `POST /admin/reset`/`/admin/scenario` + `POST /demo/inject-fault` control proxy; no-op on W1)
+- New `tests/e2e/__init__.py` package marker so `tests.e2e.conftest` is importable from test modules
+- New `tests/e2e/test_00_stack_up.py` (8 tests): all services healthz/readyz 200 + status ok, readyz green + checks all ok, content-type json, control readyz shape, service-count vs compose.yaml (harness/compose drift guard)
+- New `docs/architecture.md` first pass: 9 sections covering principles, services/networks with trust-boundary probes, repo layout, data model (10 tables), ConnectorSpec v1 summary, LLM budgets/redaction, e2e harness (conftest fixtures, env vars, budget: 5 min full suite / 30s test_00), verification ladder, next work (W2–W10)
+
+**Key decisions:**
+- Keep Docker touchpoint to one fixture (`e2e_stack`) so tests stay independent and random-order safe; the fixture is session-scoped, so `docker compose up` runs once per `make e2e` invocation, not per test
+- Skip instead of fail when Docker missing: `make test` stays green on laptops, CI with Docker gets full coverage; `E2E_SKIP_STACK=1` assumes externally managed stack (CI after `make up`) and skips immediately if not reachable instead of waiting 120s
+- Duplicate `SERVICE_PORTS` guard via `test_service_count_matches_compose` — the harness and `compose.yaml` cannot drift silently; W9 will add more e2e files that reuse the same constant
+- Use `assert e2e_stack` in each test to satisfy ruff ARG001 while declaring the dependency; conftest's `reset_simulator_state` keeps one `# noqa: ARG001` where the dep is via autouse and the assert alone is not enough for ruff's analysis
+
+**Files changed:**
+- `tests/e2e/conftest.py` (new, 235 lines), `tests/e2e/__init__.py` (new), `tests/e2e/test_00_stack_up.py` (new, 8 tests)
+- `docs/architecture.md` (first pass, ~220 lines, replaces 3-line skeleton)
+
+**Notes for next iteration:**
+- Next: P1.W2.1 `simulators/common` seeded generator (properties, reservations, folios with late postings, duplicates, nullable fields; same seed → byte-identical)
+- W2.2 will wire the admin API on port 8001 inside simulators (admin-net only) and host-map it if needed for the reset fixture; the conftest hook is ready
+- `docs/architecture.md` will be extended in W3 (runtime), W4 (ladder), W7 (control/UI), W8 (bench), and finalized in W10 — keep it under 4 KB in progress-state summary, full detail lives here
+- No new Python package coverage impact; e2e is separate from `make test` 90% gate
