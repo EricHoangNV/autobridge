@@ -1,4 +1,4 @@
-"""Core data model (P1.W1.5, plan §2.3).
+"""Core data model (P1.W1.5, plan §2.3; job queue added in P1.W1.6).
 
 SQLAlchemy 2.0 models for the control plane. SQLite now, Postgres-ready:
 only portable column types are used (``String``, ``Text``, ``Integer``,
@@ -83,6 +83,12 @@ EVIDENCE_KINDS = frozenset(
 )
 MODEL_TIERS = frozenset({"small", "frontier"})
 DEPENDENCY_POLICIES = frozenset({"pause_on_release_change", "notify"})
+#: Job queue vocabularies (P1.W1.6): one job per BuildRun / SyncRun /
+#: RepairRun execution attempt series. ``run_id`` points at the domain row
+#: the job drives (``<kind>_runs.id``); it is null until a sync/repair
+#: handler creates its row at execution time.
+JOB_KINDS = frozenset({"build", "sync", "repair"})
+JOB_STATES = frozenset({"queued", "running", "succeeded", "failed"})
 
 
 class ImmutableReleaseError(Exception):
@@ -548,4 +554,59 @@ class DependencyRegistration(Base):
     def _validate_policy(self, key: str, value: str) -> str:
         if value not in DEPENDENCY_POLICIES:
             raise ValueError(f"{key} must be one of {sorted(DEPENDENCY_POLICIES)}")
+        return value
+
+
+class Job(Base):
+    """One queued execution of a BuildRun / SyncRun / RepairRun (P1.W1.6).
+
+    The ``JobRunner`` (``control/jobs.py``) owns the state diagram
+    ``queued → running → succeeded | queued (retry) | failed``. All
+    transitions are committed to this row, so a worker killed mid-job
+    leaves a ``running`` row behind that a restarted worker reclaims via
+    ``reclaim_orphaned`` and re-runs — no in-memory state is trusted.
+
+    ``run_id`` names the domain row (``<kind>_runs.id``). Build jobs get
+    their ``BuildRun`` row at submit time; sync/repair handlers create
+    their row at execution time (a ``SyncRun`` needs its terminal
+    ``outcome`` at insert), so ``run_id`` stays null until then.
+    """
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        _check("jobs", "kind", "kind", JOB_KINDS),
+        _check("jobs", "state", "state", JOB_STATES),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    #: Executions started so far (each claim increments it).
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        GenericJSON, nullable=False, default=dict
+    )
+    result: Mapped[dict[str, Any] | None] = mapped_column(GenericJSON, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Worker that currently owns a ``running`` job (None once terminal).
+    worker_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+    @validates("kind")
+    def _validate_kind(self, key: str, value: str) -> str:
+        if value not in JOB_KINDS:
+            raise ValueError(f"{key} must be one of {sorted(JOB_KINDS)}")
+        return value
+
+    @validates("state")
+    def _validate_state(self, key: str, value: str) -> str:
+        if value not in JOB_STATES:
+            raise ValueError(f"{key} must be one of {sorted(JOB_STATES)}")
         return value
