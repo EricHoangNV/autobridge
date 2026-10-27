@@ -85,7 +85,7 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 
 - A spec names credentials by `credential_ref` (an env key name); the value is read at runtime from the environment and never written to a spec, release, evidence record, log, prompt or API response. A test replays a full run's event stream and asserts no credential value appears.
 - Every probe, observation, hypothesis, decision, patch, verification and approval is an `EvidenceRecord` with `parent_ids[]` (`src/autobridge/evidence/`); the dashboard renders stored records, never narrated text.
-- `.env` is git-ignored; `.env.example` lists every key with an empty value.
+- `.env` is git-ignored; `.env.example` lists every secret with an empty value.
 
 ---
 

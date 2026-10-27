@@ -436,13 +436,17 @@ def test_anthropic_provider_explicit_models() -> None:
     assert p.small_model == "s1"
 
 
-def test_anthropic_provider_api_key_from_arg() -> None:
+def test_anthropic_provider_api_key_from_arg(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_FRONTIER_MODEL", "f-env")
+    monkeypatch.setenv("ANTHROPIC_SMALL_MODEL", "s-env")
     p = AnthropicProvider(api_key="sk-test-123")
     assert p.api_key == "sk-test-123"
 
 
 def test_anthropic_provider_api_key_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env")
+    monkeypatch.setenv("ANTHROPIC_FRONTIER_MODEL", "f-env")
+    monkeypatch.setenv("ANTHROPIC_SMALL_MODEL", "s-env")
     assert AnthropicProvider().api_key == "sk-env"
 
 
@@ -535,6 +539,8 @@ def test_anthropic_provider_unknown_tier_raises_before_network() -> None:
 def test_anthropic_provider_lazy_client_creation(monkeypatch: pytest.MonkeyPatch) -> None:
     # No _client yet; _get_client creates one
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-lazy")
+    monkeypatch.setenv("ANTHROPIC_FRONTIER_MODEL", "f-env")
+    monkeypatch.setenv("ANTHROPIC_SMALL_MODEL", "s-env")
     p = AnthropicProvider()
     assert p._client is None
     # Mock anthropic module
@@ -577,6 +583,8 @@ def test_openai_provider_complete_raises() -> None:
 
 def test_openai_provider_api_key_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    monkeypatch.setenv("OPENAI_FRONTIER_MODEL", "o-f-env")
+    monkeypatch.setenv("OPENAI_SMALL_MODEL", "o-s-env")
     assert OpenAIProvider().api_key == "sk-openai"
 
 
@@ -585,7 +593,7 @@ def test_openai_provider_api_key_from_env(monkeypatch: pytest.MonkeyPatch) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_config_defaults_when_env_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_missing_env_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
     for k in [
         "ANTHROPIC_FRONTIER_MODEL",
         "ANTHROPIC_SMALL_MODEL",
@@ -600,13 +608,17 @@ def test_config_defaults_when_env_absent(monkeypatch: pytest.MonkeyPatch) -> Non
         openai_small_model,
     )
 
-    assert anthropic_frontier_model() != ""
-    assert anthropic_small_model() != ""
-    assert openai_frontier_model() != ""
-    assert openai_small_model() != ""
+    for fn, key in [
+        (anthropic_frontier_model, "ANTHROPIC_FRONTIER_MODEL"),
+        (anthropic_small_model, "ANTHROPIC_SMALL_MODEL"),
+        (openai_frontier_model, "OPENAI_FRONTIER_MODEL"),
+        (openai_small_model, "OPENAI_SMALL_MODEL"),
+    ]:
+        with pytest.raises(RuntimeError, match=key):
+            fn()
 
 
-def test_config_env_overrides_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_env_provides_model_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_FRONTIER_MODEL", "my-frontier")
     from autobridge.config import anthropic_frontier_model
 

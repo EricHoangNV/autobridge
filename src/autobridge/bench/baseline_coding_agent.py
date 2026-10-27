@@ -15,7 +15,7 @@ CLI contract (``claude -p <prompt> --output-format json``)::
         "type": "result",
         "result": "generated spec yaml ...",
         "usage": {"input_tokens": 1200, "output_tokens": 3400},
-        "model": "claude-sonnet-4-5-20250929",
+        "model": "<MODEL_ID_FROM_ENV>",
         "cost_usd": 0.012,
         "session_id": "..."
     }
@@ -415,7 +415,7 @@ class CodexCliDriver:
         {
             "output": "generated spec yaml …",
             "usage": {"input_tokens": 1200, "output_tokens": 3400},
-            "model": "codex-mini-latest",
+            "model": "<MODEL_ID_FROM_ENV>",
             "cost_usd": 0.012
         }
 
