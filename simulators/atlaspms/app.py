@@ -89,11 +89,11 @@ def get_readyz() -> dict[str, object]:
     docs_ok = any((DOCS_DIR / n).is_file() for n in ("atlaspms-openapi.json", "atlaspms-openapi.yaml", "atlas-openapi.json", "atlas-openapi.yaml"))
     checks: dict[str, object] = {
         "default": "ok",
-        "scenario": state["scenario_id"],
+        "scenario": "ok",
         "docs": "ok" if docs_ok else "missing",
     }
     status = "ok" if docs_ok else "degraded"
-    return {"status": status, "checks": checks}
+    return {"status": status, "checks": checks, "scenario": state["scenario_id"]}
 
 
 @app.get("/properties")
