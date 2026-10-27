@@ -87,6 +87,12 @@ export async function getConnector(connectorId: string, client: ApiClient = api)
   });
 }
 
+export async function listSyncRuns(connectorId: string, client: ApiClient = api) {
+  return client.GET("/connectors/{connector_id}/sync-runs", {
+    params: { path: { connector_id: connectorId } },
+  });
+}
+
 export async function listDependencies(
   connectorId: string,
   client: ApiClient = api,

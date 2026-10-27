@@ -210,6 +210,22 @@ def create_dependency(connector_id: str, body: DependencyCreate, db: Session = D
     return _dep_to_out(dep)
 
 
+@router.get("/{connector_id}/sync-runs", response_model=list[SyncRunOut])
+def list_sync_runs(connector_id: str, db: Session = Depends(get_db)) -> list[SyncRunOut]:
+    conn = db.get(Connector, connector_id)
+    if conn is None:
+        raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
+    release_ids = db.execute(
+        select(ConnectorRelease.id).where(ConnectorRelease.connector_id == connector_id)
+    ).scalars().all()
+    if not release_ids:
+        return []
+    rows = db.execute(
+        select(SyncRun).where(SyncRun.release_id.in_(release_ids)).order_by(SyncRun.started_at.desc()).limit(100)
+    ).scalars().all()
+    return [_sync_to_out(s) for s in rows]
+
+
 @router.get("/{connector_id}/dependencies", response_model=list[DependencyOut])
 def list_dependencies(connector_id: str, db: Session = Depends(get_db)) -> list[DependencyOut]:
     conn = db.get(Connector, connector_id)

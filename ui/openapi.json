@@ -2009,6 +2009,52 @@
         ]
       }
     },
+    "/connectors/{connector_id}/sync-runs": {
+      "get": {
+        "operationId": "list_sync_runs_connectors__connector_id__sync_runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connector_id",
+            "required": true,
+            "schema": {
+              "title": "Connector Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SyncRunOut"
+                  },
+                  "title": "Response List Sync Runs Connectors  Connector Id  Sync Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Sync Runs",
+        "tags": [
+          "connectors"
+        ]
+      }
+    },
     "/demo/inject-fault": {
       "post": {
         "operationId": "inject_fault_demo_inject_fault_post",
