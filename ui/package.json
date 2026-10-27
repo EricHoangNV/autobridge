@@ -2,20 +2,38 @@
   "name": "autobridge-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "AutoBridge UI - Next.js + typed OpenAPI client (W7.3)",
+  "description": "AutoBridge UI - Next.js 15 + typed OpenAPI client (W7.4)",
   "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "gen": "openapi-typescript ./openapi.json -o ./lib/api/schema.d.ts",
     "gen:check": "npm run gen && git diff --exit-code -- ./lib/api/schema.d.ts ./openapi.json",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "openapi-fetch": "^0.13.0"
+    "next": "^15.3.0",
+    "openapi-fetch": "^0.13.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "swr": "^2.3.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^22.13.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "jsdom": "^26.0.0",
     "openapi-typescript": "^7.6.0",
-    "typescript": "^5.8.0"
+    "postcss": "^8.5.0",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
   }
 }

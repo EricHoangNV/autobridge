@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --border: 214 32% 91%;
+  --muted: 210 40% 96%;
+}
+
+body {
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
