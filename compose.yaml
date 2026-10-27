@@ -151,6 +151,21 @@ services:
       - "8112:8001"
     healthcheck: *healthcheck-py
 
+  # P2.S4.1 MCP Guardian: mock HotelTools V1/V2 + compatibility gateway
+  # (engine trust zone, engine-net only; no verifier/simulator route).
+  mcp-hotel:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    environment:
+      APP_MODULE: mcp_stretch.app:app
+      PYTHONPATH: /srv/src:/srv
+    networks:
+      - engine-net
+    ports:
+      - "8115:8000"
+    healthcheck: *healthcheck-py
+
   ui:
     build:
       context: ./ui

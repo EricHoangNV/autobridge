@@ -28,6 +28,7 @@ EXPECTED_SERVICES = {
     "sim-legacystay",
     "sim-edgepos",
     "edge-worker",
+    "mcp-hotel",
     "ui",
     "bench",
 }
@@ -45,6 +46,7 @@ EXPECTED_ATTACHMENT = {
     "sim-legacystay": {"vendor-net", "admin-net"},
     "sim-edgepos": {"edge-net"},
     "edge-worker": {"edge-net"},
+    "mcp-hotel": {"engine-net"},
     "ui": {"engine-net"},
     "bench": {"engine-net", "verifier-net"},
 }
@@ -60,6 +62,7 @@ EXPECTED_PORTS = {
     "sim-legacystay": 8111,
     "sim-edgepos": 8113,
     "edge-worker": 8114,
+    "mcp-hotel": 8115,
     "ui": 8107,
     "bench": 8108,
 }
@@ -117,7 +120,7 @@ def test_edge_network_isolated(compose: dict) -> None:
     """P2.S2: sim-edgepos lives only on edge-net; no other service joins it."""
     assert set(compose["services"]["sim-edgepos"]["networks"]) == {"edge-net"}
     assert set(compose["services"]["edge-worker"]["networks"]) == {"edge-net"}
-    for svc in ("control", "worker", "runtime-sandbox", "verifier", "ui", "bench"):
+    for svc in ("control", "worker", "runtime-sandbox", "verifier", "ui", "bench", "mcp-hotel"):
         assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
     for svc in ("sim-atlas", "sim-harbor", "sim-legacystay"):
         assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
@@ -200,6 +203,11 @@ def test_bench_app_health() -> None:
 
 def test_edge_worker_app_health() -> None:
     _check_health("autobridge.edge.app")
+
+
+def test_mcp_hotel_app_health() -> None:
+    """P2.S4.1: the MCP mock serves the same /healthz + /readyz contract."""
+    _check_health("mcp_stretch.app")
 
 
 def test_sim_edgepos_app_health() -> None:

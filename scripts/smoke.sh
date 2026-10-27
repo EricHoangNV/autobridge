@@ -7,7 +7,7 @@
 # control -> verifier), so a blanket network outage cannot pass as "isolated".
 set -euo pipefail
 
-SERVICES="control:8101 worker:8102 runtime-sandbox:8103 verifier:8104 sim-atlas:8105 sim-harbor:8106 sim-legacystay:8111 sim-edgepos:8113 edge-worker:8114 ui:8107 bench:8108"
+SERVICES="control:8101 worker:8102 runtime-sandbox:8103 verifier:8104 sim-atlas:8105 sim-harbor:8106 sim-legacystay:8111 sim-edgepos:8113 edge-worker:8114 mcp-hotel:8115 ui:8107 bench:8108"
 
 fail() {
   echo "SMOKE FAIL: $1" >&2
@@ -49,6 +49,7 @@ probe runtime-sandbox http://sim-harbor:8000/healthz up
 probe runtime-sandbox http://sim-legacystay:8000/healthz up
 probe control http://verifier:8000/healthz up
 probe edge-worker http://sim-edgepos:8000/healthz up
+probe control http://mcp-hotel:8000/healthz up
 
 echo ">> smoke: negative network checks (plan §2.1 trust boundaries + §5 S2 edge)"
 probe runtime-sandbox http://verifier:8000/healthz down
@@ -66,5 +67,6 @@ probe ui http://sim-edgepos:8000/healthz down
 probe edge-worker http://verifier:8000/healthz down
 probe edge-worker http://sim-atlas:8000/healthz down
 probe edge-worker http://sim-edgepos:8001/healthz down
+probe edge-worker http://mcp-hotel:8000/healthz down
 
 echo "smoke OK"

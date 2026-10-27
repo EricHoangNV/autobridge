@@ -39,6 +39,7 @@ Design principles (plan §1):
 | `sim-atlas` | `simulators` | `simulators.atlaspms.app:app` | simulator | 8105 | AtlasPMS synthetic vendor (clean OpenAPI) + admin API |
 | `sim-harbor` | `simulators` | `simulators.harborpms.app:app` | simulator | 8106 | HarborPMS synthetic vendor (messy docs, quirks) + admin API |
 | `sim-legacystay` | `simulators` | `simulators.legacystay.app:app` | simulator | 8111 | LegacyStay synthetic vendor Phase 2 (offset, strict Bearer, throttle, nullable chaos) + admin API |
+| `mcp-hotel` | `mcp_stretch` | `mcp_stretch.app:app` | engine | 8115 | MCP Guardian Phase 2 (mock HotelTools V1→V2 + compatibility gateway, pinned-consumer replay) |
 | `ui` | `ui` | Node stub → Next.js 15 (W7) | user | 8107 | Four screens over the control plane |
 | `bench` | `autobridge.bench` | `autobridge.bench.app:app` | engine | 8108 | Matched-budget harness (AutoBridge vs baseline) |
 
@@ -50,7 +51,7 @@ mounted read-only into the verifier container and nowhere else.
 ### 2.2 Docker networks (plan §2.1)
 
 ```
-engine-net   — control, worker, runtime-sandbox, ui, bench
+engine-net   — control, worker, runtime-sandbox, ui, bench, mcp-hotel
 vendor-net   — runtime-sandbox ↔ sim-atlas/sim-harbor/sim-legacystay public API (8000)
 verifier-net — control ↔ verifier, bench ↔ verifier
 admin-net    — control ↔ sim-atlas/sim-harbor/sim-legacystay admin API (8001, W2.2)
@@ -117,7 +118,7 @@ autobridge/
 ├── generated/       connectors/<id>/<release>/spec.yaml + build-report.json
 ├── ui/              Next.js 15, TypeScript, Tailwind; lib/api (openapi-typescript client) — stub in W1
 ├── experiments/     benchmark_runs/*.jsonl  scorecard.md
-├── mcp_stretch/     (Phase 2)
+├── mcp_stretch/     (Phase 2 S4: catalog.py, gateway.py, replay.py, app.py — MCP Guardian mock + gateway)
 ├── tests/           unit/  e2e/ (conftest.py + test_00_stack_up.py in W1)
 ├── scripts/         wait_readyz.sh  smoke.sh  fake_claude.py
 ├── mds/             planning + agent bookkeeping (PRD-TRACKING, BUILD-NOTES, progress-*, DIRECTIVES, LEARNINGS, …)
@@ -311,6 +312,22 @@ from the static fixture
 (`request-confirmation`, `authorize`, `connect`, `mark-healing`, `resolve`)
 own the only legal transitions — anything else is a 422, never guessed.
 Acceptance: `tests/e2e/test_s3_discovery_import.py` (fakes + live).
+
+Phase 2 S4 adds the MCP Guardian (`mcp_stretch/`, engine zone, served as
+`mcp-hotel :8115` on `engine-net` only): a mock `HotelToolsV1` → `V2` tool
+migration (3 renamed tools + 1 addition), a declarative catalog
+snapshot/diff (`GET /catalog/diff`), a compatibility gateway over a pinned
+V1→V2 mapping table (`POST /gateway/invoke`, `POST /gateway/validate` —
+mappings are data validated by `validate_mapping`, never generated code),
+and pinned-consumer workflow replay (`POST /replay/run|compare`). Every
+invoke ends `Complete | Degraded | Blocked` with the criterion named
+(unknown tool → `Blocked`, never guessed); money is `Decimal` (exact 2dp
+strings), dates are property-local business dates, and the mock carries no
+credentials. The pinned consumer stays `Complete` through the gateway while
+plain exact-name rediscovery goes `Blocked` on the first renamed tool;
+unsafe mappings (dropped money param, money routed to non-money) are
+rejected with 422. Acceptance: `tests/e2e/test_s4_mcp_gateway.py`
+(fakes + live).
 
 ### 9.2 UI screens (Next.js 15, App Router, Tailwind, SWR + SSE)
 

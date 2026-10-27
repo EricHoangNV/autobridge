@@ -60,6 +60,7 @@ SERVICE_PORTS: Final[dict[str, int]] = {
     "sim-legacystay": 8111,
     "sim-edgepos": 8113,
     "edge-worker": 8114,
+    "mcp-hotel": 8115,
     "ui": 8107,
     "bench": 8108,
 }

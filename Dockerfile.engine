@@ -17,6 +17,10 @@ RUN pip install --no-cache-dir .
 
 COPY src/ ./src/
 
+# P2.S4.1: the MCP Guardian mock lives in mcp_stretch/ (engine trust zone)
+# and is served as APP_MODULE=mcp_stretch.app:app by the mcp-hotel service.
+COPY mcp_stretch/ ./mcp_stretch/
+
 EXPOSE 8000
 
 # APP_MODULE is set per service in compose.yaml, e.g. autobridge.control.app:app
