@@ -215,14 +215,17 @@ def test_main_no_score_env_skips_scorecard(tmp_path: pathlib.Path, monkeypatch: 
 
 
 def test_main_visibility_env_selects_split(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # REQ-007: a heldout run without HELDOUT_DIR is refused (exit 2) —
+    # the manifest is frozen, so private seeds are required.
+    monkeypatch.delenv("HELDOUT_DIR", raising=False)
     monkeypatch.setenv("BENCH_VISIBILITY", "heldout")
     monkeypatch.setenv("BENCH_NO_SCORE", "1")
     out = tmp_path / "runs"
     ret = main(["--output-dir", str(out)])
-    assert ret == 0
+    assert ret == 2
+    # The heldout split itself is still listed from the public catalog (dev metadata only).
     expected = {f"{sid}--trial-0.jsonl" for sid in list_scenarios(visibility="heldout")}
     assert expected, "heldout split must be non-empty (W2 escrow)"
-    assert {p.name for p in out.glob("*.jsonl")} - {"_summary.json"} == expected
 
 
 def test_main_invalid_visibility_rejected(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -241,19 +244,21 @@ def test_main_invalid_visibility_rejected(tmp_path: pathlib.Path, monkeypatch: p
 def test_check_heldout_sha_ok_and_missing_and_mismatch(tmp_path: pathlib.Path) -> None:
     import hashlib
 
-    # Missing manifest → no-op (heldout not frozen yet; owner freezes per P1.W2.8)
-    check_heldout_sha(tmp_path / "empty")
+    # Missing manifest → no-op (path with no freeze commitment).
+    missing_manifest = tmp_path / "empty" / "SHA256SUMS"
+    check_heldout_sha(tmp_path / "empty", manifest_path=missing_manifest)
     (tmp_path / "empty").mkdir()
-    check_heldout_sha(tmp_path / "empty")
+    check_heldout_sha(tmp_path / "empty", manifest_path=missing_manifest)
 
     heldout = tmp_path / "heldout"
     heldout.mkdir()
     data = heldout / "case.yaml"
     data.write_bytes(b"id: trap\n")
     sha = hashlib.sha256(b"id: trap\n").hexdigest()
-    (heldout / "SHA256SUMS").write_text(f"{sha}  case.yaml\n")
-    check_heldout_sha(heldout)  # must not raise
+    manifest = heldout / "SHA256SUMS"
+    manifest.write_text(f"{sha}  case.yaml\n")
+    check_heldout_sha(heldout, manifest_path=manifest)  # must not raise
 
     data.write_bytes(b"id: tampered\n")
     with pytest.raises(AssertionError, match="SHA mismatch"):
-        check_heldout_sha(heldout)
+        check_heldout_sha(heldout, manifest_path=manifest)

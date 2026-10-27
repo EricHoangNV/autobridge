@@ -90,6 +90,10 @@ class VerifyRequest(BaseModel):
     records: dict[str, list[dict[str, Any]]] | None = Field(default=None, description="Direct produced records (for tests)")
     # Regression suite: scenarios to re-run as regression gate; None = use default
     regression_suite: list[str] | None = Field(default=None, description="Scenarios for regression gate")
+    # Private heldout seed override (REQ-007): when set, the oracle
+    # regenerates ground truth from this seed instead of the public YAML
+    # seed.  Never echoed in the response, never logged.
+    seed: int | None = Field(default=None, description="Private heldout seed override (never echoed)")
 
 
 class RegressionFailureDetail(BaseModel):
@@ -265,6 +269,14 @@ def post_verify(body: VerifyRequest) -> VerifyResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # REQ-007: private heldout seed override — validated, never logged, never echoed.
+    seed_override = body.seed
+    if seed_override is not None:
+        if isinstance(seed_override, bool) or not isinstance(seed_override, int):
+            raise HTTPException(status_code=400, detail="seed must be a non-negative int")
+        if seed_override < 0 or seed_override > 1_000_000_000:
+            raise HTTPException(status_code=400, detail="seed must be a non-negative int")
+
     # At least one of release_id / spec / records must be provided, or we treat as baseline check
     # For W2.6, we allow empty (no spec) — verifier just checks drift signals
     spec = body.spec
@@ -308,8 +320,8 @@ def post_verify(body: VerifyRequest) -> VerifyResponse:
         from verifier.checks import run_all_checks
         from verifier.oracle import generate_expected_canonical, generate_mutated
 
-        expected = generate_expected_canonical(body.scenario_id)
-        mutated = generate_mutated(body.scenario_id)
+        expected = generate_expected_canonical(body.scenario_id, seed_override)
+        mutated = generate_mutated(body.scenario_id, seed_override)
         produced = body.records
         # Normalize: if records contains reservations/folios top-level
         if "reservations" not in produced and "folios" not in produced:
@@ -326,7 +338,7 @@ def post_verify(body: VerifyRequest) -> VerifyResponse:
         failed_checks = _sanitize_failed_checks(failed)
     else:
         # Oracle path: simulate spec execution
-        verdict, score, failed_raw = oracle_verdict(body.scenario_id, spec)
+        verdict, score, failed_raw = oracle_verdict(body.scenario_id, spec, seed_override)
         failed_checks = _sanitize_failed_checks(failed_raw)  # type: ignore[arg-type]
 
     regression, regression_failures = _compute_regression(body.scenario_id, verdict, spec, body.regression_suite, failed_checks)

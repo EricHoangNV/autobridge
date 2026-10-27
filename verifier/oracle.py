@@ -35,32 +35,43 @@ from simulators.scenarios import load_scenario
 # ---------------------------------------------------------------------------
 
 
-def get_scenario_seed(scenario_id: str) -> int:
-    """Return seed for scenario_id via YAML catalog."""
+def get_scenario_seed(scenario_id: str, seed_override: int | None = None) -> int:
+    """Return seed for scenario_id via YAML catalog, or the heldout override.
+
+    REQ-007: benchmark heldout runs pass the private seed (from
+    ``$HELDOUT_DIR``) as *seed_override*; it is used for dataset
+    generation instead of the public YAML seed and is never logged.
+    """
+    if seed_override is not None:
+        if not isinstance(seed_override, int) or isinstance(seed_override, bool):
+            raise ValueError("seed_override must be int")
+        if seed_override < 0 or seed_override > 1_000_000_000:
+            raise ValueError("seed_override out of range")
+        return seed_override
     scen = load_scenario(scenario_id)
     return int(scen.seed)
 
 
-def generate_baseline(scenario_id: str) -> dict[str, list[dict[str, Any]]]:
+def generate_baseline(scenario_id: str, seed_override: int | None = None) -> dict[str, list[dict[str, Any]]]:
     """Generate baseline (unmutated) dataset for scenario's seed."""
-    seed = get_scenario_seed(scenario_id)
+    seed = get_scenario_seed(scenario_id, seed_override)
     return generate_dataset(seed=seed)
 
 
-def generate_mutated(scenario_id: str) -> dict[str, list[dict[str, Any]]]:
+def generate_mutated(scenario_id: str, seed_override: int | None = None) -> dict[str, list[dict[str, Any]]]:
     """Generate mutated dataset as simulator would serve it."""
-    seed = get_scenario_seed(scenario_id)
+    seed = get_scenario_seed(scenario_id, seed_override)
     baseline = generate_dataset(seed=seed)
     return apply_dataset_mutations(baseline, scenario_id)
 
 
-def generate_expected_canonical(scenario_id: str) -> dict[str, list[dict[str, Any]]]:
+def generate_expected_canonical(scenario_id: str, seed_override: int | None = None) -> dict[str, list[dict[str, Any]]]:
     """Expected canonical records = baseline dataset in canonical shape.
 
     Baseline generator already emits canonical Reservation / FolioCharge
     dicts that validate against schemas/reservation.schema.json etc.
     """
-    baseline = generate_baseline(scenario_id)
+    baseline = generate_baseline(scenario_id, seed_override)
     return {
         "reservations": list(baseline.get("reservations", [])),
         "folios": list(baseline.get("folios", [])),
@@ -336,17 +347,19 @@ def simulate_produced_records(
 def oracle_verdict(
     scenario_id: str,
     spec: dict[str, Any] | None = None,
+    seed_override: int | None = None,
 ) -> tuple[str, float, list[dict[str, Any]]]:
     """Run oracle for scenario_id + spec, return (verdict, score, failed_checks).
 
     Verdict is ``pass`` when no checks fail, ``fail`` otherwise.
     Score is 1.0 for pass, else (total_checks - failed)/total_checks.
     This is imported by checks.py for the full check suite.
+    REQ-007: *seed_override* carries the private heldout seed (never logged).
     """
     from verifier.checks import run_all_checks
 
-    expected = generate_expected_canonical(scenario_id)
-    mutated = generate_mutated(scenario_id)
+    expected = generate_expected_canonical(scenario_id, seed_override)
+    mutated = generate_mutated(scenario_id, seed_override)
     produced = simulate_produced_records(mutated, expected, spec, scenario_id)
 
     failed = run_all_checks(expected, produced, mutated, spec, scenario_id)

@@ -106,10 +106,14 @@ make bench-heldout                            # Nov 3 run: BENCH_VISIBILITY=held
 
 Steps inside `python -m autobridge.bench.harness`:
 
-1. **Heldout SHA gate** (`check_heldout_sha`) — no-op until the owner
-   freezes heldout (P1.W2.8); once `verifier/hidden_cases/heldout/SHA256SUMS`
-   exists every listed file's sha256 must match or the run exits 2 before
-   anything executes.
+1. **Heldout gate** (REQ-007) — dev runs skip it. `heldout`/`all` runs
+   verify every file in `$HELDOUT_DIR` against the committed
+   `verifier/hidden_cases/heldout/SHA256SUMS` (exit 2 on missing env,
+   missing file or sha mismatch), load the private per-scenario seeds,
+   push them to the simulator admin plane (`$SIMULATOR_ADMIN_URL`, when
+   set), and verify each heldout trial with the private seed override.
+   Seeds never appear in logs, JSONL, the scorecard or SSE events — only
+   the scenario id and the manifest sha are recorded.
 2. **Matched-budget run** — every scenario × trial through both arms with
    byte-identical `HarnessInputs` (asserted pre-run and audited post-run).
 3. **JSONL output** — `experiments/benchmark_runs/<scenario>--trial-<n>.jsonl`
@@ -118,6 +122,9 @@ Steps inside `python -m autobridge.bench.harness`:
    verifier hidden mode over HTTP (unreachable verifier records losses,
    never raises), then `experiments/benchmark_runs/_scorecard.json` and
    `experiments/scorecard.md` (wins AND losses) via `bench/report.py`.
+   Heldout scorecards carry the header `Heldout seeds: private (manifest
+   <sha of SHA256SUMS>)`; dev scorecards say `Heldout seeds: n/a — dev run
+   on public YAML seeds`.
 
 ## Reproducibility
 
@@ -137,7 +144,26 @@ Steps inside `python -m autobridge.bench.harness`:
   seed produce byte-identical JSONL and that a different seed (or different
   arm outcomes) fails the check.
 
-## Heldout freeze runbook (owner step, P1.W2.8)
+## Heldout freeze runbook (owner step, P1.W2.8 + REQ-007)
+
+The owner holds the private seeds outside git and outside every sandbox
+(`$HELDOUT_DIR`, e.g. `~/autobridge-heldout`): one file per heldout
+scenario, `<scenario_id>.yaml` with `id`, `seed` (int) and `nonce`
+(random hex, so published hashes cannot be brute-forced back to the seed).
+The repo commits only the `sha256sum` manifest
+(`verifier/hidden_cases/heldout/SHA256SUMS`, frozen in ff372083).
+
+```bash
+make bench-heldout HELDOUT_DIR=~/autobridge-heldout   # Nov 3 run
+```
+
+The target refuses to run without `HELDOUT_DIR` (exit 2). The harness
+checks the private files against the committed manifest, uses each
+scenario's private seed end to end (simulator admin scenario call +
+verifier hidden-mode oracle override) for that run, and records only the
+scenario id and the manifest sha — dev runs and every other path keep the
+public YAML seed. Never create the heldout files inside the repo, and
+never weaken the gate to make a run pass.
 
 Agents prepare the gate; the owner freezes. When the dev/heldout split is
 final, from the repo root:
@@ -146,7 +172,8 @@ final, from the repo root:
 cd verifier/hidden_cases/heldout && sha256sum ./*.yaml > SHA256SUMS && git add SHA256SUMS
 ```
 
-From then on every `make bench` (and `make bench-heldout`) verifies the
-manifest first and refuses to run on tampered heldout fixtures (exit 2).
+From then on every heldout run (`make bench-heldout`) verifies the
+manifest first and refuses to run on tampered heldout fixtures (exit 2);
+dev runs (`make bench`, `test_07`) skip the gate.
 `tests/e2e/test_07_benchmark_matched_budget.py` runs one dev scenario
 through both arms and validates the scorecard schema.

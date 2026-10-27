@@ -35,7 +35,6 @@ from autobridge.bench.harness import (
     assert_budget_fields_equal,
     assert_inputs_equal,
     assert_results_reproducible,
-    check_heldout_sha,
     run_harness,
     score_and_report,
     verify_matched_trial,
@@ -81,8 +80,8 @@ def _verify_fn(spec: Any, scenario_id: str) -> dict[str, Any]:
 
 
 def test_07_benchmark_matched_budget(tmp_path: pathlib.Path) -> None:
-    # 1. Heldout SHA gate runs before the run (no-op until frozen).
-    check_heldout_sha()
+    # 1. Dev runs skip the heldout gate (REQ-007: it applies to
+    # heldout/all runs with HELDOUT_DIR only) — no gate call here.
 
     # 2. One dev scenario through both arms with matched budgets.
     cfg = HarnessConfig(seed=SEED, scenarios=(SCENARIO_ID,), trials_per_scenario=1)

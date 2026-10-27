@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from simulators.common.generator import generate_dataset
 from simulators.scenarios import load_all_scenarios
 from verifier.checks import (
     check_business_date,
@@ -424,3 +425,32 @@ def test_spec_helpers_edge_cases() -> None:
     }
     assert _spec_has_enum_mapping_for_status(spec, ["confirmed"]) is True
     assert _spec_has_enum_mapping_for_status({"entities": {}}, ["confirmed"]) is False
+
+
+# --- REQ-007: private seed override ---
+
+
+def test_seed_override_changes_dataset() -> None:
+    public = get_scenario_seed("baseline")
+    assert get_scenario_seed("baseline", seed_override=975311) == 975311
+    assert generate_baseline("baseline", seed_override=975311) == generate_dataset(seed=975311)
+    assert generate_baseline("baseline", seed_override=975311) != generate_baseline("baseline")
+    assert public != 975311
+
+
+def test_seed_override_validation() -> None:
+    import pytest
+
+    from verifier.oracle import get_scenario_seed
+
+    with pytest.raises(ValueError):
+        get_scenario_seed("baseline", seed_override=-1)
+    with pytest.raises(ValueError):
+        get_scenario_seed("baseline", seed_override=True)
+
+
+def test_oracle_verdict_accepts_override() -> None:
+    verdict, score, failed = oracle_verdict("baseline", None, seed_override=975311)
+    assert verdict in ("pass", "fail")
+    assert 0.0 <= score <= 1.0
+    assert isinstance(failed, list)

@@ -102,8 +102,13 @@ def verify_via_http(
     *,
     verifier_url: str = "http://localhost:8104",
     timeout_s: float = 30.0,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     """Call verifier ``POST /verify`` in hidden mode over HTTP.
+
+    *seed* is the REQ-007 private heldout seed override: sent in the
+    request body (never logged here) so the oracle judges the private
+    dataset.  Omitted when ``None`` (dev runs use the public YAML seed).
 
     Returns the raw response dict.  On transport error returns a
     ``fail`` payload so scoring records a loss (never raises).
@@ -111,10 +116,13 @@ def verify_via_http(
     import httpx  # noqa: PLC0415
 
     url = verifier_url.rstrip("/") + "/verify"
+    body: dict[str, Any] = {"spec": spec, "scenario_id": scenario_id, "mode": "hidden"}
+    if seed is not None:
+        body["seed"] = seed
     try:
         resp = httpx.post(
             url,
-            json={"spec": spec, "scenario_id": scenario_id, "mode": "hidden"},
+            json=body,
             timeout=timeout_s,
         )
         if resp.status_code != 200:
@@ -125,6 +133,28 @@ def verify_via_http(
         return data
     except Exception as exc:
         return {"verdict": "fail", "score": 0.0, "failed_checks": [{"name": "verifier_unreachable", "count": 1, "details": f"{type(exc).__name__}"}], "regression": "pass"}
+
+
+def wrap_verify_fn_with_seeds(verify_fn: VerifyFn, seeds: dict[str, int]) -> VerifyFn:
+    """Wrap *verify_fn* so heldout scenarios verify with their private seed (REQ-007).
+
+    The wrapper calls ``verify_fn(spec, scenario_id, seed=...)`` for
+    scenarios present in *seeds*; two-arg fns keep working via fallback.
+    Seeds never enter the returned payload — they only ride the request.
+    """
+    if not seeds:
+        return verify_fn
+
+    def _wrapped(spec: dict[str, Any] | None, scenario_id: str) -> dict[str, Any]:
+        seed = seeds.get(scenario_id)
+        if seed is None:
+            return verify_fn(spec, scenario_id)
+        try:
+            return verify_fn(spec, scenario_id, seed=seed)  # type: ignore[call-arg]
+        except TypeError:
+            return verify_fn(spec, scenario_id)
+
+    return _wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -482,12 +512,16 @@ def score_bench(
     *,
     escalation_bundles: dict[str, dict[str, dict[str, Any]]] | None = None,
     seed: int | None = None,
+    heldout: bool = False,
+    heldout_manifest_sha: str | None = None,
 ) -> dict[str, Any]:
     """Score a full harness run; returns the JSON-safe scorecard dict.
 
     *escalation_bundles* maps ``"<scenario_id>:<trial>"`` → ``{arm: bundle}``
     for arms that escalated.  Missing entries score ``0.0`` quality when
     escalation was needed (never silently dropped).
+    REQ-007: *heldout* marks a private-seed run; *heldout_manifest_sha*
+    is recorded in the scorecard header (seeds never are).
     """
     bundles = escalation_bundles or {}
     if isinstance(bench_result, dict):
@@ -515,6 +549,8 @@ def score_bench(
         "trials": scored_trials,
         "wins": agg["wins"],
         "losses": agg["losses"],
+        "heldout": heldout,
+        "heldout_manifest_sha": heldout_manifest_sha,
     }
 
 
@@ -551,6 +587,11 @@ def validate_scorecard_schema(scorecard: dict[str, Any]) -> None:
                 raise AssertionError(f"scorecard trial missing key {key!r}")
     if not isinstance(scorecard["wins"], list) or not isinstance(scorecard["losses"], list):
         raise AssertionError("scorecard wins/losses must be lists")
+    # REQ-007 optional heldout provenance (present on heldout runs, absent on old cards).
+    if "heldout" in scorecard and not isinstance(scorecard["heldout"], bool):
+        raise AssertionError("scorecard['heldout'] must be a bool")
+    if scorecard.get("heldout_manifest_sha") is not None and not isinstance(scorecard["heldout_manifest_sha"], str):
+        raise AssertionError("scorecard['heldout_manifest_sha'] must be a str")
 
 
 def healthz() -> dict[str, str]:

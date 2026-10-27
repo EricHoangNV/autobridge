@@ -26,7 +26,9 @@ from autobridge.bench.harness import (
     assert_budget_fields_equal,
     assert_inputs_equal,
     check_heldout_sha,
+    committed_heldout_manifest_path,
     docs_ref_for_scenario,
+    heldout_manifest_sha,
     is_matched,
     list_scenarios,
     make_trial_inputs,
@@ -472,39 +474,44 @@ def test_verify_matched_trial_fail() -> None:
 
 
 # ---------------------------------------------------------------------------
-# check_heldout_sha
+# check_heldout_sha — REQ-007: temp HELDOUT_DIR + temp manifest, never the real dir
 # ---------------------------------------------------------------------------
 
 
+def _write_manifest(tmp_path: pathlib.Path, files: dict[str, bytes]) -> pathlib.Path:
+    """Write *files* into tmp_path plus a matching SHA256SUMS; return manifest path."""
+    lines = []
+    for rel, blob in files.items():
+        (tmp_path / rel).write_bytes(blob)
+        lines.append(f"{hashlib.sha256(blob).hexdigest()}  {rel}\n")
+    manifest = tmp_path / "SHA256SUMS"
+    manifest.write_text("".join(lines))
+    return manifest
+
+
 def test_check_heldout_sha_no_manifest(tmp_path: pathlib.Path) -> None:
-    # No SHA256SUMS file — should pass (not frozen)
-    check_heldout_sha(heldout_dir=tmp_path)  # no raise
+    # Missing manifest file — no-op (heldout not frozen on that path).
+    check_heldout_sha(heldout_dir=tmp_path, manifest_path=tmp_path / "SHA256SUMS")  # no raise
 
 
 def test_check_heldout_sha_valid(tmp_path: pathlib.Path) -> None:
-    # Create a file and valid manifest
-    f = tmp_path / "data.yaml"
-    f.write_text("hello")
-    sha = hashlib.sha256(b"hello").hexdigest()
-    manifest = tmp_path / "SHA256SUMS"
-    manifest.write_text(f"{sha}  data.yaml\n")
-    check_heldout_sha(heldout_dir=tmp_path)  # no raise
+    manifest = _write_manifest(tmp_path, {"data.yaml": b"hello"})
+    check_heldout_sha(heldout_dir=tmp_path, manifest_path=manifest)  # no raise
 
 
 def test_check_heldout_sha_mismatch(tmp_path: pathlib.Path) -> None:
-    f = tmp_path / "data.yaml"
-    f.write_text("hello")
+    (tmp_path / "data.yaml").write_text("hello")
     manifest = tmp_path / "SHA256SUMS"
     manifest.write_text("deadbeef  data.yaml\n")
     with pytest.raises(AssertionError, match="mismatch"):
-        check_heldout_sha(heldout_dir=tmp_path)
+        check_heldout_sha(heldout_dir=tmp_path, manifest_path=manifest)
 
 
 def test_check_heldout_sha_missing_file(tmp_path: pathlib.Path) -> None:
     manifest = tmp_path / "SHA256SUMS"
     manifest.write_text("abc123  missing.yaml\n")
     with pytest.raises(AssertionError, match="missing"):
-        check_heldout_sha(heldout_dir=tmp_path)
+        check_heldout_sha(heldout_dir=tmp_path, manifest_path=manifest)
 
 
 def test_check_heldout_sha_with_comments(tmp_path: pathlib.Path) -> None:
@@ -513,13 +520,27 @@ def test_check_heldout_sha_with_comments(tmp_path: pathlib.Path) -> None:
     sha = hashlib.sha256(b"hello").hexdigest()
     manifest = tmp_path / "SHA256SUMS"
     manifest.write_text(f"# comment\n\n{sha}  data.yaml\n")
-    check_heldout_sha(heldout_dir=tmp_path)  # no raise
+    check_heldout_sha(heldout_dir=tmp_path, manifest_path=manifest)  # no raise
 
 
-def test_check_heldout_sha_default_no_file() -> None:
-    # Default path verifier/hidden_cases/heldout/SHA256SUMS doesn't exist yet
-    # Should not raise
-    check_heldout_sha()  # no raise (heldout not frozen)
+def test_check_heldout_sha_requires_heldout_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Committed manifest is frozen in the repo; without HELDOUT_DIR the
+    # gate refuses (REQ-007) instead of checking repo files.
+    assert committed_heldout_manifest_path().is_file()
+    monkeypatch.delenv("HELDOUT_DIR", raising=False)
+    with pytest.raises(AssertionError, match="HELDOUT_DIR not set"):
+        check_heldout_sha()
+
+
+def test_heldout_manifest_sha_hex() -> None:
+    sha = heldout_manifest_sha()
+    assert sha is not None
+    assert len(sha) == 64
+    assert all(c in "0123456789abcdef" for c in sha)
+
+
+def test_heldout_manifest_sha_missing(tmp_path: pathlib.Path) -> None:
+    assert heldout_manifest_sha(tmp_path / "SHA256SUMS") is None
 
 
 # ---------------------------------------------------------------------------
@@ -979,21 +1000,18 @@ def test_main_with_bench_scenarios_env(tmp_path: pathlib.Path, monkeypatch: pyte
 def test_main_heldout_sha_failure(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from autobridge.bench.harness import main
 
-    # Create a fake heldout manifest that will fail
-    heldout = tmp_path / "heldout"
-    heldout.mkdir()
-    (heldout / "data.yaml").write_text("hello")
-    (heldout / "SHA256SUMS").write_text("deadbeef  data.yaml\n")
-    monkeypatch.chdir(tmp_path)
-    # Monkeypatch default heldout dir by passing via env not supported, so test directly via check
-    # Instead test main's heldout check: it checks verifier/hidden_cases/heldout/SHA256SUMS
-    # We can't easily make it fail without file in that location, but we can test check_heldout_sha
-    # For main, create verifier structure
-    verifier_heldout = tmp_path / "verifier" / "hidden_cases" / "heldout"
-    verifier_heldout.mkdir(parents=True)
-    (verifier_heldout / "data.yaml").write_text("hello")
-    (verifier_heldout / "SHA256SUMS").write_text("deadbeef  data.yaml\n")
-    ret = main(["--scenarios", "baseline", "--output-dir", str(tmp_path / "out2")])
+    # Heldout run without HELDOUT_DIR is refused (exit 2).
+    monkeypatch.delenv("HELDOUT_DIR", raising=False)
+    ret = main(["--scenarios", "baseline", "--visibility", "heldout", "--output-dir", str(tmp_path / "out1"), "--no-score"])
+    assert ret == 2
+
+    # Heldout run with a dir missing the committed files is refused (exit 2).
+    tampered = tmp_path / "tampered"
+    tampered.mkdir()
+    (tampered / "data.yaml").write_text("hello")
+    (tampered / "SHA256SUMS").write_text("deadbeef  data.yaml\n")
+    monkeypatch.setenv("HELDOUT_DIR", str(tampered))
+    ret = main(["--scenarios", "baseline", "--visibility", "heldout", "--output-dir", str(tmp_path / "out2"), "--no-score"])
     assert ret == 2
 
 

@@ -219,3 +219,20 @@ def test_verify_bounded_names() -> None:
             "loss_detected",
         }
         assert isinstance(fc["count"], int) and fc["count"] > 0
+
+
+# --- REQ-007: private heldout seed override ---
+
+
+def test_verify_seed_override_accepted_and_never_echoed() -> None:
+    r = client.post("/verify", json={"scenario_id": "baseline", "mode": "hidden", "seed": 975311})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["verdict"] in ("pass", "fail")
+    assert "seed" not in body
+    assert "975311" not in r.text
+
+
+def test_verify_seed_override_rejected_when_bad() -> None:
+    r = client.post("/verify", json={"scenario_id": "baseline", "mode": "hidden", "seed": -1})
+    assert r.status_code == 400

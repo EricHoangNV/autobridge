@@ -486,19 +486,26 @@ def verify_matched_trial(trial: TrialResult) -> None:
         assert_inputs_equal(trial.baseline.inputs, trial.one_shot.inputs)
 
 
-def check_heldout_sha(heldout_dir: str | pathlib.Path | None = None) -> None:
-    """Verify heldout SHA256SUMS if present (W8.5 guard; no-op until frozen).
+def _repo_root() -> pathlib.Path:
+    """Repo root resolved from this file (never from cwd — tests chdir)."""
+    return pathlib.Path(__file__).resolve().parents[3]
 
-    If ``verifier/hidden_cases/heldout/SHA256SUMS`` exists, verify every
-    listed file's sha256 matches.  If the file does not exist the check
-    passes (heldout not yet frozen — owner freezes at end of W2).
-    """
-    root = pathlib.Path(heldout_dir) if heldout_dir else pathlib.Path("verifier/hidden_cases/heldout")
-    manifest = root / "SHA256SUMS"
-    if not manifest.is_file():
-        return
-    import hashlib as _hashlib
 
+#: Env var pointing at the owner-held private heldout seed directory (REQ-007).
+HELDOUT_DIR_ENV = "HELDOUT_DIR"
+
+#: Env var for the simulator admin plane used to push private seeds (REQ-007).
+SIMULATOR_ADMIN_URL_ENV = "SIMULATOR_ADMIN_URL"
+
+
+def committed_heldout_manifest_path() -> pathlib.Path:
+    """Committed SHA256SUMS that pins the private heldout files (REQ-007)."""
+    return _repo_root() / "verifier" / "hidden_cases" / "heldout" / "SHA256SUMS"
+
+
+def _read_manifest_entries(manifest: pathlib.Path) -> list[tuple[str, str]]:
+    """Parse sha256sum-format lines into (sha, rel) pairs (skips blanks/comments)."""
+    entries: list[tuple[str, str]] = []
     for line in manifest.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -506,13 +513,122 @@ def check_heldout_sha(heldout_dir: str | pathlib.Path | None = None) -> None:
         parts = line.split()
         if len(parts) < 2:
             continue
-        expected_sha, rel = parts[0], parts[1]
+        entries.append((parts[0], parts[1]))
+    return entries
+
+
+def check_heldout_sha(heldout_dir: str | pathlib.Path | None = None, manifest_path: str | pathlib.Path | None = None) -> None:
+    """Verify private heldout files in HELDOUT_DIR against the committed manifest (REQ-007).
+
+    The manifest (``verifier/hidden_cases/heldout/SHA256SUMS``) pins the
+    owner-held private seed files.  Files are read from *heldout_dir*
+    (default ``$HELDOUT_DIR``) — never from the repo folder — and compared
+    by sha256.  A missing manifest is a no-op (heldout not frozen).
+    Once the manifest exists the directory is required and any missing
+    file or sha mismatch raises ``AssertionError`` (the CLI maps it to
+    exit 2 and refuses the heldout run).
+    """
+    manifest = pathlib.Path(manifest_path) if manifest_path else committed_heldout_manifest_path()
+    if not manifest.is_file():
+        return
+    import hashlib as _hashlib
+
+    root = (
+        pathlib.Path(heldout_dir)
+        if heldout_dir
+        else (pathlib.Path(os.environ[HELDOUT_DIR_ENV]) if os.environ.get(HELDOUT_DIR_ENV) else None)
+    )
+    if root is None:
+        raise AssertionError("heldout SHA check: HELDOUT_DIR not set (refusing heldout run without private seeds)")
+    for expected_sha, rel in _read_manifest_entries(manifest):
         target = root / rel
         if not target.is_file():
             raise AssertionError(f"heldout SHA check: missing file {rel}")
         actual = _hashlib.sha256(target.read_bytes()).hexdigest()
         if actual != expected_sha:
             raise AssertionError(f"heldout SHA mismatch for {rel}: {actual} != {expected_sha}")
+    return
+
+
+def heldout_manifest_sha(manifest_path: str | pathlib.Path | None = None) -> str | None:
+    """Sha256 hex of the committed manifest file itself (scorecard header); None when unfrozen."""
+    manifest = pathlib.Path(manifest_path) if manifest_path else committed_heldout_manifest_path()
+    if not manifest.is_file():
+        return None
+    import hashlib as _hashlib
+
+    return _hashlib.sha256(manifest.read_bytes()).hexdigest()
+
+
+def load_heldout_seeds(
+    heldout_dir: str | pathlib.Path | None = None, manifest_path: str | pathlib.Path | None = None
+) -> dict[str, int]:
+    """Check the gate, then load ``{scenario_id: private seed}`` from HELDOUT_DIR (REQ-007).
+
+    Each ``<scenario_id>.yaml`` must map ``id`` (str, matching the file
+    stem), ``seed`` (non-negative int) and ``nonce`` (str).  Seeds are
+    secrets: this function never prints, logs or serializes them — the
+    caller keeps them out of JSONL, scorecards and SSE events.
+    """
+    check_heldout_sha(heldout_dir=heldout_dir, manifest_path=manifest_path)
+    manifest = pathlib.Path(manifest_path) if manifest_path else committed_heldout_manifest_path()
+    heldout_env = os.environ.get(HELDOUT_DIR_ENV, "").strip() or None
+    root = (
+        pathlib.Path(heldout_dir)
+        if heldout_dir
+        else (pathlib.Path(heldout_env) if heldout_env else None)
+    )
+    if root is None:
+        raise AssertionError("heldout SHA check: HELDOUT_DIR not set (refusing heldout run without private seeds)")
+    import yaml as _yaml
+
+    seeds: dict[str, int] = {}
+    for _, rel in _read_manifest_entries(manifest):
+        if not rel.endswith(".yaml"):
+            continue
+        data = _yaml.safe_load((root / rel).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise AssertionError(f"heldout seed file {rel} must be a mapping")
+        sid = data.get("id")
+        seed = data.get("seed")
+        nonce = data.get("nonce")
+        if not isinstance(sid, str) or not sid:
+            raise AssertionError(f"heldout seed file {rel} needs a str 'id'")
+        if pathlib.Path(rel).stem != sid:
+            raise AssertionError(f"heldout seed file {rel} id {sid!r} does not match filename")
+        if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+            raise AssertionError(f"heldout seed file {rel} needs a non-negative int 'seed'")
+        if not isinstance(nonce, str) or not nonce:
+            raise AssertionError(f"heldout seed file {rel} needs a str 'nonce'")
+        seeds[sid] = seed
+    if not seeds:
+        raise AssertionError("heldout SHA check: manifest lists no seed files")
+    return seeds
+
+
+def push_simulator_seed(
+    scenario_id: str, seed: int, *, admin_url: str, timeout_s: float = 5.0
+) -> None:
+    """Push a private seed to the simulator admin plane (REQ-007).
+
+    ``POST {admin_url}/admin/scenario`` with the admin-net header.  Raises
+    on transport or HTTP error.  Never logs the seed — only the scenario id
+    appears in error text.
+    """
+    import httpx as _httpx
+
+    try:
+        resp = _httpx.post(
+            admin_url.rstrip("/") + "/admin/scenario",
+            json={"id": scenario_id, "seed": seed},
+            headers={"X-Admin-Network": "admin-net"},
+            timeout=timeout_s,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"simulator admin unreachable for scenario {scenario_id!r}: {exc}") from exc
+    if resp.status_code != 200:
+        raise RuntimeError(f"simulator admin rejected scenario {scenario_id!r}: HTTP {resp.status_code}")
+    return
 
 
 # ---------------------------------------------------------------------------
@@ -965,6 +1081,8 @@ def score_and_report(
     scorecard_path: str | pathlib.Path = "experiments/scorecard.md",
     verifier_url: str | None = None,
     verifier_timeout_s: float = 10.0,
+    heldout_seeds: dict[str, int] | None = None,
+    heldout_manifest_sha: str | None = None,
 ) -> dict[str, Any]:
     """Score *bench_result* via verifier hidden mode and write scorecard files.
 
@@ -976,9 +1094,18 @@ def score_and_report(
     (``(spec, scenario_id) -> dict``).  When ``None`` the scorer calls the
     verifier's ``POST /verify`` hidden mode over HTTP — an unreachable
     verifier records losses, never raises.
+
+    REQ-007: when *heldout_seeds* is given, each heldout scenario is
+    verified with its private seed (via the ``seed`` override, never
+    recorded in the scorecard), and the scorecard header records the
+    manifest sha — never the seeds.
     """
     from autobridge.bench.report import write_scorecard, write_scorecard_json  # noqa: PLC0415
-    from autobridge.bench.scoring import score_bench, verify_via_http  # noqa: PLC0415
+    from autobridge.bench.scoring import (  # noqa: PLC0415
+        score_bench,
+        verify_via_http,
+        wrap_verify_fn_with_seeds,
+    )
 
     url = verifier_url or bench_result.config.verifier_url
     fn = verify_fn
@@ -986,7 +1113,14 @@ def score_and_report(
         import functools  # noqa: PLC0415
 
         fn = functools.partial(verify_via_http, verifier_url=url, timeout_s=verifier_timeout_s)
-    scorecard = score_bench(bench_result, fn)
+    if heldout_seeds:
+        fn = wrap_verify_fn_with_seeds(fn, heldout_seeds)
+    scorecard = score_bench(
+        bench_result,
+        fn,
+        heldout=bool(heldout_seeds),
+        heldout_manifest_sha=heldout_manifest_sha,
+    )
     out_dir = pathlib.Path(output_dir)
     write_scorecard_json(scorecard, out_dir / "_scorecard.json")
     write_scorecard(scorecard, scorecard_path)
@@ -1001,16 +1135,24 @@ def score_and_report(
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for ``make bench``.
 
-    Steps (W8.5):
-    1. Heldout SHA check (no-op until frozen; hard fail on mismatch).
+    Steps (W8.5 + REQ-007):
+    1. Heldout gate — dev runs skip it; ``heldout``/``all`` runs verify
+       ``$HELDOUT_DIR`` against the committed manifest and load private
+       seeds (exit 2 on missing env, missing file or sha mismatch).
     2. Run harness for dev scenarios (or ``BENCH_SCENARIOS`` /
        ``--scenarios``; ``BENCH_VISIBILITY`` / ``--visibility`` selects
        the dev/heldout split — the Nov 3 heldout run uses heldout).
+       Heldout scenarios are pushed to the simulator admin plane with
+       their private seed first (``$SIMULATOR_ADMIN_URL``; skipped when
+       unset, fatal on push failure so live runs never score wrong data).
     3. Write ``experiments/benchmark_runs/*.jsonl`` (idempotent:
-       same seed overwrites the same files with identical canonical bytes).
+       same seed overwrites the same files with identical canonical bytes;
+       private seeds never appear in the payload).
     4. Score via verifier hidden mode + render ``experiments/scorecard.md``
        with wins and losses (skip with ``--no-score`` / ``BENCH_NO_SCORE=1``).
-    5. Print summary to stdout.
+       Heldout runs verify with the private seed override and record the
+       manifest sha in the scorecard header — never the seeds.
+    5. Print summary to stdout (scenario ids and manifest sha only).
     """
     import argparse
 
@@ -1025,6 +1167,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Scenario visibility split (default: dev; env BENCH_VISIBILITY)",
     )
+    parser.add_argument(
+        "--heldout-dir",
+        type=str,
+        default=None,
+        help="Private heldout seed dir (default: $HELDOUT_DIR; required for heldout/all)",
+    )
     parser.add_argument("--scorecard", type=str, default="experiments/scorecard.md", help="Scorecard markdown path")
     parser.add_argument("--no-score", action="store_true", help="Skip scoring/report (harness JSONL only)")
     parser.add_argument("--token-ceiling", type=int, default=None)
@@ -1033,12 +1181,56 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verifier-url", type=str, default=None)
     args = parser.parse_args(argv)
 
-    # 1. Heldout SHA check
-    try:
-        check_heldout_sha()
-    except AssertionError as exc:
-        print(f"heldout SHA check failed: {exc}", flush=True)
+    # Env overrides (for Docker Compose)
+    env_scenarios = os.environ.get("BENCH_SCENARIOS", "")
+    env_seed = os.environ.get("BENCH_SEED", "")
+    env_trials = os.environ.get("BENCH_TRIALS", "")
+    env_visibility = os.environ.get("BENCH_VISIBILITY", "")
+    env_no_score = os.environ.get("BENCH_NO_SCORE", "")
+    env_heldout_dir = os.environ.get(HELDOUT_DIR_ENV, "")
+
+    visibility = args.visibility or (env_visibility.strip() or None) or "dev"
+    if visibility not in ("dev", "heldout", "all"):
+        print(f"invalid visibility {visibility!r} (want dev|heldout|all)", flush=True)
         return 2
+
+    scenarios = args.scenarios
+    if not scenarios and env_scenarios:
+        scenarios = [s.strip() for s in env_scenarios.split(",") if s.strip()]
+    if not scenarios:
+        # 2. Build config (needed for nothing here; scenarios first for push filtering)
+        scenarios = list_scenarios(visibility=visibility)
+
+    # 1. Heldout gate — dev runs skip it entirely (REQ-007).
+    heldout_seeds: dict[str, int] | None = None
+    manifest_sha: str | None = None
+    if visibility in ("heldout", "all"):
+        heldout_dir = args.heldout_dir or (env_heldout_dir.strip() or None)
+        try:
+            check_heldout_sha(heldout_dir=heldout_dir)
+            heldout_seeds = load_heldout_seeds(heldout_dir=heldout_dir)
+        except AssertionError as exc:
+            print(f"heldout SHA check failed: {exc}", flush=True)
+            return 2
+        manifest_sha = heldout_manifest_sha()
+        # Push private seeds to the simulator admin plane so live arms
+        # serve the same data the verifier judges (ids only in output).
+        admin_url = os.environ.get(SIMULATOR_ADMIN_URL_ENV, "").strip() or None
+        if admin_url:
+            assert heldout_seeds is not None
+            push_targets = [s for s in scenarios if s in heldout_seeds]
+            for sid in push_targets:
+                try:
+                    push_simulator_seed(sid, heldout_seeds[sid], admin_url=admin_url)
+                except RuntimeError as exc:
+                    print(f"heldout simulator push failed: {exc}", flush=True)
+                    return 1
+        print(
+            f"bench harness: heldout run on {len(scenarios)} scenarios "
+            f"({sum(1 for s in scenarios if heldout_seeds and s in heldout_seeds)} private), "
+            f"manifest {(manifest_sha or 'unknown')[:12]}",
+            flush=True,
+        )
 
     # 2. Build config
     cfg_kwargs: dict[str, Any] = {}
@@ -1055,12 +1247,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.verifier_url is not None:
         cfg_kwargs["verifier_url"] = args.verifier_url
 
-    # Env overrides (for Docker Compose)
-    env_scenarios = os.environ.get("BENCH_SCENARIOS", "")
-    env_seed = os.environ.get("BENCH_SEED", "")
-    env_trials = os.environ.get("BENCH_TRIALS", "")
-    env_visibility = os.environ.get("BENCH_VISIBILITY", "")
-    env_no_score = os.environ.get("BENCH_NO_SCORE", "")
+    # Env overrides (for Docker Compose; scenarios/visibility resolved above)
     if env_trials and "trials_per_scenario" not in cfg_kwargs:
         try:  # noqa: SIM105
             cfg_kwargs["trials_per_scenario"] = int(env_trials)
@@ -1073,16 +1260,6 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     cfg = HarnessConfig(**cfg_kwargs)
-
-    scenarios = args.scenarios
-    if not scenarios and env_scenarios:
-        scenarios = [s.strip() for s in env_scenarios.split(",") if s.strip()]
-    visibility = args.visibility or (env_visibility.strip() or None) or "dev"
-    if visibility not in ("dev", "heldout", "all"):
-        print(f"invalid visibility {visibility!r} (want dev|heldout|all)", flush=True)
-        return 2
-    if not scenarios:
-        scenarios = list_scenarios(visibility=visibility)
 
     print(f"bench harness: seed={cfg.seed} token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
     print(f"  sandbox_image={cfg.sandbox_image} sandbox_url={cfg.sandbox_url}", flush=True)
@@ -1105,6 +1282,8 @@ def main(argv: list[str] | None = None) -> int:
             bench_result,
             output_dir=args.output_dir,
             scorecard_path=args.scorecard,
+            heldout_seeds=heldout_seeds,
+            heldout_manifest_sha=manifest_sha,
         )
         wins = len(scorecard.get("wins", []))
         losses = len(scorecard.get("losses", []))

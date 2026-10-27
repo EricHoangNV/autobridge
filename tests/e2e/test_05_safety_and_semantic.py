@@ -1087,16 +1087,52 @@ def test_no_frontier_tokens_for_deterministic_paths() -> None:
                 assert res.model_usage["frontier_tokens"] == 0
 
 
-def _hidden_cases_confined_to_sha_gate(text: str) -> bool:
-    """Every ``hidden_cases`` mention lies inside ``check_heldout_sha``.
+# Gate functions allowed to touch the heldout commitment (REQ-007): the
+# W8.5 integrity gate plus the private-seed loader.  Fixture bytes flow
+# into ``sha256()`` and out only as a hex digest; private seeds flow only
+# into the simulator admin call / verifier ``seed`` override — never into
+# prompts, responses, logs or files (asserted by unit no-leak tests).
+_HELDOUT_GATE_FUNCTIONS = (
+    "check_heldout_sha",
+    "committed_heldout_manifest_path",
+    "heldout_manifest_sha",
+    "load_heldout_seeds",
+    "push_simulator_seed",
+)
 
-    The W8.5 heldout integrity gate hashes heldout files against SHA256SUMS.
-    It must return None on all paths (bare ``return`` only): fixture bytes
-    flow into ``sha256()`` and out only as a hex digest, never into a prompt,
-    response, or caller. (Mirror of the helper in test_04; the two files
-    stay standalone so each e2e file reads independently.)
+
+def _gate_spans(lines: list[str]) -> list[tuple[int, int]]:
+    """Spans (start, end) of the heldout gate functions in *lines*."""
+    spans = []
+    for i, line in enumerate(lines):
+        for name in _HELDOUT_GATE_FUNCTIONS:
+            if line.startswith(f"def {name}("):
+                end = next(
+                    (j for j in range(i + 1, len(lines)) if lines[j].startswith(("def ", "class "))),
+                    len(lines),
+                )
+                spans.append((i, end))
+    return spans
+
+
+def _hidden_cases_confined_to_sha_gate(text: str) -> bool:
+    """Every ``hidden_cases`` mention lies inside a heldout gate function.
+
+    The heldout gate hashes private files against SHA256SUMS.
+    ``check_heldout_sha`` must return None on all paths (bare ``return``
+    only): fixture bytes flow into ``sha256()`` and out only as a hex
+    digest, never into a prompt, response, or caller.  ``load_heldout_seeds``
+    returns the private seeds to the bench caller, so it must never print
+    them (no ``print(`` inside). (Mirror of the helper in test_04; the
+    two files stay standalone so each e2e file reads independently.)
     """
     lines = text.splitlines()
+    spans = _gate_spans(lines)
+    if not spans:
+        return False
+    for i, line in enumerate(lines):
+        if "hidden_cases" in line and not any(s <= i < e for s, e in spans):
+            return False
     try:
         start = next(i for i, line in enumerate(lines) if line.startswith("def check_heldout_sha"))
     except StopIteration:
@@ -1105,18 +1141,25 @@ def _hidden_cases_confined_to_sha_gate(text: str) -> bool:
         (i for i in range(start + 1, len(lines)) if lines[i].startswith(("def ", "class "))),
         len(lines),
     )
-    if any("hidden_cases" in line for line in lines[:start]):
-        return False
-    if any("hidden_cases" in line for line in lines[end:]):
-        return False
     if "-> None" not in lines[start]:
         return False
-    # Every return inside the gate is bare: the function yields no bytes.
-    return all(
+    # Every return inside the SHA gate is bare: the function yields no bytes.
+    if not all(
         line.strip() == "return"
         for line in lines[start + 1 : end]
         if line.strip().startswith("return")
+    ):
+        return False
+    try:
+        lstart = next(i for i, line in enumerate(lines) if line.startswith("def load_heldout_seeds"))
+    except StopIteration:
+        return True
+    lend = next(
+        (i for i in range(lstart + 1, len(lines)) if lines[i].startswith(("def ", "class "))),
+        len(lines),
     )
+    # The seed loader must never print seeds to stdout.
+    return not any("print(" in line for line in lines[lstart + 1 : lend])
 
 
 def test_engine_never_imports_verifier_or_simulators() -> None:
@@ -1132,14 +1175,20 @@ def test_engine_never_imports_verifier_or_simulators() -> None:
             )
         if "hidden_cases" not in text and "heldout" not in text.lower():
             continue
-        # Sole exception: bench/harness.py::check_heldout_sha (P1.W8.5 heldout
-        # integrity gate) — confined use asserted structurally below.
-        assert pyfile.name == "harness.py" and pyfile.parent.name == "bench", (
+        # Bench-package exception (harness concern per DIRECTIVES §2): the
+        # ``hidden_cases`` literal stays confined to the heldout gate
+        # functions in bench/harness.py (hash + private-seed load; seeds
+        # never printed, asserted structurally below).
+        assert pyfile.parent.name == "bench" and pyfile.parent.parent.name == "autobridge", (
             f"{pyfile} references hidden_cases/heldout — trust boundary violation"
         )
-        assert _hidden_cases_confined_to_sha_gate(text), (
-            f"{pyfile}: hidden_cases use escaped check_heldout_sha"
-        )
+        if "hidden_cases" in text:
+            assert pyfile.name == "harness.py", (
+                f"{pyfile} references hidden_cases — only bench/harness.py may"
+            )
+            assert _hidden_cases_confined_to_sha_gate(text), (
+                f"{pyfile}: hidden_cases use escaped the heldout gate"
+            )
 
 
 def test_sync_outcome_always_complete_degraded_blocked_with_criteria() -> None:

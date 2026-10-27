@@ -54,6 +54,10 @@ def render_scorecard_markdown(scorecard: dict[str, Any]) -> str:
     lines.append(f"Generated: {scorecard.get('generated_at', 'unknown')}")
     lines.append(f"Seed: {scorecard.get('seed', 'unknown')}")
     lines.append(f"Trials: {scorecard.get('matched_trials', 0)}/{scorecard.get('total_trials', 0)} matched")
+    if scorecard.get("heldout"):
+        lines.append(f"Heldout seeds: private (manifest {scorecard.get('heldout_manifest_sha', 'unknown')})")
+    else:
+        lines.append("Heldout seeds: n/a — dev run on public YAML seeds")
     lines.append("")
     lines.append("## Aggregate metrics (per arm)")
     lines.append("")
