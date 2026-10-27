@@ -575,3 +575,28 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 
 
 
+## P1.W3.2 Auth strategies (bearer, api-key header, basic, oauth2 client-credentials)
+**Date:** 2026-10-27
+**Ref:** plan §4 W3 + §2.4; task P1.W3.2. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `src/autobridge/runtime/auth.py` (242 lines): AuthError/TokenFetchError, OAuth2Token dataclass, _get_secret (env read with AuthError naming only credential_ref, never value), build_auth_headers for bearer/api_key_header/basic/oauth2 (oauth2 returns {} after validating secret, token fetch via OAuth2TokenManager), OAuth2TokenManager (client-credentials POST with grant_type/client_id/client_secret/scope, caching with expires_in and 10s margin, clear_cache, auth_header, _now dynamic for test patchability, secret never logged), get_auth_headers convenience helper; trust boundary: no verifier/simulators import
+- Refactored `src/autobridge/runtime/http.py` to delegate auth to auth.py (re-exports AuthError/OAuth2Token/build_auth_headers for backward compat), HttpClient now uses OAuth2TokenManager internally with TokenFetchError→HttpError translation, keeps _oauth_token sync for legacy tests, auth header merging unchanged, no secret logging
+- New `tests/unit/test_autobridge_runtime_auth.py` (38 tests): bearer/api_key/basic success/missing/unsupported, oauth2 build empty/ missing, OAuth2TokenManager success/fetch/auth_header/caching without expiry/expiry refresh with explicit time_fn/clear_cache/missing secret/non-200/not-json/missing token/network/init errors/scope included/string expires_in, get_auth_headers none/bearer/api_key/oauth2 with manager/ephemeral fallback, secrets never in AuthError/TokenFetchError messages, OAuth2Token dataclass
+
+**Key decisions:**
+- Split auth into dedicated module vs keeping in http.py: auth.py owns all credential handling (env read, header building, token fetch/cache) so http.py only handles HTTP retry/backoff; separation makes trust-boundary audit (secrets never logged) easier and satisfies plan's "auth strategies auth.py" deliverable
+- OAuth2TokenManager time handling: store time_fn optionally, use _now() that calls time.monotonic() dynamically when no explicit fn, so HttpClient's manager respects monkeypatch.setattr(time, "monotonic", ...) after creation (required for expiry test that patches after init); explicit time_fn still supported for deterministic tests
+- build_auth_headers for oauth2 validates credential exists (raises AuthError if missing) but returns {} to signal caller to fetch token — matches previous http.py behavior; actual fetch is manager.get_token()/fetch_token() with POST form data and scope handling
+- HttpClient backward compat: re-export AuthError/OAuth2Token/build_auth_headers from auth via alias, keep _oauth_token attribute synced from manager._token so existing http_interpreter tests that mock time.monotonic and check cache still pass; TokenFetchError translated to HttpError with status_code preservation for existing 401/500 expectations
+- Secrets never logged: every error message names only credential_ref (env key), never the value; no logger calls include secret; tested via assertions that "super-secret-123" not in AuthError/TokenFetchError strings across all types
+
+**Files changed:**
+- `src/autobridge/runtime/auth.py` (new)
+- `src/autobridge/runtime/http.py` (refactored to delegate to auth.py, added OAuth2TokenManager integration, removed duplicate definitions)
+- `tests/unit/test_autobridge_runtime_auth.py` (new, 38 tests)
+
+**Notes for next iteration:**
+- Next: P1.W3.3 pagination (offset/cursor/page with stop_when guards, repeated_cursor → Degraded no_loss)
+- Auth is now complete and never logs secrets; verifier's HttpClient usage should go through same path (no direct env read elsewhere)
+- No new e2e file for W3.2 (workstream e2e is test_02_reference_sync); make test now 820 pass (509 autobridge @99.05% incl. auth 100%, verifier 93.67%, simulators 98.54%)

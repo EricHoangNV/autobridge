@@ -2,7 +2,7 @@
 
 ## Current State
 
-W3.1 runtime interpreter+http done (2026-10-27): ConnectorSpec operation execution with retry/backoff from rate_limit.retry, pagination loop with stop_when guards, ModelCall 0.
+W3.2 auth strategies done (2026-10-27): bearer, api-key header, basic, oauth2 client-credentials via credential_ref, never logged.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -24,10 +24,11 @@ W3.1 runtime interpreter+http done (2026-10-27): ConnectorSpec operation executi
   - P1.W2.7: Verifier regression runner (regression_suite param, baseline + fixable suite), mutation helpers (10 ids, flip/drop helpers), invalid-patch trap set (7 traps, net→total_amount etc. rejected)
   - P1.W2.9: e2e test_01_simulators_and_oracle (admin API → verifier verdicts vs catalog, hidden mode, sim HTTP faults) + docs/safety-model.md first pass
   - P1.W3.1: Runtime interpreter + http (retry/backoff, offset/cursor/page pagination, repeated_cursor flag, ModelCall 0)
-- Tests: 782 pass / 0 fail / 0 skip (autobridge 99.07%, verifier 93.67%, simulators 98.54%; ui –) + 17 e2e pass (8 test_00 + 9 test_01, skip when no Docker)
+  - P1.W3.2: Auth strategies (bearer, api-key header, basic, oauth2 client-credentials via credential_ref, never logged)
+- Tests: 820 pass / 0 fail / 0 skip (autobridge 99.05%, verifier 93.67%, simulators 98.54%; ui –) + 17 e2e pass (8 test_00 + 9 test_01, skip when no Docker)
 - Stack: `make up` → all 8 readyz green (via TestClient) / `make smoke` green / `make e2e` green (17 pass, skip when no Docker) / `make lint` + `make typecheck` green
 
 ## Next tasks
 1. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check; owner freezes SHA256SUMS)
-2. **P1.W3.2** — Auth strategies (bearer, api-key, basic, oauth2 client-credentials; credential_ref from env, never logged)
-3. **P1.W3.3** — Pagination with stop_when guards (offset/cursor/page, repeated_cursor → Degraded no_loss)
+2. **P1.W3.3** — Pagination with stop_when guards (offset/cursor/page, repeated_cursor → Degraded no_loss)
+3. **P1.W3.4** — Closed transform registry (date_local, money, enum_map, etc.), checks, checkpoint

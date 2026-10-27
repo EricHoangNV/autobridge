@@ -14,27 +14,40 @@ Trust boundary: no import of :mod:`verifier` or :mod:`simulators`.
 
 from __future__ import annotations
 
-import base64
 import os
 import re
 import time
 from collections.abc import Callable  # noqa: TC003
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from autobridge.runtime.auth import (
+    AuthError as _AuthError,
+)
+from autobridge.runtime.auth import (
+    OAuth2Token as _OAuth2Token,
+)
+from autobridge.runtime.auth import (
+    OAuth2TokenManager,
+    TokenFetchError,
+)
+from autobridge.runtime.auth import (
+    build_auth_headers as _build_auth_headers,
+)
+
 if TYPE_CHECKING:
     from autobridge.spec.models import AuthSpec, RetryPolicy
+
+# Re-export for backward compat (tests import from http)
+AuthError = _AuthError
+OAuth2Token = _OAuth2Token
+build_auth_headers = _build_auth_headers
 
 # Placeholder pattern: ${UPPER_SNAKE}
 _ENV_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 
 _DEFAULT_BASE_DELAY_S = 0.05  # small so tests stay fast
-
-
-class AuthError(RuntimeError):
-    """Missing credential or unsupported auth type."""
 
 
 class HttpError(RuntimeError):
@@ -102,40 +115,8 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
         return None
 
 
-def build_auth_headers(auth: AuthSpec) -> dict[str, str]:
-    """Build auth header(s) from *auth*.
-
-    Reads the secret from ``credential_ref`` env key.  For ``bearer`` and
-    ``api_key_header`` the secret is the token; for ``basic`` it is the
-    password paired with ``auth.username``; for ``oauth2_client_credentials``
-    the secret is the client secret (token exchange is handled by
-    :class:`HttpClient` when needed).
-    """
-    secret = os.environ.get(auth.credential_ref)
-    if not secret:
-        raise AuthError(f"Missing env var {auth.credential_ref!r} for auth credential_ref")
-    if auth.type == "bearer":
-        return {"Authorization": f"Bearer {secret}"}
-    if auth.type == "api_key_header":
-        assert auth.header_name is not None
-        return {auth.header_name: secret}
-    if auth.type == "basic":
-        assert auth.username is not None
-        raw = f"{auth.username}:{secret}".encode()
-        token = base64.b64encode(raw).decode()
-        return {"Authorization": f"Basic {token}"}
-    if auth.type == "oauth2_client_credentials":
-        # Token will be fetched on demand; return placeholder so caller can
-        # detect that an exchange is required.
-        # We still validate env presence here.
-        return {}
-    raise AuthError(f"Unsupported auth type {auth.type!r}")
-
-
-@dataclass(slots=True)
-class OAuth2Token:
-    access_token: str
-    expires_at: float | None = None
+# build_auth_headers and OAuth2Token are imported from auth (re-exported above)
+# for backward compat; see autobridge.runtime.auth for implementation.
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +151,13 @@ class HttpClient:
         self.sleep_fn = sleep_fn
         self.client_factory = client_factory or httpx.Client
         self._oauth_token: OAuth2Token | None = None
+        self._oauth_manager: OAuth2TokenManager | None = None
+        if auth is not None and auth.type == "oauth2_client_credentials":
+            self._oauth_manager = OAuth2TokenManager(
+                auth,
+                timeout_s=timeout_s,
+                client_factory=self.client_factory,
+            )
 
     # -- URL helpers -------------------------------------------------------
 
@@ -191,52 +179,24 @@ class HttpClient:
 
     def _ensure_oauth_token(self) -> str:
         assert self.auth is not None and self.auth.type == "oauth2_client_credentials"
-        if (
-            self._oauth_token is not None
-            and self._oauth_token.expires_at is not None
-            and time.monotonic() < self._oauth_token.expires_at - 10
-        ):
-            return self._oauth_token.access_token
-        # Fetch token — use a short-lived httpx client.
-        secret = os.environ.get(self.auth.credential_ref)
-        if not secret:
-            raise AuthError(f"Missing env var {self.auth.credential_ref!r} for oauth2 client secret")
-        assert self.auth.token_url is not None
-        assert self.auth.username is not None  # client_id
-        data = {
-            "grant_type": "client_credentials",
-            "client_id": self.auth.username,
-            "client_secret": secret,
-        }
-        if self.auth.scopes:
-            data["scope"] = " ".join(self.auth.scopes)
-        url = self.auth.token_url
-        # Token fetch itself respects retry if the token_url is retryable; for
-        # simplicity fetch without retry (failures are surfaced as HttpError).
-        try:
-            with self.client_factory(timeout=self.timeout_s) as client:
-                resp = client.post(url, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
-        except Exception as exc:
-            raise HttpError(f"oauth2 token fetch failed: {exc}") from exc
-        if resp.status_code != 200:
-            raise HttpError(
-                f"oauth2 token fetch returned {resp.status_code}",
-                status_code=resp.status_code,
-                response=resp.text,
+        # Lazy init manager if not created (e.g. auth changed after init)
+        if self._oauth_manager is None:
+            self._oauth_manager = OAuth2TokenManager(
+                self.auth, timeout_s=self.timeout_s, client_factory=self.client_factory
             )
+        # Keep _oauth_token in sync for external inspection / legacy tests
         try:
-            body = resp.json()
-        except Exception as exc:
-            raise HttpError(f"oauth2 token response is not JSON: {exc}") from exc
-        token = body.get("access_token")
-        if not token:
-            raise HttpError("oauth2 token response missing access_token")
-        expires_in = body.get("expires_in")
-        expires_at = None
-        if isinstance(expires_in, (int, float)):
-            expires_at = time.monotonic() + float(expires_in)
-        self._oauth_token = OAuth2Token(access_token=str(token), expires_at=expires_at)
-        return self._oauth_token.access_token
+            token = self._oauth_manager.get_token()
+        except AuthError:
+            raise
+        except TokenFetchError as exc:
+            # Translate to HttpError for backward compat (existing tests expect HttpError)
+            if exc.status_code is not None:
+                raise HttpError(str(exc), status_code=exc.status_code, response=exc.response) from exc
+            raise HttpError(str(exc)) from exc
+        # Sync legacy attribute
+        self._oauth_token = self._oauth_manager._token
+        return token
 
     # -- request -----------------------------------------------------------
 
