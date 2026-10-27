@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W8.5 bench pipeline done (2026-10-27): `make bench` runs heldout SHA gate → matched-budget run → idempotent JSONL → verifier hidden-mode scoring → `experiments/scorecard.md` (wins AND losses); reproducibility via `canonical_payload`/`assert_results_reproducible` (timing-only exclusions, proven live with identical sha256 across runs); `tests/e2e/test_07_benchmark_matched_budget.py` validates the scorecard schema; `make bench-heldout` + freeze runbook ready for Nov 3 (freeze itself stays P1.W2.8 HUMAN). W8 workstream complete (W8.1–W8.5).
+P1.W9.1 e2e harness complete (2026-10-27): conftest has verified per-test simulator reset (live) + best-effort (fakes), autouse `os.environ` restore, `SUITE_RUNTIME_BUDGET_SECONDS=300` / `WARM_TEST00_BUDGET_SECONDS=30`; `pytest-randomly` shuffles every run; suite 66/66 green live on seeds 123+777 (~5s warm) and via fakes, cold managed bring-up + teardown green (~20s); `make smoke` green incl. negative network checks. Fixed live blockers: verifier image now ships simulators/ (was ModuleNotFoundError), Dockerfile.engine installs project deps (was missing sqlalchemy). Trust-boundary e2e tests updated for W7 builds.py guard + W8.5 SHA gate (structural confinement). PRE-EXISTING FLAG: `lint-imports` contract broken on main by W8 harness (`bench/harness.py` imports/reads simulators/) — left untouched, needs owner decision.
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -62,9 +62,10 @@ P1.W8.5 bench pipeline done (2026-10-27): `make bench` runs heldout SHA gate →
   - P1.W8.3: one_shot_generator secondary control
   - P1.W8.4: bench scoring + report via verifier hidden mode
   - P1.W8.5: make bench idempotent + heldout sha + test_07 + docs/benchmark.md
-- Tests: 1995 pass / 0 fail (autobridge 1684 @ 90.63%, verifier 92 @ 93.78%, simulators 219 @ 96.55%)
-- Stack: compose down in sbx1 (test_07 green without Docker via fakes; live verifier path when up) / lint + typecheck green
+  - P1.W9.1: e2e harness complete (verified reset, env isolation, budget, random order)
+- Tests: 1995 pass / 0 fail (autobridge 1684 @ 90.63%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + e2e 66/66 live
+- Stack: compose down in sbx1 (full live suite green; smoke green) / lint + typecheck green
 
 ## Next tasks
-1. **P1.W9.1** — tests/e2e/conftest.py complete (independent, random-order safe)
-2. **P1.W9.2** — make e2e + CI job (unit → smoke → e2e from clean clone)
+1. **P1.W9.2** — make e2e + CI job (unit → smoke → e2e from clean clone)
+2. **P1.W10.1** — README + docs/ pages + .env.example

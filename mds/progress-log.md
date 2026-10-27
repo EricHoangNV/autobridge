@@ -1500,3 +1500,31 @@ What: `src/autobridge/bench/scoring.py` (VerifyOutcome normalize, verify_via_htt
 ## 2026-10-27 — P1.W8.5 done (sbx1, opencode meta/muse-spark-1.3 escalation)
 `make bench` is now the full pipeline: heldout SHA gate → matched-budget run (10 dev scenarios) → idempotent JSONL → verifier hidden-mode scoring → `experiments/scorecard.md` with wins AND losses. Reproducibility pinned by `canonical_payload`/`assert_results_reproducible` (timing-only exclusions) + 15 new unit tests; `tests/e2e/test_07_benchmark_matched_budget.py` runs one dev scenario through both arms and validates the scorecard schema (green without Docker, live verifier when up). Idempotency proven live (two runs, identical canonical sha256). `make bench-heldout` added for the Nov 3 run; heldout freeze runbook in `docs/benchmark.md` (freeze itself stays P1.W2.8 HUMAN). Full suite 1995 pass (1684/92/219 @ 90.63/93.78/96.55%), lint + typecheck green.
 - Next tasks: P1.W9.1 e2e conftest complete, P1.W9.2 make e2e + CI, P1.W10 packaging/demo.
+
+## P1.W9.1 — e2e harness complete (verified reset, env isolation, budget, random order)
+**Date:** 2026-10-27
+**Ref:** plan §4 W9 + §3 (Agent: opencode meta/muse-spark-1.3 (escalation))
+
+**What was done:**
+- `tests/e2e/conftest.py` completed: `reset_simulator_state` now does verified `POST /admin/reset` (admin port + public fallback, control `/demo/inject-fault` best-effort) for tests using `e2e_stack`, best-effort otherwise; new autouse `preserve_process_env` restores `os.environ` per test; `SUITE_RUNTIME_BUDGET_SECONDS=300`, `WARM_TEST00_BUDGET_SECONDS=30`
+- Added `pytest-randomly` to dev deps: suite green under seeds 123/777/20261104 (fakes, 43+23 skipped) and 123/777 live (66/66, ~5s warm); cold managed bring-up (`compose up --build --wait` from `down -v`) + teardown green via test_00 (~20s)
+- Fixed two stale trust-boundary allowlists that kept the suite red on main: test_04 now allowlists W7 `builds.py` 422 guard (same never-open assertions); test_04/test_05 confine the W8.5 `check_heldout_sha` exception structurally (all `hidden_cases` mentions inside the function, `-> None`, bare returns only)
+- Fixed two packaging bugs that had kept ALL live e2e skipped/crashing: verifier image now copies `simulators/` + CMD `verifier.app:app` (was `ModuleNotFoundError: simulators`); `Dockerfile.engine` runs `pip install .` (was missing sqlalchemy → control crash); compose unit test rewritten to pin the new no-engine-src guarantee
+- `docs/architecture.md` §7 updated (complete harness, budget with measured numbers); `make smoke` green incl. negative network checks; `make test` 1995 pass, coverage 90.63/93.78/96.55; lint + typecheck green
+
+**Key decisions:**
+- Exception (not evasion) for `check_heldout_sha`: the plan-mandated heldout SHA gate must read files to hash them; the e2e tests now assert the narrow property that matters (bytes leave only as hex digest, function returns None) instead of a blanket string ban that contradicted the accepted W8 design
+- Fixed packaging rather than documenting live-e2e as blocked: the stack runs in this sandbox and the fixes are 5-line, behavior-preserving, boundary-preserving (engine still excluded from verifier image, pinned by unit test)
+- Left `bench/harness.py` simulators imports/reads untouched (see Notes) — W8 redesign risk, owner call
+
+**Files changed:**
+- `tests/e2e/conftest.py` — completed harness (reset, env isolation, budget constants)
+- `tests/e2e/test_04_bootstrap_unfamiliar_api.py`, `tests/e2e/test_05_safety_and_semantic.py` — stale allowlists + SHA-gate confinement helper
+- `verifier/Dockerfile`, `compose.yaml`, `Dockerfile.engine` — live-e2e packaging fixes
+- `tests/unit/test_autobridge_compose.py` — pins no-engine-src verifier image guarantee
+- `pyproject.toml`, `uv.lock` — pytest-randomly dev dep
+- `docs/architecture.md` — §7 complete + measured budget
+
+**Notes for next iteration:**
+- PRE-EXISTING (on origin/main, not mine): `lint-imports` contract `autobridge must not import simulators` is BROKEN by `src/autobridge/bench/harness.py:216,256` (`from simulators.common.faults import SCENARIO_CATALOG`, function-local) plus `list_scenarios()` reading `simulators/scenarios/*.yaml` off disk. Remediation needs a W8 decision (scenario discovery via API/verifier vs vendored catalog). Also the e2e top-40-lines import grep misses function-local imports — consider a whole-file import-pattern scan once the harness is fixed.
+- P1.W9.2 (CI job) is next; `.github/` does not exist yet so that task creates it.

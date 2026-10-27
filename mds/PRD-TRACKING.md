@@ -91,7 +91,7 @@
 - [x] P1.W8.5 `make bench` idempotent and reproducible from seeds, heldout sha check before the run; `tests/e2e/test_07_benchmark_matched_budget.py` runs one dev scenario through both arms and validates the scorecard schema; `docs/benchmark.md`
 
 #### W9 — E2E suite (continuous deliverable, plan §4 W9)
-- [>] P1.W9.1 `tests/e2e/conftest.py` complete: brings up Compose, waits on `readyz`, resets simulator state per test, tears down; tests independent (random-order run passes); suite runtime budget documented — in progress: sbx1 since 2026-10-27 09:07
+- [x] P1.W9.1 `tests/e2e/conftest.py` complete: brings up Compose, waits on `readyz`, resets simulator state per test, tears down; tests independent (random-order run passes); suite runtime budget documented
 - [ ] P1.W9.2 `make e2e` runs the whole suite against the Compose stack; CI job running unit (coverage gate) → smoke → e2e from a clean clone
 
 #### W10 — Packaging + demo (plan §4 W10, §6)
