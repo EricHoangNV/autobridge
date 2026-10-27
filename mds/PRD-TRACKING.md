@@ -7,7 +7,7 @@
 >
 > Status: `[x]` done · `[ ]` open · `[>]` claimed by a ralph loop ("in progress: sbx1 since …" or "sbx-mini") · `[~]` partial/blocked. Completed-task build notes live in `BUILD-NOTES.md`.
 > Task ids: `P<phase>.W<workstream>.<n>` for Phase 1 (e.g. `P1.W2.3`), `P<phase>.S<item>.<n>` for Phase 2 (e.g. `P2.S1.1`).
-> Workstreams are in dependency order (plan §4): W1 → W2 → W3 → W4 → W5 → W6; W7 after W3; W8 after W6; W9 grows with every workstream; W10 last. Phase 2 opens only after W1–W6 are green and the stop rule holds (plan §5).
+> Workstreams are in dependency order (plan §4): W1 → W2 → W3 → W4 → W5 → W6; W7 after W3; W8 after W6; W9 grows with every workstream; W10 last. Phase 2 is open (owner stop-rule decision 2026-10-27 in `PRD.MD`); `[~]` HUMAN owner steps do not block it.
 > `HUMAN` = needs the owner; agents do the codeable part, then leave it `[~]` with the exact manual step.
 > A workstream is done when its unit tests are ≥ 90%, its e2e file is green, its `readyz` checks are green and its docs page is updated (plan §3).
 
@@ -100,7 +100,7 @@
 - [x] P1.W10.2 `make demo` driving the six demo steps of plan §6 through the control API; its output is the same evidence the UI renders (live-control-api + local-evidence modes, 22 unit tests)
   - [~] P1.W10.3 HUMAN — codeable done (demo in CI + ui/public fix, verified live 2026-10-27); OWNER STEP: confirm CI green on main with the demo step, then record the labelled demo (script: docs/demo.md, plan §6)
 
-### Phase 2 — Stretch (plan §5; entry only after W1–W6 green and the stop rule holds at end of Nov 1)
+### Phase 2 — Stretch (plan §5; OPEN since 2026-10-27, owner decision in PRD.MD; each item keeps its own entry condition)
 
 - [ ] P2.S1.1 LegacyStay third vendor (entry: W6 + W8): heldout-only unseen-generalization vendor (rate limits, misleading examples, nullable chaos); bootstrap + at least one repair verified with no vendor-specific rule added; `tests/e2e/test_s1_legacystay.py`
 - [ ] P2.S2.1 Simulated Edge target (entry: W7): `RuntimeTarget.Edge`, toy edge worker on an isolated Docker network running a verified, signed release against a sim POS reachable only there; control plane cannot reach the sim POS (negative test); `tests/e2e/test_s2_edge_target.py`

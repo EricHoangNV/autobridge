@@ -615,7 +615,7 @@ ${LATEST_VERDICTS}
    Look at open [ ] items in the manifest, any open requests, and any FAIL verdicts.
    Items marked [>] (or requests with Status: IN_PROGRESS) are claimed by another loop: never pick them, unless the claim's time is more than 6 hours old (then treat it as abandoned and say so in your summary).
    Make your own judgment — do NOT just follow the \"Next tasks\" list from a previous agent.
-   Respect the dependency order (W1 → W2 → W3 → W4 → W5 → W6; W7 after W3; W8 after W6; W9 alongside; W10 last): do not start a workstream whose predecessor has open tasks it depends on. Work only on Phase 1 until every Phase 1 task is [x] and the owner has recorded the stop-rule decision in mds/PRD.MD; do not start Phase 2 early.
+   Respect the dependency order (W1 → W2 → W3 → W4 → W5 → W6; W7 after W3; W8 after W6; W9 alongside; W10 last): do not start a workstream whose predecessor has open tasks it depends on. Work only on Phase 1 until every Phase 1 task is [x] (a [~] HUMAN owner step does not count as open) and the owner has recorded the stop-rule decision in mds/PRD.MD; do not start Phase 2 before that decision.
 3. Pick the highest priority task using this order:
    a. Architectural decisions and core abstractions (spec, trust boundaries, ladder, data model)
    b. Integration points between modules (runtime ↔ verifier ↔ simulators, control ↔ engine)

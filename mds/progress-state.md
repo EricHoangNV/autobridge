@@ -23,7 +23,7 @@ REQ-006 done (sbx1 2026-10-27): money is Decimal end to end — transform_money 
 ## Next tasks
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: populate verifier/hidden_cases/heldout/, sha256sum > SHA256SUMS (docs/benchmark.md)
-3. Phase 2 (P2.S1.1–S7.1) opens only after the Nov 1 stop-rule checkpoint (plan §5)
+3. Phase 2 is open (owner decision 2026-10-27, PRD.MD): start with P2.S1.1 LegacyStay, in plan §5 order
 
 ## Open Requests
 None — REQ-006 was the last open request (resolved 2026-10-27).
