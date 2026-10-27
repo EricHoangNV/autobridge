@@ -60,8 +60,8 @@ def apply_transform(
     fn = REGISTRY.get(name)
     if fn is None:
         raise TransformError(f"unknown transform {name!r} — closed set {TRANSFORMS}")
-    # Propagate field name into enum_map args for error reporting
-    if name == "enum_map" and field_name and "field" not in args:
+    # Propagate field name into enum_map/money args for error reporting
+    if name in ("enum_map", "money") and field_name and "field" not in args:
         args = {**args, "field": field_name}
     return fn(value, args, context_tz=context_tz)
 

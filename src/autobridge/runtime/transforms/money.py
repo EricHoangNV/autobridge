@@ -24,11 +24,12 @@ def transform_money(
 
     - None → None (nullable)
     - Decimal → quantized
-    - int (not bool) → interpreted as minor units? Actually treat as units then quantize.
-      To avoid ambiguity, int is treated as Decimal(int) then quantized (e.g. 5 → 5.00).
+    - int (not bool) → interpreted as units then quantized (e.g. 5 → 5.00).
       Callers with cents-as-int should use string.
     - str → strip currency symbols, commas, parse Decimal
-    - float → rejected via error (should never be float, but handle via str)
+    - float → rejected (money is Decimal end to end, never float; a float
+      has already lost precision upstream, so it is never laundered via str).
+      Vendor JSON must be parsed with parse_float=Decimal.
     - Returns Decimal quantized to scale (default 2).
     - On invalid, raises TransformError (not Blocked).
     """
@@ -47,8 +48,14 @@ def transform_money(
     elif isinstance(value, int):
         dec = Decimal(value)
     elif isinstance(value, float):
-        # Avoid binary float, but accept with warning
-        dec = Decimal(str(value))
+        # Money is Decimal end to end, never float: a float has already lost
+        # precision upstream, so it is rejected rather than laundered via str().
+        # Vendor JSON responses must be parsed with parse_float=Decimal.
+        field = args.get("field") or "unknown"
+        raise TransformError(
+            f"money: float input rejected for field {field!r}: {value!r} "
+            "(money is Decimal, never float)"
+        )
     elif isinstance(value, str):
         s = value.strip()
         # Remove currency symbols, commas, spaces

@@ -18,6 +18,7 @@ import os
 import re
 import time
 from collections.abc import Callable  # noqa: TC003
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -298,7 +299,10 @@ class HttpClient:
         """
         resp = self.request("GET", path, params=params, headers=headers)
         try:
-            data = resp.json()
+            # Money is Decimal end to end, never float: parse JSON numbers
+            # with fractional parts as Decimal so money fields never arrive
+            # as binary floats (transform_money rejects float input).
+            data = resp.json(parse_float=Decimal)
         except Exception as exc:
             raise HttpError(f"response is not JSON: {exc}", status_code=resp.status_code) from exc
         if not isinstance(data, dict):

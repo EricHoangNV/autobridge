@@ -194,8 +194,17 @@ def test_money_int_and_decimal_input() -> None:
     assert transform_money(5, {"scale": 0}) == Decimal("5")
 
 
-def test_money_float_input() -> None:
-    assert transform_money(42.5, {"scale": 2}) == Decimal("42.50")
+def test_money_float_input_rejected() -> None:
+    # REQ-006: money is Decimal end to end, never float — a float has already
+    # lost precision upstream, so it is rejected rather than laundered via str().
+    with pytest.raises(TransformError, match="float.*never float"):
+        transform_money(42.5, {"scale": 2})
+
+
+def test_money_float_rejection_names_field() -> None:
+    # The pipeline propagates the field name so the error names the field.
+    with pytest.raises(TransformError, match="total_amount"):
+        apply_transform(42.5, "money", {"scale": 2}, field_name="total_amount")
 
 
 def test_money_scale_variants() -> None:

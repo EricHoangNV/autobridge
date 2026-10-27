@@ -234,7 +234,7 @@ fault is detected as `Degraded` rather than looping.
 |---|---|---|
 | `date_local` | UTC instant → property-local calendar date (midnight crossing handled) | `tz: <iana> | source`, default `UTC` |
 | `datetime_utc` | Local instant → UTC ISO (`+00:00`) | `tz: <iana> | source` |
-| `money` | String/int/`Decimal` → `Decimal` quantized | `scale: 0..6` (default 2, uses `ROUND_HALF_UP`, strips `$`, `,`) |
+| `money` | String/int/`Decimal` → `Decimal` quantized (float input is rejected) | `scale: 0..6` (default 2, uses `ROUND_HALF_UP`, strips `$`, `,`) |
 | `enum_map` | Vendor code → canonical vocab; unknown `block` | `map: { from: to, … }, on_unknown: block` |
 | `flatten` | `[[a],[b]]` → `[a,b]` | — |
 | `coalesce` | First non-empty | `default` / `value` / `fallback` / `values: […]` |

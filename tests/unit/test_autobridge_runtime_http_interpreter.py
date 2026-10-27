@@ -330,6 +330,21 @@ def test_get_success() -> None:
     assert data == {"data": [{"id": 1}]}
 
 
+def test_get_money_parsed_as_decimal_not_float() -> None:
+    # REQ-006: money is Decimal end to end — vendor JSON numbers must arrive
+    # as Decimal (parse_float=Decimal) since transform_money rejects floats.
+    from decimal import Decimal
+
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        return httpx.Response(200, json={"data": [{"total_amount": 42.5}]})
+
+    client, _ = _make_client_with_transport(handler)
+    data = client.get("/reservations")
+    amount = data["data"][0]["total_amount"]
+    assert isinstance(amount, Decimal)
+    assert amount == Decimal("42.5")
+
+
 def test_get_non_json() -> None:
     def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
         return httpx.Response(200, content=b"not json")
