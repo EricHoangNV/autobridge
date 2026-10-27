@@ -19,6 +19,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <a href="/connectors" className="hover:text-zinc-900 hover:underline">
                 Connectors
               </a>
+              <a href="/repairs" className="hover:text-zinc-900 hover:underline">
+                Repairs
+              </a>
               <a
                 href="/healthz"
                 className="rounded border bg-white px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
