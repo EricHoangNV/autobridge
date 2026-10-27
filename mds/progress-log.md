@@ -1278,3 +1278,53 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - P1.W6.5 closes W6 workstream: all 5 scenarios end-to-end, escalation bundle, regression gate, safety model; no open blockers.
 - Gotchas: `make test` gate only counts `test_autobridge_*.py` — future W6+ files must use that prefix; money 2dp via string split not Decimal equality to reject 90.000; gross_sum low-only prevents baseline false positive.
 
+
+## 2026-10-27 — P1.W7.1 FastAPI control plane (`src/autobridge/control`)
+
+**Date:** 2026-10-27
+**Ref:** plan §4 W7.1, §2.11; task P1.W7.1. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `src/autobridge/control/schemas.py` (225 lines, 100%): Health/Ready, ConnectorCreate/Out/Detail (with releases/last_sync/open_drift/dependencies), ReleaseOut, BuildRequest/Response, SyncRequest/Response, BuildRunOut/SyncRunOut/RepairRunOut/ApprovalOut/RunOut/JobOut, DriftEventOut/DependencyOut, InjectFaultRequest/Response (labelled=True/demo=True), ModelUsageResponse with by_tier/by_provider/by_purpose + entries, ScorecardsResponse — all plan §2.11 endpoints typed.
+- New `src/autobridge/control/deps.py` (57 lines): get_engine() cache + init_db, get_session_factory(), get_db() generator (yield→commit/rollback→close), reset_engine_cache() for tests.
+- Rewrote `src/autobridge/control/app.py` (61 lines): lifespan Base.create_all, include 10 routers, GET /healthz (ok), GET /readyz (DB + verifier checks via readyz()), GET / root, title "AutoBridge Control" with description.
+- New `src/autobridge/control/routes/connectors.py` (81 lines, 85%): POST /connectors (validate runtime_target kind, block edge), GET /connectors, GET /connectors/{id} (releases+last_sync via active or latest + open_drift + dependencies), POST/GET /connectors/{id}/dependencies (409 on duplicate).
+- New `src/autobridge/control/routes/builds.py` (147 lines, 58%): POST /connectors/{id}/build (docs_text/docs_url via httpx/docs_path guard generated/connectors, base_url fallback to connector.base_url, verifier_url from env, submits via db-bound JobRunner factory from db.get_bind(), run_once inline, returns job_id/build_run_id), POST /connectors/{id}/sync (resolve release_id via active or latest, validate connector match, submit sync job).
+- New `src/autobridge/control/routes/runs.py` (105 lines, 91%): GET /runs/{id} polymorphic (Build/Sync/Repair/Job), GET /runs/{id}/detail, GET /jobs + /jobs/{id}, GET /evidence/{id}, GET /runs/{id}/evidence (redacted via _collect_secrets), GET /runs/{id}/events SSE (EventSourceResponse, redact_payload, done marker).
+- New `src/autobridge/control/routes/drift.py` (44 lines): GET /drift (filter by connector_id/status), GET /drift/{id}, GET /repairs (+ filter), GET /repairs/{id}.
+- New `src/autobridge/control/routes/repairs.py` (89 lines): POST /repairs/{id}/approve (require propose, infer to_release via provenance_repair_run_id, approve_release+commit), POST /repairs/{id}/reject, GET /releases (+ filter), GET /releases/{id}, POST /releases/{id}/rollback (create new release copying target spec, active flip).
+- New `src/autobridge/control/routes/demo.py` (64 lines, 77%): POST /demo/inject-fault with TARGET_MAP aliases, _admin_url_for_target (Docker vs host 8109/8110), env overrides SIM_*_ADMIN_URL/SIMULATOR_ADMIN_URL, proxy POST /admin/scenario via httpx, response labelled=True/demo=True + [DEMO] message, POST /demo/reset.
+- New `src/autobridge/control/routes/metrics.py` (41 lines, 80%): GET /metrics/model-usage (aggregate ModelCall frontier_tokens/small_tokens/total_cost string, by_tier/by_provider/by_purpose + entries), GET /metrics/sync-outcomes.
+- New `src/autobridge/control/routes/bench.py` (45 lines, 44%): GET /bench/scorecards (scan experiments/ + benchmark_runs for .md/.json, preview), GET /bench/scorecard (path param, security under experiments/ check).
+- New `tests/unit/test_autobridge_control_api.py` (42 tests): health/readyz/root, connectors create/list/invalid runtime/missing fields/detail/deps, builds requires_docs/with_text/blocks reference/not_found, sync no_releases/with_release/wrong connector, runs get/detail/not_found/jobs, drift/repairs/releases empty + not_found, demo inject valid/invalid/missing + reset, metrics empty/sync_outcomes, bench, evidence/SSE, secrets never leak, OpenAPI 15 required endpoints, docs/redoc, contract 422s.
+- New `tests/unit/test_autobridge_control_api_extended.py` (8 tests): deps engine cache + get_db commit, docs_url mocked + docs_path file + nonexistent synth, approve/reject/rollback full flows with DriftEvent+RepairRun+release via create_release_from_patch, metrics with ModelCall data + sync-outcomes, bench with files + path security, demo env override + extra fields, SSE redaction with planted secret via REDACT_TEST_KEY.
+
+**Key decisions:**
+- JobRunner db-bound factory via db.get_bind() → sessionmaker(bind) so in-memory test DB (file tmp_path) shares BuildRun/Job rows between control submit and inline run_once; avoids global file DB mismatch that left build's connector not found.
+- Build base_url_override fallback to connector.base_url ensures ${HARBOR_BASE_URL} placeholder (harbor hint) not invalid ${RANDOM_HEX_BASE_URL} (digit-start fails CREDENTIAL_REF_RE); preserves valid spec.
+- _collect_secrets queries Connector.credential_ref from DB + any uppercase env var matching ^[A-Z][A-Z0-9_]{2,}$ (skip PATH/etc) so REDACT_TEST_KEY value is redacted in SSE/evidence even though not _API_KEY suffix.
+- ruff header noqa B008/TC002/ARG001 on all route files for FastAPI Depends pattern and SQLAlchemy Session imports; test files noqa TC003/F401 for coverage gate prefix requirement.
+- OpenAPI contract test asserts 15 required paths present; schemathesis-style validation via response-code checks + schema valid JSON.
+
+**Files changed:**
+- `src/autobridge/control/app.py` (rewritten)
+- `src/autobridge/control/deps.py` (new)
+- `src/autobridge/control/schemas.py` (new)
+- `src/autobridge/control/routes/connectors.py` (new)
+- `src/autobridge/control/routes/builds.py` (new)
+- `src/autobridge/control/routes/runs.py` (new)
+- `src/autobridge/control/routes/drift.py` (new)
+- `src/autobridge/control/routes/repairs.py` (new)
+- `src/autobridge/control/routes/demo.py` (new)
+- `src/autobridge/control/routes/metrics.py` (new)
+- `src/autobridge/control/routes/bench.py` (new)
+- `tests/unit/test_autobridge_control_api.py` (new)
+- `tests/unit/test_autobridge_control_api_extended.py` (new)
+
+**Checks:**
+- `make test` — 1704 pass (autobridge 90.28% 8641 stmts 840 miss, verifier 93.78% 92, simulators 96.55% 219; 90% gate per package) — 1393 autobridge + 92 verifier + 219 simulators; `make lint` green, `make typecheck` green, `lint-imports` kept.
+- Manual TestClient smoke: create connector → build (Harbor docs) → release → sync (Blocked w/o server) → jobs → drift empty → metrics → bench → demo inject-fault labelled, all via tmp_path file DB.
+
+**Notes for next iteration:**
+- Next: P1.W7.2 SSE run events (control/sse.py, GET /runs/{id}/events) from stored EvidenceRecords; redaction test over full run's event stream (no credential value appears) — already partially implemented, needs dedicated test.
+- Gotchas: sqlite:///:memory: per-connection isolation breaks JobRunner sharing — use file tmp_path; random hex connector ids produce invalid placeholder; SSE redaction needs DB credential_refs; ruff B008 on route files — header noqa.

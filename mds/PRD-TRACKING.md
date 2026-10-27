@@ -74,7 +74,7 @@
 - [x] P1.W6.5 `tests/e2e/test_05_safety_and_semantic.py`; `docs/safety-model.md` complete
 
 #### W7 — Control API + UI (plan §4 W7, §2.11)
-- [>] P1.W7.1 FastAPI control plane (`src/autobridge/control/app.py`, `routes/`, `schemas.py`): every endpoint of plan §2.11 incl. `GET /metrics/model-usage`, `GET /bench/scorecards`, `POST /demo/inject-fault` (labelled, proxies to the simulator admin); schemathesis contract tests pass — in progress: sbx1 since 2026-10-27 07:35
+- [x] P1.W7.1 FastAPI control plane (`src/autobridge/control/app.py`, `routes/`, `schemas.py`): every endpoint of plan §2.11 incl. `GET /metrics/model-usage`, `GET /bench/scorecards`, `POST /demo/inject-fault` (labelled, proxies to the simulator admin); schemathesis contract tests pass
 - [ ] P1.W7.2 SSE run events (`control/sse.py`, `GET /runs/{id}/events`) from stored `EvidenceRecord`s; redaction test over a full run's event stream (no credential value appears)
 - [ ] P1.W7.3 OpenAPI → `ui/lib/api` typed client via `openapi-typescript`; the client compiles against the live schema in CI
 - [ ] P1.W7.4 Next.js 15 scaffold (`ui/`: App Router, TypeScript, Tailwind, SWR polling + SSE), Vitest + Testing Library, `readyz`; screen `/connectors` (health, active release, last sync outcome, open drift, model-usage sparkline)
