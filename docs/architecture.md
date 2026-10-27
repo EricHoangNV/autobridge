@@ -373,8 +373,23 @@ the full journey in `tests/e2e/test_06_ui_journey.spec.ts` (Playwright).
 `POST /demo/inject-fault` is the sole bridge to `admin-net` and every request
 is labelled `demo: true, labelled: true`.
 
-### 9.3 E2E journey (P1.W7.8, plan §4 W7)
+### 9.3 `ab` CLI for CI (P2.S7.1, plan §5 S7)
 
+The thin `ab` wrapper (`src/autobridge/cli.py`, installed as the `ab`
+console script) drives the same journey as the UI over the control API —
+`ab connectors create`, `ab build <id> [--wait]`, `ab sync <id> [--wait]`,
+`ab runs get`, `ab drift list/get`, `ab repairs list/get/approve/reject`,
+`ab health` — with `--output text|json` (JSON for CI) and `--control-url`
+(flag, else `$AUTOBRIDGE_CONTROL_URL`, else `http://localhost:8101`).
+It owns no state machine, applies no patches and imports no engine,
+verifier or simulator code; exit codes are `0` success, `1` API/connection
+failure, `2` usage. Only `credential_ref` env-key names travel — no flag
+accepts a credential value (pinned by
+`tests/e2e/test_s7_cli.py::test_s7_cli_never_takes_credential_values`).
+`--wait` polls `GET /jobs/{id}` to a terminal state. Acceptance:
+`tests/e2e/test_s7_cli.py` (fakes + live).
+
+### 9.4 E2E journey (P1.W7.8, plan §4 W7)
 `tests/e2e/test_06_ui_journey.spec.ts` walks the four screens in the browser,
 captures every request, and asserts none target
 `sim-atlas/sim-harbor/verifier` or ports 8104/8105/8106/8109/8110. When the
