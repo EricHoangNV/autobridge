@@ -1354,3 +1354,9 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - No e2e for W7.2 beyond unit — existing `test_00_stack_up` already checks readyz; W7.8 will add Playwright journey
 - Secrets never appear in API responses per DIRECTIVES §6 — verified for both evidence and SSE streams
 
+### 2026-10-27 P1.W7.3 — Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+- Claim: P1.W7.3 OpenAPI → ui typed client
+- What: exported live control OpenAPI (30 paths) to `ui/openapi.json` via `scripts/export_openapi.py` with `--check` for CI; generated `ui/lib/api/schema.d.ts` (2103 lines, 58K) via openapi-typescript 7.13.0; created typed `ui/lib/api/client.ts` (260 lines) via openapi-fetch `createClient<paths>` with 25 wrappers (connectors CRUD, build/sync, runs/jobs/evidence, drift/repairs approve/reject, releases rollback, demo inject-fault, metrics/bench/healthz) + EventSource SSE helper, re-exporting 22 schema types from `components["schemas"]` without hand-written duplicates; added `ui/tsconfig.json` and `ui/package-lock.json`; Makefile targets `openapi`/`openapi-check`/`ui-typecheck`; 5 pytest checks prove live-schema match, generated ops present, client imports from schema.d.ts, no duplicate interfaces, tsc and export --check pass.
+- Why: plan §2.11 requires UI client generated from live OpenAPI via openapi-typescript and compiling in CI; never hand-write API types.
+- Tests: `make test` 1722 pass (autobridge 90.34%, verifier 93.78%, simulators 96.55%) / `make openapi-check` ok / `make ui-typecheck` ok / `make lint` + `make typecheck` green / `test_autobridge_ui_client` 5 pass.
+- Files: `scripts/export_openapi.py`, `ui/openapi.json`, `ui/lib/api/schema.d.ts`, `ui/lib/api/client.ts`, `ui/lib/api/index.ts`, `ui/tsconfig.json`, `ui/package.json`, `ui/package-lock.json`, `Makefile`, `tests/unit/test_autobridge_ui_client.py`
