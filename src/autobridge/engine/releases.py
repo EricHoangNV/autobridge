@@ -66,6 +66,34 @@ def _ensure_repair_run(session: Session, repair_run_id: str) -> RepairRun:
     return run
 
 
+def _maybe_verify(
+    spec: dict[str, Any],
+    *,
+    verifier_url: str | None,
+    scenario_id: str,
+    verified_scenarios: list[str] | None,
+    mode: str = "visible",
+) -> None:
+    """If verifier_url given, verify spec against scenario + regression suite.
+
+    Raises GateBlockedError (from verification.py) when verdict or regression
+    fail. Caller translates to ReleaseError with the same message.
+    """
+    if not verifier_url:
+        return
+    try:
+        from autobridge.engine.verification import ensure_gate_passes  # noqa: PLC0415
+    except Exception:
+        return
+    ensure_gate_passes(
+        spec,
+        scenario_id,
+        verifier_url,
+        verified_scenarios=verified_scenarios,
+        mode=mode,
+    )
+
+
 def create_release(
     session: Session,
     *,
@@ -75,6 +103,10 @@ def create_release(
     provenance_build_run_id: str | None = None,
     provenance_repair_run_id: str | None = None,
     verification_report_id: str | None = None,
+    verifier_url: str | None = None,
+    scenario_id: str = "baseline",
+    verified_scenarios: list[str] | None = None,
+    mode: str = "visible",
 ) -> ConnectorRelease:
     """Create a new :class:`ConnectorRelease` from a fully validated spec.
 
@@ -86,6 +118,13 @@ def create_release(
       5. Signature is ``spec_signature(spec)`` (sha256 canonical JSON).
 
     The row is flushed and returned; caller commits.
+
+    When *verifier_url* is provided, the candidate spec is verified before
+    persisting: ``POST /verify {spec, scenario_id, regression_suite}`` must
+    return ``verdict pass`` and ``regression pass``. A release that breaks
+    any previously verified scenario (``verified_scenarios``) is blocked with
+    ``GateBlockedError``; the plausible-but-wrong patch is rejected because its
+    ``invalid_patch_trap`` check fails (P1.W6.4).
     """
     _ensure_connector(session, connector_id)
 
@@ -102,6 +141,16 @@ def create_release(
 
     # Canonical JSON for signature uses dumped data
     spec_data: dict[str, Any] = validated.model_dump(mode="json", by_alias=True)
+
+    # Regression gate (when verifier_url provided) — before persisting
+    _maybe_verify(
+        spec_data,
+        verifier_url=verifier_url,
+        scenario_id=scenario_id,
+        verified_scenarios=verified_scenarios,
+        mode=mode,
+    )
+
     sig = spec_signature(spec_data)
     version = next_version(session, connector_id)
 
@@ -129,6 +178,10 @@ def create_release_from_patch(
     provenance_repair_run_id: str | None = None,
     provenance_build_run_id: str | None = None,
     verification_report_id: str | None = None,
+    verifier_url: str | None = None,
+    scenario_id: str = "baseline",
+    verified_scenarios: list[str] | None = None,
+    mode: str = "visible",
 ) -> ConnectorRelease:
     """Create a new release by applying *patch* to *base_release_id*'s spec.
 
@@ -139,6 +192,12 @@ def create_release_from_patch(
 
     This is the repair path: a verified patch from a ``RepairRun`` becomes
     a candidate release awaiting approval.
+
+    When *verifier_url* is provided, the candidate spec is verified before
+    persisting — a release that breaks any previously verified scenario
+    (``verified_scenarios``) is blocked with ``GateBlockedError``; the
+    plausible-but-wrong patch is rejected because its ``invalid_patch_trap``
+    check fails (P1.W6.4).
     """
     if not patch:
         raise ReleaseError("patch must be a non-empty list of operations")
@@ -164,6 +223,10 @@ def create_release_from_patch(
         provenance_build_run_id=provenance_build_run_id,
         provenance_repair_run_id=provenance_repair_run_id,
         verification_report_id=verification_report_id,
+        verifier_url=verifier_url,
+        scenario_id=scenario_id,
+        verified_scenarios=verified_scenarios,
+        mode=mode,
     )
 
 

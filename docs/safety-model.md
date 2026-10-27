@@ -151,7 +151,48 @@ Other guarantees proven in W2:
 * **Regression gate** — `regression_suite` param re-runs previously verified
   scenarios; a release that breaks `baseline` is blocked.
 
-## 7. Network topology (excerpt)
+## 7. Regression gate on every candidate release (P1.W6.4)
+
+Every candidate `ConnectorRelease` is verified before it is persisted.
+`src/autobridge/engine/verification.py` POSTs the candidate spec to
+`POST /verify {spec, scenario_id, regression_suite}` (never imports
+`verifier`/`simulators`; `credential_ref` only, secrets never leave the
+engine). The verifier returns `{verdict, regression, failed_checks,
+regression_failures}` — only bounded names, never fixtures.
+
+Gate logic (`_parse_verifier_response`):
+
+* `allowed = verdict == "pass" and regression == "pass"`
+* `verdict fail` → blocked with the first `failed_checks[].name`; the
+  plausible-but-wrong patch is rejected because its name is
+  `invalid_patch_trap` (net→total_amount after gross→net).
+* `regression fail` → blocked with the breaking scenario ids from
+  `regression_failures[].scenario_id`; a patch that fixes
+  `rename_guest_id` but breaks `baseline` is blocked.
+
+Engine enforcement (`src/autobridge/engine/releases.py`):
+
+```
+candidate_spec = apply_patch(base.spec, patch)
+maybe_verify(candidate_spec, verifier_url, scenario_id, verified_scenarios)
+# raises GateBlockedError when verdict or regression fail
+create_release(..., spec=candidate_spec)  # only on pass
+```
+
+`verified_scenarios` is the connector's previously verified set
+(e.g. `["baseline", "rename_guest_id", "offset_to_cursor"]`);
+when `verifier_url` is `None` the gate is skipped for backward compat
+(unit tests without Docker). `GateBlockedError` carries `block_reason`
+and the raw verifier `result` for the ladder trace.
+
+Proven in `tests/unit/test_autobridge_verification_gate.py` (28 tests):
+verdict/regression parsing, `invalid_patch_trap` wording, HTTP 500 and
+unreachable handling, `regression_suite` forwarding, `create_release` and
+`create_release_from_patch` blocking vs allowing, and a live
+`oracle_verdict` check that the trap spec is rejected and a wrong pagination
+spec fails `pagination_shape`.
+
+## 8. Network topology (excerpt)
 
 ```
 engine-net   control, worker, runtime-sandbox, ui, bench
@@ -164,7 +205,7 @@ No `internal: true` — host ports are required for `make smoke`/`make e2e`.
 A dedicated unit test (`test_autobridge_compose.py`) asserts the intended
 attachments statically; smoke probes assert reachability and isolation live.
 
-## 8. Escalation bundle (L4)
+## 9. Escalation bundle (L4)
 
 When no L0/L1 rule matches, the budget is exhausted, or the drift class is
 `CAPABILITY_REMOVED` / `AUTH_REVOKED`, the ladder emits an **escalation

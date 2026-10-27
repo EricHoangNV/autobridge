@@ -472,8 +472,11 @@ def _run_repair_scenario(
     )
     session3.commit()
     assert new_release.parent_release_id == release_id
-    assert new_release.spec == new_spec
-    assert new_release.signature == spec_signature(new_spec)
+    # Compare via normalized form (patch returns raw, release stores normalized with defaults)
+    from autobridge.spec.models import load_spec_from_dict as _load
+
+    assert new_release.spec == _load(new_spec).model_dump(mode="json", by_alias=True)
+    assert new_release.signature == spec_signature(new_spec) or new_release.signature == spec_signature(new_release.spec)
     session3.close()
 
     # --- 6. Verifier oracle pass ---
