@@ -23,7 +23,7 @@ make down                   # docker compose down -v
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same order from a clean clone:
-`make test → make up → make smoke → make e2e → make e2e-ui`.
+`make test → make up → make smoke → make e2e → make e2e-ui → make demo`.
 
 ## How it works
 

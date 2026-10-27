@@ -254,10 +254,12 @@ make bench    # heldout sha check → matched-budget run → experiments/scoreca
 make demo     # six demo steps through the control API (W10)
 ```
 
-CI runs unit (coverage gate) → smoke → e2e from a clean clone
-(`.github/workflows/ci.yml`, P1.W9.2): one ordered job — `make test`, then
+CI runs unit (coverage gate) → smoke → e2e → demo from a clean clone
+(`.github/workflows/ci.yml`, P1.W9.2 + P1.W10.3): one ordered job — `make test`, then
 `make up`, `make smoke`, `make e2e`, then the Playwright UI journey via
-`make e2e-ui`, with `make down` unconditional (`if: always()`). The
+`make e2e-ui`, then the six demo steps via `make demo` (live against the
+stack, after e2e so fault injection cannot contaminate the suite), with
+`make down` unconditional (`if: always()`). The
 definition of done for a workstream is: unit ≥ 90% + its e2e file green +
 its readyz checks green + its docs page updated (plan §3).
 
