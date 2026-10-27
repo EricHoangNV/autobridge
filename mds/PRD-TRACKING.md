@@ -88,7 +88,7 @@
  - [x] P1.W8.2 Baseline drivers: `claude_code_headless` (headless CLI with usage/token capture, using the W1 fake in tests) and a `codex_cli` adapter stub; fallback documented (route the baseline through `LLMProvider` with an equivalent agent loop, plan §9)
 - [x] P1.W8.3 `one_shot_generator` secondary diagnostic control
 - [x] P1.W8.4 `bench/scoring.py` (verified completion, repair success, false-fix/unsafe rate, escalation quality, elapsed, tool calls, model calls, frontier tokens, estimated cost, zero-frontier solves) via verifier hidden mode; `bench/report.py` → `experiments/scorecard.md` listing wins and losses
-- [ ] P1.W8.5 `make bench` idempotent and reproducible from seeds, heldout sha check before the run; `tests/e2e/test_07_benchmark_matched_budget.py` runs one dev scenario through both arms and validates the scorecard schema; `docs/benchmark.md`
+- [>] P1.W8.5 `make bench` idempotent and reproducible from seeds, heldout sha check before the run; `tests/e2e/test_07_benchmark_matched_budget.py` runs one dev scenario through both arms and validates the scorecard schema; `docs/benchmark.md` — in progress: sbx1 since 2026-10-27 09:01
 
 #### W9 — E2E suite (continuous deliverable, plan §4 W9)
 - [ ] P1.W9.1 `tests/e2e/conftest.py` complete: brings up Compose, waits on `readyz`, resets simulator state per test, tears down; tests independent (random-order run passes); suite runtime budget documented
