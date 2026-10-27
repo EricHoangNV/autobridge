@@ -1416,3 +1416,31 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 **Notes for next iteration:**
 - `npx playwright install` required before first `npx playwright test` in fresh clone; otherwise mocked journey still validated via unit test. Stack E2E (pytest) suite unchanged (test_00…05); test_06 is independent Playwright spec and skipped when UI not reachable — `make e2e` still green.
 - W8 benchmark work can start; W7 now complete (all screens green, isolation proven statically and via browser interception, readyz green).
+
+## P1.W8.1 bench harness matched-budget + self-test
+**Date:** 2026-10-27
+**Ref:** mds/AutoBridge_Implementation_Plan_2026-10-26.md §2.10, §4 W8 (P1.W8.1)
+
+**What was done:**
+- Created `src/autobridge/bench/harness.py` (939 lines, 91% cover): `HarnessConfig` (sandbox_image/sandbox_url/docs_volume/credential_refs/visible_tests/token_ceiling/wall_clock_s/control_api_url/verifier_url/runtime_target/trials_per_scenario/seed) and `HarnessInputs` (per scenario×trial, frozen, fingerprint/budget_fields) with `make_trial_inputs` deterministic from `(seed, scenario_id, trial)` via sha256, `docs_ref_for_scenario`, `list_scenarios(visibility)` from YAML catalog + fallback to faults SCENARIO_CATALOG
+- Harness self-test: `assert_inputs_equal` (field-named AssertionError), `is_matched`, `assert_budget_fields_equal` proving six task fields identical; `verify_matched_trial` post-hoc audit; `check_heldout_sha` guard for W8.5
+- Result types `ArmResult`/`TrialResult`/`BenchResult` with `to_dict` including budget audit, elapsed/token/cost/verdict, `fingerprint`, `all_matched`, `matched_error`
+- Runners: `run_autobridge_arm` via control API httpx client (synthetic fallback when no client), `run_baseline_arm` via ClaudeCodeDriver/FakeClaudeDriver prompt containing same docs/sandbox/creds/tests/token/wall-clock, `run_baseline_via_llm_provider` fallback documented per plan §9 (routes through `BudgetedProvider` with same ceilings)
+- Orchestration: `run_trial` builds inputs once, clones for both arms, asserts matched via self-test before launching either arm, runs both via injected callables; `run_harness` loops scenario×trial idempotent from seed; `write_results`/`write_bench_summary` to `experiments/benchmark_runs/*.jsonl` + `_summary.json`; `main` CLI for `make bench` with BENCH_SCENARIOS/BENCH_SEED/BENCH_TRIALS env, heldout SHA check first
+- Tests: `tests/unit/test_autobridge_bench_harness.py` (86 tests) covering defaults/validation, docs_ref, list_scenarios dev/heldout/all, make_trial_inputs deterministic/different-trial/scenario/config/invalid, fingerprint, budget_fields, assert_inputs_equal all 8 fields (docs_volume/sandbox_url/sandbox_image/credential_refs/visible_tests/token_ceiling/wall_clock_s/scenario_id/runtime_target) + is_matched/budget, ArmResult/TrialResult/BenchResult to_dict, verify_matched_trial, check_heldout_sha (no manifest/valid/mismatch/missing/comments/default), run_autobridge_arm synthetic/fake success/error/custom URL/raise, run_baseline_arm synthetic/fake/raise/cost, fallback provider synthetic/fake/error, run_trial identical inputs + six budget fields + synthetic + coercion + same image, run_harness default/multiple/override/custom runners/idempotent/different seed/matched budget, write_results single/multiple/credentials leak, write_bench_summary, main CLI default/seed/env/heldout failure + bench app health
+
+**Key decisions:**
+- HarnessInputs carries credential_refs only (no values) per DIRECTIVES §6; both arms read env at runtime
+- Single construction + clone for self-test: `make_trial_inputs` called twice with same args must be equal — proves deterministic and identical; the assertion runs pre-launch so a harness bug fails loudly before any arm executes
+- Synthetic runners when no client/driver so unit tests stay green without Docker; real runners are injected in `run_harness` callers and in `main`
+- Fallback baseline via LLMProvider documented as plan §9 risk mitigation; shares same token_ceiling/wall_clock_s via `Budget`
+- `runtime-sandbox` image field included in matched contract (task: same image), alongside six named budget fields
+
+**Files changed:**
+- `src/autobridge/bench/harness.py` — new harness module (HarnessConfig/HarnessInputs/assert_inputs_equal/run_trial/run_harness/write_results/main)
+- `tests/unit/test_autobridge_bench_harness.py` — new 86-test suite (91% cover on harness.py)
+
+**Notes for next iteration:**
+- W8.2 will expand baseline drivers (claude_code_headless capture + codex_cli stub + fallback doc); harness already supports pluggable drivers
+- W8.4 scoring/report will consume `TrialResult.to_dict` JSONL output; W8.5 make bench idempotency + e2e test_07 will use `run_harness` + `verify_matched_trial`
+- Heldout SHA check is guard-only; owner freezes at end of W2 via external step per P1.W2.8

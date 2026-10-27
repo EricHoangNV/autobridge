@@ -2,6 +2,8 @@
 
 ## Current State
 
+P1.W8.1 bench harness matched-budget done (2026-10-27): HarnessConfig + HarnessInputs per scenario×trial with identical docs_volume/sandbox_url/sandbox_image/credential_refs/visible_tests/token_ceiling/wall_clock_s/control/verifier URLs/runtime_target; make_trial_inputs deterministic from seed, assert_inputs_equal self-test (field-named AssertionError) + assert_budget_fields_equal + is_matched + verify_matched_trial; ArmResult/TrialResult/BenchResult with fingerprint/budget audit/to_dict; run_trial asserts matched before launching both arms then runs autobridge via control API client and baseline via ClaudeCodeDriver/FakeClaudeDriver/fallback LLMProvider; run_harness loops scenario×trial idempotent from seed, check_heldout_sha guard, write_results/write_bench_summary to experiments/benchmark_runs/*.jsonl, CLI main with BENCH_SCENARIOS/BENCH_SEED/BENCH_TRIALS env; 86 new tests (harness 91% cover), make test 90.28% autobridge / 93.78% verifier / 96.55% simulators.
+
 P1.W7.8 UI journey + network isolation done (2026-10-27): Playwright spec tests/e2e/test_06_ui_journey.spec.ts with network interception (no requests to sim-atlas/sim-harbor/verifier or ports 8104/8105/8106/8109/8110) walking four screens (/connectors health/release/drift/sparkline → /connectors/new docs/base_url/credential/entities create+build → /connectors/[id] spec YAML/releases/sync runs/fingerprints → /repairs/[id] drift evidence/ladder L0-L4/hypotheses+probes/patch diff/visible tests/verifier verdict/model usage/Approve-Reject-Rollback + labelled Inject Fault drawer); mocked fallback so green without Docker, live walk when stack up; unit isolation checks + playwright config.
 
 P1.W7.7 Screen /repairs/[id] done (2026-10-27): Drift evidence, ladder trace with L0-L4 badges, hypotheses+probes, JSON Patch diff old/new side by side, visible tests, verifier verdict, model usage, Approve/Reject/Rollback; labelled Inject Fault demo drawer (Demo/labelled badges, POST /demo/inject-fault); model-usage view (frontier/small/calls + zero-frontier badge + token bar); /repairs list; layout nav update; 10 new component test files + 2 page test files (103 Vitest pass, 23 files), next build 11 routes.
@@ -73,10 +75,12 @@ P1.W6.4 Regression gate done (2026-10-27): verify_spec POST /verify with regress
   - P1.W7.6: /connectors/[id] screen (spec YAML, releases, sync runs, fingerprints, dependencies) — SWR, 12 component+page tests, next build 9 routes
   - P1.W7.7: /repairs/[id] screen (drift evidence, ladder trace L0-L4, hypotheses+probes, JSON Patch diff old/new, visible tests, verifier verdict, model usage, Approve/Reject/Rollback + Inject Fault drawer + model-usage view) — 103 Vitest pass, next build 11 routes
   - P1.W7.8: UI journey + network isolation — Playwright spec + unit isolation checks (compose/source/spec existence) — 103 Vitest pass + 7 new isolation tests, next build 9 routes
-- Tests: 1729 pass / 0 fail (autobridge 90.00%, verifier 93.78%, simulators 96.55%; ui tsc green) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker) — ui: 103 Vitest pass + next build green
+  - P1.W8.1: Bench harness matched-budget (identical docs/sandbox/creds/tests/tokens/wall-clock per scenario×trial + self-test)
+- Tests: 1815 pass / 0 fail (autobridge 90.28%, verifier 93.78%, simulators 96.55%; ui tsc green) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker) — ui: 103 Vitest pass + next build green
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green / `make lint` + `make typecheck` + `make ui-typecheck` green
 
 ## Next tasks
-1. **P1.W8.1** — bench/harness.py matched-budget harness (identical docs/sandbox/creds/tests/tokens/wall-clock per scenario × trial)
-2. **P1.W8.2** — Baseline drivers: claude_code_headless + codex_cli stub with fallback via LLMProvider
-3. **P1.W8.3** — one_shot_generator secondary diagnostic control
+1. **P1.W8.2** — Baseline drivers: claude_code_headless + codex_cli stub with fallback via LLMProvider
+2. **P1.W8.3** — one_shot_generator secondary diagnostic control
+3. **P1.W8.4** — bench/scoring.py + report.py → experiments/scorecard.md
+
