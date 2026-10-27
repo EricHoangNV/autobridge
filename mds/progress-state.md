@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-002 DONE (2026-10-27): all 5 broadcast slices shipped — tokens/shell, repair call+scorebug, live climb, rundown+masthead, new run-sheet + dashed Inject Fault drawer; all testids kept; Agent: opencode meta/muse-spark-1.3 (escalation).
+P1.W2.8 CODEABLE DONE (2026-10-27): heldout sha gate + runbook verified, awaiting owner freeze; Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -68,9 +68,9 @@ REQ-002 DONE (2026-10-27): all 5 broadcast slices shipped — tokens/shell, repa
   - P1.W10.2: make demo six steps via control API + local evidence
   - REQ-001: operator name on approvals (server-set actor, GET /operator, UI lines, compose var)
   - REQ-002: broadcast redesign, all 5 slices (tokens/shell, repair call+scorebug, live climb, rundown+masthead, new run-sheet + drawer)
-- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.86%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 128 + e2e test_06 4/6 in sandbox (2 detail-page fails pre-existing: no control plane; touched journeys green)
-- Stack: compose down in sbx1 this run (dev-server e2e only) / make lint + ui typecheck green
+- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.86%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 128 + e2e test_06 4/6 in sandbox (2 detail-page fails pre-existing: no control plane; touched journeys green) + W2.8 gate re-verified 2026-10-27 (8 heldout/sha + 14 w85 pass, no-op live check pass)
+- Stack: compose down in sbx1 this run (unit gate checks only, no e2e stack)
 
 ## Next tasks
 1. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)
-2. **P1.W2.8** — HUMAN heldout freeze (manifest + sha check ready; owner freezes)
+2. **P1.W2.8** — [~] awaiting OWNER freeze: populate verifier/hidden_cases/heldout/ then sha256sum > SHA256SUMS (runbook docs/benchmark.md)

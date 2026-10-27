@@ -1630,3 +1630,9 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 - `mds/REQUESTS.MD` — REQ-002 moved to Resolved/DONE
 
 **Verification:** ui 128/128, tsc clean, `make test` green, directives §7 clean; e2e test_06 4/6 (touched journeys green; 2 detail-page failures pre-existing — fail on clean tree too, no control plane in sandbox)
+
+## 2026-10-27 — P1.W2.8 codeable verification (sbx1)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+**Status:** [~] codeable done, owner freeze pending (no code changed)
+**Verification:** heldout/sha unit subset 8 passed + w85 14 passed; live `check_heldout_sha()` no-op pass (no SHA256SUMS = gate open); directives §2/§8 clean (harness has no verifier/simulator imports, HTTP only); docs runbook (docs/benchmark.md #Heldout-freeze-runbook) accurate — `cd verifier/hidden_cases/heldout && sha256sum ./*.yaml > SHA256SUMS && git add SHA256SUMS`; .gitkeep placeholders tracked in dev/ + heldout/.
+**Owner step:** populate `verifier/hidden_cases/heldout/` then freeze SHA256SUMS per runbook and commit. Task left [~] with that exact command on its tracking line.
