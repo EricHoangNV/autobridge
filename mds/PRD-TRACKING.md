@@ -58,7 +58,7 @@
 - [x] P1.W4.7 `tests/e2e/test_03_known_repairs_zero_frontier.py`: `rename_guest_id`, `offset_to_cursor`, `cursor_repeat_token`, `nested_path_shift` → verified new release with `frontier_tokens == 0`, asserted on the ledger per scenario
 
 #### W5 — Hypothesis engine + bootstrap (plan §4 W5, §2.6)
-- [ ] P1.W5.1 Docs reader (`discovery/docs_reader.py`): OpenAPI 3.x and Markdown narrative docs → a normalized interface description with provenance (which doc line)
+- [>] P1.W5.1 Docs reader (`discovery/docs_reader.py`): OpenAPI 3.x and Markdown narrative docs → a normalized interface description with provenance (which doc line) — in progress: sbx1 since 2026-10-27 05:31
 - [ ] P1.W5.2 Classifiers (`discovery/classifiers.py`): auth / pagination / date semantics / status vocabulary from docs + first probes
 - [ ] P1.W5.3 `Hypothesis` model and `HypothesisEnumerator` families: date (created/arrival/business/UTC), pagination (offset/cursor/page), amount (gross/net/tax-inclusive), status vocabulary; every hypothesis links to at least one evidence record
 - [ ] P1.W5.4 `ProbeSelector` (`discovery/probes.py`): picks the allowed GET probe that best splits surviving hypotheses by expected information gain; budget of probes, requests, wall-clock, tokens per run
