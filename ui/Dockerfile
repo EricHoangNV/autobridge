@@ -1,7 +1,7 @@
 # UI image (W7.4): Next.js 15 App Router build.
 FROM node:20-alpine AS builder
 WORKDIR /srv/ui
-COPY package.json package-lock.json* pnpm-lock.yaml* ./
+COPY package.json package-lock.json* ./
 RUN npm install --include=dev || npm install --include=dev --legacy-peer-deps
 COPY . .
 ARG NEXT_PUBLIC_API_URL=http://control:8000
