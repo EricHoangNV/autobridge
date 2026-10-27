@@ -1,0 +1,71 @@
+# AutoBridge CI — P1.W9.2 (plan §4 W9).
+#
+# One job, ordered steps, from a clean clone:
+#   unit (coverage gate) → smoke → e2e (pytest suite + Playwright UI journey).
+# The Compose stack is brought up once by `make up`, reused by `make e2e`
+# (the harness detects the already-up stack and leaves teardown to us), and
+# always torn down by `make down` — even when an earlier step fails.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    name: unit → smoke → e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+
+    steps:
+      - name: Checkout (clean clone)
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Node 22 (UI + Playwright)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # ---- unit: coverage gate per package (plan §3) ----
+      - name: Unit tests (90% coverage gate per package)
+        run: make test
+
+      # ---- smoke: stack up + healthz/readyz + network checks ----
+      - name: Bring up the Compose stack
+        run: make up
+
+      - name: Smoke (healthz/readyz + negative network checks)
+        run: make smoke
+
+      # ---- e2e: whole pytest suite, random order, against the stack ----
+      - name: E2E pytest suite (random order)
+        run: make e2e
+
+      # ---- e2e-ui: Playwright journey (green with mocks if stack down) ----
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: ui
+
+      - name: E2E UI journey (Playwright)
+        run: make e2e-ui
+
+      - name: Tear down the Compose stack
+        if: always()
+        run: make down

@@ -232,7 +232,8 @@ Run the suite with:
 ```
 make up                # build + wait for readyz
 make smoke             # healthz/readyz + network probes (host)
-make e2e               # tests/e2e via pytest (needs Docker)
+make e2e               # tests/e2e via pytest (needs Docker), random order
+make e2e-ui            # Playwright UI journey test_06 (needs `make up` first)
 E2E_SKIP_STACK=1 make e2e   # reuse an already-up stack
 ```
 
@@ -253,7 +254,10 @@ make bench    # heldout sha check → matched-budget run → experiments/scoreca
 make demo     # six demo steps through the control API (W10)
 ```
 
-CI runs unit (coverage gate) → smoke → e2e from a clean clone. The
+CI runs unit (coverage gate) → smoke → e2e from a clean clone
+(`.github/workflows/ci.yml`, P1.W9.2): one ordered job — `make test`, then
+`make up`, `make smoke`, `make e2e`, then the Playwright UI journey via
+`make e2e-ui`, with `make down` unconditional (`if: always()`). The
 definition of done for a workstream is: unit ≥ 90% + its e2e file green +
 its readyz checks green + its docs page updated (plan §3).
 
@@ -314,9 +318,9 @@ E2E_UI_BASE=http://localhost:3000 npx playwright test
 
 `make test` covers the same invariant without a browser via
 `tests/unit/test_autobridge_ui_isolation.py` (compose + source + spec
-existence checks). `make e2e` runs the pytest suite (`test_00` … `test_05`);
-the Playwright spec is independent and skips gracefully when the UI is not
-reachable.
+existence checks). `make e2e` runs the pytest suite (`test_00` … `test_05`,
+`test_07`); the Playwright spec is independent — run it with `make e2e-ui`
+— and skips gracefully when the UI is not reachable.
 
 ## 10. What's next
 

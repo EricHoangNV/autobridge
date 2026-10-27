@@ -38,6 +38,8 @@ imports or reads the other two.
 make test     # unit, ≥90% coverage per Python package + UI component tests
 make up && make smoke   # all services healthz + readyz, negative network checks
 make e2e      # tests/e2e/test_00 … test_07 (+ test_s* in Phase 2), random order
+make e2e-ui   # Playwright UI journey test_06 (needs `make up` first)
+# CI (.github/workflows/ci.yml): make test → make up → make smoke → make e2e → make e2e-ui
 make bench    # heldout sha check, matched-budget run → experiments/scorecard.md
 make demo     # six demo steps through the control API
 ```
