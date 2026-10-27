@@ -69,7 +69,7 @@
 #### W6 — Semantic drift + safety (plan §4 W6)
 - [x] P1.W6.1 `SEMANTIC_VALUE_DRIFT` detection via invariants (schema-valid but a money / date / count invariant fails) with the failing invariant named in `unmet_criteria`
 - [x] P1.W6.2 Scenarios `gross_to_net`, `tz_boundary_shift`, `status_vocab_change`, `endpoint_removed`, `token_revoked` wired end to end: `gross_to_net` → `Degraded` with the money invariant named, then a verified repair backed by independent evidence or an escalation; `endpoint_removed` and `token_revoked` escalate with no patch attempted
-- [>] P1.W6.3 Escalation bundle format (evidence bundle + one precise question for a human) and its storage on `RepairRun` — in progress: sbx1 since 2026-10-27 07:02 UTC
+- [x] P1.W6.3 Escalation bundle format (evidence bundle + one precise question for a human) and its storage on `RepairRun`
 - [ ] P1.W6.4 Regression gate on every candidate release: a release that breaks any previously verified scenario is blocked; the plausible-but-wrong patch is rejected by the verifier
 - [ ] P1.W6.5 `tests/e2e/test_05_safety_and_semantic.py`; `docs/safety-model.md` complete
 

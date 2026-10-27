@@ -1207,3 +1207,16 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 
 Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 
+
+## 2026-10-27 — P1.W6.3 Escalation bundle format (evidence bundle + one precise question for a human) and its storage on `RepairRun`
+
+**Ref:** plan §4 W6, §2.5 Repair ladder and escalation; task P1.W6.3. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+- Added `RepairRun.escalation_bundle` JSON column (nullable, dict with reason/question/evidence_ids/evidence_payloads/suggested_action, one-question contract) + alembic 0003 portable migration
+- Extended `src/autobridge/repair/escalation.py` with `to_dict`/`from_dict` validation (non-empty reason, non-empty question, exactly one '?' ending) and fixed BudgetExhausted default wording to single question; documented format
+- Updated `src/autobridge/repair/ladder.py` non-fixable (CAPABILITY_REMOVED/AUTH_REVOKED) and AUTH_EXPIRED escalations to produce EscalationBundle via escalation_for_no_fix so every escalate has bundle
+- Updated `src/autobridge/repair/controller.py` to persist bundle dict on RepairRun insert and surface bundle in repair_job_handler output
+- Added 17 unit tests in tests/unit/test_w6_3_escalation_bundle.py covering format, round-trip, validation, budget variants, RepairRun storage, controller/job handler paths, ladder evidence
+- Updated docs/safety-model.md with new §8 Escalation bundle (format, storage, producers, consumers, redaction)
+- Checks: make test 1600 pass (autobridge 90.00%, verifier 93.78%, simulators 96.55%) / make lint + make typecheck green / alembic history head 0003
+
