@@ -14,7 +14,6 @@
           "name": "Muse Spark Open (Baseten)",
           "limit": {
             "context": 1048576,
-            "input": 170000,
             "output": 65536
           },
           "cost": {
