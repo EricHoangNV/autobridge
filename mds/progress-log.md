@@ -236,3 +236,32 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 **Notes for next iteration:**
 - Next: P1.W1.8 LLMProvider + Budget + ModelCall ledger (model_call evidence kind already reserved); job handlers (W3/W4/W5) should emit EvidenceRecords via this store once they exist
 - Full-run event-stream redaction test (DIRECTIVES §6) belongs to W7.2 SSE work — the store + redact helpers it needs are in place
+
+## P1.W1.8 LLMProvider + Budget + ModelCall ledger
+**Date:** 2026-10-27
+**Ref:** plan §4 W1 + §2.9 (LLM adapter and budgets); task P1.W1.8. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `src/autobridge/llm/provider.py`: `Usage`/`ToolCall`/`Completion` value objects, `Budget` (max_frontier_tokens/max_small_tokens/max_calls/max_wall with `check_pre_call` + `record` raising `BudgetExhausted`), `LLMProvider` Protocol (runtime_checkable, messages/tools/max_tokens/tier/purpose → Completion), `BudgetedProvider` wrapper (budget enforcement + optional ModelCall ledger via session/run_id, provider_name/model_fn overrides, fallback for bare inner), `AnthropicProvider` (env-driven frontier/small model ids from `config.py`, lazy anthropic client, system extraction, tool parsing, usage → Usage, unknown tier → ValueError before network), `OpenAIProvider` stub (raises NotImplementedError until P2.S5.1), `FakeProvider` (per-tier/default/callable responses, calls list, last_purpose, model_for_tier), `estimate_cost`/`record_model_call` helpers
+- Updated `src/autobridge/llm/__init__.py` to re-export the public API
+- Updated `src/autobridge/config.py` with `anthropic_frontier_model`/`anthropic_small_model`/`openai_frontier_model`/`openai_small_model` helpers (env with safe defaults, never literals in provider code)
+- Updated `.env.example` with 4 new model-id keys (empty values, git-ignored `.env` holds real ones)
+- New `tests/unit/test_autobridge_llm.py` (58 tests): value objects, estimate_cost, every Budget ceiling + remaining + no-limits + reason, record_model_call insert/explicit-cost/frontier-cost, FakeProvider default/per-tier/default-key/callable/tools/messages/model_for_tier, BudgetedProvider pass-through/pre-call-exhausted/token-exhausted/ledger/custom-name/model-fn/fallback/no-session/no-run_id/frontier-tracked/purpose-forwarded, Anthropic system/tool/no-tools/unknown-tier/lazy-client/env-override, OpenAI stub, config defaults/overrides, Protocol conformance for all 4 providers
+
+**Key decisions:**
+- Budget counts `total_tokens` per tier against its own ceiling; unknown tiers only bump `calls`; wall-clock checked pre-call; exceeding call raises BudgetExhausted (ladder escalates to L4, never retries)
+- BudgetedProvider is the single budget-aware path: callers never touch Budget directly except via the wrapper; ledger insertion is best-effort after budget record (so budget violation still propagates even if ledger would have succeeded)
+- Anthropic system messages extracted to top-level `system` kwarg (Anthropic API shape); tools forwarded as-is when present, omitted otherwise; client constructed lazily so tests without a key don't fail
+- FakeProvider `responses` keyed by tier with `"default"` fallback; callable values receive full call signature for dynamic fakes (e.g. echo)
+
+**Files changed:**
+- `src/autobridge/llm/provider.py` (new, 530 lines), `src/autobridge/llm/__init__.py` (exports), `src/autobridge/config.py` (4 helpers), `.env.example` (4 keys)
+- `tests/unit/test_autobridge_llm.py` (new, 58 tests)
+
+**Checks:**
+- Targeted: 58 pass; `make test` — 303 pass (286 autobridge @99.79%, 4 verifier @100%, 13 simulators @100%; 90% gate per package)
+- `make lint`, `make typecheck` — green; compose untouched (no e2e file for W1.8; workstream e2e is P1.W1.10)
+
+**Notes for next iteration:**
+- Next: P1.W1.9 test fakes (RuntimeTarget fake + coding-agent CLI fake) — bench drivers will reuse FakeProvider pattern (usage output capture)
+- P2.S5.1 fills OpenAIProvider with the same interface; keep model ids in config so the two providers stay symmetric
