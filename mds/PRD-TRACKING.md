@@ -61,7 +61,7 @@
 - [x] P1.W5.1 Docs reader (`discovery/docs_reader.py`): OpenAPI 3.x and Markdown narrative docs → a normalized interface description with provenance (which doc line)
 - [x] P1.W5.2 Classifiers (`discovery/classifiers.py`): auth / pagination / date semantics / status vocabulary from docs + first probes
 - [x] P1.W5.3 `Hypothesis` model and `HypothesisEnumerator` families: date (created/arrival/business/UTC), pagination (offset/cursor/page), amount (gross/net/tax-inclusive), status vocabulary; every hypothesis links to at least one evidence record
-- [>] P1.W5.4 `ProbeSelector` (`discovery/probes.py`): picks the allowed GET probe that best splits surviving hypotheses by expected information gain; budget of probes, requests, wall-clock, tokens per run — in progress: sbx1 since 2026-10-27 05:50
+- [x] P1.W5.4 `ProbeSelector` (`discovery/probes.py`): picks the allowed GET probe that best splits surviving hypotheses by expected information gain; budget of probes, requests, wall-clock, tokens per run
 - [ ] P1.W5.5 Budgeted L2 / L3 wiring in the ladder: L3 only when the enumerator yields fewer than two hypotheses (asserted); `BudgetExhausted` → L4 escalation bundle, never a silent guess; surviving ambiguity → `Degraded` with open questions
 - [ ] P1.W5.6 `discovery/bootstrap.py` + `engine/build_run.py`: docs → draft spec → compile → visible tests → verify; Harbor connector produced from docs alone with no reference-spec access
 - [ ] P1.W5.7 `tests/e2e/test_04_bootstrap_unfamiliar_api.py` with the negative test that the workspace has no path to `verifier/` or `simulators/`; `date` ambiguity resolved within the probe budget or reported `Degraded`

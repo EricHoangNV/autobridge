@@ -1021,3 +1021,28 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - P1.W5.5 budgets L2/L3 wiring: L3 only when enumerator yields <2 hypotheses (asserted), BudgetExhausted→L4 escalation bundle, surviving ambiguity→Degraded with open questions
 - Keep amount hypotheses per money field: if bootstrap produces specs with multiple money fields (e.g. amount vs total_amount), the probe selector must handle per-field distinguishing probes
 - Gotchas: ruff SIM102 nested if→single if with and (fixed with --unsafe-fixes), mypy pool variable reuse (list[tuple] vs list[Provenance]) → renamed op_pool, Harbor pagination initially 21 (all ops) → filtered to 12 after fixing classification strategy!=none check. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+## P1.W5.4 — ProbeSelector picks best GET probe by EIG with budget enforcement
+**Date:** 2026-10-27
+**Ref:** plan §4 W5 + §2.6 Hypothesis engine (P1.W5.4 ProbeSelector)
+
+**What was done:**
+- New `src/autobridge/discovery/probes.py` (514 lines, 98%): `ProbeSpec` (operation GET-only, method validation, key() stable param encoding, to_probe_observation_kwargs), `ProbeBudget` (max_probes/max_requests/max_wall/max_tokens, counters probes_used/requests_used/tokens_used/wall_start, check_pre_probe/record_probe/record_tokens/record_request raising `BudgetExhausted`, remaining(), max_wall_seconds alias, wall-clock via `time.monotonic`), candidate enumeration `_candidates_from_interface` (one per GET operation, dedup by path, sorted, normalizes leading slash, description from summary, provenance), scoring `_entropy` (Shannon bits, normalized priors, zero-prior filter) + `_predicted_observation` (family-specific relevance: date→reservations/folios/charges vs properties irrelevant, pagination→field==operation, amount→folios/reservations/charges, status→reservations/bookings, strategy-or-unknown bucket) + `expected_information_gain` (H_before - E[H_after] partitioning by predicted observation, tiny-negative clamp) + `_score_probe` alias, `ProbeSelector` (iface + optional ProbeBudget or legacy `llm.provider.Budget` translation + optional llm_budget, cached candidates, candidates()/score()/select_next()/best_probe()/rank_probes(), EIG descending with lexicographic tie-break, attempted set handles ProbeSpec.key() and bare operation, budget pre-check via ProbeBudget.check_pre_probe and llm_budget.check_pre_call, record_probe_result() syncing to orig Budget, remaining_budget())
+- New `tests/unit/test_autobridge_discovery_probes.py` (75 tests): ProbeSpec validation/keys/kwargs, ProbeBudget unlimited/max_probes/requests/tokens/wall/record_request/remaining/alias/zero-requests, candidates GET-only/dedup/no-ops/normalize/summary, entropy single/empty/uniform/non-normalized/zero-prior, predicted_observation per family relevant/irrelevant/empty-strategy/unknown, EIG empty/single/positive/irrelevant/pagination/mixed, selector candidates/score/select_best/empty/no-candidates/attempted/tie-break/budget-pre-check/wall/llm-budget/translation/rank/alias/record-noop/record-update/remaining/with-llm-budget/record-tokens-exhaust, real fixtures harbor/atlas best pick and ranking, cached candidates, llm_budget none path
+
+**Key decisions:**
+- EIG defined as entropy reduction over prior-weighted hypotheses partitioned by predicted observable (strategy value). Irrelevant hypotheses map to `None` bucket (no information), so /reservations (date/pagination/amount/status relevant) outranks /properties (irrelevant → 0 gain). This satisfies "best splits surviving hypotheses" and is deterministic (lexicographic tie-break).
+- ProbeBudget mirrors `llm.provider.Budget` dimensions but with probe-oriented names; legacy `Budget` accepted by class-name check and translated (max_calls→max_probes/requests, max_tokens sum, calls→probes_used/requests_used, wall_start preserved) so tests reusing llm Budget work and future bootstrap can pass either.
+- Candidates are purely from `InterfaceDescription` GET operations (no synthetic paths) to respect "allowed GET probe" requirement; params left empty for executor to fill required values — selector's job is scoring, not param synthesis.
+- Budget enforcement raises `BudgetExhausted` (same class as llm) before selection, never silent guess; wall-clock via `time.monotonic` diff, tokens via explicit record calls.
+
+**Files changed:**
+- `src/autobridge/discovery/probes.py` — new, ProbeSelector + ProbeBudget + EIG scoring
+- `tests/unit/test_autobridge_discovery_probes.py` — new, 75 tests
+
+**Notes for next iteration:**
+- Next: P1.W5.5 Budgeted L2/L3 wiring in ladder (L3 only when enumerator yields <2 hypotheses asserted; BudgetExhausted→L4 escalation bundle never silent guess; surviving ambiguity→Degraded with open questions)
+- P1.W5.6 Bootstrap (docs→draft spec→compile→visible tests→verify; Harbor connector from docs alone with no reference-spec access)
+- No e2e file for W5.4 (workstream e2e is test_04_bootstrap_unfamiliar_api); probes.py trust boundary respected (no verifier/simulators imports)
+
+Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
