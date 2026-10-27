@@ -1,48 +1,88 @@
 # AutoBridge
 
-Generic Connect + Heal engine: compiles declarative connectors from vendor docs, detects drift, repairs
-it through a deterministic-first ladder (L0 knowledge → L1 rules → L2 small model → L3 frontier model →
-L4 human), and verifies every repair behind a separate trust boundary.
+Generic Connect + Heal engine: compiles declarative connectors from vendor docs, executes
+them on a schedule, detects drift when a vendor changes, repairs the connector through a
+deterministic-first ladder (L0 knowledge → L1 rules → L2 small model → L3 frontier model →
+L4 human), and verifies every repair behind a separate trust boundary before it ships.
 
-**Status:** skeleton only. No code yet. The plan is `mds/AutoBridge_Implementation_Plan_2026-10-26.md`;
-the task board is `mds/PRD-TRACKING.md`.
+Money is `Decimal` end to end; dates are property-local business dates; every `SyncRun`
+ends `Complete | Degraded | Blocked` with the unmet criterion named.
 
-## Layout (plan §2.2)
+## Quickstart (clean machine: Docker + `uv` only)
+
+```bash
+cp .env.example .env        # fill in provider keys; secrets stay in .env (git-ignored)
+make up                     # build images, start the stack, wait for every /readyz
+make smoke                  # healthz/readyz + trust-boundary network probes
+make test                   # unit, ≥90% coverage per Python package
+make e2e                    # tests/e2e/test_00 … test_07, random order
+make e2e-ui                 # Playwright UI journey (needs `make up` first)
+make bench                  # heldout sha check → matched-budget run → experiments/scorecard.md
+make demo                   # six demo steps through the control API (plan §6)
+make down                   # docker compose down -v
+```
+
+CI (`.github/workflows/ci.yml`) runs the same order from a clean clone:
+`make test → make up → make smoke → make e2e → make e2e-ui`.
+
+## How it works
+
+1. **Connect** — a vendor's docs become a declarative `ConnectorSpec` (YAML/JSON) via
+   bootstrap (docs → hypotheses → probes → evidence → spec), or start from a reference
+   spec under `generated/connectors/<id>/reference/`.
+2. **Execute** — the runtime interprets the spec (`GET` operations, auth by
+   `credential_ref`, pagination with guards, closed transform set, per-entity checks)
+   and records a `SyncRun` with outcome, `data_readiness`, `fingerprint_id` and
+   checkpoint. Baseline syncs use zero model calls.
+3. **Detect** — fingerprint + classifier assign one of 12 drift classes
+   (`FIELD_RENAME`, `PAGINATION_CHANGE`, `SEMANTIC_VALUE_DRIFT`, …).
+4. **Repair** — the ladder tries L0 knowledge, then 7 deterministic L1 rules
+   (JSON Patch on the spec), then budgeted L2/L3 model calls, else escalates with a
+   bundle (exactly one question + redacted evidence). Known patterns repair with
+   `frontier_tokens == 0`.
+5. **Verify** — the separate verifier service (own package, image, network) runs the
+   oracle + canonical checks in visible or hidden mode and returns only bounded
+   `failed_checks` names/counts + score — never fixture rows. A regression gate
+   re-runs previously verified scenarios before a release persists; the
+   intentionally-wrong patch (`invalid_patch_trap`) is always rejected.
+6. **Ship** — approve / reject / rollback releases; canary monitor + consumer
+   pause/notify (`DependencyRegistration`) on `release.activated`.
+
+Design principles (plan §1): repairs are data (JSON Patch, no generated code);
+three trust boundaries (`src/autobridge`, `verifier/`, `simulators/` — separate
+packages, images, Docker networks; the engine never imports or reads the other two);
+deterministic first; success is a typed outcome, not a 200; coverage ≥ 90% per
+package; every service has `/healthz` + `/readyz`; secrets only as `credential_ref`.
+
+## Layout
 
 ```
 autobridge/
-├── README.md  compose.yaml  .env.example  Makefile  pyproject.toml (uv workspace)   ← W1
+├── README.md  compose.yaml  .env.example  Makefile  pyproject.toml (uv workspace)
 ├── docs/            architecture.md  connector-spec.md  safety-model.md  benchmark.md  demo.md
-├── schemas/         reservation / folio-charge / connector-spec.v1 / discovery-result.v0 / runtime-target
+├── schemas/         reservation / folio-charge / connector-spec.v1 / runtime-target / discovery-result.v0
 ├── src/autobridge/  spec/ runtime/ discovery/ drift/ repair/ llm/ evidence/ control/ engine/ bench/
-├── verifier/        own pyproject; oracle, canonical checks, mutation tests, hidden_cases/{dev,heldout}
-├── simulators/      own pyproject; common/ atlaspms/ harborpms/ legacystay/ docs/ scenarios/
+├── verifier/        own pyproject; oracle, canonical checks, hidden_cases/{dev,heldout}
+├── simulators/      own pyproject; common/ atlaspms/ harborpms/ docs/ scenarios/ (14 YAMLs)
 ├── generated/       connectors/<id>/<release>/spec.yaml + build-report.json
 ├── ui/              Next.js 15 + TypeScript + Tailwind; lib/api (openapi-typescript client)
 ├── experiments/     benchmark_runs/*.jsonl  scorecard.md
 ├── mcp_stretch/     Phase 2
-├── tests/           unit/  e2e/
-├── mds/             planning + agent bookkeeping (see below)
-├── ralph-afk.sh     autonomous build loop (Docker Sandboxes; Claude Code or OpenCode per tier)
-├── opencode.json    OpenCode permissions + the Spark/Wonder model entries per provider
-└── directives-for.sh  prints the DIRECTIVES rules that apply to a change
+├── tests/           unit/  e2e/ (test_00 … test_07 + test_06 Playwright spec)
+├── scripts/         wait_readyz.sh  smoke.sh  fake_claude.py  fake_codex.py
+├── mds/             planning + agent bookkeeping (plan, PRD index, tracking, notes, directives)
+└── alembic/         migrations for the core data model
 ```
 
-Trust boundaries (plan §1.2, §2.1): `src/autobridge` (engine), `verifier/` (oracle), `simulators/`
-(vendors + fault injector) are separate packages, containers and Docker networks. Engine code never
-imports or reads the other two.
+## Docs
 
-## Verification ladder (plan §8)
-
-```
-make test     # unit, ≥90% coverage per Python package + UI component tests
-make up && make smoke   # all services healthz + readyz, negative network checks
-make e2e      # tests/e2e/test_00 … test_07 (+ test_s* in Phase 2), random order
-make e2e-ui   # Playwright UI journey test_06 (needs `make up` first)
-# CI (.github/workflows/ci.yml): make test → make up → make smoke → make e2e → make e2e-ui
-make bench    # heldout sha check, matched-budget run → experiments/scorecard.md
-make demo     # six demo steps through the control API
-```
+| Page | Covers |
+|---|---|
+| `docs/architecture.md` | Services, networks, health contracts, data model, ladder, e2e harness, control API + UI |
+| `docs/connector-spec.md` | ConnectorSpec v1 reference: source/auth, operations, pagination, entities, closed transforms, checks, JSON Patch |
+| `docs/safety-model.md` | Verifier trust boundary, oracle, scenario catalog, semantic invariants, regression gate, escalation, guarantees |
+| `docs/benchmark.md` | Matched-budget harness, baseline drivers, scoring, `make bench` pipeline, heldout freeze runbook |
+| `docs/demo.md` | Six demo steps (plan §6) through the control API, with the evidence each step renders |
 
 ## The autonomous loop
 
@@ -54,23 +94,25 @@ sh ralph-afk.sh --agent opencode --provider meta --model muse-wonder-1.0 sbx-min
 sh ralph-afk.sh --validate sbx-mini 1      # daily directives audit
 ```
 
-Ralph (planning, iterations, checkpoints, validation) drives one coding-agent runtime per iteration:
-Claude Code in its own sandbox, or OpenCode in its own sandbox with a provider/model chosen by tier
-(Baseten Spark Open = worker, Modal Spark Open = backup, Meta Spark 1.3 / Wonder = escalation). Failures
-are classified per iteration (auth, provider, empty, unfinished task) and move the ladder; the
-verification gates (`make lint / typecheck / test`, the workstream's e2e file, the mds/ bookkeeping) are
-the same whichever runtime ran. Setup and the tier table: `mds/DEPLOY.md`.
+Ralph (planning, iterations, checkpoints, validation) drives one coding-agent runtime per
+iteration: Claude Code in its own sandbox, or OpenCode in its own sandbox with a
+provider/model chosen by tier (Baseten Spark Open = worker, Modal Spark Open = backup,
+Meta Spark 1.3 / Wonder = escalation). Failures are classified per iteration (auth,
+provider, empty, unfinished task) and move the ladder; the verification gates
+(`make lint / typecheck / test`, the workstream's e2e file, the mds/ bookkeeping) are the
+same whichever runtime ran. Setup and the tier table: `mds/DEPLOY.md`.
 
-Prerequisites before the first run: `git init` + a GitHub `origin` with a `main` branch (the loop works
-in `.worktrees/<sbx>` off `origin/main` and pushes there), `gh auth login`, Docker Sandboxes (`sbx`)
-with the four sandboxes named in `mds/DEPLOY.md`, Claude signed in inside `claude-autobridge`,
-network policy allowing the three provider hosts.
+Prerequisites before the first run: `git init` + a GitHub `origin` with a `main` branch
+(the loop works in `.worktrees/<sbx>` off `origin/main` and pushes there),
+`gh auth login`, Docker Sandboxes (`sbx`) with the four sandboxes named in `mds/DEPLOY.md`,
+Claude signed in inside `claude-autobridge`, network policy allowing the three provider
+hosts.
 
 ## mds/ files
 
 | File | Role | Who reads it |
 |---|---|---|
-| `AutoBridge_Implementation_Plan_2026-10-26.md` | The plan (design + build order). Stable. | Agents read one § at a time |
+| `AutoBridge_Implementation_Plan_2026-10-26.md` | The plan (design + build order). Stable. | Agents, one § at a time |
 | `PRD.MD` | Index into the plan; owner-only decisions log | Agents, by § |
 | `PRD-TRACKING.md` | Task manifest (`[ ] [>] [~] [x]`) — pick and claim work here | Every loop iteration |
 | `BUILD-NOTES.md` | Per-task build notes, keyed by task id | On demand |

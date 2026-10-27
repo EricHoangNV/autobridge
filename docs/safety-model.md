@@ -1,10 +1,10 @@
 # AutoBridge — safety model
 
-> Complete through P1.W6 (plan §4 W6, §2.5–§2.8). Covers the verifier
+> Complete through P1.W6 (plan §4 W6, §2.5–§2.8), final reference as of W10.
+> Covers the verifier
 > trust boundary, oracle, scenario catalog, semantic invariants, drift
 > detection, escalation bundles and the regression gate on every release.
-> Phase 2 extensions (MCP guardian, Edge) will extend this page; the
-> final reference is updated in W10.
+> Phase 2 extensions (MCP guardian, Edge) will extend this page.
 
 ## 1. Why a separate verifier
 
@@ -337,8 +337,8 @@ specs under `generated/connectors/`.
 
 ## 12. Where to go next
 
-W7 adds the control plane (`/metrics/model-usage`, `POST /demo/inject-fault` with
-label) and the Next.js UI; W8 adds the matched-budget benchmark. Phase 2
-extends the model with LegacyStay, Edge targets and the MCP Guardian. This
-page is updated again in W10 with the final demo evidence.
+W7 added the control plane (`/metrics/model-usage`, `POST /demo/inject-fault` with
+label) and the Next.js UI; W8 added the matched-budget benchmark; W10 completed
+this page as the final safety reference alongside the [demo script](demo.md).
+Phase 2 extends the model with LegacyStay, Edge targets and the MCP Guardian.
 

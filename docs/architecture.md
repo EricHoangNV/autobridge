@@ -1,7 +1,7 @@
 # AutoBridge — Architecture
 
-> First pass for P1.W1.10 (plan §4 W1, §2.1, §2.2, §2.3). Later workstreams extend
-> this page; the final version is due in W10.
+> Final reference as of P1.W10.1 (plan §4 W10, §2.1, §2.2, §2.3). Earlier
+> workstreams extended this page section by section; W10 completed it.
 
 ## 1. What AutoBridge does
 
@@ -322,20 +322,28 @@ existence checks). `make e2e` runs the pytest suite (`test_00` … `test_05`,
 `test_07`); the Playwright spec is independent — run it with `make e2e-ui`
 — and skips gracefully when the UI is not reachable.
 
-## 10. What's next
+## 10. Final state (W10)
+
+All Phase 1 workstreams are complete and documented on their own pages:
 
 - **W2** — `simulators/common` seeded generator, fault switchboard, Atlas/Harbor
-  apps with real pagination/auth, scenario catalog, verifier oracle + regression
-  runner + mutation/invalid-patch traps, heldout freeze.
+  apps with real pagination/auth, scenario catalog (14 YAMLs), verifier oracle +
+  regression runner + mutation/invalid-patch traps. See
+  [Safety model](safety-model.md) §§2–6.
 - **W3** — runtime interpreter (HTTP + retry, auth, pagination, transforms,
-  checks, checkpointing), `RuntimeTarget` wiring, reference specs.
+  checks, checkpointing), `RuntimeTarget` wiring, reference specs. See
+  [ConnectorSpec](connector-spec.md).
 - **W4–W6** — drift detection, the 7 deterministic repair rules, ladder L0/L1,
-  hypothesis engine, semantic drift + safety.
-- **W8** — benchmark harness (matched-budget harness, baseline drivers, scoring
-  via verifier hidden mode, `make bench` reproducibility).
-- **W10** — final docs pass (`connector-spec.md`, `safety-model.md`,
-  `benchmark.md`, `demo.md`, README).
+  hypothesis engine, semantic drift + safety. See [Safety model](safety-model.md)
+  §§7–11.
+- **W7** — control plane + UI (§9 above).
+- **W8** — benchmark harness (matched-budget, baseline drivers, scoring via
+  verifier hidden mode, `make bench` reproducibility). See
+  [Benchmark](benchmark.md).
+- **W10** — this docs pass (`connector-spec.md`, `safety-model.md`,
+  `benchmark.md`, `demo.md`, README) plus `make demo` driving the six demo
+  steps. See [Demo](demo.md).
 
 Trust boundaries, money-as-Decimal, business-date semantics, and the
-`/healthz`/`/readyz` contracts are established in W1 and remain load-bearing
-for every workstream that follows.
+`/healthz`/`/readyz` contracts were established in W1 and remain load-bearing
+for every workstream.
