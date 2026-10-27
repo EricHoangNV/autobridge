@@ -23,6 +23,45 @@ and recorded on every `Approval`.
 Context: the design prototype in `tmp/design/` is local only (gitignored) and not available to the
 loop; implement this in `ui/` and `src/autobridge/control/`, matching the current styling.
 
+### REQ-002 — Redesign the UI to the broadcast direction (2026-10-27)
+Status: OPEN
+Restyle the four screens of `ui/` to the approved design: a dark "live broadcast graphic" look with
+one accent (broadcast yellow = "now / needs you"), Archivo (variable width) + Fragment Mono, radius 0.
+Desktop (1280 and 1440) is what gets demoed; phone only needs to not break.
+
+**The design is a local reference, not in git.** Read it (never copy it into the repo, never edit it)
+at `/Volumes/OWC-Express-1M2/Development/autobridge/tmp/design/`:
+- `DIRECTION.md`: tokens, type, status shapes, the screens' grammar, the signature ("the climb"),
+  voice, and the **"Hand-off: porting to ui/"** section, which maps each existing component to its
+  new shape. Read that section first.
+- `site/app.css` (tokens + shared styles), `site/app.js` (the climb, URL states), and the four
+  screens: `site/repair.html`, `site/connectors.html`, `site/connector.html`, `site/new.html`.
+- `shots/r2/` and `shots/r3/` hold renders of the approved state (PNG) if you need to compare.
+Do not commit anything under `tmp/` (it is gitignored; keep it that way).
+
+**Do it in slices, one per iteration**, and record which slice is done under this request:
+1. Tokens and shell: CSS variables in `ui/app/globals.css`, Tailwind theme mapping, fonts via
+   `next/font/google` (Archivo with the `wdth` axis, Fragment Mono), the top bar with LIVE, the
+   labelled "Demo: inject fault" button and healthz. Remove `zinc-*`, `red-*`, `rounded-*` use.
+2. `/repairs/[id]`: the call (rung numeral, headline, story, drift trace, five-segment track) and
+   the scorebug (verifier, frontier tokens, model usage, Approve / Reject / Rollback), then
+   hypotheses, probes, visible tests, patch diff. States: climbing, escalated, error, loading.
+3. The climb, driven by the run's SSE ladder events instead of the prototype's timers: the frontier
+   counter moves only at L3; the verdict and action appear only once a patch passed. Respect
+   `prefers-reduced-motion`.
+4. `/connectors` (the rundown, recent repairs, empty state) and `/connectors/[id]` (masthead,
+   r14-waiting band, sync runs, releases, spec viewer, fingerprint, dependencies).
+5. `/connectors/new` (form + "what the build will do" run sheet) and the Inject Fault drawer.
+
+**Rules:**
+- Real data from the control API only; the prototype's numbers are sample content.
+- Keep every existing `data-testid`, the e2e UI journey (`tests/e2e/test_06_ui_journey.spec.ts`)
+  and the network rule (UI never calls simulators or the verifier). Update unit tests to the new
+  markup; do not delete tests to make them pass.
+- If REQ-001 (operator name) is done first, keep its "Approving as <name>" line in the new scorebug.
+- No new runtime dependencies beyond the fonts; say so in BUILD-NOTES if a build step needs network
+  for `next/font/google`.
+
 ---
 
 ## Resolved Requests (reference only)
