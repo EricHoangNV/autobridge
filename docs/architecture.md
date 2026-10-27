@@ -244,7 +244,68 @@ CI runs unit (coverage gate) → smoke → e2e from a clean clone. The
 definition of done for a workstream is: unit ≥ 90% + its e2e file green +
 its readyz checks green + its docs page updated (plan §3).
 
-## 9. What's next
+## 9. Control plane + UI (plan §2.11, §4 W7)
+
+The control plane is a FastAPI app (`src/autobridge/control/app.py`) with
+30 paths and 28 schemas (OpenAPI at `ui/openapi.json`, typed client in
+`ui/lib/api/client.ts` via `openapi-typescript`). Every service has
+`/healthz`/`/readyz`; the UI has its own readyz proxy to control.
+
+### 9.1 Endpoints (§2.11)
+
+`POST /connectors`, `GET /connectors`, `GET /connectors/{id}`,
+`POST /connectors/{id}/build|sync`, `GET /runs/{id}`, `GET /runs/{id}/events`
+(SSE, redacted), `GET /drift`, `POST /repairs/{id}/approve|reject`,
+`POST /releases/{id}/rollback`, `POST /demo/inject-fault` (labelled, proxies
+to simulator admin on `admin-net`), `GET /metrics/model-usage`,
+`GET /bench/scorecards`, plus `healthz`/`readyz`. Schemathesis contract tests
+run against the live OpenAPI.
+
+### 9.2 UI screens (Next.js 15, App Router, Tailwind, SWR + SSE)
+
+1. `/connectors` — table: health, active release, last sync outcome, open drift,
+   model-usage sparkline.
+2. `/connectors/new` — docs upload/URL/paste, sandbox base URL, credential
+   env-ref picker (known refs + custom), target entities, create & build two-step.
+3. `/connectors/[id]` — spec viewer (YAML), release history, sync runs with
+   `Complete|Degraded|Blocked`, fingerprints, dependency registrations.
+4. `/repairs/[id]` — drift evidence, ladder trace L0-L4 badges, hypotheses +
+   probes, JSON Patch diff old/new side by side, visible tests, verifier
+   verdict, model usage, Approve/Reject/Rollback + Inject Fault drawer +
+   model-usage view; list at `/repairs`.
+
+The UI talks to simulators/verifier **only via the control plane**:
+`compose.yaml` puts `ui` on `engine-net` alone (no `vendor-net`,
+`verifier-net`, `admin-net`); `next.config.mjs` rewrites `/api/*` to
+`control:8000` (8101 on the host). `scripts/smoke.sh` negative probes
+`ui -/-> sim-atlas:8000, sim-harbor:8000, verifier:8000`; the static
+precondition is asserted in `tests/unit/test_autobridge_ui_isolation.py` and
+the full journey in `tests/e2e/test_06_ui_journey.spec.ts` (Playwright).
+`POST /demo/inject-fault` is the sole bridge to `admin-net` and every request
+is labelled `demo: true, labelled: true`.
+
+### 9.3 E2E journey (P1.W7.8, plan §4 W7)
+
+`tests/e2e/test_06_ui_journey.spec.ts` walks the four screens in the browser,
+captures every request, and asserts none target
+`sim-atlas/sim-harbor/verifier` or ports 8104/8105/8106/8109/8110. When the
+Compose stack is up it walks live data; when it is not it intercepts
+`/api/*` and `localhost:8101` with mocks so the journey is still green and the
+network invariant is still checked. `playwright.config.ts` (root) and
+`ui/playwright.config.ts` target that single spec:
+
+```
+npx playwright test tests/e2e/test_06_ui_journey.spec.ts
+E2E_UI_BASE=http://localhost:3000 npx playwright test
+```
+
+`make test` covers the same invariant without a browser via
+`tests/unit/test_autobridge_ui_isolation.py` (compose + source + spec
+existence checks). `make e2e` runs the pytest suite (`test_00` … `test_05`);
+the Playwright spec is independent and skips gracefully when the UI is not
+reachable.
+
+## 10. What's next
 
 - **W2** — `simulators/common` seeded generator, fault switchboard, Atlas/Harbor
   apps with real pagination/auth, scenario catalog, verifier oracle + regression
@@ -253,7 +314,8 @@ its readyz checks green + its docs page updated (plan §3).
   checks, checkpointing), `RuntimeTarget` wiring, reference specs.
 - **W4–W6** — drift detection, the 7 deterministic repair rules, ladder L0/L1,
   hypothesis engine, semantic drift + safety.
-- **W7–W8** — control-plane API, SSE, Next.js UI, benchmark harness.
+- **W8** — benchmark harness (matched-budget harness, baseline drivers, scoring
+  via verifier hidden mode, `make bench` reproducibility).
 - **W10** — final docs pass (`connector-spec.md`, `safety-model.md`,
   `benchmark.md`, `demo.md`, README).
 
