@@ -374,15 +374,19 @@ $(git -C "$WT_DIR" log --oneline origin/main..HEAD 2>/dev/null | head -10)"
   fi
 
   # Dependencies: uv for the Python workspace (skipped until pyproject.toml exists, i.e. before W1),
-  # pnpm for the UI once ui/package.json exists.
+  # pnpm for the UI once ui/package.json declares dependencies (the W1 stub has none, so it is skipped).
+  # pnpm is not in the sandbox images: it is installed at the version in "packageManager" (pnpm@x.y.z),
+  # or the latest release if that field is missing. --frozen-lockfile only once pnpm-lock.yaml exists.
   if ! sbx exec -w "$WT_DIR" "$SANDBOX_NAME" bash -c '\
     command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1; export PATH="$HOME/.local/bin:$PATH"; \
     log=/tmp/deps-'"$LOOP_TAG"'.log; : > "$log"; \
     if [ -f pyproject.toml ]; then uv sync --all-packages >>"$log" 2>&1 || exit 1; fi; \
-    if [ -f ui/package.json ]; then \
-      v=$(sed -n "s/.*\"packageManager\": *\"pnpm@\([^\"]*\)\".*/\1/p" ui/package.json); \
-      [ -z "$v" ] || [ "$(pnpm --version 2>/dev/null)" = "$v" ] || sudo npm install -g "pnpm@$v" >>"$log" 2>&1; \
-      (cd ui && pnpm install --frozen-lockfile --prefer-offline) >>"$log" 2>&1 || exit 1; \
+    if [ -f ui/package.json ] && jq -e "((.dependencies // {}) + (.devDependencies // {})) | length > 0" ui/package.json >/dev/null 2>&1; then \
+      v=$(jq -r ".packageManager // empty | select(startswith(\"pnpm@\")) | sub(\"^pnpm@\"; \"\") | sub(\"\\\\+.*$\"; \"\")" ui/package.json); \
+      if [ -z "$v" ]; then command -v pnpm >/dev/null 2>&1 || { echo "ui/package.json has no packageManager: installing the latest pnpm" >>"$log"; sudo npm install -g pnpm >>"$log" 2>&1 || exit 1; }; \
+      elif [ "$(pnpm --version 2>/dev/null)" != "$v" ]; then sudo npm install -g "pnpm@$v" >>"$log" 2>&1 || exit 1; fi; \
+      frozen=""; [ -f ui/pnpm-lock.yaml ] && frozen=--frozen-lockfile; \
+      (cd ui && pnpm install $frozen --prefer-offline) >>"$log" 2>&1 || exit 1; \
     fi'; then
     lnotify "⚠️ Dependency install failed in $WT_DIR (log in the sandbox: /tmp/deps-$LOOP_TAG.log); the agent will retry"
   fi
