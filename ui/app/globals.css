@@ -111,3 +111,624 @@ body {
   white-space: nowrap;
   cursor: pointer;
 }
+
+/* Broadcast buttons + links (REQ-002 slice 2, from the approved direction). */
+.btn {
+  display: inline-block;
+  font-weight: 750;
+  font-size: 17px;
+  line-height: 1;
+  font-variation-settings: "wdth" 112;
+  padding: 18px 22px;
+  background: var(--live);
+  color: var(--live-ink);
+  border: 1.5px solid var(--live);
+  cursor: pointer;
+  text-decoration: none;
+  text-align: left;
+  border-radius: 0;
+}
+.btn:hover {
+  filter: brightness(1.06);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn.quiet {
+  background: none;
+  color: var(--ink);
+  border-color: var(--off);
+}
+.link {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.link:hover {
+  color: var(--ink);
+}
+
+.kicker {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+h2.sec {
+  text-wrap: balance;
+  margin: 0 0 12px;
+  font-size: 22px;
+  font-weight: 750;
+  font-variation-settings: "wdth" 112;
+  letter-spacing: -0.005em;
+}
+
+/* Repair core screen: the call (left) + the scorebug (right). */
+.repair-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
+  border: 1px solid var(--rule);
+}
+.repair-call {
+  padding: 32px 40px 28px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.repair-who {
+  color: var(--ink-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.4em;
+  font-size: 14px;
+}
+.repair-who b {
+  color: var(--ink);
+}
+.repair-rung {
+  display: flex;
+  align-items: flex-end;
+  gap: 28px;
+  margin-top: 14px;
+}
+.repair-big {
+  font-weight: 900;
+  font-size: clamp(120px, 14vw, 216px);
+  line-height: 0.78;
+  color: var(--live);
+  font-variation-settings: "wdth" 125;
+  letter-spacing: -0.02em;
+  flex: none;
+  min-width: 2.1ch;
+  font-variant-numeric: tabular-nums;
+}
+.repair-big.is-zero {
+  color: var(--ink);
+}
+.repair-headline {
+  margin: 0 0 4px;
+  font-size: clamp(28px, 2.5vw, 38px);
+  line-height: 1.06;
+  font-weight: 750;
+  max-width: 17ch;
+  font-variation-settings: "wdth" 112;
+  text-wrap: balance;
+}
+.repair-story {
+  font-size: 18px;
+  line-height: 1.5;
+  max-width: 60ch;
+  margin: 22px 0 0;
+  color: var(--ink);
+}
+.repair-ask {
+  display: none;
+  margin: 18px 0 0;
+  border: 1.5px solid var(--live);
+  padding: 14px 16px;
+  font-size: 17px;
+}
+[data-state="escalated"] .repair-ask {
+  display: block;
+}
+
+/* Drift trace figure. */
+.repair-trace {
+  margin: 26px 0 0;
+  position: relative;
+}
+.repair-trace svg {
+  display: block;
+  width: 100%;
+  height: 132px;
+}
+.repair-trace .base {
+  stroke: var(--off);
+  stroke-width: 1;
+}
+.repair-trace .line {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.repair-trace .mark-l {
+  stroke: var(--live);
+  stroke-width: 2;
+}
+.repair-trace figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--ink-2);
+  margin-top: 6px;
+}
+.repair-trace .tag {
+  position: absolute;
+  top: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--live);
+  white-space: nowrap;
+}
+
+/* Five-segment ladder track. */
+.repair-track {
+  margin-top: 28px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+}
+.repair-seg {
+  position: relative;
+  padding-top: 14px;
+}
+.repair-seg::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 6px;
+  background: var(--off);
+}
+.repair-seg .fill {
+  position: absolute;
+  inset: 0 auto auto 0;
+  height: 6px;
+  width: 100%;
+  background: var(--ink);
+  transform-origin: left;
+}
+.repair-seg.now .fill {
+  background: var(--live);
+}
+.repair-seg.todo .fill {
+  transform: scaleX(0);
+}
+.repair-seg .lv {
+  font-weight: 800;
+  font-size: 22px;
+  font-variation-settings: "wdth" 125;
+  display: block;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.repair-seg .nm {
+  color: var(--ink-2);
+  font-size: 14px;
+  display: block;
+}
+.repair-seg .tk {
+  font-size: 15px;
+  font-weight: 650;
+  display: block;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.repair-seg.now .lv {
+  color: var(--live);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .repair-seg .fill {
+    transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+
+/* Scorebug (verdict + tokens + action). */
+.repair-bug {
+  background: var(--band);
+  padding: 28px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  border-left: 1px solid var(--rule);
+  min-width: 0;
+}
+.repair-score {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 18px;
+  align-items: baseline;
+  margin: 0;
+}
+.repair-score dt {
+  font-size: 56px;
+  font-weight: 850;
+  line-height: 1;
+  font-variation-settings: "wdth" 125;
+  font-variant-numeric: tabular-nums;
+}
+.repair-score dt small {
+  font-size: 26px;
+  color: var(--ink-2);
+  font-weight: 700;
+}
+.repair-score dd {
+  margin: 0;
+  font-size: 16px;
+}
+.repair-tok {
+  font-size: 56px;
+  font-weight: 850;
+  line-height: 1;
+  font-variation-settings: "wdth" 125;
+  font-variant-numeric: tabular-nums;
+}
+.repair-tok-l {
+  margin: 6px 0 0;
+  color: var(--ink-2);
+}
+.repair-split {
+  margin: 12px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  color: var(--ink-2);
+  border-top: 1px solid var(--rule);
+  padding-top: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.repair-split b {
+  color: var(--ink);
+  font-weight: 650;
+}
+.repair-rej {
+  margin: 0;
+  border-top: 1px solid var(--rule);
+  padding-top: 16px;
+  color: var(--ink-2);
+}
+.repair-rej b {
+  color: var(--stop);
+  font-weight: 650;
+}
+.repair-acts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.repair-acts .btn {
+  width: 100%;
+}
+.repair-acts .more {
+  display: flex;
+  gap: 20px;
+}
+.pend-only {
+  display: none;
+}
+[data-state="climbing"] .repair-past,
+[data-state="climbing"] .repair-rej {
+  display: none;
+}
+[data-state="climbing"] .pend-only {
+  display: block;
+}
+
+/* Lower detail grid: hypotheses / probes / visible tests. */
+.repair-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 48px;
+  padding: 36px 40px 8px;
+  border: 1px solid var(--rule);
+  border-top: 0;
+}
+.repair-hyp {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  margin-bottom: 20px;
+  font-size: 16px;
+}
+.repair-hyp .p {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.repair-hyp .bar2 {
+  grid-column: 1 / -1;
+  height: 8px;
+  background: var(--off);
+  position: relative;
+}
+.repair-hyp .bar2 span {
+  display: block;
+  height: 100%;
+  background: var(--ink-2);
+}
+.repair-hyp.top .bar2 span {
+  background: var(--ink);
+}
+.repair-hyp .bar2 i {
+  position: absolute;
+  top: -5px;
+  width: 2px;
+  height: 18px;
+  background: var(--ink-2);
+}
+.repair-hyp small {
+  grid-column: 1 / -1;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.repair-probe {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 0 8px;
+  margin: 0 0 14px;
+}
+.repair-probe .pn {
+  grid-row: span 2;
+  font-weight: 900;
+  font-size: 22px;
+  line-height: 1.1;
+  font-variation-settings: "wdth" 125;
+}
+.repair-probe > code {
+  display: block;
+  color: var(--ink);
+  margin-bottom: 2px;
+  overflow-wrap: anywhere;
+}
+.repair-probe span {
+  color: var(--ink-2);
+}
+.repair-tests {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.repair-tests li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.repair-tests code {
+  color: var(--ink);
+}
+
+/* Patch diff side by side. */
+.repair-patch {
+  padding: 32px 40px 48px;
+  border: 1px solid var(--rule);
+  border-top: 0;
+}
+.repair-patch-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.repair-patch-head p {
+  margin: 0;
+  color: var(--ink-2);
+}
+.repair-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  margin-top: 6px;
+}
+.repair-diff pre {
+  margin: 0;
+  padding: 16px 18px;
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-x: auto;
+  color: var(--ink-2);
+}
+.repair-diff pre + pre {
+  border-left: 1px solid var(--rule);
+}
+.repair-diff .cap {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-2);
+  margin-bottom: 8px;
+}
+.repair-diff del {
+  color: var(--stop);
+  text-decoration: line-through;
+}
+.repair-diff ins {
+  color: var(--live-ink);
+  background: var(--live);
+  text-decoration: none;
+}
+
+/* Error banner + sticky phone dock. */
+.repair-banner {
+  display: none;
+}
+[data-state="error"] .repair-banner {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 40px;
+  background: var(--band);
+  border: 1px solid var(--rule);
+  border-bottom: 2px solid var(--stop);
+}
+.repair-banner p {
+  margin: 0;
+}
+.repair-dock {
+  display: none;
+}
+
+/* Loading skeleton: hide content, show band blocks. */
+[data-state="loading"] .repair-call > *,
+[data-state="loading"] .repair-bug > * {
+  visibility: hidden;
+}
+[data-state="loading"] .repair-call,
+[data-state="loading"] .repair-bug {
+  background-repeat: no-repeat;
+}
+[data-state="loading"] .repair-call {
+  background-image: linear-gradient(var(--band), var(--band)), linear-gradient(var(--band), var(--band)),
+    linear-gradient(var(--band), var(--band));
+  background-size: 40% 18px, 70% 160px, 90% 60px;
+  background-position: 40px 34px, 40px 76px, 40px 280px;
+}
+[data-state="loading"] .repair-bug {
+  background-image: linear-gradient(var(--off), var(--off)), linear-gradient(var(--off), var(--off));
+  background-size: 50% 56px, 100% 56px;
+  background-position: 32px 64px, 32px calc(100% - 28px);
+}
+
+@media (max-width: 1100px) {
+  .repair-stage {
+    grid-template-columns: 1fr;
+  }
+  .repair-bug {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 28px 40px;
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+  }
+  .repair-bug .repair-acts {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+  }
+  .repair-acts .btn {
+    width: auto;
+  }
+  .repair-detail {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 700px) {
+  .repair-call {
+    padding: 18px 16px 20px;
+  }
+  .repair-rung {
+    gap: 14px;
+  }
+  .repair-big {
+    font-size: 96px;
+    min-width: 0;
+  }
+  .repair-headline {
+    font-size: 22px;
+  }
+  .repair-story {
+    font-size: 16px;
+    margin-top: 14px;
+  }
+  .repair-trace svg {
+    height: 96px;
+  }
+  .repair-track {
+    gap: 4px;
+    margin-top: 18px;
+  }
+  .repair-seg .nm {
+    display: none;
+  }
+  .repair-seg .lv {
+    font-size: 18px;
+  }
+  .repair-seg .tk {
+    font-size: 13px;
+  }
+  .repair-bug {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .repair-bug .repair-acts {
+    display: none;
+  }
+  .repair-score dt,
+  .repair-tok {
+    font-size: 40px;
+  }
+  .repair-detail {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding: 28px 16px 0;
+  }
+  .repair-patch {
+    padding: 28px 16px 120px;
+  }
+  .repair-diff {
+    grid-template-columns: 1fr;
+  }
+  .repair-diff pre + pre {
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+  }
+  .repair-dock {
+    display: flex;
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 5;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: var(--band);
+    border-top: 1px solid var(--rule);
+    flex-wrap: wrap;
+  }
+  .repair-dock .btn {
+    flex: 1 1 200px;
+    min-width: 0;
+    text-align: center;
+    padding: 16px 12px;
+    font-size: 16px;
+  }
+  .repair-dock .v {
+    flex: none;
+    font-weight: 800;
+    font-variation-settings: "wdth" 125;
+    font-size: 20px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .repair-dock .v small {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-2);
+    font-variation-settings: "wdth" 100;
+  }
+}

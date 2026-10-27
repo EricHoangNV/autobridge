@@ -30,8 +30,8 @@ type Props = {
 function driftClassColor(driftClass: string): string {
   const v = driftClass.toLowerCase();
   if (v.includes("capability_removed") || v.includes("auth_revoked") || v.includes("blocked")) return "bg-band text-stop border-stop";
-  if (v.includes("rate_limit") || v.includes("transient")) return "bg-amber-100 text-amber-800 border-amber-200";
-  if (v.includes("semantic") || v.includes("gross_to_net")) return "bg-violet-100 text-violet-800 border-violet-200";
+  if (v.includes("rate_limit") || v.includes("transient")) return "bg-band text-live border-live";
+  if (v.includes("semantic") || v.includes("gross_to_net")) return "bg-band text-ink border-rule";
   return "bg-ground text-ink border-rule";
 }
 
@@ -112,7 +112,7 @@ export function DriftEvidenceSection({ driftEvents, evidenceRecords, loading }: 
                   .map((e) => (
                     <li key={e.id} data-testid={`evidence-record-${e.id}`} className="px-4 py-2">
                       <div className="flex items-center gap-2">
-                        <span className="inline-flex bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">{e.kind}</span>
+                        <span className="inline-flex bg-ground px-1.5 py-0.5 font-mono text-[11px] text-ink-2">{e.kind}</span>
                         <span className="font-mono text-[11px] text-ink-2">{e.id.slice(0, 8)}</span>
                       </div>
                       <pre className="mt-1 max-h-32 overflow-auto bg-ground p-2 font-mono text-xs text-ink-2">

@@ -26,17 +26,17 @@ function formatPatchValue(value: unknown): string {
 }
 
 function opColor(op: string): string {
-  if (op === "add") return "bg-emerald-50 border-emerald-200 text-emerald-900";
+  if (op === "add") return "bg-band border-live text-ink";
   if (op === "remove") return "bg-band border-stop text-stop";
-  if (op === "replace") return "bg-amber-50 border-amber-200 text-amber-900";
-  if (op === "move" || op === "copy") return "bg-blue-50 border-blue-200 text-blue-900";
-  return "bg-ground border-rule text-ink";
+  if (op === "replace") return "bg-band border-rule text-ink";
+  if (op === "move" || op === "copy") return "bg-band border-rule text-ink-2";
+  return "bg-band border-rule text-ink";
 }
 
 function opBadge(op: string): string {
-  if (op === "add") return "bg-emerald-100 text-emerald-800";
-  if (op === "remove") return "bg-band text-stop";
-  if (op === "replace") return "bg-amber-100 text-amber-800";
+  if (op === "add") return "bg-live text-live-ink";
+  if (op === "remove") return "bg-band text-stop border border-stop";
+  if (op === "replace") return "bg-ink text-ground";
   return "bg-ground text-ink-2";
 }
 

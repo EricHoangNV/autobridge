@@ -37,7 +37,7 @@ export function VisibleTestsPanel({ visibleTestResults }: Props) {
 
   if (!results.length) {
     return (
-      <div data-testid="visible-tests-empty" className="border border-dashed px-4 py-6 text-center text-sm text-ink-2">
+      <div data-testid="visible-tests-empty" className="border border-dashed border-rule px-4 py-6 text-center text-sm text-ink-2">
         No visible tests recorded for this repair.
       </div>
     );
@@ -47,74 +47,60 @@ export function VisibleTestsPanel({ visibleTestResults }: Props) {
   const failedCount = results.filter((t) => testPassed(t) === false).length;
 
   return (
-    <div data-testid="visible-tests-panel" className="overflow-hidden border bg-band">
-      <div className="flex items-center justify-between border-b bg-ground px-4 py-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-2">
-          Visible tests ({results.length})
-        </h3>
-        <div className="flex items-center gap-2 text-xs">
-          {passedCount > 0 ? (
-            <span data-testid="visible-tests-passed-count" className="inline-flex bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800">
-              {passedCount} passed
-            </span>
-          ) : null}
-          {failedCount > 0 ? (
-            <span data-testid="visible-tests-failed-count" className="inline-flex bg-band px-2 py-0.5 font-medium text-stop">
-              {failedCount} failed
-            </span>
-          ) : null}
-        </div>
+    <div data-testid="visible-tests-panel">
+      <div className="mb-1 flex items-center gap-2 text-xs text-ink-2">
+        {passedCount > 0 ? (
+          <span data-testid="visible-tests-passed-count">{passedCount} passed</span>
+        ) : null}
+        {failedCount > 0 ? (
+          <span data-testid="visible-tests-failed-count" className="text-stop">{failedCount} failed</span>
+        ) : null}
+        {passedCount === 0 && failedCount === 0 ? <span>{results.length} recorded</span> : null}
       </div>
 
-      <ul className="divide-y divide-rule">
+      <ul className="repair-tests">
         {results.map((t, idx) => {
           const passed = testPassed(t);
           const name = (t.name ?? t.test ?? `test-${idx}`) as string;
+          const shape = passed === true ? "st ok" : passed === false ? "st blk" : "st";
           return (
-            <li key={idx} data-testid={`visible-test-${idx}`} className="flex items-start gap-3 px-4 py-3">
-              <span
-                data-testid={`visible-test-status-${idx}`}
-                className={`mt-0.5 inline-flex shrink-0 items-center border px-2 py-0.5 text-xs font-medium ${
-                  passed === true
-                    ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                    : passed === false
-                      ? "bg-band text-stop border-stop"
-                      : "bg-ground text-ink-2 border-rule"
-                }`}
-              >
+            <li key={idx} data-testid={`visible-test-${idx}`}>
+              <code data-testid={`visible-test-name-${idx}`}>{name}</code>
+              <span data-testid={`visible-test-status-${idx}`} className={shape}>
                 {passed === true ? "pass" : passed === false ? "fail" : "unknown"}
               </span>
-              <div className="min-w-0 flex-1">
-                <div data-testid={`visible-test-name-${idx}`} className="text-xs font-medium text-ink">
-                  {name}
-                </div>
-                {t.message ? (
-                  <div className="mt-1 text-xs text-ink-2">{String(t.message)}</div>
-                ) : null}
-                {t.error ? (
-                  <div className="mt-1 bg-band px-2 py-1 font-mono text-xs text-stop">{String(t.error)}</div>
-                ) : null}
-                {/* Show extra keys as compact JSON for unknown shapes */}
-                {(() => {
-                  const known = new Set(["name", "test", "status", "passed", "ok", "result", "message", "error"]);
-                  const extra: Record<string, unknown> = {};
-                  for (const [k, v] of Object.entries(t)) {
-                    if (!known.has(k)) extra[k] = v;
-                  }
-                  if (Object.keys(extra).length) {
-                    return (
-                      <pre className="mt-1 max-h-24 overflow-auto bg-ground p-2 font-mono text-[11px] text-ink-2">
-                        {JSON.stringify(extra, null, 2)}
-                      </pre>
-                    );
-                  }
-                  return null;
-                })()}
-              </div>
             </li>
           );
         })}
       </ul>
+      {/* Extra detail (message / error / unknown keys) below the broadcast list */}
+      <div className="mt-2 space-y-1">
+        {results.map((t, idx) => (
+          <div key={idx}>
+            {t.message ? (
+              <div className="text-xs text-ink-2">{String(t.message)}</div>
+            ) : null}
+            {t.error ? (
+              <div className="bg-band px-2 py-1 font-mono text-xs text-stop">{String(t.error)}</div>
+            ) : null}
+            {(() => {
+              const known = new Set(["name", "test", "status", "passed", "ok", "result", "message", "error"]);
+              const extra: Record<string, unknown> = {};
+              for (const [k, v] of Object.entries(t)) {
+                if (!known.has(k)) extra[k] = v;
+              }
+              if (Object.keys(extra).length) {
+                return (
+                  <pre className="mt-1 max-h-24 overflow-auto bg-band p-2 font-mono text-[11px] text-ink-2">
+                    {JSON.stringify(extra, null, 2)}
+                  </pre>
+                );
+              }
+              return null;
+            })()}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

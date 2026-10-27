@@ -128,70 +128,68 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
   }
 
   return (
-    <div data-testid="repair-actions" className="border bg-band">
-      <div className="border-b bg-ground px-4 py-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-2">Actions</h3>
+    <div data-testid="repair-actions" className="repair-acts repair-past">
+      <button
+        data-testid="repair-approve-btn"
+        onClick={doApprove}
+        disabled={!canApprove || busy !== null}
+        className="btn"
+      >
+        {busy === "approve" ? "Approving…" : "Approve release"}
+      </button>
+      <div className="more">
+        <button
+          data-testid="repair-reject-btn"
+          onClick={doReject}
+          disabled={!canReject || busy !== null}
+          className="link"
+        >
+          {busy === "reject" ? "Rejecting…" : "Reject patch"}
+        </button>
+        <span className="link" aria-hidden="true" style={{ textDecoration: "none" }}>
+          ·
+        </span>
+        <label className="link" style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+          Roll back to
+          <input
+            data-testid="rollback-target-input"
+            value={rollbackTarget}
+            onChange={(e) => setRollbackTarget(e.target.value)}
+            placeholder="release id"
+            className="border border-rule bg-ground px-2 py-1 font-mono text-xs text-ink"
+            style={{ width: 130 }}
+          />
+        </label>
+        <button
+          data-testid="rollback-btn"
+          onClick={doRollback}
+          disabled={!canRollback || busy !== null}
+          className="link"
+        >
+          {busy === "rollback" ? "Rolling back…" : "Roll back"}
+        </button>
       </div>
+      <p data-testid="approving-as" className="text-xs text-ink-2">
+        Approving as {operatorName ?? "…"}
+      </p>
 
-      <div className="space-y-3 px-4 py-3">
-        <div className="flex flex-wrap gap-2">
-          <button
-            data-testid="repair-approve-btn"
-            onClick={doApprove}
-            disabled={!canApprove || busy !== null}
-            className="bg-live px-4 py-2 text-sm font-medium text-live-ink hover:opacity-90 disabled:opacity-50"
-          >
-            {busy === "approve" ? "Approving…" : "Approve"}
-          </button>
-          <button
-            data-testid="repair-reject-btn"
-            onClick={doReject}
-            disabled={!canReject || busy !== null}
-            className="border border-rule bg-band px-4 py-2 text-sm font-medium text-ink-2 hover:bg-ground disabled:opacity-50"
-          >
-            {busy === "reject" ? "Rejecting…" : "Reject"}
-          </button>
+      {!canApprove ? (
+        <p className="text-xs text-ink-2">Approve/Reject available only when decision is “propose” (current: {decision}).</p>
+      ) : null}
+
+      {msg ? (
+        <div
+          data-testid={msg.type === "error" ? "repair-action-error" : "repair-action-success"}
+          className="border px-3 py-2 text-sm"
+          style={
+            msg.type === "error"
+              ? { borderColor: "var(--stop)", color: "var(--stop)" }
+              : { borderColor: "var(--rule)", color: "var(--ink)" }
+          }
+        >
+          {msg.text}
         </div>
-        <p data-testid="approving-as" className="text-xs text-ink-2">
-          Approving as {operatorName ?? "…"}
-        </p>
-
-        {!canApprove ? (
-          <p className="text-xs text-ink-2">Approve/Reject available only when decision is “propose” (current: {decision}).</p>
-        ) : null}
-
-        {/* Rollback */}
-        <div className="border-t pt-3">
-          <h4 className="text-xs font-medium text-ink-2">Rollback</h4>
-          <p className="mt-1 text-xs text-ink-2">Restore a prior release by id (creates a new release copying its spec).</p>
-          <div className="mt-2 flex gap-2">
-            <input
-              data-testid="rollback-target-input"
-              value={rollbackTarget}
-              onChange={(e) => setRollbackTarget(e.target.value)}
-              placeholder="target release id"
-              className="flex-1 border border-rule px-2 py-1 font-mono text-xs"
-            />
-            <button
-              data-testid="rollback-btn"
-              onClick={doRollback}
-              disabled={!canRollback || busy !== null}
-              className="border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-            >
-              {busy === "rollback" ? "Rolling back…" : "Rollback"}
-            </button>
-          </div>
-        </div>
-
-        {msg ? (
-          <div
-            data-testid={msg.type === "error" ? "repair-action-error" : "repair-action-success"}
-            className={`border px-3 py-2 text-sm ${msg.type === "error" ? "border-stop bg-band text-stop" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}
-          >
-            {msg.text}
-          </div>
-        ) : null}
-      </div>
+      ) : null}
     </div>
   );
 }
