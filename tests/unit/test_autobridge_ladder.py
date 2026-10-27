@@ -678,7 +678,8 @@ def test_controller_handle_sync_summary() -> None:
 
 def test_controller_repair_job_handler_rate_limit() -> None:
     from autobridge.control.jobs import JobContext
-    from autobridge.control.models import Connector, DriftEvent, spec_signature as _sig
+    from autobridge.control.models import Connector, DriftEvent
+    from autobridge.control.models import spec_signature as _sig
     from autobridge.repair.controller import repair_job_handler
 
     engine = create_engine("sqlite:///:memory:")

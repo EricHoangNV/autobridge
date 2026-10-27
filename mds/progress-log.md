@@ -864,3 +864,30 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - P1.W4.5 releases will use LadderResult.candidate_patch to create ConnectorRelease rows with parent linkage and verifier gate; controller already creates RepairRun with candidate_patch and ladder_level_reached
 - L0 cache is in-memory singleton for W4.4; later can be backed by DB lookup of prior verified releases by spec_signature+drift_class
 - Coverage autobridge 91.70% (knowledge 82%, ladder 82%, controller 68% but package passes 90% gate); verifier 93.78%, simulators 98.54%; `make lint`/`typecheck` green; no new e2e file for W4.4 (workstream e2e is test_03_known_repairs_zero_frontier requiring W4.5-4.7)
+
+## P1.W4.5 Releases: ConnectorRelease creation from verified patch, approve/reject/rollback
+**Date:** 2026-10-27
+**Ref:** plan §4 W4 + §2.3/§2.4 (ConnectorRelease immutability, patch as repair); task P1.W4.5. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Created `src/autobridge/engine/releases.py` (175 lines, 99% coverage): ReleaseError, next_version (max+1), create_release (connector + parent validation, load_spec_from_dict path errors, spec_signature, version increment, provenance Build/Repair, verification_report_id), create_release_from_patch (empty patch reject, base existence + connector check, provenance repair_run check, apply_patch validation, delegation to create_release with parent=base), _activate (connector existence + release connector match, flip active_release_id), approve_release (actor non-empty, repair_run + to/from validation, cross-connector mismatch check, inferred connector_id, activate + Approval approve), reject_release (actor/repair_run + optional from/to validation, no activation, Approval reject), rollback_release (actor, active existence, target + repair_run + connector match, new release copying target spec with parent=current + same verification_report, activate, Approval rollback with rollback_of=current)
+- Created `tests/unit/test_autobridge_releases.py` (29 tests): version increment, create basic/parent/invalid/missing/wrong-parent, patch happy (parent/signature/provenance), empty/missing/wrong/invalid patch/invalid spec/unknown repair_run, approve activates/inferred/mismatch/empty-actor/missing/mismatched-from-to, reject does-not-activate/empty/missing, rollback happy (version 3, parent=current, spec identity, signature equality, approval fields, active flip, immutability of v1), rollback bit-identical sync output via execute_sync with MockTransport (canonical_records + records_observed + outcome + JSON equality), rollback error cases (no active, missing target, empty actor, missing connector/repair_run, different connector target), verification stable, reject None ids
+- Lint-fixed `src/autobridge/repair/ladder.py` + `tests/unit/test_autobridge_ladder.py` import grouping (ruff I001/E402) from 0.9 upgrade
+
+**Key decisions:**
+- Engine functions flush-not-commit so JobRunner and direct callers share transaction control; create_release canonicalizes spec via validated dump so signature is stable and defaults (action:[], pagination nulls) are included — this explains why raw input != stored spec and why tests compare canonical fields
+- Approve infers connector_id from to_release when omitted but validates explicit mismatch; reject is audit-only; rollback always creates a new immutable release (max+1) copying target spec verbatim so signature bit-identical to target and parent points at superseded release — the Approval's rollback_of names the superseded release for audit, and active_release_id flip makes rollback observable
+- Bit-identical sync proof uses engine.sync_run.execute_sync with same MockTransport pages for r1 and r3 (rollback copy) and asserts canonical_records equality, records_observed equality, outcome equality, and JSON round-trip — deterministic because same spec + same seed/fake data → same fingerprint and Decimal amounts
+- Kept provenance fields optional but validated when provided so W4.7 e2e can create releases from RepairRun.candidate_patch with verification_report_id and have full lineage
+
+**Files changed:**
+- `src/autobridge/engine/releases.py` — new, release creation + approve/reject/rollback
+- `tests/unit/test_autobridge_releases.py` — new, 29 tests
+- `src/autobridge/repair/ladder.py` — lint import grouping fix
+- `tests/unit/test_autobridge_ladder.py` — lint import grouping fix
+
+**Notes for next iteration:**
+- P1.W4.6 is canary monitor (engine/monitor.py + health.canary from spec) and DependencyRegistration pause_on_release_change — approve/rollback activation should emit release.activated and pause consumers; engine/releases._activate is the hook to add that
+- P1.W4.7 e2e test_03_known_repairs_zero_frontier will use these releases + RepairController ladder to verify 4 fixable scenarios → new release with frontier_tokens==0 asserted on ledger; needs verifier hidden mode + scenario catalog
+- No new e2e file for W4.5; workstream e2e remains test_03; coverage stays ≥90% per package (autobridge 91.87%, verifier 93.78%, simulators 98.54%)
+
