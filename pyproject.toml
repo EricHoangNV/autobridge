@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.8",
     "pyyaml>=6.0",
     "jsonpatch>=1.33",
+    "jsonschema>=4.23",
     "jsonpath-ng>=1.7",
     "httpx>=0.28",
     "python-dotenv>=1.0",

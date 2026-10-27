@@ -88,3 +88,39 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 
 **Notes for next iteration:**
 - Next: P1.W1.3 ConnectorSpec v1. W2 must bind the simulator admin API to the admin-net interface only (see Key decisions).
+
+## P1.W1.3 — ConnectorSpec v1 models, JSON Schema, JSON Patch, release registry
+**Date:** 2026-10-27
+**Ref:** plan §2.4, §4 W1; PRD-TRACKING P1.W1.3
+**Agent:** opencode meta/muse-spark-1.3 (escalation)
+
+**What was done:**
+- `src/autobridge/spec/models.py` — strict pydantic v1 document: closed 9-transform set with compact `[name, {args}]` normalization, JSONPath-subset validation on every path field, credential_ref-only auth (per-type requirements, inline secrets rejected by extra=forbid), no-credentials base_url, per-strategy pagination requirements, cross-ref checks (entity.from, date_order fields, capabilities.read, canary.operation), YAML/dict loaders, `validate_against_schema_file`, `format_validation_errors`
+- `src/autobridge/spec/patch.py` — RFC 6902 apply-to-copy + revalidate (`PatchError` / `SpecValidationError` with path errors), `diff_specs` via jsonpatch, `reverse_patch` via diff-back
+- `src/autobridge/spec/registry.py` — write-once `generated/connectors/<id>/<release>/{spec.yaml,build-report.json}` with spec validation, sha256 signature + mismatch detection, traversal guards, half-write cleanup
+- `schemas/connector-spec.v1.json` — generated from `ConnectorSpec.model_json_schema()`; test pins file == models so they cannot drift
+- `tests/unit/test_autobridge_spec.py` — 81 tests: Harbor §2.4 fixture round-trip, schema-file validation, closed set, JSONPath accept/reject, ~20 invalid-spec path-error cases, patch apply/diff/reverse, registry round-trip/write-once/corrupt/signature/cleanup
+- `pyproject.toml` — added `jsonschema>=4.23` (schema-file validation leg of the round-trip)
+
+**Key decisions:**
+- `retry.statuses` not `retry.on`: bare `on:` parses as boolean True under YAML 1.1 (LEARNINGS #2)
+- `enum_map` hard-requires `on_unknown: block` at the model layer — unknown enums Block, never guessed, enforced before any runtime exists
+- `method: Literal["GET"]` for v1 operations (reads only; capabilities.action empty in the demo)
+- Normalizer returns plain `{name, args}` data so item failures carry full dotted locs instead of nested ValidationErrors
+- `reverse_patch` computed as diff-back rather than op inversion — correct for move/copy/array edge cases by construction
+
+**Files changed:**
+- `src/autobridge/spec/models.py`, `src/autobridge/spec/patch.py`, `src/autobridge/spec/registry.py`, `src/autobridge/spec/__init__.py` (public exports)
+- `schemas/connector-spec.v1.json` (generated, pinned by test)
+- `tests/unit/test_autobridge_spec.py` (new, 81 tests)
+- `pyproject.toml`, `uv.lock` (jsonschema dep)
+- `mds/LEARNINGS.MD` — new #2 (YAML boolean keys)
+
+**Checks:**
+- `make test` — 138 pass (121 autobridge @100%, 4 verifier @100%, 13 simulators @100%; 90% gate per package)
+- `make lint`, `make typecheck`, `make lint-imports` (1 kept) — green
+- e2e: none for W1.3 (no workstream e2e file; compose.yaml untouched, stack as W1.2 left it)
+
+**Notes for next iteration:**
+- Next: P1.W1.4 canonical entity schemas, then P1.W1.5 SQLAlchemy models. The registry's `spec_signature` is the future `ConnectorRelease.signature`.
+- Runtime transforms in W3 must accept exactly `TRANSFORMS` from `autobridge.spec.models` — import it, do not redefine the set.
