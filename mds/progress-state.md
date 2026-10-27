@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W10.2 demo complete (2026-10-27): `make demo` drives plan §6 six steps via the control API when the stack is up (live-control-api, redacted call log per step) and computes the same engine evidence locally when down; step-2 live create idempotent by connector name; 22 unit tests, demo.py 96% line cover; live-verified + test_02 6/6, sims reset, stack down.
+REQ-001 operator name complete (2026-10-27): server sets `Approval.actor` from `AUTOBRIDGE_OPERATOR` (default `operator`), `GET /operator` exposes it, `ReleaseOut.approved_by` populated; UI `RepairActions` shows "Approving as <name>", `ReleaseHistory` shows approver per release; W7.8 Playwright journey 6/6 green (mock stabilization); compose forwards the var.
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -66,8 +66,9 @@ P1.W10.2 demo complete (2026-10-27): `make demo` drives plan §6 six steps via t
   - P1.W9.2: make e2e + CI job (unit → smoke → e2e from clean clone)
   - P1.W10.1: README + docs/ pages + .env.example
   - P1.W10.2: make demo six steps via control API + local evidence
-- Tests: 2024 pass / 0 fail (autobridge 1713 @ 90.83%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + e2e test_02 6/6 live
-- Stack: compose down in sbx1 (after live demo verification; sims reset to baseline) / lint + typecheck green
+  - REQ-001: operator name on approvals (server-set actor, GET /operator, UI lines, compose var)
+- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.83%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 105 + e2e test_06 6/6 (mocked, chromium)
+- Stack: compose up in sbx1 (control verified live: GET /operator default + override) / lint + typecheck green
 
 ## Next tasks
 1. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)

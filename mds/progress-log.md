@@ -1570,3 +1570,10 @@ test_02 6/6 on the same stack; sims reset; stack down afterwards. Full suite
 P1.W10.3 clean-clone check + recording; P1.W2.8 heldout freeze. Note:
 `POST /demo/reset` returns 403 via control plane (missing admin-network
 header, pre-existing W7.1) — demo does not depend on it.
+
+## 2026-10-27 — REQ-001 operator name on approvals (sbx1)
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+- What: server sets `Approval.actor` from `AUTOBRIDGE_OPERATOR` (default `operator`) in approve/reject/rollback; body actor accepted-but-ignored (schemas optional); `GET /operator`; `ReleaseOut.approved_by` via latest approval; compose forwards `${AUTOBRIDGE_OPERATOR:-operator}`; `.env.example` entry; UI `RepairActions` fetches name, shows "Approving as <name>", no actor input, sends `{}`; `ReleaseHistory` "Approved by" column; client `getOperator` + `OperatorOut`; openapi.json + schema.d.ts regenerated; docs/architecture.md endpoint line.
+- Tests: 2 new server tests (env actor wins over client actor across approve/reject/rollback + approved_by in list/get/detail; default name); UI tests for Approving-as line (incl. fallback) + approved-by; full `make test` 2026 pass (1715 @ 90.83% / 92 @ 93.78% / 219 @ 96.55%), ui 105 pass, tsc + lint + mypy green, live `GET /operator` verified default + override.
+- E2E (test_06, mocked chromium 6/6): added `/operator` + `control:8000` route mocks, REQ-001 assertions; drive-by mock/harness fixes — mock releases lacked `signature` (crashed SpecViewer on empty `spec:{}`), two invalid `expect().or()` chains, strict-mode `Visible tests` heading, duplicate `model-usage-view` testid.
+- Gotcha: compose UI bakes `NEXT_PUBLIC_API_URL=http://control:8000`, unreachable from test browser — mocked mode must intercept it. Live-mode journeys need seeded data (empty DB fails detail pages); noted, not changed.

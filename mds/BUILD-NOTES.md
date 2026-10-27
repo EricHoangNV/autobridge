@@ -417,3 +417,9 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 - Docs: `docs/demo.md` prerequisites paragraph now describes live vs local
   modes, `CONTROL_URL`/`DEMO_SEED`/`--json`; Makefile `demo` target no longer
   a stub.
+
+### REQ-001 — Show the operator's name on approvals (2026-10-27, sbx1)
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+- Files: `src/autobridge/control/deps.py` (`OPERATOR_ENV_VAR`, `get_operator_name()`, `approved_by_for_releases()`), `schemas.py` (`OperatorOut`, optional ignored `actor`, `ReleaseOut.approved_by`), `routes/repairs.py` (`GET /operator`, server actor on approve/reject/rollback, approved_by on list/get/rollback), `routes/connectors.py` (approved_by on detail), `.env.example`, `compose.yaml` (control forwards `${AUTOBRIDGE_OPERATOR:-operator}`), `ui/lib/api/client.ts` (`getOperator`), regenerated `ui/openapi.json` + `schema.d.ts`, `ui/components/RepairActions.tsx` (fetch name, "Approving as" line, no actor input), `ui/components/ReleaseHistory.tsx` (Approved-by column), tests + `docs/architecture.md`.
+- Decisions: body `actor` kept as accepted-but-ignored optional field (old clients keep working, missing actor no longer 422); empty env value falls back to `operator`; approval lookup is latest-by-created_at per release, one query per listing.
+- Gotchas: compose UI bakes `NEXT_PUBLIC_API_URL=http://control:8000` so Playwright mocked mode must intercept that host too; mock releases needed real `signature` + non-empty `spec` (empty `spec:{}` crashes SpecViewer); spec had invalid `expect().or()` chains (only `locator.or()` exists) — replaced with boolean expects; `Visible tests` heading and `model-usage-view` needed exact/first selectors after UI gained duplicate text/testids.
