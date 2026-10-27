@@ -49,7 +49,7 @@
 - [x] P1.W3.7 Reference specs for Atlas and Harbor under `generated/connectors/`; `tests/e2e/test_02_reference_sync.py`: both sync `Complete` with `ModelCall` count 0; `docs/connector-spec.md`
 
 #### W4 — Drift detection + deterministic repair + releases (plan §4 W4, §2.5)
-- [ ] P1.W4.1 Fingerprinting (`drift/fingerprint.py`: keys, types, pagination shape) and `drift/signals.py` from sync runs and the canary
+- [>] P1.W4.1 Fingerprinting (`drift/fingerprint.py`: keys, types, pagination shape) and `drift/signals.py` from sync runs and the canary — in progress: sbx1 since 2026-10-27 04:43
 - [ ] P1.W4.2 Drift classifier (`drift/classifier.py`) for the 12 classes of plan §2.5 with evidence ids; tests per class from the scenario catalog
 - [ ] P1.W4.3 The 7 deterministic rules in `repair/rules/` (`rename_field`, `offset_to_cursor`, `cursor_to_offset`, `retry_backoff_only`, `enum_extend_requires_evidence`, `nested_path_shift`, `type_coerce_string_number`), each with precondition, patch generator, confidence, verification level, and unit tests for precondition true/false and patch shape; `repair/registry.py`
 - [ ] P1.W4.4 `RepairController` + `ladder.py` with L0 knowledge lookup (profile cache keyed by vendor + fingerprint delta) and L1 rules wired; `rate_limit_429` / `transient_503` → no patch, backoff only; `token_expired` → refresh if permitted else escalate; `CAPABILITY_REMOVED` / `AUTH_REVOKED` escalate with no patch attempted
