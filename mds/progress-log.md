@@ -55,3 +55,36 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 **Notes for next iteration:**
 - `P1.W1.2` creates `compose.yaml` with 8 services, 4 networks, healthz/readyz, negative network checks — after that `make up` and `make smoke` will test real containers
 - `uv sync --all-packages --extra dev` is required after cloning; `make test`/`lint`/`typecheck` all use `uv run` so they work in clean venv
+
+## [P1.W1.2 compose.yaml — all services, four networks, healthz/readyz]
+**Date:** 2026-10-27
+**Ref:** plan §2.1, §4 W1; PRD-TRACKING P1.W1.2 (claimed by sbx1, finished from the previous iteration's uncommitted work)
+**Agent:** opencode meta/muse-wonder-1.0 (escalation)
+
+**What was done:**
+- Finished the previous iteration's unfinished W1.2 work: `compose.yaml` with control, worker, runtime-sandbox, verifier, sim-atlas, sim-harbor, ui, bench on engine-net/vendor-net/verifier-net/admin-net (host ports 8101–8108, healthchecks on every service)
+- Health-only stub apps for worker (`autobridge.engine.app`), runtime-sandbox (`autobridge.runtime.app`), bench (`autobridge.bench.app`), both simulators, and a Node UI stub (`ui/server.js`); per-trust-zone Dockerfiles (`Dockerfile.engine`, `verifier/Dockerfile` with `verifier/`-only context, `simulators/Dockerfile`, `ui/Dockerfile`)
+- `scripts/wait_readyz.sh` (all 8 readyz) wired into `make up`; `scripts/smoke.sh` (healthz/readyz + positive and negative in-container network probes) wired into `make smoke`
+- Fixed the stack blocker: removed `internal: true` from verifier-net/admin-net and added `test_no_network_is_internal` (LEARNINGS #1)
+
+**Key decisions:**
+- Isolation by network attachment only, never `internal: true`: it silently drops host-port publishing for a single-network service and, on an in-place flip, service DNS aliases
+- `bench` attached to engine-net + verifier-net because W8 scoring uses the verifier's hidden mode
+- Simulators dual-homed on vendor-net + admin-net; the sandbox↛sim:8001 negative check is attachment-true only once W2 binds the admin API to the admin-net interface (nothing listens on 8001 yet)
+
+**Files changed:**
+- `compose.yaml` — 8 services, 4 networks, healthchecks, verifier fixtures mounted ro at `/fixtures`
+- `Dockerfile.engine`, `verifier/Dockerfile`, `simulators/Dockerfile`, `ui/Dockerfile`, `ui/package.json`, `ui/server.js`
+- `src/autobridge/engine/app.py`, `src/autobridge/runtime/app.py`, `src/autobridge/bench/app.py`, `simulators/atlaspms/app.py`, `simulators/harborpms/app.py`
+- `scripts/smoke.sh`, `scripts/wait_readyz.sh`, `Makefile`
+- `tests/unit/test_autobridge_compose.py`, `tests/unit/test_simulators_apps.py`
+- `mds/LEARNINGS.MD` — new #1 (internal Compose networks)
+
+**Checks:**
+- `make test` — 57 pass, 100% coverage per package (90% gate)
+- `make lint`, `make typecheck`, `make lint-imports` (1 kept) — green
+- `docker compose down && make up` — all 8 readyz green; `make smoke` green incl. negative probes
+- e2e: none for W1.2 (`tests/e2e/test_00_stack_up.py` is P1.W1.10)
+
+**Notes for next iteration:**
+- Next: P1.W1.3 ConnectorSpec v1. W2 must bind the simulator admin API to the admin-net interface only (see Key decisions).

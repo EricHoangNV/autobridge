@@ -18,7 +18,7 @@
 
 #### W1 — Foundations (plan §4 W1, §2.2, §2.3, §2.9)
 - [x] P1.W1.1 Repo scaffold: uv workspace `pyproject.toml` with packages `autobridge` (`src/autobridge`), `verifier/`, `simulators/`; ruff + mypy + pytest-cov config with the 90% gate per package; import-linter contract that `autobridge` never imports `verifier` or `simulators` (DIRECTIVES §2); `Makefile` targets `up / down / test / smoke / e2e / bench / demo / lint / typecheck`; one passing smoke test per package; `.env.example` complete
-- [>] P1.W1.2 `compose.yaml` — in progress: sbx1 since 2026-10-27 02:06
+- [x] P1.W1.2 `compose.yaml`
 - [ ] P1.W1.3 `ConnectorSpec` v1: pydantic models (`src/autobridge/spec/models.py`), `schemas/connector-spec.v1.json`, the closed transform name set, JSONPath-subset validation; YAML → model → JSON-schema round-trip; invalid specs rejected with path-level errors; `spec/patch.py` JSON Patch apply + validate + reverse; `spec/registry.py` for releases on disk under `generated/connectors/`
 - [ ] P1.W1.4 Canonical entity schemas `schemas/reservation.schema.json`, `schemas/folio-charge.schema.json`; `schemas/runtime-target.json`; `schemas/discovery-result.v0.json` reserved (plan §2.3 last bullet); tests that the reference examples validate
 - [ ] P1.W1.5 SQLAlchemy models for the core data model (plan §2.3: `Connector`, `ConnectorRelease`, `BuildRun`, `SyncRun`, `DriftEvent`, `RepairRun`, `Approval`, `EvidenceRecord`, `ModelCall`, `DependencyRegistration`) + Alembic migrations; SQLite now, Postgres-ready (no SQLite-only types); `ConnectorRelease` immutability enforced at the model layer
