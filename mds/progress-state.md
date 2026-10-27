@@ -2,6 +2,8 @@
 
 ## Current State
 
+P1.W7.2 SSE run events done (2026-10-27): `src/autobridge/control/sse.py` streaming stored EvidenceRecords with credential redaction, `GET /runs/{id}/events` via sse_starlette, full-stream redaction test proving no secret value appears; 90.34% coverage.
+
 P1.W7.1 FastAPI control plane done (2026-10-27): all §2.11 endpoints (connectors CRUD, build/sync jobs, runs/events SSE, drift, repairs approve/reject, releases rollback, demo inject-fault labelled proxy, metrics/model-usage, bench/scorecards) with healthz/readyz DB check, OpenAPI contract 15 endpoints, secrets redacted; 90.28% coverage.
 
 P1.W6.5 Safety model complete + e2e test_05 done (2026-10-27): 5 scenarios via fake+live admin-oracle, regression gate, escalation bundle single '?', Decimal+04:00, secrets redacted, frontier 0; docs/safety-model.md §§3,7-12.
@@ -54,10 +56,12 @@ P1.W6.4 Regression gate done (2026-10-27): verify_spec POST /verify with regress
   - P1.W6.4: Regression gate
   - P1.W6.5: Safety model + test_05
   - P1.W7.1: FastAPI control plane (§2.11) — all endpoints + OpenAPI + redaction
-- Tests: 1704 pass / 0 fail (autobridge 90.28%, verifier 93.78%, simulators 96.55%; ui –) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker)
+  - P1.W7.2: SSE run events (`control/sse.py`, `GET /runs/{id}/events` from EvidenceRecords with redaction)
+- Tests: 1717 pass / 0 fail (autobridge 90.34%, verifier 93.78%, simulators 96.55%; ui –) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker)
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green / `make lint` + `make typecheck` green
 
 ## Next tasks
-1. **P1.W7.2** — SSE run events + redaction test over full stream
-2. **P1.W7.3** — OpenAPI → ui typed client
-3. **P1.W7.4** — Next.js scaffold + /connectors screen
+1. **P1.W7.3** — OpenAPI → ui typed client via openapi-typescript
+2. **P1.W7.4** — Next.js 15 scaffold + /connectors screen
+3. **P1.W7.5** — Screen /connectors/new
+

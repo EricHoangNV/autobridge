@@ -1328,3 +1328,29 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 **Notes for next iteration:**
 - Next: P1.W7.2 SSE run events (control/sse.py, GET /runs/{id}/events) from stored EvidenceRecords; redaction test over full run's event stream (no credential value appears) — already partially implemented, needs dedicated test.
 - Gotchas: sqlite:///:memory: per-connection isolation breaks JobRunner sharing — use file tmp_path; random hex connector ids produce invalid placeholder; SSE redaction needs DB credential_refs; ruff B008 on route files — header noqa.
+
+## P1.W7.2 SSE run events from stored EvidenceRecords with full-stream redaction
+**Date:** 2026-10-27
+**Ref:** mds/AutoBridge_Implementation_Plan_2026-10-26.md §2.11, §4 W7
+
+**What was done:**
+- Created `src/autobridge/control/sse.py` (176 lines, 100% covered) — `collect_secrets` gathering credential_ref values from DB + env pattern scan (≥6 chars, skip PATH/HOME/etc, plus _API_KEY/_TOKEN/_SECRET suffix fallback), `evidence_to_sse_data` redacting payload via `redact_payload`, `get_evidence_for_run` matching exact and `<prefix>:<id>` forms, `records_to_sse_payloads`, `sse_event_generator` async generator with disconnect check and terminal done marker, `build_sse_events_for_run` sync helper for tests
+- Refactored `src/autobridge/control/routes/runs.py` to delegate to `control.sse` — removed duplicated `_collect_secrets` body, now `sse_collect_secrets` + `evidence_to_sse_data` + `get_evidence_for_run`; kept `_collect_secrets` wrapper for compat; `GET /runs/{id}/evidence` and `GET /runs/{id}/events` now share helpers and respect redaction defense-in-depth
+- Added `tests/unit/test_autobridge_sse.py` (13 tests, 100% on sse.py) — `collect_secrets` from DB+env, skip keys, DB exception fallback, short-value suffix handling, `evidence_to_sse_data` redaction, `get_evidence_for_run` filtering, `records_to_sse_payloads`, async `sse_event_generator` with disconnect, `build_sse_events_for_run` auto-collect, plus the required full-stream redaction test: build run + 4 deliberately leaked EvidenceRecords (nested auth header, list, key leak, both secrets) then GET /evidence and GET /events streams, asserting no secret value appears in raw body nor in any JSON data, REDACTED appears, done marker count matches
+
+**Key decisions:**
+- Keep SSE as stored-only (no live polling) per plan §2.11 — dashboard renders stored records; terminal done event gives count for UI
+- Collect secrets at read time from both DB credential_refs and env scan so legacy rows and env-added secrets are redacted even if EvidenceStore already redacted at write time
+- Keep _collect_secrets as thin wrapper in runs.py so existing unit tests importing it still pass (trust boundary: engine never imports verifier/simulators)
+- Use sse_starlette EventSourceResponse unchanged; inner generator now calls `evidence_to_sse_data` for single redaction path
+
+**Files changed:**
+- `src/autobridge/control/sse.py` — new, SSE helpers + redaction
+- `src/autobridge/control/routes/runs.py` — refactor to use sse.py, keep logic identical
+- `tests/unit/test_autobridge_sse.py` — new, 13 tests including full-stream redaction over all evidence kinds
+
+**Notes for next iteration:**
+- P1.W7.3 should generate `ui/lib/api` from live OpenAPI via openapi-typescript and assert client compiles in CI
+- No e2e for W7.2 beyond unit — existing `test_00_stack_up` already checks readyz; W7.8 will add Playwright journey
+- Secrets never appear in API responses per DIRECTIVES §6 — verified for both evidence and SSE streams
+
