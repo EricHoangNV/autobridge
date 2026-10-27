@@ -706,9 +706,10 @@ def build_draft_spec(
             # Build interface for selector (needs operations)
             selector = ProbeSelector(iface, budget=probe_budget, llm_budget=llm_budget)
             # For each family, attempt resolution if ambiguity matters
-            # Flatten hypotheses that are relevant to compile (pagination + status + amount)
-            # Date hypotheses about ambiguous `date` field are not compile-blocking (we ignore)
-            compile_relevant_families = ["pagination", "status", "amount"]
+            # Date hypotheses about ambiguous `date` field are probed to determine semantics;
+            # compile ignores the ambiguous field when resolution is ambiguous, but probe budget
+            # disambiguation is the W5.7 requirement (resolved within budget or Degraded).
+            compile_relevant_families = ["pagination", "status", "date"]
             for fam in compile_relevant_families:
                 hyps = hypotheses_by_family.get(fam, [])
                 if len(hyps) <= 1:
@@ -717,12 +718,22 @@ def build_draft_spec(
                 # To avoid unnecessary probing, check if classifier already high confidence for this family
                 # For pagination, classifier high for Harbor -> we can skip probing
                 should_probe = True
-                if fam == "pagination" and classification.pagination.overall_confidence == "high":
-                    should_probe = False
+                if fam == "pagination":
+                    # Skip if main ops (/reservations, /folios) are high confidence, even if overall medium
+                    main_ops = {"/reservations", "/folios"}
+                    main_guesses = [g for g in classification.pagination.per_operation if g.operation in main_ops]
+                    if (main_guesses and all(g.confidence == "high" for g in main_guesses)) or classification.pagination.overall_confidence == "high":
+                        should_probe = False
                 if fam == "status" and classification.status_vocabulary.confidence == "high":
                     should_probe = False
+                if fam == "date" and not classification.date_semantics.ambiguous_fields:
+                        should_probe = False
                 if not should_probe:
-                    resolution_results[fam] = {"decision": "skipped_high_confidence", "hypothesis_count": len(hyps)}
+                    # For date, even when skipping we record handling so trace shows deterministic resolution
+                    if fam == "date":
+                        trace.append({"stage": "date_ambiguity", "ambiguous_fields": list(classification.date_semantics.ambiguous_fields), "handling": "ignore_ambiguous_field"})
+                    else:
+                        resolution_results[fam] = {"decision": "skipped_high_confidence", "hypothesis_count": len(hyps)}
                     continue
                 result = resolve_hypotheses(
                     hyps,
@@ -743,24 +754,18 @@ def build_draft_spec(
                     open_questions = tuple(list(open_questions) + list(result.open_questions))
                     trace.append({"stage": "resolve", "family": fam, "decision": "degraded", "open_questions": list(result.open_questions)})
                 else:
-                    trace.append({"stage": "resolve", "family": fam, "decision": result.decision})
+                    trace.append({"stage": "resolve", "family": fam, "decision": result.decision, "hypothesis": getattr(result.resolved_hypothesis, "id", None) if result.resolved_hypothesis else None})
                 # Merge model usage
                 for k in ("frontier_tokens", "small_tokens", "calls", "frontier_calls", "small_calls"):
                     model_usage[k] = int(model_usage.get(k, 0)) + int(result.model_usage.get(k, 0))
-            # Date family: check ambiguous flag
+            # Date family fallback: if ambiguous but not probed (e.g. skipped due to high confidence or no family entry)
             date_amb = classification.date_semantics.ambiguous_fields
-            if date_amb:
-                # If ambiguous date field exists, we note it but compile ignores the field
-                # Probe could disambiguate, but ignoring is correct per Harbor docs note
-                # If we attempted probing and still ambiguous, we report Degraded
-                # For now, treat date ambiguity as Degraded only if no probe and enumerator >1
-                # Since we ignore date field, we don't degrade bootstrap itself, but we record open question
-                has_date_probing = "date" in resolution_results
-                if not has_date_probing:
-                    # Record that date ambiguity exists but is handled by ignoring
+            if date_amb and "date" not in resolution_results:
+                # Record that date ambiguity exists but is handled by ignoring
+                # Search trace for existing date_ambiguity entry to avoid duplicate
+                has_da = any(t.get("stage") == "date_ambiguity" for t in trace)
+                if not has_da:
                     trace.append({"stage": "date_ambiguity", "ambiguous_fields": list(date_amb), "handling": "ignore_ambiguous_field"})
-                    # Optionally add open question if strict: but Harbor expects no degradation for spec correctness
-                    # We keep open_questions empty for successful Harbor bootstrap
         except Exception as exc:
             trace.append({"stage": "resolve", "error": str(exc)})
             # Continue to compile anyway

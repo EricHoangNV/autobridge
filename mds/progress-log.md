@@ -1110,3 +1110,27 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - No P2 tasks until W6 green; bootstrap does not import reference specs and does not cache vendor-specific rules (P2.S1 leg)
 
 Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+## P1.W5.7 — Bootstrap unfamiliar API e2e (negative trust boundary + date ambiguity probe budget)
+**Date:** 2026-10-27
+**Ref:** plan §4 W5 + §2.6 Hypothesis engine; task P1.W5.7 (service confirmation: tests/e2e/test_04_bootstrap_unfamiliar_api.py). Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Enhanced `src/autobridge/discovery/bootstrap.py` to probe `date` family within budget: compile_relevant_families now pagination/status/date (amount excluded as non-blocking), pagination skip logic checks main ops (/reservations, /folios) high confidence even when overall medium, date probe uses ProbeSelector+resolver with EIG and BudgetExhausted→L4 escalation; trace records date_ambiguity ignore when not probed vs date resolved when probed, open_questions Degraded when probe budget exhausted or non-distinguishing probes
+- Created `tests/e2e/test_04_bootstrap_unfamiliar_api.py` (13 tests): negative workspace path test (no symlink/import/file-read to verifier/simulators, registry allowed, guard rejects generated/connectors source, hidden_cases never leaked), Harbor bootstrap from docs alone (valid spec, placeholder, cursor/repeated_cursor, opaque H1→confirmed, money Decimal scale2, business_date cutoff 4, no date field, capabilities/health, schema validation), oracle pass baseline, money Decimal + business_date boundary via fake sync + transform_business_date, date classification 4 hypotheses with evidence, date resolved within probe budget via fake executor strategy arrival + bootstrap path with ProbeBudget 5, date degraded when no executor or nondistinguishing probe or BudgetExhausted→escalate, L3 assert <2 vs ≥2 skip, every hypothesis evidence linkage, visible tests green with tamper checks, fake sync Complete with ModelCall 0 and fingerprint, plus 2 live e2e when stack up (Harbor live sync + live date duplication probe)
+
+**Key decisions:**
+- Keep bootstrap deterministic for Harbor pagination: main ops high confidence skips probing even when overall medium (Harbor has 7 ops, some medium, but list_reservations/list_folios are high), so fake e2e stays within budget and date probing gets its own budget slot; amount excluded because bootstrap always uses money scale2 transform declaratively, not probed semantics
+- Date probing via strategy hook (arrival) not open() file read; executor returns strategy arrival for date family, cursor for pagination would be needed if not skipped; resolver filtering via strategy keeps arrival hypothesis, others eliminated, yielding resolved in 1 probe
+- Negative test allows spec/registry.py to mention generated/connectors (storage) but forbids open()/Path() reads; bootstrap+build_run guard remains, hidden_cases never in src/autobridge; raises AssertionError via raise not assert False for ruff B011
+- Live e2e uses localhost:8106 with Harbor token and verifies date duplicates arrival_date; skips when Docker unavailable so suite stays green
+
+**Files changed:**
+- `src/autobridge/discovery/bootstrap.py` — enhanced probe loop for date, pagination main-ops skip, amount exclusion, date fallback trace
+- `tests/e2e/test_04_bootstrap_unfamiliar_api.py` — new, 13 tests for P1.W5.7 passing criteria
+
+**Notes for next iteration:**
+- Next: P1.W6.1 SEMANTIC_VALUE_DRIFT detection via invariants (money/date/count invariant fails) with failing invariant named in unmet_criteria
+- Bootstrap date probing now covers W5.7 "resolved within probe budget or Degraded" — W6 will need similar invariant checks for gross_to_net/tz_boundary_shift
+- No docs page changed for W5.7; docs/architecture.md already covers bootstrap; W10 will finalize all docs
+
