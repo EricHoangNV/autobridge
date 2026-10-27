@@ -891,3 +891,28 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - P1.W4.7 e2e test_03_known_repairs_zero_frontier will use these releases + RepairController ladder to verify 4 fixable scenarios → new release with frontier_tokens==0 asserted on ledger; needs verifier hidden mode + scenario catalog
 - No new e2e file for W4.5; workstream e2e remains test_03; coverage stays ≥90% per package (autobridge 91.87%, verifier 93.78%, simulators 98.54%)
 
+## P1.W4.6 Canary monitor + DependencyRegistration pause signal
+**Date:** 2026-10-27
+**Ref:** plan §4 W4 + §2.3/§2.4 (canary monitor, DependencyRegistration); task P1.W4.6. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Created `src/autobridge/engine/monitor.py` (167 lines, 98% coverage): parse_canary_interval (60s/5m/1h → seconds), should_run_canary (elapsed vs every with UTC/naive handling, None→due), get_canary_config (extract health.canary every/operation/max_pages), run_canary (lightweight probe executing only canary operation via Interpreter with max_pages, mapping to canonical via transforms, checks via evaluate_entity_checks, outcome via determine_outcome, data_readiness, fingerprint_id via compute_fingerprint_id, checkpoint, error→Blocked fallback, returns sync-like summary for signals_from_canary)
+- Added DependencyRegistration helpers in same module: register_consumer (idempotent upsert), ensure_demo_consumer (demo-dashboard/Reservation/pause_on_release_change), is_consumer_paused/resume_consumer/get_dependency_status, handle_release_activated (pauses all pause_on_release_change regs for connector, emits EvidenceRecord kind decision payload event release.activated + connector_id/release_id/paused_consumers/actor, never leaks secret)
+- Extended `src/autobridge/engine/releases.py`: _activate now takes actor kwarg and emits via monitor.handle_release_activated inside best-effort try/except, approve_release and rollback_release pass actor through so every activation emits and pauses dependents
+- Created `tests/unit/test_autobridge_monitor.py` (30 tests): interval parse/should_run/boundary/naive/default-now, get_canary_config happy/missing, run_canary Complete/fingerprint/max_pages/Blocked enum/HttpFailure/Empty/Checkpoint/NoLoss invariant/UnknownEnum without field, signals integration, register idempotent, demo consumer, is_paused/resume, handle emits+pauses selective already_paused/no_consumer, get_status, approve pauses demo+evidence+no secret, rollback pauses+actor, reject not, notify never, multiple selective, canary respects spec definition, interval units
+
+**Key decisions:**
+- Canary is single-operation probe not full sync (max_pages from spec, usually 1) to keep cost low and match health.canary semantics; fingerprint and outcome reuse sync_run helpers so drift/fingerprint and signals pipelines interpret canary identically
+- Pause signal implemented as EvidenceRecord not in-memory bus: activation emits release.activated with paused list for dashboard verification and test assertions, stored with run_id release:<id>; _activate wrapper swallows emission errors so release flip never fails due to monitor issue
+- Dependency helpers are in monitor.py (as task names the file) with local import in releases.py to avoid circular; demo consumer is helper not auto-created on connector insert to keep model layer idempotent and let tests control registration
+
+**Files changed:**
+- `src/autobridge/engine/monitor.py` — new, canary probe + dependency pause signal + release.activated emission
+- `src/autobridge/engine/releases.py` — extended _activate/approve/rollback to emit and pause
+- `tests/unit/test_autobridge_monitor.py` — new, 30 tests
+
+**Notes for next iteration:**
+- P1.W4.7 is the workstream acceptance e2e test_03_known_repairs_zero_frontier (4 fixable scenarios → verified new release with frontier_tokens==0); it should reuse monitor's demo consumer pattern and verify EvidenceRecord release.activated exists
+- No new e2e file for W4.6; workstream e2e remains test_03; coverage now 954 autobridge @92.07% (monitor 98%), verifier 93.78%, simulators 98.54%; lint/typecheck green
+- Directives CheckNo 4 Runtime semantics satisfied (canary outcome Degraded/Blocked same as sync, money Decimal preserved via mapping)
+
