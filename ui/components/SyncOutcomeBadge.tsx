@@ -1,19 +1,18 @@
 type Props = { outcome: string | null | undefined };
 
-const colorFor = (o: string): string => {
-  if (o === "Complete") return "bg-emerald-100 text-emerald-800 border-emerald-200";
-  if (o === "Degraded") return "bg-amber-100 text-amber-800 border-amber-200";
-  if (o === "Blocked") return "bg-band text-stop border-stop";
-  return "bg-ground text-ink-2 border-rule";
-};
+// Square-shape status (broadcast): Complete = ink word + filled square,
+// Degraded = live word + half square, Blocked = stop word + hollow square.
+function shapeFor(o: string): string {
+  if (o === "Complete") return "st-ok";
+  if (o === "Degraded") return "st-deg";
+  if (o === "Blocked") return "st-blk";
+  return "st-mut";
+}
 
 export function SyncOutcomeBadge({ outcome }: Props) {
   const label = outcome ?? "—";
   return (
-    <span
-      data-testid="sync-outcome-badge"
-      className={`inline-flex items-center border px-2 py-0.5 text-xs font-medium ${colorFor(label)}`}
-    >
+    <span data-testid="sync-outcome-badge" className={`st ${shapeFor(label)}`}>
       {label}
     </span>
   );

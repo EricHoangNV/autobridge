@@ -5,45 +5,42 @@ type Props = {
   label?: string;
 };
 
-export function Sparkline({ values, width = 80, height = 24, label }: Props) {
+/**
+ * Broadcast token bars: one bar per sync/repair, zero bars drawn as a
+ * 2px baseline tick in --off. Nonzero bars fill in --ink.
+ */
+export function Sparkline({ values, width = 200, height = 40, label }: Props) {
   if (!values.length) {
     return (
-      <span data-testid="sparkline" className="text-xs text-ink-2">
+      <span data-testid="sparkline" className="text-sm text-ink-2">
         {label ?? "no data"}
       </span>
     );
   }
   const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const range = max - min || 1;
-  const stepX = values.length > 1 ? width / (values.length - 1) : width;
-  const points = values
-    .map((v, i) => {
-      const x = i * stepX;
-      const y = height - ((v - min) / range) * height;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-
+  const n = values.length;
+  const slot = width / n;
+  const barW = Math.max(2, Math.min(8, slot - 2));
   return (
     <svg
       data-testid="sparkline"
-      width={width}
+      width="100%"
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      className="inline-block overflow-visible"
+      preserveAspectRatio="none"
+      className="block"
       role="img"
-      aria-label={label ?? `sparkline with ${values.length} points`}
+      aria-label={label ?? `sparkline with ${n} points`}
     >
-      <polyline
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        className="text-ink-2"
-        points={points}
-      />
+      {values.map((v, i) => {
+        if (v <= 0) {
+          const x = i * slot + (slot - barW) / 2;
+          return <rect key={i} data-testid="sparkline-tick" fill="var(--off)" x={x} y={height - 2} width={barW} height={2} />;
+        }
+        const h = Math.max(3, (v / max) * height);
+        const x = i * slot + (slot - barW) / 2;
+        return <rect key={i} data-testid="sparkline-bar" fill="var(--ink)" x={x} y={height - h} width={barW} height={h} />;
+      })}
     </svg>
   );
 }

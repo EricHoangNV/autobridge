@@ -14,6 +14,9 @@ const mockedUseSWR = useSWR as unknown as ReturnType<typeof vi.fn>;
 describe("ConnectorsPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // Default for the repairs + drift fetches (fourth/fifth SWR calls); the
+    // per-test mockReturnValueOnce queues take precedence for the first three.
+    mockedUseSWR.mockReturnValue({ data: [], error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>);
   });
 
   it("shows loading state", () => {

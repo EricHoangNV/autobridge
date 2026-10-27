@@ -113,6 +113,9 @@ const mockSyncRuns = [
 describe("ConnectorDetailPage", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // Default for the repairs fetch (third SWR call); the per-test
+    // mockReturnValueOnce queues take precedence for detail + sync-runs.
+    mockedUseSWR.mockReturnValue({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
     // Mock fetch for trigger-sync button (used inside handleSync)
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve("") }) as unknown as typeof fetch;
   });
@@ -143,7 +146,7 @@ describe("ConnectorDetailPage", () => {
     // Dependency registrations
     expect(screen.getByTestId("dependency-list")).toBeInTheDocument();
     // Trigger sync button
-    expect(screen.getByTestId("trigger-sync-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("sync-now-button")).toBeInTheDocument();
   });
 
   it("renders Degraded sync run correctly", () => {

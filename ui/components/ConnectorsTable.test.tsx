@@ -64,7 +64,7 @@ describe("ConnectorsTable", () => {
     expect(screen.getByTestId(`connector-row-${c.id}`)).toBeInTheDocument();
     expect(screen.getByText("Atlas PMS")).toBeInTheDocument();
     expect(screen.getByTestId("health-badge")).toHaveTextContent("healthy");
-    expect(screen.getByText("v3")).toBeInTheDocument();
+    expect(screen.getByText("r3")).toBeInTheDocument();
     expect(screen.getByTestId("sync-outcome-badge")).toHaveTextContent("Complete");
     expect(screen.getByTestId(`drift-count-${c.id}`)).toHaveTextContent("0");
     expect(screen.getByTestId("sparkline")).toBeInTheDocument();

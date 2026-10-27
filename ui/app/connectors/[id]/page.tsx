@@ -2,13 +2,19 @@
 
 import { useState, useEffect } from "react";
 import useSWR from "swr";
+import Link from "next/link";
 import { SpecViewer } from "@/components/SpecViewer";
 import { ReleaseHistory } from "@/components/ReleaseHistory";
 import { SyncRunsTable } from "@/components/SyncRunsTable";
 import { DependencyList } from "@/components/DependencyList";
-import { SyncOutcomeBadge } from "@/components/SyncOutcomeBadge";
-import { HealthBadge } from "@/components/HealthBadge";
-import type { ConnectorDetail, ReleaseOut, SyncRunOut, DependencyOut } from "@/lib/api/client";
+import { frontierTokensOf, waitingRepairs } from "@/components/ConnectorsTable";
+import type {
+  ConnectorDetail,
+  ReleaseOut,
+  RepairRunOut,
+  SyncRunOut,
+  DependencyOut,
+} from "@/lib/api/client";
 
 function getBaseUrl(): string {
   if (typeof window !== "undefined") {
@@ -27,6 +33,41 @@ const fetcher = async <T,>(path: string): Promise<T> => {
 type PageProps = {
   params: Promise<{ id: string }> | { id: string };
 };
+
+function formatDayTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === now.toDateString()) return `today ${time}`;
+    return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+  } catch {
+    return iso;
+  }
+}
+
+/** Read a nested path from the free-form spec map without assuming its shape. */
+function specPath(spec: unknown, path: string[]): unknown {
+  let cur: unknown = spec;
+  for (const key of path) {
+    if (cur === null || typeof cur !== "object" || Array.isArray(cur)) return undefined;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
+}
+
+/** Quiet fact segments for the masthead, only from data the spec actually carries. */
+function specFacts(spec: ReleaseOut["spec"] | null | undefined): string[] {
+  if (!spec || typeof spec !== "object") return [];
+  const out: string[] = [];
+  const authType = specPath(spec, ["source", "auth", "type"]);
+  if (typeof authType === "string" && authType) out.push(`${authType} auth`);
+  const pagination = specPath(spec, ["source", "pagination", "strategy"]);
+  if (typeof pagination === "string" && pagination) out.push(`${pagination} pagination`);
+  const tz = specPath(spec, ["source", "timezone"]);
+  if (typeof tz === "string" && tz) out.push(`Dates in ${tz}`);
+  return out;
+}
 
 export default function ConnectorDetailPage({ params }: PageProps) {
   // Next.js 15: params is Promise<{ id: string }> in production.
@@ -59,6 +100,12 @@ export default function ConnectorDetailPage({ params }: PageProps) {
     fetcher,
     { refreshInterval: 5000 },
   );
+
+  // Repairs for this connector (client-side match on open drift ids, so no
+  // server-side filter is assumed): drives the waiting band.
+  const { data: allRepairs } = useSWR<RepairRunOut[]>("/repairs", fetcher, {
+    refreshInterval: 5000,
+  });
 
   const [syncState, setSyncState] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
@@ -111,7 +158,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
 
   if (detailLoading) {
     return (
-      <div data-testid="connector-detail-page" className="py-8 text-center text-sm text-ink-2">
+      <div data-testid="connector-detail-page" className="px-10 py-8 text-center text-sm text-ink-2">
         Loading connector…
       </div>
     );
@@ -120,12 +167,12 @@ export default function ConnectorDetailPage({ params }: PageProps) {
   if (detailError) {
     return (
       <div data-testid="connector-detail-page">
-        <a href="/connectors" data-testid="back-to-connectors" className="text-xs text-ink-2 hover:text-ink hover:underline">
+        <a href="/connectors" data-testid="back-to-connectors" className="link px-10">
           ← Back to connectors
         </a>
         <div
           data-testid="connector-detail-error"
-          className="mt-4 border border-stop bg-band px-4 py-3 text-sm text-stop"
+          className="mx-10 mt-4 border border-stop bg-band px-4 py-3 text-sm text-stop"
         >
           Failed to load connector {(detailError as Error).message}
         </div>
@@ -135,165 +182,189 @@ export default function ConnectorDetailPage({ params }: PageProps) {
 
   if (!detail) {
     return (
-      <div data-testid="connector-detail-page" className="py-8 text-center text-sm text-ink-2">
+      <div data-testid="connector-detail-page" className="px-10 py-8 text-center text-sm text-ink-2">
         Connector not found.
       </div>
     );
   }
 
+  const openDrift = detail.open_drift ?? [];
+  const openDriftIds = new Set(openDrift.map((d) => d.id));
+  const myRepairs = (allRepairs ?? []).filter((r) =>
+    (r.drift_event_ids ?? []).some((id) => openDriftIds.has(id)),
+  );
+  const waiting = waitingRepairs(myRepairs);
+  const waitingRepair = waiting[0] ?? null;
+
+  const maxVersion = detail.releases?.length
+    ? Math.max(...detail.releases.map((r) => r.version))
+    : null;
+  const facts = specFacts(specRelease?.spec);
+  const entityNames = (detail.target_entities ?? []).join(", ") || "—";
+
   return (
     <div data-testid="connector-detail-page">
-      {/* Header */}
-      <div className="mb-6">
-        <a
-          href="/connectors"
-          data-testid="back-to-connectors"
-          className="text-xs text-ink-2 hover:text-ink hover:underline"
-        >
-          ← Back to connectors
-        </a>
-        <div className="mt-2 flex items-start justify-between gap-4">
-          <div>
-            <h1 data-testid="connector-name" className="text-xl font-semibold tracking-tight">
-              {detail.name}
-            </h1>
-            <p className="mt-1 text-sm text-ink-2">{detail.base_url}</p>
-            <div className="mt-2 flex items-center gap-2">
-              <HealthBadge status={detail.health_status} />
-              {detail.last_sync ? <SyncOutcomeBadge outcome={detail.last_sync.outcome} /> : null}
-              <span className="text-xs text-ink-2">{detail.id.slice(0, 8)}</span>
-            </div>
-          </div>
-          <button
-            data-testid="trigger-sync-btn"
-            onClick={handleSync}
-            disabled={syncState === "sending"}
-            className="bg-live px-4 py-2 text-sm font-medium text-live-ink hover:opacity-90 disabled:opacity-50"
-          >
-            {syncState === "sending" ? "Starting sync…" : "Sync now"}
-          </button>
+      <section className="mast">
+        <div className="crumb">
+          <Link href="/connectors">Connectors</Link> / {detail.id.slice(0, 8)}
         </div>
+        <div>
+          <h1 data-testid="connector-name">{detail.name}</h1>
+        </div>
+        <p className="facts">
+          {facts.map((f) => (
+            <span key={f}>
+              <b>{f.split(" ")[0]}</b> {f.split(" ").slice(1).join(" ")}
+            </span>
+          ))}
+          <span>
+            <b>{(detail.target_entities ?? []).length}</b> entities
+          </span>
+          <span>
+            Credential <b data-testid="connector-credential-ref">{detail.credential_ref}</b>
+          </span>
+          <span>
+            Entities <b data-testid="connector-target-entities">{entityNames}</b>
+          </span>
+          <span>
+            Open drift <b data-testid="connector-open-drift-count">{openDrift.length} open</b>
+          </span>
+        </p>
+        <div className="relbig">
+          <span data-testid="connector-active-release" className="r num">
+            {maxVersion !== null ? `r${maxVersion}` : "—"}
+          </span>
+          <span className="l">
+            {activeRelease ? `live since ${formatDayTime(activeRelease.created_at)}` : "no release yet"}
+          </span>
+        </div>
+      </section>
+
+      <div className="px-10 pt-4">
+        <Link href="/connectors" data-testid="back-to-connectors" className="link">
+          ← Back to connectors
+        </Link>
+      </div>
+
+      {waitingRepair ? (
+        <div className="wait">
+          <p>
+            <b>Repair {waitingRepair.id.slice(0, 8)} is waiting for you.</b>{" "}
+            {waitingRepair.rule_id ?? openDrift[0]?.drift_class ?? "Drift"} at L
+            {waitingRepair.ladder_level_reached} ·{" "}
+            {frontierTokensOf(waitingRepair).toLocaleString()} frontier tokens.
+          </p>
+          <Link className="btn" href={`/repairs/${encodeURIComponent(waitingRepair.id)}`}>
+            Review repair {waitingRepair.id.slice(0, 8)}
+          </Link>
+        </div>
+      ) : openDrift.length ? (
+        <div className="wait">
+          <p>
+            <b>{openDrift.length} open drift.</b> No repair proposed yet — trigger a sync to start the climb.
+          </p>
+        </div>
+      ) : null}
+
+      <div className="px-10 pt-4">
+        <button
+          data-testid="sync-now-button"
+          onClick={handleSync}
+          disabled={syncState === "sending"}
+          className="btn quiet"
+        >
+          {syncState === "sending" ? "Starting sync…" : "Sync now"}
+        </button>
         {syncMsg ? (
           <div
             data-testid={syncState === "error" ? "sync-error" : "sync-success"}
-            className={`mt-3 border px-4 py-2 text-sm ${syncState === "error" ? "border-stop bg-band text-stop" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}
+            className={`mt-3 border px-4 py-2 text-sm ${syncState === "error" ? "border-stop bg-band text-stop" : "border-rule bg-band text-ink"}`}
           >
             {syncMsg}
           </div>
         ) : null}
       </div>
 
-      {/* Connector meta */}
-      <section className="mb-8 border bg-ground px-4 py-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-2">Connector info</h2>
-        <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-          <div>
-            <dt className="text-xs text-ink-2">Credential ref</dt>
-            <dd data-testid="connector-credential-ref" className="font-mono text-xs">
-              {detail.credential_ref}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-ink-2">Target entities</dt>
-            <dd data-testid="connector-target-entities" className="text-xs">
-              {(detail.target_entities ?? []).join(", ") || "—"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-ink-2">Vendor docs ref</dt>
-            <dd className="text-xs text-ink-2">{detail.vendor_docs_ref ?? "—"}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-ink-2">Runtime target</dt>
-            <dd className="font-mono text-xs">{JSON.stringify(detail.runtime_target)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-ink-2">Active release</dt>
-            <dd data-testid="connector-active-release" className="font-mono text-xs">
-              {detail.active_release_id ? detail.active_release_id.slice(0, 8) : "—"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-ink-2">Open drift</dt>
-            <dd data-testid="connector-open-drift-count" className="text-xs">
-              {(detail.open_drift ?? []).length} open
-            </dd>
-          </div>
-        </dl>
+      <section className="cols">
+        <div>
+          <h2 className="sec">Sync runs</h2>
+          <SyncRunsTable syncRuns={syncRuns ?? (detail.last_sync ? [detail.last_sync as SyncRunOut] : [])} />
+        </div>
+        <div>
+          <h2 className="sec">Releases</h2>
+          <ReleaseHistory releases={detail.releases ?? []} activeReleaseId={detail.active_release_id} />
+        </div>
       </section>
 
-      {/* Spec viewer */}
-      <section className="mb-8">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Spec viewer</h2>
+      <section className="spec" aria-labelledby="spec-t">
+        <div>
+          <h2 className="sec" id="spec-t">
+            Spec{specRelease ? `, r${specRelease.version}` : ""}
+          </h2>
           {detail.releases?.length ? (
             <select
               data-testid="release-selector"
               value={specRelease?.id ?? ""}
               onChange={(e) => setSelectedReleaseId(e.target.value || null)}
-              className="border border-rule px-2 py-1 text-xs"
+              className="mb-3 border border-rule bg-band px-2 py-1 text-sm"
               aria-label="Select release for spec viewer"
             >
               {(detail.releases ?? []).map((r) => (
                 <option key={r.id} value={r.id}>
-                  v{r.version} — {r.id.slice(0, 8)}{r.id === detail.active_release_id ? " (active)" : ""}
+                  r{r.version} — {r.id.slice(0, 8)}{r.id === detail.active_release_id ? " (active)" : ""}
                 </option>
               ))}
             </select>
           ) : null}
+          <ul className="toc" aria-label="Spec sections">
+            {specRelease?.spec && typeof specRelease.spec === "object"
+              ? Object.keys(specRelease.spec as Record<string, unknown>)
+                  .slice(0, 8)
+                  .map((key) => (
+                    <li key={key}>
+                      <a href="#spec-t">{key}</a>
+                    </li>
+                  ))
+              : null}
+          </ul>
         </div>
         {specRelease ? (
-          <SpecViewer spec={specRelease.spec as Record<string, unknown>} title={`Spec — v${specRelease.version} (${specRelease.id.slice(0, 8)})`} />
+          <SpecViewer spec={specRelease.spec as Record<string, unknown>} title={`Spec — r${specRelease.version} (${specRelease.id.slice(0, 8)})`} />
         ) : (
-          <div data-testid="spec-viewer-empty" className="border border-dashed px-4 py-6 text-center text-sm text-ink-2">
+          <div data-testid="spec-viewer-empty" className="border border-rule px-4 py-6 text-sm text-ink-2">
             No releases yet. Build a connector to see its spec.
           </div>
         )}
       </section>
 
-      {/* Release history */}
-      <section className="mb-8">
-        <h2 className="mb-2 text-sm font-semibold">Release history</h2>
-        <ReleaseHistory releases={detail.releases ?? []} activeReleaseId={detail.active_release_id} />
-      </section>
-
-      {/* Sync runs */}
-      <section className="mb-8">
-        <h2 className="mb-2 text-sm font-semibold">Sync runs</h2>
-        <SyncRunsTable syncRuns={syncRuns ?? (detail.last_sync ? [detail.last_sync as SyncRunOut] : [])} />
-      </section>
-
-      {/* Dependency registrations */}
-      <section className="mb-8">
-        <h2 className="mb-2 text-sm font-semibold">Dependency registrations</h2>
-        <DependencyList dependencies={(detail.dependencies ?? []) as DependencyOut[]} />
-      </section>
-
-      {/* Fingerprints summary (from sync runs) */}
-      {(syncRuns ?? []).length > 0 || detail.last_sync?.fingerprint_id ? (
-        <section className="mb-8">
-          <h2 className="mb-2 text-sm font-semibold">Fingerprints</h2>
-          <div data-testid="fingerprints-section" className="border bg-band px-4 py-3">
-            {(syncRuns ?? (detail.last_sync ? [detail.last_sync] : [])).length ? (
-              <ul className="space-y-1 text-xs">
-                {(syncRuns ?? (detail.last_sync ? [detail.last_sync] : [])).map((run: SyncRunOut | typeof detail.last_sync) =>
-                  run?.fingerprint_id ? (
-                    <li key={run.id} data-testid={`fingerprint-entry-${run.id}`} className="font-mono text-ink-2">
-                      {run.id.slice(0, 8)} → {run.fingerprint_id}
-                      <span className="ml-2 text-ink-2">({run.outcome})</span>
-                    </li>
-                  ) : null,
+      <section className="foot">
+        <div>
+          <h2 className="sec">Fingerprint</h2>
+          {(syncRuns ?? []).length > 0 || detail.last_sync?.fingerprint_id ? (
+            <div data-testid="fingerprints-section">
+              <dl className="fp num">
+                {(syncRuns ?? (detail.last_sync ? [detail.last_sync] : [])).map(
+                  (run: SyncRunOut | typeof detail.last_sync) =>
+                    run?.fingerprint_id ? (
+                      <div key={run.id} className="contents" data-testid={`fingerprint-entry-${run.id}`}>
+                        <dt>{run.id.slice(0, 8)}</dt>
+                        <dd>
+                          {run.fingerprint_id} <span className="font-normal text-ink-2">({run.outcome})</span>
+                        </dd>
+                      </div>
+                    ) : null,
                 )}
-                {!(syncRuns ?? (detail.last_sync ? [detail.last_sync] : [])).some((r: SyncRunOut | typeof detail.last_sync) => r?.fingerprint_id) ? (
-                  <li className="text-ink-2">No fingerprints recorded yet.</li>
-                ) : null}
-              </ul>
-            ) : (
-              <p className="text-xs text-ink-2">No fingerprints recorded yet.</p>
-            )}
-          </div>
-        </section>
-      ) : null}
+              </dl>
+            </div>
+          ) : (
+            <p className="text-sm text-ink-2">No fingerprints recorded yet.</p>
+          )}
+        </div>
+        <div>
+          <h2 className="sec">Dependencies</h2>
+          <DependencyList dependencies={(detail.dependencies ?? []) as DependencyOut[]} />
+        </div>
+      </section>
     </div>
   );
 }

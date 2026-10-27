@@ -32,8 +32,10 @@ describe("ReleaseHistory", () => {
     expect(screen.getByTestId("release-history-table")).toBeInTheDocument();
     expect(screen.getByTestId("release-row-rel-1")).toBeInTheDocument();
     expect(screen.getByTestId("release-row-rel-2")).toBeInTheDocument();
-    expect(screen.getByText("v1")).toBeInTheDocument();
-    expect(screen.getByText("v2")).toBeInTheDocument();
+    expect(screen.getByText("r1")).toBeInTheDocument();
+    expect(screen.getByText("r2")).toBeInTheDocument();
+    // Newest non-active release is the candidate waiting for approval
+    expect(screen.getByText("Candidate", { exact: false })).toBeInTheDocument();
   });
 
   it("marks active release", () => {

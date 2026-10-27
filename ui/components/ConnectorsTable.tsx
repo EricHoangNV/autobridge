@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import type { ConnectorOut, ConnectorDetail, ModelUsageResponse } from "@/lib/api/client";
+import type {
+  ConnectorOut,
+  ConnectorDetail,
+  DriftEventOut,
+  ModelUsageResponse,
+  RepairRunOut,
+} from "@/lib/api/client";
 import { HealthBadge } from "./HealthBadge";
 import { SyncOutcomeBadge } from "./SyncOutcomeBadge";
 import { Sparkline } from "./Sparkline";
@@ -15,9 +21,10 @@ type Props = {
   connectors: ConnectorOut[];
   detailsById?: Record<string, ConnectorDetail | null>;
   modelUsage?: ModelUsageResponse | null;
+  repairsByConnector?: Record<string, RepairRunOut[]>;
 };
 
-function driftCount(detail: ConnectorDetail | null | undefined): number {
+export function driftCount(detail: ConnectorDetail | null | undefined): number {
   if (!detail) return 0;
   return (detail.open_drift ?? []).length;
 }
@@ -26,97 +33,181 @@ function lastSyncOutcome(detail: ConnectorDetail | null | undefined): string | n
   return detail?.last_sync?.outcome ?? null;
 }
 
-function activeReleaseLabel(connector: ConnectorOut, detail: ConnectorDetail | null | undefined): string {
+function activeReleaseVersion(connector: ConnectorOut, detail: ConnectorDetail | null | undefined): number | null {
   if (detail?.releases?.length) {
     const active = detail.releases.find((r) => r.id === connector.active_release_id);
-    if (active) return `v${active.version}`;
-    // fallback to latest release version if active id missing
-    const latest = detail.releases[detail.releases.length - 1];
-    return latest ? `v${latest.version}` : "—";
+    if (active) return active.version;
+    return detail.releases[detail.releases.length - 1]?.version ?? null;
   }
-  return connector.active_release_id ? connector.active_release_id.slice(0, 8) : "—";
+  return null;
 }
 
-function sparklineValues(modelUsage: ModelUsageResponse | null | undefined, connectorId: string): number[] {
-  // Prefer per-run entries if present; else use total as single point so the sparkline is non-empty.
-  if (!modelUsage) return [];
-  const entries = modelUsage.entries ?? [];
-  // If entries carry by_run, try to find ones for this connector (best effort: check run ids or consumer).
-  // Fallback: use total_calls split as a tiny series so the UI always shows something when there is usage.
-  if (entries.length) {
-    const perConnector = entries.flatMap((e) => {
-      const runs = (e as unknown as { by_run?: Array<{ connector_id?: string; calls?: number }> }).by_run ?? [];
-      return runs.filter((r) => r.connector_id === connectorId).map((r) => r.calls ?? 0);
-    });
-    if (perConnector.length) return perConnector;
-    // No per-connector breakdown: show a 3-point sparkline from total_calls
-    const total = modelUsage.total_calls ?? 0;
-    if (total > 0) return [Math.max(1, Math.floor(total / 3)), Math.max(1, Math.floor(total / 2)), total];
-  }
-  if (modelUsage.total_calls > 0) return [modelUsage.total_calls];
-  return [];
+/** Newest release that is not the active one: the candidate waiting for approval. */
+function candidateVersion(connector: ConnectorOut, detail: ConnectorDetail | null | undefined): number | null {
+  if (!detail?.releases?.length) return null;
+  const activeId = connector.active_release_id ?? detail.active_release_id;
+  const others = detail.releases
+    .filter((r) => r.id !== activeId)
+    .sort((a, b) => b.version - a.version);
+  return others.length ? others[0].version : null;
+}
+export function frontierTokensOf(repair: RepairRunOut): number {
+  const mu = repair.model_usage as Record<string, unknown> | null | undefined;
+  const raw = mu?.frontier_tokens;
+  const n = typeof raw === "number" ? raw : Number(raw ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-export function ConnectorsTable({ connectors, detailsById, modelUsage }: Props) {
+/** Repairs still waiting for a human (decision == "propose"), newest first. */
+export function waitingRepairs(repairs: RepairRunOut[]): RepairRunOut[] {
+  return repairs
+    .filter((r) => r.decision === "propose")
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+
+/**
+ * Attribute repairs to connectors via their drift events.
+ * Repairs whose drift ids are unknown (drift fetch failed) are skipped.
+ */
+export function groupRepairsByConnector(
+  repairs: RepairRunOut[],
+  drifts: DriftEventOut[],
+): Record<string, RepairRunOut[]> {
+  const driftToConnector = new Map(drifts.map((d) => [d.id, d.connector_id]));
+  const out: Record<string, RepairRunOut[]> = {};
+  for (const r of repairs) {
+    const connectorIds = new Set(
+      (r.drift_event_ids ?? [])
+        .map((id) => driftToConnector.get(id))
+        .filter((v): v is string => typeof v === "string"),
+    );
+    for (const cid of connectorIds) {
+      (out[cid] ??= []).push(r);
+    }
+  }
+  for (const list of Object.values(out)) {
+    list.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+  }
+  return out;
+}
+
+function formatTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+function recordsTotal(lastSync: ConnectorDetail["last_sync"]): number | null {
+  if (!lastSync) return null;
+  const obs = Object.values((lastSync.records_observed ?? {}) as Record<string, unknown>);
+  const nums = obs.filter((v): v is number => typeof v === "number");
+  if (!nums.length) return null;
+  return nums.reduce((a, b) => a + b, 0);
+}
+
+export function ConnectorsTable({ connectors, detailsById, modelUsage: _modelUsage, repairsByConnector }: Props) {
+  void _modelUsage;
   if (!connectors.length) {
-    return <p data-testid="connectors-empty" className="py-8 text-center text-sm text-ink-2">No connectors yet. Create one to get started.</p>;
+    return (
+      <p data-testid="connectors-empty" className="px-10 py-8 text-center text-sm text-ink-2">
+        No connectors yet. Create one to get started.
+      </p>
+    );
   }
 
   return (
-    <div className="overflow-x-auto border bg-band">
-      <table data-testid="connectors-table" className="w-full text-left text-sm">
-        <thead className="bg-ground text-xs uppercase tracking-wide text-ink-2">
-          <tr>
-            <th className="px-4 py-3 font-medium">Connector</th>
-            <th className="px-4 py-3 font-medium">Health</th>
-            <th className="px-4 py-3 font-medium">Active release</th>
-            <th className="px-4 py-3 font-medium">Last sync</th>
-            <th className="px-4 py-3 font-medium">Open drift</th>
-            <th className="px-4 py-3 font-medium">Model usage</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-rule">
-          {connectors.map((c) => {
-            const detail = detailsById?.[c.id] ?? null;
-            return (
-              <tr key={c.id} data-testid={`connector-row-${c.id}`} className="hover:bg-ground">
-                <td className="px-4 py-3">
-                  <Link href={`/connectors/${encodeURIComponent(c.id)}`} className="font-medium text-ink hover:underline">
-                    {c.name}
-                  </Link>
-                  <div className="text-xs text-ink-2">{c.base_url}</div>
-                  <div className="text-[11px] text-ink-2">{c.id.slice(0, 8)}</div>
-                </td>
-                <td className="px-4 py-3">
-                  <HealthBadge status={c.health_status ?? "unknown"} />
-                </td>
-                <td className="px-4 py-3 font-mono text-xs">{activeReleaseLabel(c, detail)}</td>
-                <td className="px-4 py-3">
-                  <SyncOutcomeBadge outcome={lastSyncOutcome(detail)} />
-                  {detail?.last_sync?.unmet_criteria?.length ? (
-                    <div className="mt-1 text-[11px] text-ink-2">{detail.last_sync.unmet_criteria.join(", ")}</div>
-                  ) : null}
-                </td>
-                <td className="px-4 py-3">
-                  {driftCount(detail) > 0 ? (
-                    <span
-                      data-testid={`drift-count-${c.id}`}
-                      className="inline-flex items-center bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
-                    >
-                      {driftCount(detail)} open
-                    </span>
-                  ) : (
-                    <span data-testid={`drift-count-${c.id}`} className="text-xs text-ink-2">0</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <Sparkline values={sparklineValues(modelUsage, c.id)} width={80} height={24} label={`model usage for ${c.name}`} />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <ul data-testid="connectors-table" className="rundown">
+      {connectors.map((c) => {
+        const detail = detailsById?.[c.id] ?? null;
+        const version = activeReleaseVersion(c, detail);
+        const outcome = lastSyncOutcome(detail);
+        const unmet = detail?.last_sync?.unmet_criteria ?? [];
+        const drift = detail?.open_drift ?? [];
+        const repairs = repairsByConnector?.[c.id] ?? [];
+        const waiting = waitingRepairs(repairs);
+        const candidate = candidateVersion(c, detail);
+        const needs = drift.length > 0;
+        const tokenSeries = repairs.slice(-20).map(frontierTokensOf);
+        const tokenTotal = tokenSeries.reduce((a, b) => a + b, 0);
+        const total = recordsTotal(detail?.last_sync);
+        const syncTime = formatTime(detail?.last_sync?.started_at);
+        return (
+          <li
+            key={c.id}
+            data-testid={`connector-row-${c.id}`}
+            className={needs ? "crow needs" : "crow"}
+          >
+            <div className="name">
+              <Link href={`/connectors/${encodeURIComponent(c.id)}`}>{c.name}</Link>
+              <code>
+                {c.id.slice(0, 8)} · {c.base_url}
+              </code>
+              <HealthBadge status={c.health_status ?? "unknown"} />
+            </div>
+            <div className="out">
+              <span className="clbl">Last sync</span>
+              <SyncOutcomeBadge outcome={outcome} />
+              {syncTime ? <span className="num text-sm text-ink-2"> {syncTime}</span> : null}
+              {outcome ? (
+                <p className="num">
+                  {unmet.length
+                    ? unmet.join(", ")
+                    : total !== null
+                      ? `${total.toLocaleString()} records, every check passed`
+                      : detail?.last_sync
+                        ? "ran, no record counts reported"
+                        : "no sync yet"}
+                </p>
+              ) : (
+                <p>no sync yet</p>
+              )}
+            </div>
+            <div className="rel">
+              <span className="clbl">Release</span>
+              <span className="r num">{version !== null ? `r${version}` : "—"}</span>
+              {candidate !== null ? <small>r{candidate} waiting</small> : null}
+            </div>
+            <div className="drift">
+              <span className="clbl">Open drift</span>
+              <span data-testid={`drift-count-${c.id}`} className="n num">
+                {drift.length > 0 ? `${drift.length} open` : "0"}
+              </span>
+              {drift.length ? <code>{drift[0].drift_class}</code> : null}
+            </div>
+            <div className="cspark">
+              <span className="clbl">Model tokens, per repair</span>
+              <Sparkline
+                values={tokenSeries}
+                label={repairs.length ? `frontier tokens for ${c.name}` : `no repairs for ${c.name} yet`}
+              />
+              <p className="num">
+                {repairs.length ? (
+                  <>
+                    <b>{tokenTotal.toLocaleString()}</b> in {repairs.length} repair{repairs.length === 1 ? "" : "s"}
+                  </>
+                ) : (
+                  "no repairs yet"
+                )}
+              </p>
+            </div>
+            {waiting.length ? (
+              <div className="go">
+                <Link className="btn" href={`/repairs/${encodeURIComponent(waiting[0].id)}`}>
+                  Review repair {waiting[0].id.slice(0, 8)}
+                </Link>
+                <span className="num text-sm text-ink-2">
+                  L{waiting[0].ladder_level_reached} · {frontierTokensOf(waiting[0]).toLocaleString()} frontier tokens ·
+                  needs your approval
+                </span>
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

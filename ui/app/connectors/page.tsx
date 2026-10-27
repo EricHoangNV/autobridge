@@ -1,8 +1,20 @@
 "use client";
 
+import Link from "next/link";
 import useSWR from "swr";
-import { ConnectorsTable } from "@/components/ConnectorsTable";
-import type { ConnectorOut, ConnectorDetail, ModelUsageResponse } from "@/lib/api/client";
+import {
+  ConnectorsTable,
+  frontierTokensOf,
+  groupRepairsByConnector,
+  waitingRepairs,
+} from "@/components/ConnectorsTable";
+import type {
+  ConnectorOut,
+  ConnectorDetail,
+  DriftEventOut,
+  ModelUsageResponse,
+  RepairRunOut,
+} from "@/lib/api/client";
 
 // Reuse the same fetcher pattern as hooks: base resolved per env.
 function getBaseUrl(): string {
@@ -18,6 +30,18 @@ const fetcher = async <T,>(path: string): Promise<T> => {
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return (await res.json()) as T;
 };
+
+function formatDayTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return sameDay ? `today ${time}` : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+  } catch {
+    return iso;
+  }
+}
 
 export default function ConnectorsPage() {
   const { data: connectors, error: connError, isLoading: connLoading } = useSWR<ConnectorOut[]>(
@@ -52,39 +76,131 @@ export default function ConnectorsPage() {
     { refreshInterval: 5000 }
   );
 
+  // Repairs + drift events resolve "who waits" and the recent-repairs list.
+  const { data: repairs } = useSWR<RepairRunOut[]>("/repairs", fetcher, { refreshInterval: 5000 });
+  const { data: drifts } = useSWR<DriftEventOut[]>("/drift", fetcher, { refreshInterval: 5000 });
+
+  const repairsByConnector =
+    repairs && drifts ? groupRepairsByConnector(repairs, drifts) : undefined;
+  const waiting = repairs ? waitingRepairs(repairs) : [];
+  const driftToConnector = new Map((drifts ?? []).map((d) => [d.id, d.connector_id]));
+  const connectorName = (id: string) =>
+    (connectors ?? []).find((c) => c.id === id)?.name ?? id.slice(0, 8);
+  const recentRepairs = [...(repairs ?? [])]
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))
+    .slice(0, 5);
+
+  const headline = (() => {
+    const n = connectors?.length ?? 0;
+    const nouns = `${n} connector${n === 1 ? "" : "s"}`;
+    const wait = waiting.length
+      ? `${waiting.length} repair${waiting.length === 1 ? " is" : "s are"} waiting for you.`
+      : "nothing waiting for you.";
+    const tokens =
+      modelUsage != null
+        ? ` ${(modelUsage.frontier_tokens + modelUsage.small_tokens).toLocaleString()} model tokens.`
+        : "";
+    return (
+      <>
+        {nouns}. <b>{wait}</b>
+        {tokens}
+      </>
+    );
+  })();
+
   return (
     <div data-testid="connectors-page">
-      <div className="mb-6 flex items-center justify-between">
+      <section className="conn-head">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Connectors</h1>
-          <p className="mt-1 text-sm text-ink-2">Health, active release, last sync outcome, open drift, and model usage.</p>
+          <h1>Connectors</h1>
+          {!connLoading && !connError && connectors ? (
+            <p className="conn-line num">{headline}</p>
+          ) : null}
         </div>
-        <a
-          href="/connectors/new"
-          data-testid="new-connector-link"
-          className="bg-live px-3 py-2 text-sm font-medium text-live-ink hover:opacity-90"
-        >
-          New connector
-        </a>
-      </div>
+        <Link href="/connectors/new" data-testid="new-connector-link" className="btn quiet">
+          Build a connector
+        </Link>
+      </section>
 
       {connLoading ? (
-        <p data-testid="connectors-loading" className="py-8 text-center text-sm text-ink-2">Loading connectors…</p>
+        <p data-testid="connectors-loading" className="px-10 py-8 text-center text-sm text-ink-2">Loading connectors…</p>
       ) : connError ? (
         <div
           data-testid="connectors-error"
-          className="border border-stop bg-band px-4 py-3 text-sm text-stop"
+          className="mx-10 border border-stop bg-band px-4 py-3 text-sm text-stop"
         >
           Failed to load connectors: {(connError as Error).message}
         </div>
+      ) : !(connectors ?? []).length ? (
+        <section data-testid="connectors-empty" className="cempty" aria-label="No connectors yet">
+          <div>
+            <h2>No connectors yet</h2>
+            <p>Point AutoBridge at an API&apos;s docs and a sandbox, and it builds a connector you can read, test and approve.</p>
+            <Link href="/connectors/new" className="btn">
+              Build a connector
+            </Link>
+          </div>
+          <figure className="ghost" aria-label="The repair ladder every connector gets: L0 knowledge and L1 rules cost 0 tokens; L2 and L3 use models; L4 is you.">
+            <ol aria-hidden="true">
+              <li><b>L0</b><span>Knowledge</span><em>0 tokens</em></li>
+              <li><b>L1</b><span>Rules</span><em>0 tokens</em></li>
+              <li><b>L2</b><span>Small model</span><em>budgeted</em></li>
+              <li><b>L3</b><span>Frontier model</span><em>budgeted</em></li>
+              <li><b>L4</b><span>You</span><em>approve</em></li>
+            </ol>
+            <figcaption>Every connector gets this repair ladder. Known API changes stop at L0 or L1, for zero model tokens.</figcaption>
+          </figure>
+        </section>
       ) : (
-        <ConnectorsTable connectors={connectors ?? []} detailsById={detailsMap ?? {}} modelUsage={modelUsage ?? null} />
+        <ConnectorsTable
+          connectors={connectors ?? []}
+          detailsById={detailsMap ?? {}}
+          modelUsage={modelUsage ?? null}
+          repairsByConnector={repairsByConnector}
+        />
       )}
 
-      {connectors?.length ? (
-        <p data-testid="connectors-count" className="mt-3 text-xs text-ink-2">
-          {connectors.length} connector{connectors.length === 1 ? "" : "s"} · polling every 5s
+      {(connectors?.length ?? 0) > 0 ? (
+        <p data-testid="connectors-count" className="num mt-3 px-10 text-xs text-ink-2">
+          {connectors?.length} connector{(connectors?.length ?? 0) === 1 ? "" : "s"} · polling every 5s
         </p>
+      ) : null}
+
+      {(connectors?.length ?? 0) > 0 && recentRepairs.length > 0 ? (
+        <section className="recent" aria-label="Recent repairs">
+          <h2 className="sec">Recent repairs</h2>
+          <ul className="reps">
+            {recentRepairs.map((r) => {
+              const cid = (r.drift_event_ids ?? [])
+                .map((id) => driftToConnector.get(id))
+                .find((v): v is string => typeof v === "string");
+              const who = cid ? connectorName(cid) : "Unknown connector";
+              const tokens = frontierTokensOf(r);
+              return (
+                <li key={r.id}>
+                  <span className={r.ladder_level_reached >= 3 ? "lv l3 num" : "lv num"}>
+                    L{r.ladder_level_reached}
+                  </span>
+                  <span className="what">
+                    <Link href={`/repairs/${encodeURIComponent(r.id)}`}>
+                      {who} · {r.rule_id ?? r.drift_event_ids[0]?.slice(0, 8) ?? "repair"}
+                    </Link>
+                    <span>
+                      {r.decision === "propose" ? "Waiting for you. " : ""}
+                      {r.rule_id ? `Rule ${r.rule_id}. ` : ""}
+                      {r.decision}
+                    </span>
+                  </span>
+                  <span className="when num text-sm text-ink-2">{formatDayTime(r.created_at)}</span>
+                  <span className="tk num">
+                    {tokens.toLocaleString()}
+                    <small>frontier tokens</small>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       ) : null}
     </div>
   );

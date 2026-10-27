@@ -8,10 +8,16 @@ describe("Sparkline", () => {
     expect(screen.getByTestId("sparkline")).toHaveTextContent("no data");
   });
 
-  it("renders svg with polyline", () => {
+  it("renders svg with bars", () => {
     const { container } = render(<Sparkline values={[1, 2, 3, 2]} />);
     expect(screen.getByTestId("sparkline").tagName.toLowerCase()).toBe("svg");
-    expect(container.querySelector("polyline")).toBeTruthy();
+    expect(container.querySelectorAll('[data-testid="sparkline-bar"]').length).toBe(4);
+  });
+
+  it("draws zero values as baseline ticks", () => {
+    const { container } = render(<Sparkline values={[0, 5, 0]} />);
+    expect(container.querySelectorAll('[data-testid="sparkline-tick"]').length).toBe(2);
+    expect(container.querySelectorAll('[data-testid="sparkline-bar"]').length).toBe(1);
   });
 
   it("single value still renders", () => {

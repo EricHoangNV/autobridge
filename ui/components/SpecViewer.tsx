@@ -85,7 +85,7 @@ export function SpecViewer({ spec, title }: Props) {
 
   if (!spec || Object.keys(spec).length === 0) {
     return (
-      <div data-testid="spec-viewer-empty" className="border border-dashed px-4 py-6 text-center text-sm text-ink-2">
+      <div data-testid="spec-viewer-empty" className="border border-rule px-4 py-6 text-sm text-ink-2">
         No spec available for this release.
       </div>
     );
@@ -102,30 +102,30 @@ export function SpecViewer({ spec, title }: Props) {
   }
 
   return (
-    <div data-testid="spec-viewer" className="overflow-hidden border bg-band">
-      <div className="flex items-center justify-between border-b bg-ground px-4 py-2">
-        <span className="text-xs font-medium text-ink-2">{title ?? "Spec (YAML)"}</span>
+    <div data-testid="spec-viewer">
+      <div className="mb-2 flex items-center justify-between gap-4">
+        <span className="text-sm text-ink-2">{title ?? "Spec (YAML)"}</span>
         <button
           data-testid="spec-copy-btn"
           onClick={handleCopy}
-          className="border bg-band px-2 py-1 text-xs text-ink-2 hover:bg-ground"
+          className="link"
         >
           {copied ? "Copied!" : "Copy YAML"}
         </button>
       </div>
       <pre
         data-testid="spec-yaml"
-        className="max-h-[480px] overflow-auto px-4 py-3 font-mono text-xs leading-relaxed text-ink"
+        className="cyaml"
       >
         {yaml}
       </pre>
-      <details className="border-t bg-ground px-4 py-2">
-        <summary data-testid="spec-json-toggle" className="cursor-pointer text-xs text-ink-2 hover:text-ink-2">
+      <details className="mt-2">
+        <summary data-testid="spec-json-toggle" className="cursor-pointer text-sm text-ink-2 hover:text-ink">
           Show raw JSON
         </summary>
         <pre
           data-testid="spec-json"
-          className="mt-2 max-h-[360px] overflow-auto bg-band p-3 font-mono text-xs text-ink-2"
+          className="cyaml mt-2"
         >
           {JSON.stringify(spec, null, 2)}
         </pre>
