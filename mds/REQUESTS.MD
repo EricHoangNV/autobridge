@@ -2,9 +2,12 @@
 
 ## Open Requests (read this section only)
 
+
+## Resolved Requests (reference only)
+
 ### REQ-002 — Redesign the UI to the broadcast direction (2026-10-27)
-Status: IN_PROGRESS (sbx1 since 2026-10-27 10:31)
-Progress: slice 4 done (2026-10-27 sbx1) — broadcast rundown + masthead: /connectors rows (square status, r-version + candidate, open drift, per-repair token bars, review-repair action), real-data headline, recent repairs via /repairs x /drift, ghost-ladder empty state; /connectors/[id] masthead (facts, r-live numeral, propose-repair waiting band) + restyled sections; badges/sparkline in broadcast grammar; every data-testid kept (sync-now-button, no-releases/no-sync-runs aliases); unit 125 + e2e test_06 6/6 green. Next: slice 5 /connectors/new + drawer.
+Status: DONE (2026-10-27)
+Progress: slice 5 done (2026-10-27 sbx1) — all 5 slices complete.
 Restyle the four screens of `ui/` to the approved design: a dark "live broadcast graphic" look with
 one accent (broadcast yellow = "now / needs you"), Archivo (variable width) + Fragment Mono, radius 0.
 Desktop (1280 and 1440) is what gets demoed; phone only needs to not break.
@@ -41,10 +44,7 @@ Do not commit anything under `tmp/` (it is gitignored; keep it that way).
 - If REQ-001 (operator name) is done first, keep its "Approving as <name>" line in the new scorebug.
 - No new runtime dependencies beyond the fonts; say so in BUILD-NOTES if a build step needs network
   for `next/font/google`.
-
----
-
-## Resolved Requests (reference only)
+Resolution: all 4 screens in broadcast grammar (tokens/shell, repair call+scorebug, live climb, rundown+masthead, new run-sheet + dashed Inject Fault drawer); every data-testid kept; unit 128 + touched e2e journeys green (test_06 4/6 in sandbox, 2 detail-page failures pre-existing: no control plane).
 
 ### REQ-001 — Show the operator's name on approvals (2026-10-27)
 Status: DONE (2026-10-27)

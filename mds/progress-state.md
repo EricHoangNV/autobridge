@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-002 slice 4 done (2026-10-27): broadcast rundown (/connectors rows, headline, recent repairs, empty state) + masthead (/connectors/[id] facts, r-live numeral, waiting band); all testids kept, e2e untouched; learnings §4.
+REQ-002 DONE (2026-10-27): all 5 broadcast slices shipped — tokens/shell, repair call+scorebug, live climb, rundown+masthead, new run-sheet + dashed Inject Fault drawer; all testids kept; Agent: opencode meta/muse-spark-1.3 (escalation).
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -67,14 +67,10 @@ REQ-002 slice 4 done (2026-10-27): broadcast rundown (/connectors rows, headline
   - P1.W10.1: README + docs/ pages + .env.example
   - P1.W10.2: make demo six steps via control API + local evidence
   - REQ-001: operator name on approvals (server-set actor, GET /operator, UI lines, compose var)
-  - REQ-002 slice 1: broadcast tokens + shell (TopBar, fonts, token swap, docs §9.2 note)
-  - REQ-002 slice 2: /repairs/[id] call + scorebug in broadcast tokens
-  - REQ-002 slice 3: the climb on live SSE (track, L3-only tick, gated verdict/action)
-  - REQ-002 slice 4: /connectors rundown + /connectors/[id] masthead in broadcast tokens
-- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.86%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 125 + e2e test_06 6/6 (mocked, chromium)
-- Stack: compose down in sbx1 this run (no live e2e; mocked e2e via dev server on :3000 green) / make lint + make typecheck + ui typecheck + ui build green
+  - REQ-002: broadcast redesign, all 5 slices (tokens/shell, repair call+scorebug, live climb, rundown+masthead, new run-sheet + drawer)
+- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.86%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 128 + e2e test_06 4/6 in sandbox (2 detail-page fails pre-existing: no control plane; touched journeys green)
+- Stack: compose down in sbx1 this run (dev-server e2e only) / make lint + ui typecheck green
 
 ## Next tasks
-1. **REQ-002 slice 5** — /connectors/new + Inject Fault drawer (IN_PROGRESS sbx1)
-2. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)
-3. **P1.W2.8** — HUMAN heldout freeze (manifest + sha check ready; owner freezes)
+1. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)
+2. **P1.W2.8** — HUMAN heldout freeze (manifest + sha check ready; owner freezes)

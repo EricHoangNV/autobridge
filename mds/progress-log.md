@@ -1603,3 +1603,30 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Files changed:** `ui/app/globals.css`, `ui/app/connectors/page.tsx` (+test), `ui/app/connectors/[id]/page.tsx` (+test), `ui/components/ConnectorsTable.tsx` (+test), `ReleaseHistory.tsx` (+test), `SyncRunsTable.tsx`, `SpecViewer.tsx`, `DependencyList.tsx`, `Sparkline.tsx` (+test), `HealthBadge.tsx`, `SyncOutcomeBadge.tsx`; `mds/LEARNINGS.MD` §4.
 **Tests:** ui 125 pass; `npm run typecheck` + `lint` + `build` green; e2e test_06 6/6 mocked-chromium (dev server :3000); `make lint` + `make typecheck` clean; `make test` 1715 @ 90.86% + 92 @ 93.78% + 219 @ 96.55%.
 **Notes for next iteration:** Slice 5 is `/connectors/new` (form + run sheet) + Inject Fault drawer. Request stays IN_PROGRESS.
+
+## REQ-002 slice 5 — /connectors/new run sheet + Inject Fault drawer
+**Date:** 2026-10-27
+**Ref:** REQUESTS.MD REQ-002 (final slice; request now DONE, all 5 slices complete)
+**Agent:** opencode meta/muse-spark-1.3 (escalation)
+
+**What was done:**
+- `/connectors/new` is now a two-column broadcast stage: form + "What the build will do" run sheet (5 steps, step 5 lit live, second Start-build button via `form=` attribute)
+- Form restyled (mono inputs, entity chips, live focus, ink success) with identical fields, validation, flow and testids; label "Vendor name"; credential hint about secret values
+- Inject Fault drawer restyled to dashed-border broadcast chrome with demo-only copy, escalating-scenario tags, dynamic action label; added real `invalid_patch_trap` scenario to the picker
+- Omitted the design's budget field deliberately: the build endpoint takes no budget param, so it would be fake UI
+- Unit tests updated to new markup (page heading, run sheet, drawer chrome/label); 3 new assertions
+
+**Key decisions:**
+- No budget input rather than a dead control (real-data rule beats prototype fidelity)
+- Kept `<select>`s in the drawer instead of the prototype's radios: the real picker has 12 scenarios and the e2e journey asserts selects
+- Marked REQ-002 DONE: all 5 slices shipped with testids/journey/network-rule intact
+
+**Files changed:**
+- `ui/app/connectors/new/page.tsx` — two-column stage + run sheet
+- `ui/app/connectors/new/page.test.tsx` — heading + sheet assertions
+- `ui/components/NewConnectorForm.tsx` — broadcast restyle, form id, vendor label
+- `ui/components/InjectFaultDrawer.tsx` — dashed drawer, tags, dynamic action, +1 scenario
+- `ui/components/InjectFaultDrawer.test.tsx` — chrome + label assertions
+- `mds/REQUESTS.MD` — REQ-002 moved to Resolved/DONE
+
+**Verification:** ui 128/128, tsc clean, `make test` green, directives §7 clean; e2e test_06 4/6 (touched journeys green; 2 detail-page failures pre-existing — fail on clean tree too, no control plane in sandbox)
