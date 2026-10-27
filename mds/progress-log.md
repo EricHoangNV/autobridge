@@ -382,3 +382,32 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Next: P1.W2.3 AtlasPMS clean OpenAPI 3.1 docs, bearer, offset; P1.W2.4 HarborPMS Markdown with wrong example + undocumented endpoint, cursor bug. Both will build on top of this fault-aware base — just add docs/ OpenAPI vs Markdown and tighten auth/pagination per vendor.
 - State file /tmp/sim_state.json is ephemeral (container-local); for multi-container split would need shared volume, but single-container threading keeps in-memory primary.
 - Admin header requirement means manual curl needs `curl -H "X-Admin-Network: admin-net" http://localhost:8109/admin/scenario` — document in W2.9 e2e test.
+
+## P1.W2.3 AtlasPMS clean OpenAPI 3.1, bearer auth, offset pagination, clear statuses
+**Date:** 2026-10-27
+**Ref:** plan §4 W2 + §2.8 (AtlasPMS); task P1.W2.3. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Created clean OpenAPI 3.1 spec for AtlasPMS: `simulators/docs/atlaspms-openapi.json` (12 KB) + `atlaspms-openapi.yaml` (7.8 KB) with aliases `atlas-openapi.*`, served via static mount `/docs/*` and API endpoints `/openapi.json`, `/openapi.yaml`, `/spec.json`, `/spec.yaml`; spec documents bearerAuth (http/bearer), offset pagination (limit/offset/total/next_offset), clear status enum confirmed/checked_in/checked_out/cancelled/no_show, money 2dp string, business dates
+- Updated `simulators/atlaspms/app.py`: disabled FastAPI auto-docs conflict (openapi_url=None), mounted `simulators/docs` as StaticFiles at `/docs`, added `_serve_openapi_*` helpers with 404 fallback, readyz now checks docs existence (degraded if missing), enforced `require_bearer=True` on all data endpoints (/properties, /reservations, /folios, /folios/{charge_id}, /reservations/{id}) returning 401 unauthorized with code
+- Updated `simulators/common/helpers.py`: added `require_bearer` param to `check_auth` (fault overrides still win, missing/malformed Bearer raises 401, empty token rejected)
+- Updated `tests/unit/test_simulators_faults.py`: added ATLAS_AUTH constant and injected Bearer header into 18 Atlas tests that previously ran without auth (W2.2 permissive baseline → W2.3 strict)
+- Added `tests/unit/test_simulators_atlas.py` (13 tests): healthz/readyz (ok + degraded when missing), openapi 3.1 clean (bearer, offset no cursor, enum), yaml/spec alias, static docs, byte-identical served vs file, bearer required (401 no/invalid/empty, 200 ok for all endpoints), fault overrides (token_expired/revoked still win), helper require_bearer branches, offset shape (total/limit/offset/next_offset, no cursor), clear statuses + Decimal money, filters + 404, docs missing 404, import boundary check
+
+**Key decisions:**
+- Keep docs on disk as source of truth (simulators/docs/*) both JSON and YAML, with two aliases so verifier/oracle can discover via either name; static mount preserves "served from simulators/docs/" requirement without custom file-read logic duplication
+- Disable FastAPI auto openapi/docs (openapi_url=None, docs_url=None) to avoid /openapi.json collision — Atlas now fully controls its spec exposure; Harbor keeps default for now (W2.4 will add Markdown narrative separately)
+- Header-level auth isolation already used for admin (X-Admin-Network) not reused for bearer; bearer check is per-route via helper so Harbor can stay permissive while Atlas is strict, and fault-injected token_expired/revoked still short-circuit before bearer validation
+- W2.2 → W2.3 migration required retrofitting existing Atlas fault tests to include auth header; kept Harbor tests header-free to preserve vendor contrast; added dedicated atlas test file for pure W2.3 acceptance criteria
+
+**Files changed:**
+- `simulators/docs/atlaspms-openapi.json` (new), `simulators/docs/atlaspms-openapi.yaml` (new), `simulators/docs/atlas-openapi.json` (alias), `simulators/docs/atlas-openapi.yaml` (alias) — removed `.gitkeep`
+- `simulators/atlaspms/app.py` (rewritten to mount docs, enforce bearer, serve spec, readyz docs check, add /folios/{charge_id})
+- `simulators/common/helpers.py` (check_auth require_bearer)
+- `tests/unit/test_simulators_faults.py` (ATLAS_AUTH + 18 header injections)
+- `tests/unit/test_simulators_atlas.py` (new, 13 tests)
+
+**Notes for next iteration:**
+- Next: P1.W2.4 HarborPMS Markdown narrative docs (one wrong example, one undocumented endpoint), cursor pagination with repeated-cursor bug, nested folios, opaque status codes, property-local dates, ambiguous `date` field; readyz
+- HarborPMS should also mount its markdown docs from simulators/docs/ and keep auth permissive; its cursor bug is already implemented in helpers (even request_count repeat) — W2.4 is mostly docs content + endpoint shape confirmation
+- No new e2e file for W2.3 (workstream e2e is P1.W2.9); compose admin ports unchanged (8109/8110)

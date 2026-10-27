@@ -39,11 +39,14 @@ def get_dataset_for_current_state() -> dict[str, list[dict[str, Any]]]:
 def check_auth(
     scenario_id: str,
     authorization: str | None = None,
+    require_bearer: bool = False,
 ) -> None:
     """Validate Authorization header, respecting fault-injected auth failures.
 
     Raises HTTPException 401/403 when auth fails. For test simplicity,
     any non-empty Bearer token is accepted unless a fault forces failure.
+    When ``require_bearer`` is True (AtlasPMS clean spec), missing or
+    malformed Authorization raises 401 unauthorized.
     """
     # Fault-injected auth failures always win
     if is_auth_expired(scenario_id):
@@ -51,12 +54,18 @@ def check_auth(
     if is_auth_revoked(scenario_id):
         raise HTTPException(status_code=403, detail={"code": "token_revoked", "message": "Token has been revoked"})
 
-    # Normal auth check: if header provided, accept any Bearer token;
-    # if missing, allow for now (W2.3 will enforce). This keeps W2.2 tests green
-    # while still demonstrating the fault path.
-    # To show enforcement, we treat missing auth as 401 only when explicitly required.
-    # For now, no hard requirement — just pass.
-    _ = authorization  # unused in W2.2 baseline
+    if require_bearer:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401, detail={"code": "unauthorized", "message": "Missing or invalid Authorization header"}
+            )
+        token = authorization.removeprefix("Bearer ").strip()
+        if not token:
+            raise HTTPException(
+                status_code=401, detail={"code": "unauthorized", "message": "Missing or invalid Authorization header"}
+            )
+        return
+    _ = authorization  # permissive for Harbor and other vendors
 
 
 def check_rate_limit_and_transient(scenario_id: str, request_count: int) -> None:

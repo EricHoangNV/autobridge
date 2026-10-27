@@ -2,7 +2,7 @@
 
 ## Current State
 
-W2.2 fault switchboard done (2026-10-27): 14 named mutations + admin API POST /admin/scenario {id, seed} on 8001/admin-net, state reset endpoint; Atlas/Harbor public APIs fault-aware with pagination/auth/rate-limit/tz traps; 68 new tests, 97.13% simulators coverage.
+W2.3 AtlasPMS done (2026-10-27): clean OpenAPI 3.1 docs from simulators/docs/, bearer auth, offset pagination, clear statuses; readyz docs check; 13 new tests, 97.35% simulators coverage.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -17,9 +17,10 @@ W2.2 fault switchboard done (2026-10-27): 14 named mutations + admin API POST /a
   - P1.W1.10: e2e conftest + test_00_stack_up (8 e2e pass, skip when no Docker) + docs/architecture.md
   - P1.W2.1: Seeded generator (properties/reservations/folios, late postings, duplicates, nullable, byte-identical)
   - P1.W2.2: Fault switchboard (14 mutations) + admin API on 8001/admin-net, state reset; Atlas/Harbor fault-aware
-- Tests: 545 pass / 0 fail / 0 skip (autobridge 99.49%, verifier 100%, simulators 97.13%; ui –) + 8 e2e pass
+  - P1.W2.3: AtlasPMS clean OpenAPI 3.1 docs, bearer auth, offset pagination, clear statuses; readyz
+- Tests: 558 pass / 0 fail / 0 skip (autobridge 99.49%, verifier 100%, simulators 97.35%; ui –) + 8 e2e pass
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (8 pass) / `make lint` + `make typecheck` green
 
 ## Next tasks
-1. **P1.W2.3** — AtlasPMS clean OpenAPI 3.1, bearer, offset pagination; readyz
-2. **P1.W2.4** — HarborPMS Markdown docs, cursor pagination with repeated-cursor bug, nested folios; readyz
+1. **P1.W2.4** — HarborPMS Markdown docs, cursor pagination with repeated-cursor bug, nested folios; readyz
+2. **P1.W2.5** — Scenario catalog simulators/scenarios/*.yaml (dev|heldout, fixable|escalate) + exact drift-class test
