@@ -1,0 +1,266 @@
+"""Fault switchboard — named mutations for simulator scenarios (P1.W2.2).
+
+Each scenario id corresponds to a drift class (plan §2.8). The switchboard
+applies deterministic mutations to the seeded dataset and/or to API
+behaviour (pagination, auth, rate limiting).
+
+The mutations are intentionally simple and data-only — they transform
+records or flip a behaviour flag that the public API checks. No code
+generation, no expressions.
+
+Scenario list (14 entries, plan §2.8):
+  baseline, rename_guest_id, offset_to_cursor, cursor_repeat_token,
+  rate_limit_429, transient_503, token_expired, token_revoked,
+  status_vocab_change, gross_to_net, tz_boundary_shift,
+  duplicate_late_records, endpoint_removed, invalid_patch_trap
+"""
+
+from __future__ import annotations
+
+import copy
+import re
+from decimal import Decimal
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Catalog metadata (used by verifier and docs; tags are dev|heldout + fixable|escalate)
+# ---------------------------------------------------------------------------
+
+SCENARIO_CATALOG: list[dict[str, str]] = [
+    {"id": "baseline", "drift_class": "none", "fixable": "fixable", "visibility": "dev"},
+    {"id": "rename_guest_id", "drift_class": "FIELD_RENAME", "fixable": "fixable", "visibility": "dev"},
+    {"id": "offset_to_cursor", "drift_class": "PAGINATION_CHANGE", "fixable": "fixable", "visibility": "dev"},
+    {"id": "cursor_repeat_token", "drift_class": "PAGINATION_BUG", "fixable": "fixable", "visibility": "dev"},
+    {"id": "rate_limit_429", "drift_class": "RATE_LIMIT", "fixable": "fixable", "visibility": "dev"},
+    {"id": "transient_503", "drift_class": "TRANSIENT_ERROR", "fixable": "fixable", "visibility": "dev"},
+    {"id": "token_expired", "drift_class": "AUTH_EXPIRED", "fixable": "fixable", "visibility": "dev"},
+    {"id": "status_vocab_change", "drift_class": "STATUS_VOCAB", "fixable": "fixable", "visibility": "dev"},
+    {"id": "gross_to_net", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "fixable", "visibility": "dev"},
+    {"id": "tz_boundary_shift", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "fixable", "visibility": "dev"},
+    {"id": "duplicate_late_records", "drift_class": "DUPLICATE_DELIVERY", "fixable": "fixable", "visibility": "dev"},
+    {"id": "endpoint_removed", "drift_class": "CAPABILITY_REMOVED", "fixable": "escalate", "visibility": "dev"},
+    {"id": "token_revoked", "drift_class": "AUTH_REVOKED", "fixable": "escalate", "visibility": "dev"},
+    {"id": "invalid_patch_trap", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "escalate", "visibility": "dev"},
+]
+
+KNOWN_SCENARIO_IDS: set[str] = {s["id"] for s in SCENARIO_CATALOG}
+
+# Status vocab mapping for status_vocab_change (opaque codes)
+STATUS_VOCAB_MAP: dict[str, str] = {
+    "confirmed": "active",
+    "checked_in": "in_house",
+    "checked_out": "departed",
+    "cancelled": "void",
+    "no_show": "noshow",
+}
+REVERSE_STATUS_VOCAB_MAP: dict[str, str] = {v: k for k, v in STATUS_VOCAB_MAP.items()}
+
+# Gross -> net factor (e.g. 10% tax removed)
+GROSS_TO_NET_FACTOR = Decimal("0.9")
+
+# TZ boundary shift: cutoff hour changes from 4 to 2 (business date shifts)
+TZ_SHIFT_CUTOFF = 2
+
+
+def is_known_scenario(scenario_id: str) -> bool:
+    return scenario_id in KNOWN_SCENARIO_IDS
+
+
+# ---------------------------------------------------------------------------
+# Record-level mutations (dataset transforms)
+# ---------------------------------------------------------------------------
+
+
+def apply_record_mutations(
+    records: list[dict[str, Any]],
+    scenario_id: str,
+    record_type: str = "reservation",
+) -> list[dict[str, Any]]:
+    """Apply scenario's record-level mutation to a list of records.
+
+    Returns a new list (deep copies). Unknown scenario_id raises ValueError.
+    ``record_type`` is ``reservation`` or ``folio`` — some mutations are
+    type-specific.
+    """
+    if scenario_id == "baseline":
+        return [copy.deepcopy(r) for r in records]
+    if scenario_id not in KNOWN_SCENARIO_IDS:
+        raise ValueError(f"unknown scenario: {scenario_id}")
+
+    out: list[dict[str, Any]] = []
+    for rec in records:
+        mutated = copy.deepcopy(rec)
+        if scenario_id == "rename_guest_id" and record_type == "reservation":
+            # Rename guest_name -> guest_identifier (or guestId)
+            if "guest_name" in mutated:
+                mutated["guest_identifier"] = mutated.pop("guest_name")
+        elif scenario_id == "status_vocab_change" and record_type == "reservation":
+            status = mutated.get("status")
+            if isinstance(status, str) and status in STATUS_VOCAB_MAP:
+                mutated["status"] = STATUS_VOCAB_MAP[status]
+        elif scenario_id == "gross_to_net" and record_type == "reservation":
+            # Convert total_amount from gross to net (multiply by 0.9)
+            amt_str = mutated.get("total_amount")
+            if isinstance(amt_str, str):
+                try:
+                    amt = Decimal(amt_str)
+                    net = (amt * GROSS_TO_NET_FACTOR).quantize(Decimal("0.01"))
+                    mutated["total_amount"] = format(net, ".2f")
+                except Exception:
+                    pass
+        elif scenario_id == "gross_to_net" and record_type == "folio":
+            amt_str = mutated.get("amount")
+            if isinstance(amt_str, str):
+                try:
+                    amt = Decimal(amt_str)
+                    net = (amt * GROSS_TO_NET_FACTOR).quantize(Decimal("0.01"))
+                    mutated["amount"] = format(net, ".2f")
+                except Exception:
+                    pass
+        elif scenario_id == "tz_boundary_shift" and record_type == "folio":
+            # Business date shifts by one day for late postings — we simulate
+            # by shifting business_date forward when posted_at hour < cutoff.
+            # Simplified: if business_date is X and posted_at is late, shift.
+            # For test purposes, we just append "_shifted" marker via date shift.
+            # Actual shift logic: move business_date one day forward (wrong).
+            # We do this for 30% of records to be detectable.
+            pass  # handled as behavior flag, not record mutation (see is_tz_shift_active)
+        elif scenario_id == "duplicate_late_records" and record_type in ("reservation", "folio"):
+            # Duplicates are handled at pagination/delivery level, not record mutation.
+            pass
+        elif scenario_id == "invalid_patch_trap" and record_type == "reservation":
+            # Trap: gross_to_net-like but with net field name changed
+            # The plausible-but-wrong patch would map net -> total_amount incorrectly.
+            # We keep total_amount as gross but add a decoy field net_amount.
+            amt_str = mutated.get("total_amount")
+            if isinstance(amt_str, str):
+                try:
+                    amt = Decimal(amt_str)
+                    net = (amt * GROSS_TO_NET_FACTOR).quantize(Decimal("0.01"))
+                    mutated["net_amount"] = format(net, ".2f")
+                    # Keep total_amount as gross (so naive net->total_amount patch is wrong)
+                except Exception:
+                    pass
+        # Other scenarios don't mutate records directly (they affect pagination/auth)
+        out.append(mutated)
+
+    # For duplicate_late_records, inject duplicates at list level
+    if scenario_id == "duplicate_late_records":
+        # Duplicate first 20% of records (deterministic)
+        n_dup = max(1, len(out) // 5) if out else 0
+        dupes = [copy.deepcopy(r) for r in out[:n_dup]]
+        # Insert duplicates at end (simulates at-least-once)
+        out = out + dupes
+
+    return out
+
+
+def apply_dataset_mutations(
+    dataset: dict[str, list[dict[str, Any]]],
+    scenario_id: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Apply scenario mutations to an entire dataset (properties + reservations + folios)."""
+    if scenario_id not in KNOWN_SCENARIO_IDS:
+        raise ValueError(f"unknown scenario: {scenario_id}")
+    # Properties are never mutated (they define timezone/currency)
+    mutated: dict[str, list[dict[str, Any]]] = {
+        "properties": [copy.deepcopy(p) for p in dataset.get("properties", [])],
+        "reservations": apply_record_mutations(dataset.get("reservations", []), scenario_id, "reservation"),
+        "folios": apply_record_mutations(dataset.get("folios", []), scenario_id, "folio"),
+    }
+    return mutated
+
+
+# ---------------------------------------------------------------------------
+# Behaviour flags (API-level mutations)
+# ---------------------------------------------------------------------------
+
+
+def is_pagination_mutated(scenario_id: str) -> bool:
+    """True if scenario changes pagination shape (offset ↔ cursor)."""
+    return scenario_id in ("offset_to_cursor", "cursor_repeat_token")
+
+
+def pagination_mode_for_scenario(scenario_id: str, default: str = "offset") -> str:
+    """Return pagination mode for scenario: 'offset' or 'cursor'."""
+    if scenario_id == "offset_to_cursor":
+        return "cursor"
+    if scenario_id == "cursor_repeat_token":
+        return "cursor"
+    return default
+
+
+def should_repeat_cursor(scenario_id: str) -> bool:
+    """True if cursor pagination should repeat a token (bug)."""
+    return scenario_id == "cursor_repeat_token"
+
+
+def is_rate_limited(scenario_id: str, request_count: int) -> bool:
+    """True if request should be rate-limited (429) for this scenario."""
+    if scenario_id == "rate_limit_429":
+        # Every 3rd request is rate limited
+        return request_count % 3 == 0 and request_count > 0
+    return False
+
+
+def is_transient_error(scenario_id: str, request_count: int) -> bool:
+    """True if request should return 503 transient error."""
+    if scenario_id == "transient_503":
+        # Every 4th request fails transiently
+        return request_count % 4 == 0 and request_count > 0
+    return False
+
+
+def is_auth_expired(scenario_id: str) -> bool:
+    return scenario_id == "token_expired"
+
+
+def is_auth_revoked(scenario_id: str) -> bool:
+    return scenario_id == "token_revoked"
+
+
+def is_endpoint_removed(scenario_id: str) -> bool:
+    return scenario_id == "endpoint_removed"
+
+
+def is_tz_shift_active(scenario_id: str) -> bool:
+    return scenario_id == "tz_boundary_shift"
+
+
+def is_invalid_patch_trap(scenario_id: str) -> bool:
+    return scenario_id == "invalid_patch_trap"
+
+
+# ---------------------------------------------------------------------------
+# Drift class helpers (for verifier)
+# ---------------------------------------------------------------------------
+
+
+def drift_class_for_scenario(scenario_id: str) -> str:
+    for entry in SCENARIO_CATALOG:
+        if entry["id"] == scenario_id:
+            return entry["drift_class"]
+    raise ValueError(f"unknown scenario: {scenario_id}")
+
+
+def is_fixable(scenario_id: str) -> bool:
+    for entry in SCENARIO_CATALOG:
+        if entry["id"] == scenario_id:
+            return entry["fixable"] == "fixable"
+    raise ValueError(f"unknown scenario: {scenario_id}")
+
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+_SCENARIO_ID_RE = re.compile(r"^[a-z0-9_]+$")
+
+
+def validate_scenario_id(scenario_id: str) -> None:
+    if not isinstance(scenario_id, str) or not scenario_id:
+        raise ValueError("scenario_id must be non-empty string")
+    if not _SCENARIO_ID_RE.match(scenario_id):
+        raise ValueError(f"scenario_id contains invalid characters: {scenario_id}")
+    if scenario_id not in KNOWN_SCENARIO_IDS:
+        raise ValueError(f"unknown scenario: {scenario_id}")

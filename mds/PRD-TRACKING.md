@@ -30,7 +30,7 @@
 
 #### W2 — Simulators + verifier / oracle (plan §4 W2, §2.7, §2.8)
 - [x] P1.W2.1 `simulators/common`: seeded generator for properties, reservations, folios with late postings across the business date, duplicates / at-least-once delivery, nullable fields; same seed → byte-identical dataset (test)
-- [>] P1.W2.2 Fault switchboard applying named mutations + admin API `POST /admin/scenario {id, seed}` on a separate port/network; state reset endpoint for e2e — in progress: sbx1 since 2026-10-27 03:12
+- [x] P1.W2.2 Fault switchboard applying named mutations + admin API `POST /admin/scenario {id, seed}` on a separate port/network; state reset endpoint for e2e
 - [ ] P1.W2.3 AtlasPMS: clean OpenAPI 3.1 docs served from `simulators/docs/`, bearer auth, offset pagination, clear statuses; `readyz`
 - [ ] P1.W2.4 HarborPMS: Markdown narrative docs with one wrong example and one undocumented endpoint, cursor pagination with the repeated-cursor bug, nested folios, opaque status codes, property-local dates, ambiguous `date` field; `readyz`
 - [ ] P1.W2.5 Scenario catalog `simulators/scenarios/*.yaml` (plan §2.8 list) tagged `dev|heldout` and `fixable|escalate`; test that each scenario applied to the reference spec fails in exactly its intended drift class and no other

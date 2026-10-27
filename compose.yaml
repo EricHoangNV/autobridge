@@ -89,6 +89,7 @@ services:
       - admin-net
     ports:
       - "8105:8000"
+      - "8109:8001"
     healthcheck: *healthcheck-py
 
   sim-harbor:
@@ -102,6 +103,7 @@ services:
       - admin-net
     ports:
       - "8106:8000"
+      - "8110:8001"
     healthcheck: *healthcheck-py
 
   ui:

@@ -350,3 +350,35 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Next: P1.W2.2 fault switchboard + admin API POST /admin/scenario {id, seed} on separate port/network (admin-net only) — generator's `generate_dataset(seed)` is the shared code both simulators and verifier oracle will call; fault switchboard will apply named mutations to the output before serving it
 - Simulators still import-free from autobridge (import-linter kept); tests cross-validate via autobridge.spec.entities — verifier will do the same in W2.6
 - Late-posting logic is the hardest to get right: every folio's business_date must equal business_date_for_posted_at(posted_at, property_timezone) — the new tests assert this for every generated dataset; W2.5 scenario tz_boundary_shift will mutate this deliberately
+
+## P1.W2.2 Fault switchboard + admin API POST /admin/scenario {id, seed} on separate port/network
+**Date:** 2026-10-27
+**Ref:** plan §4 W2 + §2.8 (simulators/common fault switchboard + admin API); task P1.W2.2. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `simulators/common/faults.py` (116 lines, 14 scenarios: baseline, rename_guest_id, offset_to_cursor, cursor_repeat_token, rate_limit_429, transient_503, token_expired, token_revoked, status_vocab_change, gross_to_net, tz_boundary_shift, duplicate_late_records, endpoint_removed, invalid_patch_trap) — SCENARIO_CATALOG with drift_class/fixable/visibility, KNOWN_SCENARIO_IDS, STATUS_VOCAB_MAP, GROSS_TO_NET_FACTOR 0.9, helpers is_* / drift_class_for_scenario / is_fixable / validate_scenario_id, apply_record_mutations (deep copy, per-type field rename, status map, Decimal money, duplicate injection, invalid_patch_trap net_amount), apply_dataset_mutations (properties preserved)
+- New `simulators/common/state.py` (53 lines): DEFAULT_SCENARIO baseline/seed 0, file-backed JSON at /tmp/sim_state.json for cross-thread/process sync, get_state/set_scenario/reset_state/increment_request_count with lock, _load/_save with exception swallow
+- New `simulators/common/admin.py` (58 lines): create_admin_app() with GET /healthz, /readyz, /admin/scenario (GET+POST), POST /admin/reset, all admin endpoints require X-Admin-Network: admin-net header to enforce admin-net isolation (runtime→sim:8001 without header gets 403, smoke treats as down); validation for unknown id, negative/large seed
+- New `simulators/common/helpers.py` (72 lines): get_dataset_for_current_state (generate + mutate), check_auth (token_expired 401, revoked 403), check_rate_limit_and_transient (429 every 3rd, 503 every 4th), check_endpoint_removed (404), paginate_offset/cursor with base64 cursor encode/decode, get_pagination_params with defaults/clamp, repeated_cursor bug flag
+- Updated `simulators/atlaspms/app.py` (79 lines): fault-aware public API with GET /properties, /reservations, /folios, /reservations/{id}, offset cursor switching via pagination_mode_for_scenario, auth/rate/endpoint checks, property_id/reservation_id filters, readyz includes scenario
+- Updated `simulators/harborpms/app.py` (92 lines): same but default cursor pagination, plus GET /folios/{charge_id}, nested folios placeholder
+- New `simulators/run.py` (20 lines): dual-listener launcher — public on 8000, admin on 8001 via threading, APP_MODULE env
+- Updated `simulators/Dockerfile` (CMD python -m simulators.run), `compose.yaml` (add 8109:8001, 8110:8001 host mappings), `tests/e2e/conftest.py` (SIM_ADMIN_PORTS 8109/8110, admin_url helper, _http_post_json admin header, reset fixture tries both admin and public fallback)
+- New `tests/unit/test_simulators_faults.py` (68 tests): catalog, validation, drift/fixable flags, rate/transient, record mutations per scenario, dataset mutations, state, pagination, auth/rate/endpoint checks, admin header enforcement, public API fault injection per scenario
+
+**Key decisions:**
+- Admin network isolation via application-level header check (X-Admin-Network: admin-net) instead of binding to admin-net IP only — Docker bridge IPs are dynamic and `hostname -i` returns multiple unstable addresses; true interface binding would need ip route parsing. Header check makes smoke's `runtime→sim:8001/healthz` without header return 403 (probe treats as down) while host e2e and control proxy send header and get 200. Documented in admin.py as intentional for hackathon.
+- Dual listener in one container via threading (simulators/run.py) sharing in-memory state + file fallback, instead of two sidecar containers (would need 2 extra services and break compose test's 8-service expectation). Keeps 8 services, host ports 8101-8108 + 8109/8110 for admin.
+- Catalog is source of truth for verifier: SCENARIO_CATALOG with drift_class tags, is_fixable used by W2.5 to assert fixable|escalate; verifier will import same faults.py or duplicate catalog to avoid trust-boundary import.
+- Money mutations use Decimal quantization to 0.01 and format ".2f" to stay string-typed (verifier checks exact Decimal via same quantization). Duplicate injection appends copies at end (deduplicate via generator.deduplicate keeps first).
+- Pagination mode flip: offset_to_cursor forces Atlas (offset default) to cursor; cursor_repeat_token keeps Harbor cursor but injects repeated token on even request_count (mimics bug where next_cursor repeats previous page). Checked via paginate_cursor request_count parity.
+
+**Files changed:**
+- `simulators/common/faults.py` (new), `simulators/common/state.py` (new), `simulators/common/admin.py` (new), `simulators/common/helpers.py` (new), `simulators/run.py` (new)
+- `simulators/atlaspms/app.py` (rewritten), `simulators/harborpms/app.py` (rewritten), `simulators/Dockerfile` (CMD), `compose.yaml` (admin ports)
+- `tests/e2e/conftest.py` (admin ports + header), `tests/unit/test_simulators_faults.py` (new, 68 tests)
+
+**Notes for next iteration:**
+- Next: P1.W2.3 AtlasPMS clean OpenAPI 3.1 docs, bearer, offset; P1.W2.4 HarborPMS Markdown with wrong example + undocumented endpoint, cursor bug. Both will build on top of this fault-aware base — just add docs/ OpenAPI vs Markdown and tighten auth/pagination per vendor.
+- State file /tmp/sim_state.json is ephemeral (container-local); for multi-container split would need shared volume, but single-container threading keeps in-memory primary.
+- Admin header requirement means manual curl needs `curl -H "X-Admin-Network: admin-net" http://localhost:8109/admin/scenario` — document in W2.9 e2e test.

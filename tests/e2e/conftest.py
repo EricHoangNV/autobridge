@@ -50,11 +50,10 @@ SERVICE_PORTS: Final[dict[str, int]] = {
 }
 
 # Simulator admin ports (separate listener on admin-net, W2.2).
-# Currently nothing listens here (first cut); the reset helper probes
-# them and ignores connection errors so W1 passes without W2.
+# Public on 8105/8106 (8000), admin on 8109/8110 (8001).
 SIM_ADMIN_PORTS: Final[dict[str, int]] = {
-    "sim-atlas": 8105,  # public 8000 on vendor-net; admin 8001 on admin-net — but host maps only public
-    "sim-harbor": 8106,
+    "sim-atlas": 8109,
+    "sim-harbor": 8110,
 }
 
 # Admin endpoints are *not* host-mapped; they live on 8001 inside the
@@ -88,14 +87,25 @@ def _http_get_json(url: str, timeout: float = 3.0) -> dict | None:
         return None
 
 
-def _http_post_json(url: str, payload: dict, timeout: float = 5.0) -> bool:
+def _http_post_json(url: str, payload: dict, timeout: float = 5.0, admin: bool = False) -> bool:
     try:
         data = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        headers = {"Content-Type": "application/json"}
+        if admin:
+            headers["X-Admin-Network"] = "admin-net"
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
     except Exception:
         return False
+
+
+def admin_url(service: str, path: str = "/admin/scenario") -> str:
+    """Return host URL for simulator admin API."""
+    port = SIM_ADMIN_PORTS[service]
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"http://localhost:{port}{path}"
 
 
 def is_stack_up(timeout: float = 3.0) -> bool:
@@ -210,21 +220,33 @@ def reset_simulator_state(e2e_stack: str) -> None:  # noqa: ARG001
     for svc in ("sim-atlas", "sim-harbor"):
         # Try control-proxied reset (W7 demo path) — available later.
         _http_post_json(service_url("control", "/demo/inject-fault"), {"target": svc, "scenario": "baseline"})
-        # Try direct admin port when host-mapped (W2 may map 8105/8106+1).
+        # Direct admin port (W2.2) — public port also works for /admin/reset in single-process fallback,
+        # but prefer admin port with header.
         for path in ADMIN_RESET_PATHS:
-            url = service_url(svc, path)
+            url = admin_url(svc, path)
             if path == "/admin/scenario":
-                _http_post_json(url, {"id": "baseline", "seed": 0})
+                _http_post_json(url, {"id": "baseline", "seed": 0}, admin=True)
             else:
-                _http_post_json(url, {})
+                _http_post_json(url, {}, admin=True)
+            # Fallback: try public port too (supports single-uvicorn mode during tests)
+            url2 = service_url(svc, path)
+            if path == "/admin/scenario":
+                _http_post_json(url2, {"id": "baseline", "seed": 0})
+            else:
+                _http_post_json(url2, {})
 
     yield
 
     # After test: same reset so the next test starts clean. No assertion.
     for svc in ("sim-atlas", "sim-harbor"):
         for path in ADMIN_RESET_PATHS:
-            url = service_url(svc, path)
+            url = admin_url(svc, path)
             if path == "/admin/scenario":
-                _http_post_json(url, {"id": "baseline", "seed": 0})
+                _http_post_json(url, {"id": "baseline", "seed": 0}, admin=True)
             else:
-                _http_post_json(url, {})
+                _http_post_json(url, {}, admin=True)
+            url2 = service_url(svc, path)
+            if path == "/admin/scenario":
+                _http_post_json(url2, {"id": "baseline", "seed": 0})
+            else:
+                _http_post_json(url2, {})

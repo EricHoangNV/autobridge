@@ -18,4 +18,5 @@ COPY . ./simulators/
 EXPOSE 8000 8001
 
 # APP_MODULE is set per service in compose.yaml, e.g. simulators.atlaspms.app:app
-CMD ["sh", "-c", "uvicorn \"$APP_MODULE\" --host 0.0.0.0 --port 8000"]
+# W2.2 dual listener: public on 8000, admin on 8001 (shared state via file).
+CMD ["sh", "-c", "python -m simulators.run"]
