@@ -9,7 +9,7 @@ provider or the runtime), so the history shows which model committed what:
 Co-Authored-By: <model name> <model-id@models.noreply>
 ```
 
-Examples: `Co-Authored-By: Muse Spark Open <muse-spark-open-816b-a42b@models.noreply>`,
+Examples: `Co-Authored-By: Muse Spark Open <muse-spark-open-1026@models.noreply>`,
 `Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>`,
 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` (Claude models keep Anthropic's address).
 The ralph loop prints the exact trailer in its prompt (OpenCode: from the pinned model id; Claude Code: from

@@ -108,6 +108,17 @@ A model list means key and network policy are fine; a connection error means the
 `sh ralph-afk.sh --agent opencode --provider modal sbx1 1`, confirms OpenCode itself signs in (the loop
 stops with an "could not authenticate" message otherwise).
 
+**Check the Baseten model id itself** (same request as Baseten's sample code, via curl):
+
+```
+sbx exec -e BASETEN_API_KEY opencode-autobridge bash -c 'curl -sS https://inference.baseten.co/v1/chat/completions \
+  -H "Authorization: Bearer $BASETEN_API_KEY" -H "Content-Type: application/json" \
+  -d "{\"model\": \"meta-models/muse-spark-open-1026\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello!\"}]}" | head -c 400'
+```
+
+A `choices[0].message.content` reply means the id in `BASETEN_MODEL` is live; a "model not found" error means the
+id changed and `.env` plus `opencode.json` need the new one.
+
 The Claude tier needs nothing in `.env`: sign in once with `sbx run --name claude-autobridge`, `/login`,
 then `/model` to pick the model (saved in the sandbox; the loop reads it for the commit trailer), exit.
 
@@ -115,7 +126,7 @@ then `/model` to pick the model (saved in the sandbox; the loop reads it for the
 
 | Tier | Agent | Provider / model (`.env`) | Role |
 |---|---|---|---|
-| worker | OpenCode | `baseten` / `BASETEN_MODEL` (Spark Open) | every normal iteration |
+| worker | OpenCode | `baseten` / `BASETEN_MODEL` (Spark Open, `meta-models/muse-spark-open-1026`) | every normal iteration |
 | backup | OpenCode | `modal` / `MODAL_MODEL` (Spark Open) | after a provider failure on worker |
 | escalation | OpenCode | `meta` / `META_MODEL` (Spark 1.3 or Wonder) | after a failure on backup, or a task unfinished `ESCALATE_AFTER` iterations in a row; the daily audit starts here |
 | final | Claude Code | the model saved by `/model` inside `claude-autobridge` (no `.env` setting) | after a failure on escalation (`RALPH_FINAL_TIER=claude`; `none` ends the ladder at meta) |

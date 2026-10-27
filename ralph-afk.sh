@@ -29,7 +29,7 @@ source "$SCRIPT_DIR/.env"
 
 # Model ids per provider (override in .env; --model overrides for one run). Ids are the ones OpenCode's
 # catalog (models.dev) uses for each provider; Baseten's Spark Open id is declared in opencode.json.
-BASETEN_MODEL="${BASETEN_MODEL:-meta-models/Muse-Spark-Open-816B-A42B}"
+BASETEN_MODEL="${BASETEN_MODEL:-meta-models/muse-spark-open-1026}"
 MODAL_MODEL="${MODAL_MODEL:-meta-models/Muse-Spark-Open-816B-A42B}"
 META_MODEL="${META_MODEL:-muse-spark-1.3}"
 # The Claude tier uses the model saved inside the Claude sandbox (/model in an interactive session), never
@@ -270,7 +270,7 @@ claude_saved_model() {
 }
 
 # Commit trailer naming the model (never the provider or runtime), CLAUDE.md / AGENTS.md "Git commits".
-#   opencode  "meta-models/Muse-Spark-Open-816B-A42B" → "Co-Authored-By: Muse Spark Open <muse-spark-open-816b-a42b@models.noreply>"
+#   opencode  "meta-models/muse-spark-open-1026" → "Co-Authored-By: Muse Spark Open <muse-spark-open-1026@models.noreply>"
 #   claude    "claude-opus-5-5" or alias "opus"       → "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" / "Claude Opus"
 #             no saved model                            → the agent fills in its own model name
 trailer_for() {  # <agent> <model id>
@@ -284,7 +284,7 @@ trailer_for() {  # <agent> <model id>
            | awk '{for(i=1;i<=NF;i++)$i=toupper(substr($i,1,1))substr($i,2)}1')
     printf 'Co-Authored-By: Claude %s <noreply@anthropic.com>' "$name"
   else
-    name=$(basename "$2" | sed -E 's/-[0-9]+[bB]-[aA][0-9]+[bB]$//; s/-/ /g' | awk '{for(i=1;i<=NF;i++)$i=toupper(substr($i,1,1))substr($i,2)}1')
+    name=$(basename "$2" | sed -E 's/-[0-9]+[bB]-[aA][0-9]+[bB]$//; s/-[0-9]{4}$//; s/-/ /g' | awk '{for(i=1;i<=NF;i++)$i=toupper(substr($i,1,1))substr($i,2)}1')
     printf 'Co-Authored-By: %s <%s@models.noreply>' "$name" "$id"
   fi
 }
