@@ -1,5 +1,41 @@
-"""Common simulator utilities (stub for W1)."""
+"""Common simulator utilities (W2: seeded dataset with late postings, duplicates, nullable)."""
 
-from simulators.common.generator import generate_batch
+from simulators.common.generator import (
+    BUSINESS_CUTOFF_HOUR,
+    CHARGE_DESCRIPTIONS,
+    GUEST_NAMES,
+    PROPERTY_TEMPLATES,
+    business_date_for_posted_at,
+    dataset_fingerprint,
+    dataset_from_json,
+    dataset_to_json,
+    deduplicate,
+    generate_batch,
+    generate_dataset,
+    generate_folios,
+    generate_properties,
+    generate_reservations,
+    property_currency_map,
+    property_timezone_map,
+    with_duplicates,
+)
 
-__all__ = ["generate_batch"]
+__all__ = [
+    "BUSINESS_CUTOFF_HOUR",
+    "CHARGE_DESCRIPTIONS",
+    "GUEST_NAMES",
+    "PROPERTY_TEMPLATES",
+    "business_date_for_posted_at",
+    "dataset_fingerprint",
+    "dataset_from_json",
+    "dataset_to_json",
+    "deduplicate",
+    "generate_batch",
+    "generate_dataset",
+    "generate_folios",
+    "generate_properties",
+    "generate_reservations",
+    "property_currency_map",
+    "property_timezone_map",
+    "with_duplicates",
+]

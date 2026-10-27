@@ -29,7 +29,7 @@
 - [x] P1.W1.10 `tests/e2e/conftest.py` first cut (compose up, wait on `readyz`, teardown) + `tests/e2e/test_00_stack_up.py`; `docs/architecture.md` first pass
 
 #### W2 — Simulators + verifier / oracle (plan §4 W2, §2.7, §2.8)
-- [>] P1.W2.1 `simulators/common`: seeded generator for properties, reservations, folios with late postings across the business date, duplicates / at-least-once delivery, nullable fields; same seed → byte-identical dataset (test) — in progress: sbx1 since 2026-10-27 03:07
+- [x] P1.W2.1 `simulators/common`: seeded generator for properties, reservations, folios with late postings across the business date, duplicates / at-least-once delivery, nullable fields; same seed → byte-identical dataset (test)
 - [ ] P1.W2.2 Fault switchboard applying named mutations + admin API `POST /admin/scenario {id, seed}` on a separate port/network; state reset endpoint for e2e
 - [ ] P1.W2.3 AtlasPMS: clean OpenAPI 3.1 docs served from `simulators/docs/`, bearer auth, offset pagination, clear statuses; `readyz`
 - [ ] P1.W2.4 HarborPMS: Markdown narrative docs with one wrong example and one undocumented endpoint, cursor pagination with the repeated-cursor bug, nested folios, opaque status codes, property-local dates, ambiguous `date` field; `readyz`

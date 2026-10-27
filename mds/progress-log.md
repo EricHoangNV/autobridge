@@ -322,4 +322,31 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Next: P1.W2.1 `simulators/common` seeded generator (properties, reservations, folios with late postings, duplicates, nullable fields; same seed → byte-identical)
 - W2.2 will wire the admin API on port 8001 inside simulators (admin-net only) and host-map it if needed for the reset fixture; the conftest hook is ready
 - `docs/architecture.md` will be extended in W3 (runtime), W4 (ladder), W7 (control/UI), W8 (bench), and finalized in W10 — keep it under 4 KB in progress-state summary, full detail lives here
-- No new Python package coverage impact; e2e is separate from `make test` 90% gate
+ - No new Python package coverage impact; e2e is separate from `make test` 90% gate
+
+## P1.W2.1 Seeded generator (properties, reservations, folios with late postings, duplicates, nullable)
+**Date:** 2026-10-27
+**Ref:** plan §4 W2 + §2.8 (simulators/common); task P1.W2.1. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `simulators/common/generator.py` full implementation (replacing W1 stub): 5 property templates (America/New_York, Los_Angeles, Europe/Berlin/London, Asia/Tokyo) with currency + timezone, reservation generator (canonical Reservation shape, property-local business dates, Decimal money 2dp string, nullable guest_name 10%, status closed vocab, updated_at aware UTC, arrival 2026-10-01..31 + stay 1-5d, deterministic IDs), folio generator (canonical FolioCharge shape, business_date within stay, late postings 15% where posted_at local 00:00-03:59 next day counts to prior business date, nullable description 10%, negative refunds 5%, Amount 2dp, posted_at aware UTC via ZoneInfo cutoff 04:00), dataset helpers (generate_dataset with include_duplicates, dataset_to_json/from_json, dataset_fingerprint sha256, with_duplicates/deduplicate for at-least-once delivery), business_date_for_posted_at helper, property/timezone maps, healthz/readyz, legacy generate_batch preserved
+- Updated `simulators/common/__init__.py` to re-export full public API (12 symbols)
+- New `tests/unit/test_simulators_generator.py` (61 tests): properties count/shape/deterministic/invalid, maps, reservations count/shape/deterministic/money/date/status/currency/updated_at/nullable/sorted/default/invalid, business_date normal/late/cutoff/timezone/naive/custom-cutoff/helper, folios count/shape/deterministic/late-invariant/late-exists/nullable/money-negative/within-stay/sorted/default/empty/bounds/currency, dataset shape/deterministic/json/fingerprint/custom/invariants/duplicates/deterministic-across-seeds, duplicates basic/deterministic/empty/rate-zero/rate-one/invalid/default/probabilistic-branch/dedup, cross-validation vs pydantic + jsonschema + nullable, legacy batch
+- Verified all existing 13 simulator smoke tests still pass; new file brings simulators to 100% (was 98.67% with 3 misses), total 477 pass
+
+**Key decisions:**
+- Single RNG per seed domain-separated (seed, seed+1009 for reservations, seed+2027 for folios) so each layer deterministic given seed and inputs, and top-level generate_dataset byte-identical (JSON sort_keys) across calls; standalone helpers each create own RNG from seed for test isolation — generate_dataset uses domain-separated seeds to match standalone outputs when called with same seed
+- Business-date cutoff fixed at 04:00 local (BUSINESS_CUTOFF_HOUR=4): posted_at before cutoff counts to prior business date; late postings generated at 00:00-03:59 local on day after business_date, normal at 08:00-22:00 on business_date; both via ZoneInfo→UTC conversion so verifier's recomputation matches
+- Properties shuffled via rng.shuffle(pool) for deterministic variety; reservations sorted by reservation_id, folios by charge_id for byte-identical ordering regardless of property shuffle
+- Duplicates via with_duplicates(rate) inserting copies at random positions; deduplicate keeps first occurrence (oracle ground truth pattern)
+- Keep legacy generate_batch shape (id/index/value/seed) for W1 smoke compatibility; new code uses generate_dataset hierarchy
+- JPY template included with 2dp money (schema allows any 3-letter code with 2dp) — realistic enough for demo, not a blocker
+
+**Files changed:**
+- `simulators/common/generator.py` (new full, 573 lines, replaces 34-line stub), `simulators/common/__init__.py` (re-exports)
+- `tests/unit/test_simulators_generator.py` (new, 61 tests)
+
+**Notes for next iteration:**
+- Next: P1.W2.2 fault switchboard + admin API POST /admin/scenario {id, seed} on separate port/network (admin-net only) — generator's `generate_dataset(seed)` is the shared code both simulators and verifier oracle will call; fault switchboard will apply named mutations to the output before serving it
+- Simulators still import-free from autobridge (import-linter kept); tests cross-validate via autobridge.spec.entities — verifier will do the same in W2.6
+- Late-posting logic is the hardest to get right: every folio's business_date must equal business_date_for_posted_at(posted_at, property_timezone) — the new tests assert this for every generated dataset; W2.5 scenario tz_boundary_shift will mutate this deliberately
