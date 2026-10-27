@@ -154,3 +154,31 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 **Notes for next iteration:**
 - Next: P1.W1.5 SQLAlchemy models. W2.1 (seeded generator) and W2.6 (verifier canonical checks) should emit/consume exactly these schemas — `validate_entity` is the shared assertion; `REFERENCE_*` are the first fixtures.
 - W3.6 `targets.py` must accept exactly the `runtime-target.json` kinds and reject `edge` at runtime until Phase 2 S2.
+
+## P1.W1.5 SQLAlchemy core data model + Alembic migrations
+**Date:** 2026-10-27
+**Ref:** plan §4 W1 + §2.3 (core data model); task P1.W1.5. Agent: opencode meta/muse-spark-1.3 (escalation).
+
+**What was done:**
+- New `src/autobridge/control/models.py`: all ten plan §2.3 tables (Connector, ConnectorRelease, BuildRun, SyncRun, DriftEvent, RepairRun, Approval, EvidenceRecord, ModelCall, DependencyRegistration) with portable types only, closed vocabularies as String + CHECK, cost as Numeric/Decimal, tz-aware timestamps, credential_ref with no secret column, and ConnectorRelease immutability via before_update/before_delete events raising ImmutableReleaseError
+- New Alembic scaffold (`alembic.ini`, `alembic/env.py` reading DATABASE_URL, script template) + `0001_core_data_model` mirroring the models, with the connectors↔releases cycle resolved by adding the active-release FK last in batch mode (SQLite-safe)
+- New `tests/unit/test_autobridge_db_models.py` (26 tests): per-table round-trips, all closed vocabularies incl. rejections, immutability update/delete blocked at flush, rollback-as-new-release, version uniqueness, Decimal money, evidence parent chains, portable-types-only + Postgres DDL compile + unique index names, helpers/env override, full alembic upgrade→insert→downgrade→upgrade cycle
+- `.env.example`: added empty `DATABASE_URL` key
+
+**Key decisions:**
+- String+CHECK over PG ENUM, String(36) uuid-hex ids, JSON over ARRAY: the same DDL compiles on Postgres (proven by test) with no dialect branches
+- Immutability at the mapper-event layer (fires at flush for any writer) rather than `__setattr__` guards, which risk breaking SQLAlchemy load/refresh paths
+- EvidenceRecord/ModelCall `run_id` is a polymorphic `kind:id` string so one ledger spans build/sync/repair runs without nullable FK fan-out
+- Spec→release validation against `connector-spec.v1.json` stays at the writer layer (W1.6/W3); the model stores the document and its `spec_signature` sha256
+
+**Files changed:**
+- `src/autobridge/control/models.py` (new), `alembic.ini` (new), `alembic/env.py` (new), `alembic/script.py.mako` (new), `alembic/versions/0001_core_data_model.py` (new)
+- `tests/unit/test_autobridge_db_models.py` (new, 26 tests), `.env.example` (DATABASE_URL)
+
+**Checks:**
+- Targeted: 26 pass; `make test` — 224 pass (207 autobridge @100%, 4 verifier @100%, 13 simulators @100%; 90% gate per package)
+- `make lint`, `make typecheck`, `lint-imports` (1 kept) — green; compose untouched (no e2e file for W1.5)
+
+**Notes for next iteration:**
+- Next: P1.W1.6 DB-backed JobRunner builds on `session_factory` + `init_db` here; control/worker services will need `DATABASE_URL` wired in compose (left for W1.6/W7, not this task)
+- `init_db` (create_all) emits the benign FK-cycle SAWarning on SQLite; migrations are the prod path and are cycle-clean
