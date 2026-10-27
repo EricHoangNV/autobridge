@@ -92,7 +92,7 @@
 
 #### W9 — E2E suite (continuous deliverable, plan §4 W9)
 - [x] P1.W9.1 `tests/e2e/conftest.py` complete: brings up Compose, waits on `readyz`, resets simulator state per test, tears down; tests independent (random-order run passes); suite runtime budget documented
-- [ ] P1.W9.2 `make e2e` runs the whole suite against the Compose stack; CI job running unit (coverage gate) → smoke → e2e from a clean clone
+- [>] P1.W9.2 `make e2e` runs the whole suite against the Compose stack; CI job running unit (coverage gate) → smoke → e2e from a clean clone — in progress: sbx1 since 2026-10-27 09:21
 
 #### W10 — Packaging + demo (plan §4 W10, §6)
 - [ ] P1.W10.1 README complete, `docs/` pages complete (`architecture`, `connector-spec`, `safety-model`, `benchmark`, `demo`), `.env.example` complete
