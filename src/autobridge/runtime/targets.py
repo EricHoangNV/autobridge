@@ -1,4 +1,4 @@
-"""Runtime targets — real + fakes (P1.W1.9, P1.W3.6, plan §2.1, §2.4).
+"""Runtime targets — real + fakes (P1.W1.9, P1.W3.6, P2.S2, plan §2.1, §2.4).
 
 The v1 engine executes :class:`ConnectorSpec` operations inside a
 :class:`RuntimeTarget`.  Real targets are:
@@ -10,6 +10,11 @@ The v1 engine executes :class:`ConnectorSpec` operations inside a
   (negative network test, W3.6).  Isolation is enforced at two layers:
   Docker Compose network attachment (vendor-net only, no verifier-net/admin-net)
   and in-process allowlist checks (host + ``/admin`` path guard).
+* :class:`EdgeTarget` — simulated edge worker (P2.S2) on an isolated Docker
+  network (``edge-net``).  It executes only signed releases: the worker
+  verifies ``spec_signature(spec) == signature`` before running anything
+  (verify centrally, execute locally), and its egress is restricted to the
+  edge-only sim POS allowlist.
 
 This module provides both the real minimal implementations and the
 in-memory fakes used to reach 90% coverage on the control/SSE layer
@@ -31,6 +36,10 @@ import time
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+#: Edge-only sim POS hostname: the only egress an edge worker needs.
+#: The control plane and the cloud sandbox never allowlist it (P2.S2).
+EDGE_POS_HOST = "sim-edgepos"
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -55,7 +64,7 @@ class TargetTimeoutError(RuntimeTargetError):
 
 
 class TargetConfigError(ValueError):
-    """Raised for invalid target configuration (e.g. edge reserved)."""
+    """Raised for invalid target configuration."""
 
 
 # ---------------------------------------------------------------------------
@@ -205,21 +214,19 @@ class BaseTarget:
             raise TargetConfigError(f"memory_mb {self.memory_mb} must be >= {MIN_MEMORY_MB}")
         if self.memory_mb > MAX_MEMORY_MB:
             raise TargetConfigError(f"memory_mb {self.memory_mb} must be <= {MAX_MEMORY_MB}")
-        if self.kind == "edge":
-            raise TargetConfigError("RuntimeTarget kind 'edge' is reserved (Phase 2 S2)")
-        # DockerSandbox allowlist must not contain blocked hosts
-        if self.kind == "docker_sandbox" and self.network_allowlist:
+        # docker_sandbox + edge allowlists must not contain blocked hosts
+        if self.kind in ("docker_sandbox", "edge") and self.network_allowlist:
             validate_allowlist(self.network_allowlist)
 
     def can_reach(self, url: str) -> bool:
         """Return True if *url* host is allowed."""
-        # Admin path is always blocked for docker_sandbox, even if host matches
-        if self.kind == "docker_sandbox" and _is_blocked_path(url):
+        # Admin path is always blocked for isolated targets, even if host matches
+        if self.kind in ("docker_sandbox", "edge") and _is_blocked_path(url):
             return False
         host = host_from_url(url)
         if not host:
             return False
-        # LocalProcess allows all; DockerSandbox checks allowlist
+        # LocalProcess allows all; isolated targets check the allowlist
         if self.kind == "local_process":
             return True
         return _host_allowed(host, self.network_allowlist)
@@ -259,8 +266,6 @@ def create_target(config: dict[str, Any]) -> BaseTarget:
     kind = config.get("kind")
     if not kind:
         raise TargetConfigError("runtime_target missing required field 'kind'")
-    if kind == "edge":
-        raise TargetConfigError("RuntimeTarget kind 'edge' is reserved (Phase 2 S2)")
     if kind == "local_process":
         return LocalProcessTarget(
             timeout_s=int(config.get("timeout_s", DEFAULT_TIMEOUT_S)),
@@ -272,6 +277,13 @@ def create_target(config: dict[str, Any]) -> BaseTarget:
             timeout_s=int(config.get("timeout_s", DEFAULT_TIMEOUT_S)),
             memory_mb=int(config.get("memory_mb", DEFAULT_MEMORY_MB)),
             image=config.get("image"),
+        )
+    if kind == "edge":
+        return EdgeTarget(
+            endpoint=config.get("endpoint"),
+            network_allowlist=list(config.get("network_allowlist", [EDGE_POS_HOST])),
+            timeout_s=int(config.get("timeout_s", DEFAULT_TIMEOUT_S)),
+            memory_mb=int(config.get("memory_mb", DEFAULT_MEMORY_MB)),
         )
     raise TargetConfigError(f"unknown RuntimeTarget kind {kind!r}")
 
@@ -299,7 +311,7 @@ def target_from_connector_spec(spec_dict: dict[str, Any]) -> BaseTarget | None:
             if raw in mapping:
                 return create_target(mapping[raw])
             if raw == "edge":
-                raise TargetConfigError("RuntimeTarget kind 'edge' is reserved (Phase 2 S2)")
+                return create_target({"kind": "edge"})
     # Top-level fallback
     if "runtime_target" in spec_dict and isinstance(spec_dict["runtime_target"], dict):
         return create_target(spec_dict["runtime_target"])
@@ -495,6 +507,161 @@ class DockerSandboxTarget(BaseTarget):
         }
 
 
+class EdgeTarget(BaseTarget):
+    """Simulated edge worker on an isolated network (P2.S2).
+
+    Executes only signed releases: :meth:`execute_signed_release` verifies
+    ``spec_signature(spec) == signature`` before running anything.  Egress
+    is restricted to ``network_allowlist`` (default: the edge-only sim POS),
+    enforced in-process exactly like :class:`DockerSandboxTarget` plus the
+    Compose attachment     (``edge-net`` only — no engine-net route to the
+    control plane's vendors, no verifier/admin route at all).
+    """
+
+    endpoint: str | None
+
+    def __init__(
+        self,
+        *,
+        endpoint: str | None = None,
+        network_allowlist: list[str] | None = None,
+        timeout_s: int = 60,
+        memory_mb: int = 512,
+        workdir: str | None = None,
+    ) -> None:
+        super().__init__(
+            kind="edge",
+            network_allowlist=list(network_allowlist if network_allowlist is not None else [EDGE_POS_HOST]),
+            timeout_s=timeout_s,
+            memory_mb=memory_mb,
+            workdir=workdir,
+        )
+        # Keep endpoint accessible as an attribute (BaseTarget has no field).
+        object.__setattr__(self, "endpoint", endpoint)
+
+    def execute_signed_release(
+        self,
+        spec: dict[str, Any],
+        signature: str | None,
+        operation: str,
+        params: dict[str, Any] | None = None,
+        client_factory: Any | None = None,
+    ) -> ExecutionResult:
+        """Verify *signature*, enforce the allowlist, then interpret.
+
+        Raises :class:`TargetConfigError` for unsigned/tampered releases and
+        :class:`NetworkBlockedError` when the spec's ``source.base_url`` is
+        outside the allowlist.
+        """
+        _ = params  # reserved: the interpreter derives params from the spec operation
+        verify_release_signature(spec, signature)
+        try:
+            from autobridge.runtime.http import HttpClient, resolve_base_url
+            from autobridge.spec.models import load_spec_from_dict
+
+            spec_obj = load_spec_from_dict(spec)
+            try:
+                resolved = resolve_base_url(spec_obj.source.base_url)
+                self.check_network(resolved)
+            except (KeyError, ValueError):
+                pass
+            http_client = HttpClient(
+                base_url=spec_obj.source.base_url,
+                auth=spec_obj.source.auth,
+                retry=spec_obj.source.rate_limit.retry,
+                timeout_s=float(self.timeout_s),
+                client_factory=client_factory,
+            )
+            from autobridge.runtime.interpreter import Interpreter
+
+            interp = Interpreter(spec_obj, http_client=http_client)
+            result = interp.execute_operation(operation, max_pages=100)
+            return ExecutionResult(
+                status="ok",
+                records=result.records,
+                output={"pages_fetched": result.pages_fetched, "stop_reason": result.stop_reason},
+                elapsed_ms=0.0,
+            )
+        except (NetworkBlockedError, TargetConfigError):
+            raise
+        except Exception as exc:
+            return ExecutionResult(status="error", error=str(exc))
+
+    def execute(
+        self,
+        spec: dict[str, Any] | None = None,
+        operation: str | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> ExecutionResult:
+        """Unsigned direct execution is refused: use signed releases.
+
+        The edge worker never runs an unverified spec; callers must go
+        through :meth:`execute_signed_release` (or the worker's ``/execute``
+        endpoint, which enforces the same rule over HTTP).
+        """
+        _ = (spec, operation, params)
+        return ExecutionResult(
+            status="blocked",
+            error="edge target executes only signed releases (signature required)",
+        )
+
+    def fetch(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Simulated fetch that enforces allowlist + admin path guard."""
+        self.check_network(url)
+        _ = params
+        return {"url": url, "data": []}
+
+    def health_check(self) -> dict[str, str]:
+        return {"status": "ok", "kind": self.kind}
+
+    def docker_run_args(self) -> dict[str, Any]:
+        """Return Docker run arguments (edge worker attaches to edge-net only)."""
+        return {
+            "image": self.image or "autobridge-edge-worker",
+            "mem_limit": f"{self.memory_mb}m",
+            "network": "edge-net",
+            "timeout_s": self.timeout_s,
+            "network_allowlist": list(self.network_allowlist),
+            "endpoint": self.endpoint,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Release signatures — verify centrally, execute locally (P2.S2)
+# ---------------------------------------------------------------------------
+
+
+def release_signature(spec: dict[str, Any]) -> str:
+    """sha256 over the canonical JSON of a ConnectorSpec document.
+
+    Identical canonicalization to
+    :func:`autobridge.control.models.spec_signature` (kept local to avoid a
+    control→runtime import); ``ConnectorRelease.signature`` stores this value
+    and any spec drift changes it.  The edge worker refuses to execute when
+    the presented signature differs.
+    """
+    import hashlib
+    import json
+
+    canonical = json.dumps(spec, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def verify_release_signature(spec: dict[str, Any], signature: str | None) -> None:
+    """Raise :class:`TargetConfigError` unless *signature* matches *spec*.
+
+    Missing, empty or mismatched signatures are all rejected: the edge
+    worker executes only signed releases.
+    """
+    if not signature:
+        raise TargetConfigError("edge release is unsigned: signature is required")
+    expected = release_signature(spec)
+    if signature != expected:
+        raise TargetConfigError(
+            "edge release signature mismatch: refusing to execute (tampered or stale release)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Fake targets (in-memory, no Docker)
 # ---------------------------------------------------------------------------
@@ -651,6 +818,67 @@ class FakeDockerSandbox(FakeRuntimeTarget):
             fail_on=fail_on,
             delay_s=delay_s,
         )
+
+
+class FakeEdgeTarget(FakeRuntimeTarget):
+    """Fake edge worker: enforces allowlist + requires a valid signature.
+
+    ``responses`` maps operation name → canned response, as in
+    :class:`FakeRuntimeTarget`.  :meth:`execute_signed_release` verifies the
+    signature first so unit tests can assert the signed-only property
+    without Docker.
+    """
+
+    def __init__(
+        self,
+        *,
+        endpoint: str | None = None,
+        network_allowlist: list[str] | None = None,
+        timeout_s: int = 60,
+        memory_mb: int = 512,
+        responses: dict[str, Any] | None = None,
+        fail_on: dict[str, Exception] | None = None,
+        delay_s: float = 0.0,
+    ) -> None:
+        super().__init__(
+            kind="edge",
+            network_allowlist=network_allowlist if network_allowlist is not None else [EDGE_POS_HOST],
+            timeout_s=timeout_s,
+            memory_mb=memory_mb,
+            responses=responses,
+            fail_on=fail_on,
+            delay_s=delay_s,
+        )
+        object.__setattr__(self, "endpoint", endpoint)
+
+    def execute_signed_release(
+        self,
+        spec: dict[str, Any],
+        signature: str | None,
+        operation: str,
+        params: dict[str, Any] | None = None,
+    ) -> ExecutionResult:
+        """Verify signature + allowlist, then return the canned response."""
+        verify_release_signature(spec, signature)
+        base_url = spec.get("source", {}).get("base_url", "") if isinstance(spec, dict) else ""
+        if base_url:
+            try:
+                from autobridge.runtime.http import resolve_base_url
+
+                self.check_network(resolve_base_url(base_url))
+            except (KeyError, ValueError):
+                pass
+        self.calls.append(
+            {"method": "execute_signed_release", "operation": operation, "params": params}
+        )
+        canned = self._lookup(operation, params)
+        if isinstance(canned, ExecutionResult):
+            return canned
+        if isinstance(canned, dict):
+            return ExecutionResult(status="ok", records=[], output=canned)
+        if isinstance(canned, list):
+            return ExecutionResult(status="ok", records=canned)
+        return ExecutionResult(status="ok", records=[], output={})
 
 
 class FakeLocalProcess(FakeRuntimeTarget):

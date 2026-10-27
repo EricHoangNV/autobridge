@@ -84,9 +84,11 @@ def test_base_target_validation_memory() -> None:
         BaseTarget(kind="docker_sandbox", timeout_s=10, memory_mb=10)
 
 
-def test_base_target_edge_reserved() -> None:
-    with pytest.raises(TargetConfigError, match="edge.*reserved"):
-        BaseTarget(kind="edge")
+def test_base_target_edge_builds_with_allowlist() -> None:
+    t = BaseTarget(kind="edge", timeout_s=10, network_allowlist=["sim-edgepos"])
+    assert t.kind == "edge"
+    assert t.can_reach("http://sim-edgepos:8000/healthz")
+    assert not t.can_reach("http://verifier:8000/verify")
 
 
 def test_base_target_can_reach_local_allows_all() -> None:
@@ -481,16 +483,16 @@ def test_local_process_resource_limits_and_timeout() -> None:
         LocalProcessTarget(timeout_s=0)
 
 
-def test_edge_reserved_via_targets() -> None:
-    """Edge kind is reserved in both real and fake targets (Phase 2 S2)."""
-    from autobridge.runtime.targets import BaseTarget, TargetConfigError, create_target
+def test_edge_target_via_factory() -> None:
+    """Edge kind builds via the factory with the edge-only default allowlist (P2.S2)."""
+    from autobridge.runtime.targets import EdgeTarget, create_target
 
-    with pytest.raises(TargetConfigError, match="reserved"):
-        BaseTarget(kind="edge", timeout_s=10)
-    with pytest.raises(TargetConfigError, match="reserved"):
-        create_target({"kind": "edge"})
-    with pytest.raises(TargetConfigError, match="reserved"):
-        create_target({"kind": "edge", "endpoint": "http://edge.local"})
+    t = create_target({"kind": "edge"})
+    assert isinstance(t, EdgeTarget)
+    assert t.kind == "edge"
+    assert t.can_reach("http://sim-edgepos:8000/healthz")
+    t2 = create_target({"kind": "edge", "endpoint": "http://edge.local"})
+    assert isinstance(t2, EdgeTarget)
 
 
 def test_create_target_factory() -> None:

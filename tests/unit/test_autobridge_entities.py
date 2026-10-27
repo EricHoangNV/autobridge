@@ -289,10 +289,15 @@ def test_runtime_target_defaults_and_allowlist() -> None:
     assert sandbox.memory_mb == 512  # type: ignore[union-attr]
 
 
-def test_edge_kind_parses_but_is_reserved() -> None:
-    edge = RUNTIME_ADAPTER.validate_python({"kind": "edge"})
+def test_edge_kind_parses_with_allowlist() -> None:
+    edge = RUNTIME_ADAPTER.validate_python(
+        {"kind": "edge", "network_allowlist": ["sim-edgepos"]}
+    )
     assert edge.kind == "edge"  # type: ignore[union-attr]
-    assert "edge" in e.RESERVED_RUNTIME_KINDS
+    assert edge.network_allowlist == ["sim-edgepos"]  # type: ignore[union-attr]
+    validate_against_schema(
+        {"kind": "edge", "network_allowlist": ["sim-edgepos"]}, "runtime-target.json"
+    )
 
 
 def test_unknown_runtime_kind_rejected_by_model_and_schema() -> None:

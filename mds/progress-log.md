@@ -1780,3 +1780,6 @@ CI green on main + records the labelled demo (docs/demo.md), then flips [x].
 
 ## 2026-10-27 — P2.S1.1 LegacyStay third vendor done (sbx1)
 Phase 2 S1 complete: heldout-only unseen-generalization vendor (rate limits, misleading examples, nullable chaos). Bootstrap from docs alone + `rename_guest_id` repair verified via generic `rename_field` L1 with frontier 0; no vendor-specific rule added (engine untouched). e2e `test_s1_legacystay.py` 10/10 live, unit 18/18, full gates green, smoke green with new service. Next: P2.S2.1 Simulated Edge target. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### 2026-10-27 — P2.S2.1 Simulated Edge target done (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Edge target shipped: signed-only `EdgeTarget` + toy edge worker on isolated `edge-net` against edge-only sim POS; verify centrally, execute locally. Negative test green live (control/sandbox cannot reach sim-edgepos from inside containers; edge-worker can), signed live execution returned EDGE-1001/1002, tampered → 403. Full gates: lint + typecheck green, make test green (autobridge 1778 @ 91.13%, verifier 92, simulators 241, ui 128), e2e test_s2 9/9 (2 live, stack up then down).

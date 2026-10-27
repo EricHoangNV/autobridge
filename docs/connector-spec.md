@@ -101,8 +101,9 @@ health:
 
 * `id` — slug `[a-z0-9_-]`, also the directory name under `generated/connectors/`.
 * `vendor` — display name.
-* `runtime_target` — `cloud | local | sandbox | edge` (`edge` is reserved for
-  Phase 2; `sandbox` is the Docker-isolated target in W3.6).
+* `runtime_target` — `cloud | local | sandbox | edge` (`edge` is the Phase 2 S2
+  simulated edge worker: executes only signed releases on the isolated
+  `edge-net`; `sandbox` is the Docker-isolated target in W3.6).
 
 ### 2.2 `source`
 

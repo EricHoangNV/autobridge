@@ -54,6 +54,7 @@ engine-net   — control, worker, runtime-sandbox, ui, bench
 vendor-net   — runtime-sandbox ↔ sim-atlas/sim-harbor/sim-legacystay public API (8000)
 verifier-net — control ↔ verifier, bench ↔ verifier
 admin-net    — control ↔ sim-atlas/sim-harbor/sim-legacystay admin API (8001, W2.2)
+edge-net     — edge-worker ↔ sim-edgepos public API (8000) ONLY (P2.S2)
 ```
 
 Isolation is by **attachment only** — no `internal: true`. An internal-only
@@ -65,6 +66,8 @@ probes asserted in `scripts/smoke.sh` and statically in
 - `runtime-sandbox` has no route to `verifier-net` or `admin-net`
 - `ui` is on `engine-net` only
 - `worker` is on `engine-net` only
+- P2.S2: `sim-edgepos` and `edge-worker` are on `edge-net` only; `control`,
+  `runtime-sandbox`, `ui` and the cloud sims have no route to it
 
 Positive probes guard against a blanket outage masquerading as isolation:
 

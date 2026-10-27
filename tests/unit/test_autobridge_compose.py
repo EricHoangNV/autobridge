@@ -26,13 +26,15 @@ EXPECTED_SERVICES = {
     "sim-atlas",
     "sim-harbor",
     "sim-legacystay",
+    "sim-edgepos",
+    "edge-worker",
     "ui",
     "bench",
 }
 
-EXPECTED_NETWORKS = {"engine-net", "vendor-net", "verifier-net", "admin-net"}
+EXPECTED_NETWORKS = {"engine-net", "vendor-net", "verifier-net", "admin-net", "edge-net"}
 
-# Plan §2.1 attachment matrix.
+# Plan §2.1 attachment matrix (+ §5 S2 edge-net).
 EXPECTED_ATTACHMENT = {
     "control": {"engine-net", "verifier-net", "admin-net"},
     "worker": {"engine-net"},
@@ -41,6 +43,8 @@ EXPECTED_ATTACHMENT = {
     "sim-atlas": {"vendor-net", "admin-net"},
     "sim-harbor": {"vendor-net", "admin-net"},
     "sim-legacystay": {"vendor-net", "admin-net"},
+    "sim-edgepos": {"edge-net"},
+    "edge-worker": {"edge-net"},
     "ui": {"engine-net"},
     "bench": {"engine-net", "verifier-net"},
 }
@@ -54,6 +58,8 @@ EXPECTED_PORTS = {
     "sim-atlas": 8105,
     "sim-harbor": 8106,
     "sim-legacystay": 8111,
+    "sim-edgepos": 8113,
+    "edge-worker": 8114,
     "ui": 8107,
     "bench": 8108,
 }
@@ -107,6 +113,16 @@ def test_worker_is_engine_net_only(compose: dict) -> None:
     assert set(compose["services"]["worker"]["networks"]) == {"engine-net"}
 
 
+def test_edge_network_isolated(compose: dict) -> None:
+    """P2.S2: sim-edgepos lives only on edge-net; no other service joins it."""
+    assert set(compose["services"]["sim-edgepos"]["networks"]) == {"edge-net"}
+    assert set(compose["services"]["edge-worker"]["networks"]) == {"edge-net"}
+    for svc in ("control", "worker", "runtime-sandbox", "verifier", "ui", "bench"):
+        assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
+    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay"):
+        assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
+
+
 def test_host_ports_unique(compose: dict) -> None:
     seen: dict[str, str] = {}
     for svc, cfg in compose["services"].items():
@@ -140,7 +156,7 @@ def test_verifier_build_context_excludes_engine(compose: dict) -> None:
 
 
 def test_sim_build_context_is_simulators_only(compose: dict) -> None:
-    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay"):
+    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-edgepos"):
         build = compose["services"][svc]["build"]
         assert build["context"] in ("./simulators", "simulators")
 
@@ -180,6 +196,14 @@ def test_runtime_sandbox_app_health() -> None:
 
 def test_bench_app_health() -> None:
     _check_health("autobridge.bench.app")
+
+
+def test_edge_worker_app_health() -> None:
+    _check_health("autobridge.edge.app")
+
+
+def test_sim_edgepos_app_health() -> None:
+    _check_health("simulators.edgepos.app")
 
 
 def test_verifier_app_health() -> None:

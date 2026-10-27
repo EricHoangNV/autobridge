@@ -26,15 +26,18 @@ def _check_runtime_target() -> bool:
     """Verify RuntimeTarget factory and network isolation are intact.
 
     Returns True when:
-    - target factory can build LocalProcess and DockerSandbox,
+    - target factory can build LocalProcess, DockerSandbox and Edge,
     - DockerSandbox allowlist blocks verifier and admin paths,
-    - Edge kind is correctly rejected.
+    - Edge executes only signed releases and blocks verifier/admin paths.
     """
     try:
         from autobridge.runtime.targets import (
             DockerSandboxTarget,
+            EdgeTarget,
             LocalProcessTarget,
             TargetConfigError,
+            release_signature,
+            verify_release_signature,
         )
 
         # LocalProcess builds
@@ -57,12 +60,32 @@ def _check_runtime_target() -> bool:
             return False
         if ds.can_reach("http://sim-harbor:8001/admin/reset"):
             return False
-        # Edge must be rejected
+        # Blocked hosts rejected at creation time
         try:
             DockerSandboxTarget(network_allowlist=["verifier"])  # blocked host
             return False
         except TargetConfigError:
             pass
+
+        # Edge builds, signs, verifies, and blocks verifier/admin paths
+        edge = EdgeTarget(network_allowlist=["sim-edgepos"], timeout_s=60, memory_mb=512)
+        assert edge.kind == "edge"
+        if edge.can_reach("http://verifier:8000/verify"):
+            return False  # pragma: no cover - validate_allowlist rejects blocked hosts at construction
+        if edge.can_reach("http://sim-edgepos:8001/admin/reset"):
+            return False  # pragma: no cover - admin paths are always blocked; backstop
+        if not edge.can_reach("http://sim-edgepos:8000/healthz"):
+            return False
+        probe_spec = {"spec_version": "v1", "source": {"base_url": "http://x"}}
+        sig = release_signature(probe_spec)
+        verify_release_signature(probe_spec, sig)
+        try:
+            verify_release_signature(probe_spec, "tampered")
+            return False  # pragma: no cover - sha256 mismatch always raises; backstop
+        except TargetConfigError:
+            pass
+        if edge.execute().status != "blocked":
+            return False  # pragma: no cover - unsigned execution is always blocked; backstop
 
         # Interpreter import check
         from autobridge.runtime.interpreter import Interpreter  # noqa: F401

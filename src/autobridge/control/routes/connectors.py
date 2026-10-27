@@ -110,12 +110,10 @@ def _dep_to_out(d: DependencyRegistration) -> DependencyOut:
 @router.post("", response_model=ConnectorOut, status_code=201, responses=DOMAIN_ERROR_422)
 def create_connector(body: ConnectorCreate, db: Session = Depends(get_db)) -> ConnectorOut:
     rt = body.runtime_target or {"kind": "local_process"}
-    # Validate runtime_target kind
+    # Validate runtime_target kind (edge shipped in P2.S2.1)
     kind = rt.get("kind", "local_process")
     if kind not in ("local_process", "docker_sandbox", "edge"):
         raise HTTPException(status_code=422, detail=f"invalid runtime_target.kind {kind!r}")
-    if kind == "edge":
-        raise HTTPException(status_code=422, detail="RuntimeTarget.edge not yet available (P2.S2.1)")
 
     conn = Connector(
         name=body.name,

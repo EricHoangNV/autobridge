@@ -45,8 +45,8 @@ ENTITY_SCHEMA_FILES = {
 RUNTIME_TARGET_SCHEMA_FILE = "runtime-target.json"
 DISCOVERY_RESULT_SCHEMA_FILE = "discovery-result.v0.json"
 
-#: Runtime target kinds the v1 engine refuses; schema-accepted but reserved.
-RESERVED_RUNTIME_KINDS = ("edge",)
+#: Runtime target kinds the engine refuses; empty since Phase 2 S2 shipped Edge.
+RESERVED_RUNTIME_KINDS = ()
 
 #: Discovery lifecycle states (Phase 2 S3); transitions only via endpoints.
 DISCOVERY_STATUSES = (
@@ -172,11 +172,14 @@ class DockerSandboxTarget(_Strict):
 
 
 class EdgeTarget(_Strict):
-    """Reserved for Phase 2 S2; the v1 engine rejects it at runtime."""
+    """Simulated edge worker (Phase 2 S2): executes a verified signed release
+    on an isolated network; verify centrally, execute locally."""
 
     kind: Literal["edge"]
     endpoint: str | None = Field(default=None, min_length=1)
+    network_allowlist: list[str] = Field(default_factory=list)
     timeout_s: int = Field(default=60, ge=1, le=3600)
+    memory_mb: int = Field(default=512, ge=64)
 
 
 RuntimeTarget = Annotated[
@@ -260,14 +263,14 @@ REFERENCE_FOLIO_CHARGE: dict[str, Any] = {
     "posted_at": "2026-10-27T00:12:00+00:00",
 }
 
-#: Reference runtime targets, one per kind (``edge`` is reserved for Phase 2).
+#: Reference runtime targets, one per kind.
 REFERENCE_RUNTIME_TARGETS: dict[str, dict[str, Any]] = {
     "local_process": {"kind": "local_process"},
     "docker_sandbox": {
         "kind": "docker_sandbox",
         "network_allowlist": ["atlas.example.com"],
     },
-    "edge": {"kind": "edge"},
+    "edge": {"kind": "edge", "network_allowlist": ["edgepos.example.com"]},
 }
 
 #: Reference discovery record: reserved v0, Phase 2 S3 static import only.

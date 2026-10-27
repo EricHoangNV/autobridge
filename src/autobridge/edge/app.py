@@ -1,0 +1,113 @@
+"""Simulated edge worker (P2.S2, plan §5 S2).
+
+Runs on the isolated ``edge-net`` Docker network and executes only signed
+connector releases against the edge-only sim POS (``sim-edgepos``):
+
+* ``POST /execute`` takes ``{spec, signature, operation}``, verifies
+  ``spec_signature(spec) == signature`` (verify centrally, execute locally),
+  enforces the edge allowlist, and interprets the operation.
+* Unsigned (missing signature) and tampered (mismatch) releases are refused
+  with 422/403 before any network or interpreter work.
+* ``GET /healthz`` / ``GET /readyz`` mirror the other engine services.
+
+Trust boundary: this module lives in the engine package (``src/autobridge``)
+and never imports ``verifier`` or ``simulators``.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from autobridge.health import healthz, readyz
+from autobridge.runtime.targets import (
+    EDGE_POS_HOST,
+    EdgeTarget,
+    NetworkBlockedError,
+    TargetConfigError,
+    release_signature,
+    verify_release_signature,
+)
+
+app = FastAPI(title="AutoBridge Edge Worker")
+
+
+def _allowlist() -> list[str]:
+    raw = os.getenv("EDGE_ALLOWLIST", EDGE_POS_HOST)
+    return [h.strip() for h in raw.split(",") if h.strip()]
+
+
+def _worker() -> EdgeTarget:
+    return EdgeTarget(
+        endpoint=os.getenv("EDGE_WORKER_ENDPOINT"),
+        network_allowlist=_allowlist(),
+        timeout_s=int(os.getenv("EDGE_TIMEOUT_S", "60")),
+    )
+
+
+class ExecuteRequest(BaseModel):
+    spec: dict[str, Any] = Field(description="Full ConnectorSpec document")
+    signature: str | None = Field(default=None, description="spec_signature(spec) from the release")
+    operation: str = Field(min_length=1, description="Operation to execute")
+    params: dict[str, Any] | None = Field(default=None)
+
+
+@app.get("/healthz")
+def get_healthz() -> dict[str, str]:
+    return healthz()  # type: ignore[return-value]
+
+
+def _check_edge() -> bool:
+    """Edge factory + signed-only + allowlist intact."""
+    try:
+        worker = _worker()
+        assert worker.kind == "edge"
+        if worker.can_reach("http://verifier:8000/verify"):
+            return False  # pragma: no cover - validate_allowlist rejects blocked hosts at construction
+        if worker.can_reach(f"http://{EDGE_POS_HOST}:8001/admin/reset"):
+            return False  # pragma: no cover - admin paths are always blocked; backstop
+        probe: dict[str, Any] = {"spec_version": "v1"}
+        sig = release_signature(probe)
+        verify_release_signature(probe, sig)
+        try:
+            verify_release_signature(probe, "tampered")
+            return False  # pragma: no cover - sha256 mismatch always raises; backstop
+        except TargetConfigError:
+            pass
+        return worker.execute().status == "blocked"
+    except Exception:
+        return False
+
+
+@app.get("/readyz")
+def get_readyz() -> dict[str, object]:
+    return readyz({"edge_target": _check_edge()})  # type: ignore[return-value]
+
+
+@app.post("/execute")
+def post_execute(body: ExecuteRequest) -> dict[str, Any]:
+    """Execute a signed release operation on the edge worker."""
+    worker = _worker()
+    try:
+        verify_release_signature(body.spec, body.signature)
+    except TargetConfigError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        result = worker.execute_signed_release(
+            body.spec, body.signature, body.operation, body.params
+        )
+    except TargetConfigError as exc:  # pragma: no cover - app pre-verified; worker double-checks
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except NetworkBlockedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if result.status == "error":
+        raise HTTPException(status_code=502, detail=result.error or "edge execution failed")
+    return {
+        "status": result.status,
+        "records": result.records,
+        "output": result.output,
+        "elapsed_ms": result.elapsed_ms,
+    }

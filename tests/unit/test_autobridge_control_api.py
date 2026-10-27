@@ -111,14 +111,14 @@ def test_create_connector_invalid_runtime(client: Any) -> None:  # type: ignore[
     r = client.post(
         "/connectors",
         json={
-            "name": "Bad",
-            "base_url": "http://example.com",
+            "name": "Edge",
+            "base_url": "http://sim-edgepos:8000",
             "credential_ref": "TEST_API_KEY",
             "target_entities": [],
-            "runtime_target": {"kind": "edge"},
+            "runtime_target": {"kind": "edge", "network_allowlist": ["sim-edgepos"]},
         },
     )
-    assert r.status_code == 422
+    assert r.status_code == 201
     r2 = client.post(
         "/connectors",
         json={

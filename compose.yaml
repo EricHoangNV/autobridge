@@ -1,17 +1,21 @@
 # AutoBridge Compose stack (plan §2.1). P1.W1.2: every service as a stub app
 # with GET /healthz + GET /readyz, on the four trust-zone networks.
 #
-# Networks (plan §2.1):
-#   engine-net   control, worker, runtime-sandbox, ui (+ bench reaches control)
+# Networks (plan §2.1 + §5 S2):
+#   engine-net   control, worker, runtime-sandbox, edge-worker, ui (+ bench reaches control)
 #   vendor-net   runtime-sandbox <-> simulator public API (8000) ONLY
 #   verifier-net control <-> verifier ONLY
 #   admin-net    control <-> simulator admin API (8001, W2.2) ONLY
+#   edge-net     edge-worker <-> sim-edgepos public API (8000) ONLY (P2.S2)
 #
 # Negative checks enforced by attachment (asserted in `make smoke`):
 #   runtime-sandbox has no route to verifier-net / admin-net
 #   (sandbox -/-> verifier fixtures, sandbox -/-> simulator admin)
 #   ui is on engine-net only (ui -/-> simulators, ui -/-> verifier)
 #   worker is on engine-net only (no verifier / simulator-admin route)
+#   control has no route to edge-net (control -/-> sim-edgepos, P2.S2)
+#   edge-worker has no route to vendor-net / verifier-net / admin-net
+#   (edge -/-> cloud sims, edge -/-> verifier, edge -/-> simulator admin)
 
 x-healthcheck-py: &healthcheck-py
   test:
@@ -77,6 +81,32 @@ services:
       # Hidden fixtures are mounted read-only here; no other service mounts
       # this volume and worker / runtime-sandbox have no route to this net.
       - ./verifier/hidden_cases:/fixtures:ro
+    healthcheck: *healthcheck-py
+
+  edge-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    environment:
+      APP_MODULE: autobridge.edge.app:app
+      EDGE_ALLOWLIST: sim-edgepos
+      EDGEPOS_API_KEY: dummy-edge-key
+    networks:
+      - edge-net
+    ports:
+      - "8114:8000"
+    healthcheck: *healthcheck-py
+
+  sim-edgepos:
+    build:
+      context: ./simulators
+      dockerfile: Dockerfile
+    environment:
+      APP_MODULE: simulators.edgepos.app:app
+    networks:
+      - edge-net
+    ports:
+      - "8113:8000"
     healthcheck: *healthcheck-py
 
   sim-atlas:
@@ -165,4 +195,6 @@ networks:
   verifier-net:
     driver: bridge
   admin-net:
+    driver: bridge
+  edge-net:
     driver: bridge

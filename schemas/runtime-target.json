@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://autobridge.local/schemas/runtime-target.json",
   "title": "RuntimeTarget",
-  "description": "Where a verified connector release executes (plan §2.2 targets.py; implemented in W3.6). Discriminated by kind. The edge variant is reserved for Phase 2 S2 and is rejected by the v1 engine at runtime.",
+  "description": "Where a verified connector release executes (plan §2.2 targets.py; implemented in W3.6, edge in P2.S2). Discriminated by kind.",
   "oneOf": [
     { "$ref": "#/$defs/local_process" },
     { "$ref": "#/$defs/docker_sandbox" },
@@ -68,19 +68,25 @@
       }
     },
     "edge": {
-      "description": "Reserved for Phase 2 S2 (simulated Edge target); the v1 engine rejects it at runtime.",
+      "description": "Simulated edge worker on an isolated network (Phase 2 S2): executes only signed releases; verify centrally, execute locally.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
         "kind": {
           "const": "edge",
-          "description": "Reserved: simulated edge worker on an isolated network."
+          "description": "Simulated edge worker on an isolated network."
         },
         "endpoint": {
-          "description": "Edge worker endpoint; reserved.",
+          "description": "Edge worker endpoint that executes signed releases.",
           "type": "string",
           "minLength": 1
+        },
+        "network_allowlist": {
+          "description": "Egress hosts the edge worker may reach; never includes the verifier or the simulator admin.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
         },
         "timeout_s": {
           "description": "Per-operation timeout in seconds.",
@@ -88,6 +94,12 @@
           "minimum": 1,
           "maximum": 3600,
           "default": 60
+        },
+        "memory_mb": {
+          "description": "Edge worker memory limit in MiB.",
+          "type": "integer",
+          "minimum": 64,
+          "default": 512
         }
       }
     }
