@@ -663,3 +663,25 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Next: P1.W3.5 will expand sync_run with data_readiness freshness/completeness docs and fingerprint id per run; no new e2e file for W3.4 (workstream e2e is test_02_reference_sync); make test now 943 pass (autobridge 95.73%, verifier 93.67%, simulators 98.54%)
 - W3.5 will need to wire DependencyRegistration pause_on_release_change already in models; P1.W3.6 adds RuntimeTarget DockerSandbox negative network test
 - Mapping's field-kind timezone assumes property.tz path returns string; if missing, falls back to UTC — document in connector-spec.md in W3.7
+
+## P1.W3.5 SyncRun outcome + data_readiness + fingerprint (sbx1)
+**Date:** 2026-10-27
+**Ref:** plan §4 W3 + §2.3/§2.4; task P1.W3.5. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Enhanced `src/autobridge/engine/sync_run.py`: `_fingerprint_config` reads health.fingerprint toggles (default all true), `_hash_string` helper, `_fingerprint_id` now hashes spec_signature + pagination_shape per operation (strategy/params/paths/stop_when + runtime pages/stop_reason/repeated) + keys sample (first 10 canonical keys sorted hashed) + types histogram (first record field → type name with Decimal detection) when enabled; `compute_data_readiness` now returns Blocked→stale/incomplete, Degraded zero-records→stale/partial, Complete→current/complete; `execute_sync` reordered to compute records_observed before data_readiness/fingerprint and passes canonical_records to fingerprint
+- Updated `tests/unit/test_autobridge_sync_run.py` to 20 tests: new cases for data_readiness edge (Degraded zero vs non-zero, Blocked, unknown fallback), fingerprint pagination_shape sensitivity, keys/types toggle, pages drift, Decimal/null handling, no_pagination_shape, Blocked unknown_enum, complete/degraded data_readiness, config defaults
+- Verified `make test` 951 pass (autobridge 95.53%, verifier 93.67%, simulators 98.54%), `make lint`/`make typecheck` green
+
+**Key decisions:**
+- Fingerprint deterministic via sorted JSON with default=str for Decimal; pagination_shape change flips id so drift detection can key on it; keys sample hashed to 12 chars keeps id short but stable; respect health.fingerprint toggles so W4.1 can disable per dimension without code change
+- Blocked freshness is stale/incomplete because consumer cannot get current data; Degraded remains current/partial except zero-records edge (stale) to avoid claiming current when empty
+
+**Files changed:**
+- `src/autobridge/engine/sync_run.py` — enhanced fingerprint + data_readiness
+- `tests/unit/test_autobridge_sync_run.py` — 20 tests
+
+**Notes for next iteration:**
+- W3.6 is RuntimeTarget DockerSandbox with network allowlist and negative test that sandbox cannot reach verifier/sim admin; W3.7 will produce Atlas/Harbor reference specs and test_02_reference_sync plus docs/connector-spec.md
+- No new e2e file for W3.5; workstream e2e is test_02_reference_sync
+- Fingerprint id is 16 hex chars stored per SyncRun; future drift/fingerprint.py will build richer signals from these ids
