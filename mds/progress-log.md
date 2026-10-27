@@ -1444,3 +1444,18 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - W8.2 will expand baseline drivers (claude_code_headless capture + codex_cli stub + fallback doc); harness already supports pluggable drivers
 - W8.4 scoring/report will consume `TrialResult.to_dict` JSONL output; W8.5 make bench idempotency + e2e test_07 will use `run_harness` + `verify_matched_trial`
 - Heldout SHA check is guard-only; owner freezes at end of W2 via external step per P1.W2.8
+
+## 2026-10-27 — P1.W8.2 baseline drivers (sbx1)
+
+Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What:** Implemented P1.W8.2 baseline drivers: `claude_code_headless` headless CLI with usage/token capture + `codex_cli` adapter stub + fallback via `LLMProvider` (plan §9).
+
+**Files:** `src/autobridge/bench/baseline_coding_agent.py` (expanded CodexCliDriver from NotImplementedError stub to full adapter: `_build_command` for `codex exec --json`, `parse_codex_output`/`build_fake_codex_output` handling output/usage/tokens/cost variants, line-delimited JSON, plain-text fallback; CodexCliError alias; FakeCodexDriver mirroring FakeClaudeDriver; BaselineLLMDriver wrapping LLMProvider+Budget with same run(prompt)->ClaudeCliResult shape, cost via estimate_cost, model_for_tier resolution, equivalent single-turn loop; get_baseline_driver factory for claude/codex/llm), `src/autobridge/bench/harness.py` (header docs for pluggable drivers + fallback, matched-budget note), `src/autobridge/bench/fake_cli.py` (re-export new symbols), `scripts/fake_codex.py` (new, FAKE_CODEX_* env, exec --json parsing), `tests/unit/test_autobridge_bench_w82.py` (60 new tests: parse_codex shapes, build, Codex driver defaults/env/command/run success/nonzero/timeout/not-found with fallback hint, FakeCodexDriver variants, BaselineLLMDriver default/with provider/budget/exhausted/error/model/cwd/cost, factory, matched-budget with codex/llm via run_trial, run_baseline_arm with codex/llm, fake_codex script integration, re-export), `tests/unit/test_autobridge_bench_agents.py` (updated stub test to expect CodexCliError with fallback, add CodexCliError import), `docs/benchmark.md` (harness + both CLIs + fallback documented with examples).
+
+**Decisions:** Codex adapter mirrors Claude API so harness can swap drivers without changing HarnessInputs — six budget fields remain identical (assert_inputs_equal); fallback documents plan §9 routing through same Budget ceilings so matched-budget self-test holds; fake_codex models fake_claude env pattern for parity; BaselineLLMDriver uses tier frontier by default matching harness token_ceiling; cost Decimal end-to-end.
+
+**Checks:** `make lint` green, `make typecheck` green, `make test` 1875 pass (autobridge 90.36% bench 94% baseline_coding_agent 97%, verifier 93.78%, simulators 96.55%), `uv run pytest tests/unit/test_autobridge_bench_w82.py` 60 pass.
+
+**Gotchas:** Previous CodexCliDriver raised NotImplementedError — updated existing test to expect CodexCliError with fallback hint; mypy unused-ignore on union-attr removed after fixing type.
+
