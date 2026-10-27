@@ -78,7 +78,7 @@
 - [x] P1.W7.2 SSE run events (`control/sse.py`, `GET /runs/{id}/events`) from stored `EvidenceRecord`s; redaction test over a full run's event stream (no credential value appears)
 - [x] P1.W7.3 OpenAPI → `ui/lib/api` typed client via `openapi-typescript`; the client compiles against the live schema in CI
 - [x] P1.W7.4 Next.js 15 scaffold (`ui/`: App Router, TypeScript, Tailwind, SWR polling + SSE), Vitest + Testing Library, `readyz`; screen `/connectors` (health, active release, last sync outcome, open drift, model-usage sparkline)
-- [ ] P1.W7.5 Screen `/connectors/new` (docs upload/URL, sandbox base URL, credential env-ref picker, target entities, start build) — fold into `/connectors` if behind
+- [>] P1.W7.5 Screen `/connectors/new` (docs upload/URL, sandbox base URL, credential env-ref picker, target entities, start build) — fold into `/connectors` if behind — in progress: sbx1 since 2026-10-27 08:00
 - [ ] P1.W7.6 Screen `/connectors/[id]` (spec viewer YAML, release history, sync runs with Complete/Degraded/Blocked, fingerprints, dependency registrations)
 - [ ] P1.W7.7 Screen `/repairs/[id]` (drift evidence, ladder trace with level badges, hypotheses + probes, JSON Patch diff old/new side by side, visible tests, verifier verdict, model usage, Approve / Reject / Rollback) + the labelled Inject Fault demo drawer + model-usage view
 - [ ] P1.W7.8 Network test that the UI never calls simulators or the verifier directly; `tests/e2e/test_06_ui_journey.spec.ts` (Playwright) completing the v2 §7.4 user journey
