@@ -14,8 +14,12 @@ Examples: `Co-Authored-By: Muse Spark Open <muse-spark-open-1026@models.noreply>
 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` (Claude models keep Anthropic's address).
 The ralph loop prints the exact trailer in its prompt (OpenCode: from the pinned model id; Claude Code: from
 the model saved by `/model` in the sandbox); use it verbatim on every commit, claim commits included. If the
-prompt leaves the name for you to fill in, or in an interactive session, write your own model name. Never write the provider (Baseten, Modal, Meta),
+prompt leaves the name for you to fill in, write your own model name. Commits made directly from the owner's
+Claude Code session on the host (outside the ralph loop) carry **no** `Co-Authored-By` trailer at all. Never write the provider (Baseten, Modal, Meta),
 "OpenCode" or "Claude Code" there.
+
+The commit **author** is always the repo owner's git identity, set by the loop. Never run `git config user.name` /
+`user.email` or pass `--author`: worktrees share one `.git/config`, so that would relabel every later commit.
 
 ## Where things are
 

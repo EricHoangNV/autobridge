@@ -302,6 +302,16 @@ classify_run() {  # <log> → prints class
   echo ok
 }
 
+# Git identity: every commit is authored by the host's git user; the model is named only in the
+# Co-Authored-By trailer. The sandboxes have no git identity of their own, so it is passed in as env
+# (GIT_AUTHOR_* / GIT_COMMITTER_* override any git config the agent might write).
+GIT_AUTHOR_NAME="$(git -C "$SCRIPT_DIR" config --global user.name)"
+GIT_AUTHOR_EMAIL="$(git -C "$SCRIPT_DIR" config --global user.email)"
+[ -n "$GIT_AUTHOR_NAME" ] && [ -n "$GIT_AUTHOR_EMAIL" ] || { echo "Set your git identity first: git config --global user.name / user.email"; exit 1; }
+GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"; GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+GIT_ID_ENV=(-e GIT_AUTHOR_NAME -e GIT_AUTHOR_EMAIL -e GIT_COMMITTER_NAME -e GIT_COMMITTER_EMAIL)
+
 select_tier "$TIER"
 UNFINISHED_STREAK=0
 lnotify "🚀 Starting AFK mode ($MODE, agent ${AGENT_OPT}, start tier $TIER) with $iterations iterations in $WT_DIR..."
@@ -312,6 +322,12 @@ for ((i=1; i<=iterations; i++)); do
   # Prepare this loop's worktree. Unfinished work from this loop's last iteration (uncommitted
   # changes or commits not yet on origin/main) is kept and handed to the agent to finish first;
   # otherwise the worktree is reset to a fresh branch from origin/main.
+  # Drop any identity an agent wrote into the shared repo config (worktrees share .git/config).
+  if [ -n "$(git -C "$SCRIPT_DIR" config --local --get user.name)$(git -C "$SCRIPT_DIR" config --local --get user.email)" ]; then
+    lnotify "⚠️ Removed a repo-local git identity ($(git -C "$SCRIPT_DIR" config --local --get user.name)) written by an agent"
+    git -C "$SCRIPT_DIR" config --local --unset-all user.name 2>/dev/null
+    git -C "$SCRIPT_DIR" config --local --unset-all user.email 2>/dev/null
+  fi
   git -C "$SCRIPT_DIR" fetch -q origin
   if [ ! -d "$WT_DIR" ]; then
     mkdir -p "$SCRIPT_DIR/.worktrees"
@@ -408,6 +424,7 @@ Check what it is (git status, git log origin/main..HEAD, the claimed [>] task ma
   WORKTREE_RULES="## Parallel loops: your worktree, claim and merge
 You are the loop in sandbox ${LOOP_TAG}. At most one other loop (the other sandbox) works at the same time, in its own worktree.
 - Work ONLY in your worktree ${WT_DIR} (branch ${BRANCH}, made from origin/main). Never edit files in ${SCRIPT_DIR} itself or in another loop's worktree.
+- Your git author identity is already set by the loop. Never run git config user.name/user.email (or --author): the model goes only in the Co-Authored-By trailer.
 - **Merge into main** (at the end of your work, after the bookkeeping): commit on your branch, then git fetch origin && git rebase origin/main. Resolve conflicts:
   - mds/PRD-TRACKING.md and mds/REQUESTS.MD: keep every other loop's status changes; only change your own item.
   - mds/progress-log.md and mds/BUILD-NOTES.md: keep both entries, yours last. mds/LEARNINGS.MD: keep both, renumber yours to the next free number (and fix references to it).
@@ -625,7 +642,7 @@ ${LATEST_VERDICTS}
   echo "Transcript: $iter_log"
   if [ "$AGENT" = claude ]; then
     # ENABLE_CLAUDEAI_MCP_SERVERS=false: don't load the claude.ai account's connectors (Gmail, Drive...)
-    sbx exec -e GH_TOKEN -e ENABLE_CLAUDEAI_MCP_SERVERS=false -w "$WT_DIR" "$SANDBOX_NAME" \
+    sbx exec -e GH_TOKEN "${GIT_ID_ENV[@]}" -e ENABLE_CLAUDEAI_MCP_SERVERS=false -w "$WT_DIR" "$SANDBOX_NAME" \
       bash -c 'echo $$ > /tmp/ralph-agent.pid; export PATH="$HOME/.local/bin:$PATH"; exec claude -p "$1" --output-format stream-json --verbose --dangerously-skip-permissions' _ "$PROMPT" \
       < /dev/null 2>&1 | tee "$iter_log" | \
       jq --unbuffered -rR '(fromjson? // {type: "raw", text: .}) |
@@ -642,7 +659,7 @@ ${LATEST_VERDICTS}
     # OPENCODE_PERMISSION keeps edits/bash/webfetch allowed even if opencode.json is missing in the worktree.
     PROVIDER_KEY_VAR=$(provider_env "$PROVIDER")
     export "$PROVIDER_KEY_VAR"
-    sbx exec -e GH_TOKEN -e "$PROVIDER_KEY_VAR" -e 'OPENCODE_PERMISSION={"edit":"allow","bash":"allow","webfetch":"allow","doom_loop":"allow","external_directory":"allow"}' \
+    sbx exec -e GH_TOKEN "${GIT_ID_ENV[@]}" -e "$PROVIDER_KEY_VAR" -e 'OPENCODE_PERMISSION={"edit":"allow","bash":"allow","webfetch":"allow","doom_loop":"allow","external_directory":"allow"}' \
       -w "$WT_DIR" "$SANDBOX_NAME" \
       bash -c 'echo $$ > /tmp/ralph-agent.pid; export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"; exec opencode run --format json --auto --model "$2" "$1"' _ "$PROMPT" "$PROVIDER/$MODEL" \
       < /dev/null 2>&1 | tee "$iter_log" | \
