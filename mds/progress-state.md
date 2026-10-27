@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W5.7 Bootstrap unfamiliar API e2e done (2026-10-27): Harbor bootstrap from docs alone verified via oracle + fake sync Complete with ModelCall 0; negative trust-boundary test (src/autobridge never imports verifier/simulators, no path to hidden, guard rejects generated/connectors); date ambiguity flagged ambiguous, 4 hypotheses with evidence, resolved within probe budget via EIG probing or Degraded with open questions; L3 assert <2, BudgetExhausted→L4 never silent guess; visible tests green, Decimal money, business_date cutoff 04:00.
+P1.W6.1 SEMANTIC_VALUE_DRIFT via invariants done (2026-10-27): money_invariant (positive Decimal 2dp, missing→Degraded), business_date_invariant (posted_at→business_date via cutoff, late posting mismatch→Degraded), count_invariant (strict vs expected, over-count→Degraded); unmet_criteria names failing invariant, signals→invariant_failure, classifier→SEMANTIC_VALUE_DRIFT; schema regen, docs updated.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -18,7 +18,7 @@ P1.W5.7 Bootstrap unfamiliar API e2e done (2026-10-27): Harbor bootstrap from do
   - P1.W2.1: Seeded generator (properties, reservations, folios, late postings, duplicates, nullable, byte-identical)
   - P1.W2.2: Fault switchboard (14 mutations) + admin API on 8001/admin-net, state reset; Atlas/Harbor fault-aware
   - P1.W2.3: AtlasPMS clean OpenAPI 3.1 docs, bearer auth, offset pagination, clear statuses; readyz
-  - P1.W2.4: HarborPMS Markdown docs (one wrong example, one undocumented endpoint), cursor pagination with repeated-cursor bug, nested folios, opaque status codes, property-local dates, ambiguous date; readyz
+  - P1.W2.4: HarborPMS Markdown narrative docs (one wrong example, one undocumented endpoint), cursor pagination with repeated-cursor bug, nested folios, opaque status codes, property-local dates, ambiguous date; readyz
   - P1.W2.5: Scenario catalog 14 YAMLs (dev|heldout + fixable|escalate), loader + isolation test (each scenario exactly one drift signal)
   - P1.W2.6: Verifier service POST /verify with oracle, canonical checks, hidden mode guard
   - P1.W2.7: Verifier regression runner (regression_suite param, baseline + fixable suite), mutation helpers (10 ids, flip/drop helpers), invalid-patch trap set (7 traps, net→total_amount etc. rejected)
@@ -44,9 +44,10 @@ P1.W5.7 Bootstrap unfamiliar API e2e done (2026-10-27): Harbor bootstrap from do
   - P1.W5.5: Budgeted L2/L3 wiring (L3 assert <2 hypotheses, BudgetExhausted→L4 escalation bundle, surviving ambiguity→Degraded; 42 tests)
   - P1.W5.6: Bootstrap (docs→draft spec→compile→visible tests→verify Harbor connector from docs alone; 49 tests)
   - P1.W5.7: Bootstrap unfamiliar API e2e (test_04: negative verifier/simulators path, Harbor oracle+sync, date ambiguity probe vs Degraded, L3 assert, BudgetExhausted→L4, visible tests, Decimal)
-- Tests: 1570 pass / 0 fail / 0 skip (autobridge 90.78%, verifier 93.78%, simulators 98.54%; ui –) + 39 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04, 21 skipped when no Docker)
+  - P1.W6.1: Semantic invariants via checks (money_invariant, business_date_invariant, count_invariant) → Degraded with named unmet_criteria + SEMANTIC_VALUE_DRIFT; 30 tests
+- Tests: 1600 pass / 0 fail / 0 skip (autobridge 90.66%, verifier 93.78%, simulators 98.54%; ui –) + 39 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04, 21 skipped when no Docker)
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (39 pass, 21 skipped) / `make lint` + `make typecheck` green
 
 ## Next tasks
-1. **P1.W6.1** — SEMANTIC_VALUE_DRIFT detection via invariants (money/date/count invariant fails)
-2. **P1.W6.2** — Scenarios gross_to_net, tz_boundary_shift, status_vocab_change, endpoint_removed, token_revoked wired end to end
+1. **P1.W6.2** — Scenarios gross_to_net, tz_boundary_shift, status_vocab_change, endpoint_removed, token_revoked wired end to end
+2. **P1.W6.3** — Escalation bundle format and storage on RepairRun

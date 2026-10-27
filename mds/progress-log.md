@@ -1134,3 +1134,36 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - Bootstrap date probing now covers W5.7 "resolved within probe budget or Degraded" — W6 will need similar invariant checks for gross_to_net/tz_boundary_shift
 - No docs page changed for W5.7; docs/architecture.md already covers bootstrap; W10 will finalize all docs
 
+## P1.W6.1 — Semantic invariants (SEMANTIC_VALUE_DRIFT via money/date/count)
+**Date:** 2026-10-27
+**Ref:** plan §4 W6 + §2.5 SEMANTIC_VALUE_DRIFT (P1.W6.1)
+
+**What was done:**
+- Extended `src/autobridge/spec/models.py` CheckKind with money_invariant, business_date_invariant, count_invariant (each with field/reference_field/cutoff validation and cross-ref against entity fields; schema regenerated)
+- New `src/autobridge/runtime/checks.py` invariants: check_money_invariant (positive Decimal 2dp, nullable only for cancelled/no_show, missing→Degraded), check_business_date_invariant (posted_at→business_date via cutoff, late posting 03:00 UTC with cutoff 4 should be prior day→Degraded), check_count_invariant (strict vs expected_count/compare_to_value, over-count also Degraded); wired in run_checks + evaluate_entity_checks
+- Wired `src/autobridge/drift/signals.py` (new crit kinds → invariant_failure) and `classifier.py` (_match_semantic recognizes new names → SEMANTIC_VALUE_DRIFT)
+- Updated `schemas/connector-spec.v1.json` (regenerated) and `docs/connector-spec.md` (document semantic invariants section); reference specs left as baseline (old specs default new fields to None, still load)
+- Added `tests/unit/test_autobridge_semantic_invariants.py` (30 tests: money pass/negative/missing/cancelled/Decimal/invalid/empty, business_date valid/late-mismatch/correct/null/empty, count pass/low/high/field/compare_to, run_checks variants, evaluate + determine_outcome Degraded with named invariant, classifier + signals SEMANTIC_VALUE_DRIFT)
+
+**Key decisions:**
+- CheckKind extended (not transforms — transforms closed per directives §1; checks are invariants, distinct set)
+- business_date_invariant UTC fallback when no property timezone in canonical record; most daytime postings pass, only late postings near midnight detect tz_boundary_shift (full tz requires property map, deferred)
+- money_invariant structural (positive Decimal 2dp) not drift magnitude — gross→net 0.9x still passes structurally, but W6.2 will wire gross_to_net via verifier money_mismatch while engine provides Degraded signal with named criterion; count_invariant over-count also fails (duplicate detection)
+- Reference specs not modified to include new invariants (baseline must stay Complete; W6.2 will add them when wiring scenarios)
+
+**Files changed:**
+- `src/autobridge/spec/models.py` — new CheckKind variants + EntityCheck field/reference_field/cutoff + cross-ref validators
+- `src/autobridge/runtime/checks.py` — new check_*_invariant functions + run_checks branches + evaluate normalization
+- `src/autobridge/drift/signals.py` — new crit set → invariant_failure
+- `src/autobridge/drift/classifier.py` — extend _match_semantic key list
+- `schemas/connector-spec.v1.json` — regenerated
+- `docs/connector-spec.md` — semantic invariants docs
+- `tests/unit/test_autobridge_semantic_invariants.py` — new, 30 tests
+
+**Notes for next iteration:**
+- Next: P1.W6.2 will wire gross_to_net/tz_boundary_shift/status_vocab_change/endpoint_removed/token_revoked end-to-end (gross_to_net→Degraded with money invariant named, then verified repair or escalate; endpoint_removed/token_revoked escalate with no patch)
+- Coverage: autobridge 90.66% (checks.py 85% — uncovered are property-tz branch and literal compare_to edge; still above gate)
+- Trust boundaries clean — no verifier/simulators imports in new code
+
+Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
