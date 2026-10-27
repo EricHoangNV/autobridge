@@ -41,7 +41,7 @@
 
 #### W3 — Runtime / interpreter (plan §4 W3, §2.4)
 - [x] P1.W3.1 `src/autobridge/runtime/interpreter.py` + `http.py`: executes a `ConnectorSpec` operation with retry/backoff from `rate_limit.retry`; `ModelCall` count stays 0 on a reference sync
-- [ ] P1.W3.2 Auth strategies `auth.py`: bearer, api-key header, basic, oauth2 client-credentials; credentials read by `credential_ref` from the environment, never logged
+- [>] P1.W3.2 Auth strategies `auth.py`: bearer, api-key header, basic, oauth2 client-credentials; credentials read by `credential_ref` from the environment, never logged — in progress: sbx1 since 2026-10-27 04:05
 - [ ] P1.W3.3 Pagination `pagination.py`: offset / cursor / page with `stop_when` guards (`null_cursor`, `repeated_cursor`, …); `repeated_cursor` stops the loop and marks `Degraded` with `no_loss` named
 - [ ] P1.W3.4 Closed transform registry (`runtime/transforms/`: `date_local`, `datetime_utc`, `money`, `enum_map`, `flatten`, `coalesce`, `const`, `concat`, `business_date`), `checks.py` (`unique_key`, `no_loss`, `date_order`), `checkpoint.py`; money `Decimal` end to end; a timestamp crossing the business-date boundary lands on the right local date; unknown enum value → `Blocked`
 - [ ] P1.W3.5 `SyncRun` outcome `Complete | Degraded | Blocked` + `unmet_criteria[]` + `data_readiness` (freshness, completeness) + fingerprint id written per run (`src/autobridge/engine/sync_run.py`)
