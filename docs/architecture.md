@@ -122,7 +122,10 @@ autobridge/
 
 Python is a **uv workspace** with three packages (`autobridge`, `verifier`,
 `simulators`) and an import-linter contract that `autobridge` never imports
-the other two (`make lint-imports`). The UI is a separate npm package.
+the other two (`make lint-imports`). Sanctioned exception (DIRECTIVES §2):
+the verifier may import the simulators' shared data-generator code
+(`simulators/common/`, `simulators/scenarios/`); the engine still may not.
+The UI is a separate npm package.
 
 ## 4. Core data model (plan §2.3)
 

@@ -104,6 +104,12 @@ type = "forbidden"
 source_modules = ["autobridge"]
 forbidden_modules = ["verifier", "simulators"]
 
+[[tool.importlinter.contracts]]
+name = "verifier must not import autobridge (it may use simulators/common and simulators/scenarios)"
+type = "forbidden"
+source_modules = ["verifier"]
+forbidden_modules = ["autobridge"]
+
 [dependency-groups]
 dev = [
     "pytest-randomly>=5.0.0",
