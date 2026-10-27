@@ -58,6 +58,20 @@ The baseline arm is pluggable via the drivers in
   / ``visible_tests`` / ``token_ceiling`` / ``wall_clock_s``, asserted by
   :func:`assert_inputs_equal` pre-run and :func:`verify_matched_trial`
   post-run.
+
+Secondary diagnostic control — ``one_shot_generator`` (P1.W8.3, plan §2.10)
+------------------------------------------------------------------------
+:mod:`autobridge.bench.one_shot` is the secondary control: a single
+:class:`LLMProvider` completion (``OneShotGenerator``) that must produce a
+``ConnectorSpec`` YAML in one pass, with the *same* :class:`HarnessInputs`
+the other two arms receive.  It goes through :class:`Budget` /
+:class:`BudgetedProvider` so token/wall ceilings are identical, and cost is
+via :func:`estimate_cost` (Decimal).  Helpers
+:func:`build_one_shot_prompt` / :func:`extract_spec_yaml` /
+:func:`try_parse_spec_yaml` normalize prompt + YAML extraction;
+:func:`run_one_shot_arm` returns ``ArmResult(arm="one_shot")`` for scoring;
+:func:`run_trial_with_one_shot` runs all three arms under a three-way
+matched audit.
 """
 
 from __future__ import annotations
@@ -347,7 +361,7 @@ def assert_budget_fields_equal(a: HarnessInputs, b: HarnessInputs) -> None:
 class ArmResult:
     """Result of one arm for one scenario × trial."""
 
-    arm: Literal["autobridge", "baseline"]
+    arm: Literal["autobridge", "baseline", "one_shot"]
     inputs: HarnessInputs
     success: bool
     elapsed_ms: float = 0.0
@@ -363,7 +377,7 @@ class ArmResult:
     # Error / model id when failed
     error: str | None = None
     model: str | None = None
-    # Optional produced spec (baseline)
+    # Optional produced spec (baseline / one_shot)
     spec: dict[str, Any] | None = None
 
     @property
@@ -405,7 +419,12 @@ class ArmResult:
 
 @dataclass(frozen=True, slots=True)
 class TrialResult:
-    """Both arms for one scenario × trial, with matched-budget audit."""
+    """Both arms for one scenario × trial, with matched-budget audit.
+
+    ``one_shot`` is the optional secondary diagnostic control arm
+    (P1.W8.3, plan §2.10): when present it received the same
+    :class:`HarnessInputs` as the other two arms.
+    """
 
     scenario_id: str
     trial: int
@@ -415,9 +434,10 @@ class TrialResult:
     baseline: ArmResult
     matched: bool
     matched_error: str | None = None
+    one_shot: ArmResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "scenario_id": self.scenario_id,
             "trial": self.trial,
             "seed": self.seed,
@@ -428,6 +448,9 @@ class TrialResult:
             "autobridge": self.autobridge.to_dict(),
             "baseline": self.baseline.to_dict(),
         }
+        if self.one_shot is not None:
+            d["one_shot"] = self.one_shot.to_dict()
+        return d
 
 
 @dataclass
@@ -459,9 +482,11 @@ class BenchResult:
 
 
 def verify_matched_trial(trial: TrialResult) -> None:
-    """Assert trial's two arms had identical inputs (post-hoc audit).
+    """Assert trial's arms had identical inputs (post-hoc audit).
 
     Raises :class:`AssertionError` if ``trial.matched`` is False.
+    When the optional ``one_shot`` arm is present it is included in the
+    three-way audit.
     """
     if not trial.matched:
         raise AssertionError(
@@ -469,6 +494,8 @@ def verify_matched_trial(trial: TrialResult) -> None:
         )
     # Also assert the actual inputs objects are equal
     assert_inputs_equal(trial.autobridge.inputs, trial.baseline.inputs)
+    if trial.one_shot is not None:
+        assert_inputs_equal(trial.baseline.inputs, trial.one_shot.inputs)
 
 
 def check_heldout_sha(heldout_dir: str | pathlib.Path | None = None) -> None:

@@ -28,6 +28,27 @@ from autobridge.bench.baseline_coding_agent import (
     parse_codex_output,
 )
 
+try:
+    from autobridge.bench.one_shot import (  # noqa: PLC0415
+        OneShotGenerator,
+        OneShotResult,
+        build_one_shot_prompt,
+        extract_spec_yaml,
+        load_docs_text,
+        run_one_shot_arm,
+        run_trial_with_one_shot,
+        try_parse_spec_yaml,
+    )
+except Exception:  # pragma: no cover
+    OneShotGenerator = None  # type: ignore
+    OneShotResult = None  # type: ignore
+    build_one_shot_prompt = None  # type: ignore
+    extract_spec_yaml = None  # type: ignore
+    load_docs_text = None  # type: ignore
+    run_one_shot_arm = None  # type: ignore
+    run_trial_with_one_shot = None  # type: ignore
+    try_parse_spec_yaml = None  # type: ignore
+
 __all__ = [
     "BaselineLLMDriver",
     "ClaudeCliError",
@@ -36,9 +57,17 @@ __all__ = [
     "CodexCliError",
     "FakeClaudeDriver",
     "FakeCodexDriver",
+    "OneShotGenerator",
+    "OneShotResult",
     "build_fake_claude_output",
     "build_fake_codex_output",
+    "build_one_shot_prompt",
+    "extract_spec_yaml",
     "get_baseline_driver",
+    "load_docs_text",
     "parse_claude_output",
     "parse_codex_output",
+    "run_one_shot_arm",
+    "run_trial_with_one_shot",
+    "try_parse_spec_yaml",
 ]

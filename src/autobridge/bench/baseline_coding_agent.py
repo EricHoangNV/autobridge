@@ -788,4 +788,9 @@ def get_baseline_driver(
         return CodexCliDriver(cli_path=cli_path, timeout_s=timeout_s, model=model)
     if kind_norm in ("llm", "fallback", "provider", "baseline_llm"):
         return BaselineLLMDriver(provider=provider, model=model)
-    raise ValueError(f"unknown baseline driver kind {kind!r}; expected 'claude', 'codex' or 'llm'")
+    if kind_norm in ("one_shot", "oneshot", "one-shot"):
+        # Lazy import to avoid cycle (one_shot imports from this module)
+        from autobridge.bench.one_shot import OneShotGenerator  # noqa: PLC0415
+
+        return OneShotGenerator(provider=provider, model=model)
+    raise ValueError(f"unknown baseline driver kind {kind!r}; expected 'claude', 'codex', 'llm' or 'one_shot'")

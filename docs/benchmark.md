@@ -67,9 +67,25 @@ from autobridge.bench.baseline_coding_agent import get_baseline_driver
 driver = get_baseline_driver("claude")   # ClaudeCodeDriver
 driver = get_baseline_driver("codex")    # CodexCliDriver (stub)
 driver = get_baseline_driver("llm")      # BaselineLLMDriver (fallback, plan §9)
+driver = get_baseline_driver("one_shot") # OneShotGenerator (secondary control, P1.W8.3)
 ```
 
-`make bench` selects via `BASELINE_DRIVER` env (`claude` | `codex` | `llm`); default is `claude` when the binary is present, otherwise `llm` fallback so the harness is runnable in CI without credentials.
+`make bench` selects via `BASELINE_DRIVER` env (`claude` | `codex` | `llm` | `one_shot`); default is `claude` when the binary is present, otherwise `llm` fallback so the harness is runnable in CI without credentials.
+
+## Secondary diagnostic control — `one_shot_generator` (P1.W8.3)
+
+`src/autobridge/bench/one_shot.py:OneShotGenerator` is the secondary control: a single `LLMProvider.complete` that must produce a `ConnectorSpec` YAML in one pass, with the *same* `HarnessInputs` the other two arms receive (docs volume, sandbox URL, credentials as refs, visible tests, token ceiling, wall-clock — asserted by `assert_inputs_equal` / `assert_budget_fields_equal` three-way). It goes through `Budget` + `BudgetedProvider` so ceilings are identical and every call lands in `ModelCall`; cost is `Decimal` via `estimate_cost`.
+
+Helpers:
+
+* `build_one_shot_prompt(inputs, docs_text)` — prompt contains scenario/trial/seed, docs Volume/ref, sandbox URL/image/runtime_target, credential refs (names only), visible tests, token/wall ceilings, plus loaded vendor docs text; no secret values (DIRECTIVES §6).
+* `extract_spec_yaml(text)` — normalizes fenced ```yaml ... ``` or bare YAML.
+* `try_parse_spec_yaml(text)` — returns dict when valid YAML, else None.
+* `load_docs_text(inputs)` — reads docs file/dir from mounted volume (max 120k chars).
+* `run_one_shot_arm(inputs, provider, budget, tier, ...)` → `ArmResult(arm="one_shot")` with usage/cost/spec.
+* `run_trial_with_one_shot(config, scenario_id, trial, ...)` — runs all three arms under matched audit, returning a `TrialResult` with extra `one_shot` arm.
+
+If the agentic baseline beats the one-shot, the gain is from tool use/iteration, not just model size. The one-shot's `spec_dict` is available for verifier scoring (W8.4) alongside the other arms.
 
 ## Scoring and reports
 
