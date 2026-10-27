@@ -2,13 +2,13 @@
 
 ## Current State
 
+P1.W6.5 Safety model complete + e2e test_05 done (2026-10-27): 5 scenarios via fake+live admin-oracle (gross_to_net Degraded money_invariant, tz_shift Degraded business_date, status_vocab_change Blocked unknown_enum, endpoint_removed/token_revoked Blocked+escalate no patch), regression gate invalid_patch_trap rejected, escalation bundle single '?' stored, Decimal+04:00 verified, secrets redacted, frontier 0; docs/safety-model.md §§3,7-12.
+
 P1.W6.4 Regression gate on every candidate release done (2026-10-27): verify_spec POST /verify with regression_suite, GateBlockedError on verdict/regression fail, invalid_patch_trap rejected, engine releases gate via verifier_url before persisting, 29 tests + live oracle checks; docs/safety-model.md §7 regression gate.
 
 P1.W6.3 Escalation bundle format done (2026-10-27): EscalationBundle (reason+one precise question with single '?' + evidence_ids + suggested_action) stored as JSON on RepairRun.escalation_bundle via alembic 0003; all L4 paths (CAPABILITY_REMOVED/AUTH_REVOKED/AUTH_EXPIRED/UNKNOWN + BudgetExhausted) produce bundle with one question, to_dict/from_dict validation, controller+job handler persistence; 17 tests.
 
 P1.W6.2 5 scenarios wired end to end done (2026-10-27): gross_to_net→Degraded money_invariant via gross_sum (10% low), tz_boundary_shift→Degraded business_date_invariant (30% shifted), status_vocab_change→Blocked unknown_enum, endpoint_removed→Blocked endpoint_not_found escalate no patch, token_revoked→Blocked auth_revoked escalate no patch; classifier ENUM before CAPABILITY, HttpError→Blocked; reference specs updated with money+ business_date invariants; simulator gross_sum independent evidence.
-
-P1.W6.1 SEMANTIC_VALUE_DRIFT via invariants done (2026-10-27): money_invariant (positive Decimal 2dp, missing→Degraded), business_date_invariant (posted_at→business_date via cutoff, late posting mismatch→Degraded), count_invariant (strict vs expected, over-count→Degraded); unmet_criteria names failing invariant, signals→invariant_failure, classifier→SEMANTIC_VALUE_DRIFT; schema regen, docs updated.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -51,12 +51,15 @@ P1.W6.1 SEMANTIC_VALUE_DRIFT via invariants done (2026-10-27): money_invariant (
   - P1.W5.6: Bootstrap (docs→draft spec→compile→visible tests→verify Harbor connector from docs alone; 49 tests)
   - P1.W5.7: Bootstrap unfamiliar API e2e (test_04: negative verifier/simulators path, Harbor oracle+sync, date ambiguity probe vs Degraded, L3 assert, BudgetExhausted→L4, visible tests, Decimal)
    - P1.W6.1: Semantic invariants via checks (money_invariant, business_date_invariant, count_invariant) → Degraded with named unmet_criteria + SEMANTIC_VALUE_DRIFT; 30 tests
-   - P1.W6.2: 5 scenarios wired end to end (gross_to_net Degraded money, tz_shift Degraded business_date, status Blocked unknown_enum, endpoint/token Blocked escalate no patch; HttpError→Blocked, classifier reorder, gross_sum evidence; 8 tests)
-   - P1.W6.3: Escalation bundle format (evidence bundle + one precise question) + storage on RepairRun via alembic 0003; all L4 escalate paths produce bundle with single '?', to_dict/from_dict validated, controller+job handler persist; 17 tests
-   - P1.W6.4: Regression gate on every candidate release (verifier POST /verify with regression_suite, GateBlockedError on verdict/regression fail, invalid_patch_trap rejected, engine releases gate via verifier_url; 29 tests)
-- Tests: 1629 pass / 0 fail / 0 skip (autobridge 90.00%, verifier 93.78%, simulators 96.55%; ui –) + 39 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04, 21 skipped when no Docker)
-- Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (39 pass, 21 skipped) / `make lint` + `make typecheck` green
+    - P1.W6.2: 5 scenarios wired end to end (gross_to_net Degraded money, tz_shift Degraded business_date, status Blocked unknown_enum, endpoint/token Blocked escalate no patch; HttpError→Blocked, classifier reorder, gross_sum evidence; 8 tests)
+    - P1.W6.3: Escalation bundle format (evidence bundle + one precise question) + storage on RepairRun via alembic 0003; all L4 escalate paths produce bundle with single '?', to_dict/from_dict validated, controller+job handler persist; 17 tests
+    - P1.W6.4: Regression gate on every candidate release (verifier POST /verify with regression_suite, GateBlockedError on verdict/regression fail, invalid_patch_trap rejected, engine releases gate via verifier_url; 29 tests)
+    - P1.W6.5: Safety model complete + e2e test_05 safety and semantic (gross_to_net→Degraded money_invariant, tz_shift→Degraded business_date, status/endpoint/token→Blocked escalate no patch, regression gate, Dec 2dp/business-date, redaction, frontier 0; 20 tests)
+- Tests: 1654 pass / 0 fail / 0 skip (autobridge 91%, verifier 93.78%, simulators 96.55%; ui –) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker)
+- Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (59 pass, 23 skipped) / `make lint` + `make typecheck` green
 
 ## Next tasks
-1. **P1.W6.5** — e2e test_05 + docs/safety-model complete
+1. **P1.W7.1** — FastAPI control plane (§2.11) incl. model-usage/bench/scorecards/inject-fault
+2. **P1.W7.2** — SSE run events + redaction over full stream
+3. **P1.W7.3** — OpenAPI → ui typed client
 

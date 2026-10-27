@@ -1248,3 +1248,33 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 
 **Next:** P1.W6.5 e2e test_05_safety_and_semantic + docs/safety-model complete
 
+## 2026-10-27 — P1.W6.5 `tests/e2e/test_05_safety_and_semantic.py` + `docs/safety-model.md` complete
+
+**Date:** 2026-10-27
+**Ref:** plan §4 W6 (safety + semantic drift) + §3; task P1.W6.5. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `tests/e2e/test_05_safety_and_semantic.py` (20 tests, 2 skipped live): gross_to_net→Degraded money_invariant via gross_sum (fake+live), tz_boundary_shift→Degraded business_date_invariant, status_vocab_change→Blocked unknown_enum SEMANTIC, endpoint_removed/token_revoked→Blocked escalate no patch, escalation bundle single '?' stored via controller+job handler, regression gate blocks via ensure_gate_passes, invalid_patch_trap rejected via oracle/live, Complete still passes, money Decimal never float, 04:00 cutoff correctness, redaction placeholder checks, Blocked/Complete freshness/completeness, fingerprint id stable and drift-sensitive, fingerprint config toggles, no fixture leak (hidden mode bounded names), secrets never in spec/bundle, unknown_enum never guessed, frontier 0 via fake sync+ladder.
+- Updated `docs/safety-model.md`: header Complete through P1.W6, §3 split verifier vs engine invariants with table (money/business_date/count) + §3.1 semantic invariants→Degraded mapping, new §8 5-scenarios table (outcome/class/ladder), §10 escalation bundle (validation single '?', storage alembic 0003, producers BudgetExhausted/CAPABILITY/AUTH), §11 safety invariants (no guessing, typed sync, Decimal/business-local, deterministic frontier 0, no leakage, secrets, regression gate), §12 next steps.
+- Renamed `tests/unit/test_w6_2_scenarios.py`→`test_autobridge_w6_2_scenarios.py` and `test_w6_3_escalation_bundle.py`→`test_autobridge_w6_3_escalation_bundle.py` so W6 tests count toward autobridge 90% gate (previously excluded by `test_autobridge_*.py` glob).
+- Fixed evidence redaction test to use `redact`/`redact_payload` (not missing `redact_text`), added ruff noqa for fake client ARG002/B023, verified all W6 paths use deterministic fake transports (ModelCall 0) and live admin-oracle when stack up.
+
+**Key decisions:**
+- Fake transport pattern `_fake_client_with_gross` mirrors simulator gross_sum independent evidence (baseline sum) for money_invariant low-only check (actual < expected with 5% tol); live oracle via `post_verify` against verifier when `SIM_ADMIN_PORTS` reachable.
+- Safety model split: verifier checks (no loss/money_exact/status) vs engine invents (money/business_date/count) — both produce Degraded/Blocked but engine names `unmet_criteria` with `invariant_results.check` and classifier SEMANTIC_VALUE_DRIFT; prevents double-counting.
+- Coverage fix by renaming not Makefile change: Makefile gate `test_autobridge_*.py` intentionally excludes non-autobridge files; W6 files belong to autobridge package so renamed to match, pushing coverage 89.76%→91% without new code.
+- Redaction via `EvidenceStore` boundary already tested; test asserts spec base_url placeholder `${VAR}`, payload redaction, and bundle never contains `sk-`/secret.
+
+**Files changed:**
+- `tests/e2e/test_05_safety_and_semantic.py` (new, 20 tests)
+- `docs/safety-model.md` (complete through W6, §§3,3.1,8-12)
+- `tests/unit/test_autobridge_w6_2_scenarios.py` (rename from test_w6_2), `tests/unit/test_autobridge_w6_3_escalation_bundle.py` (rename)
+
+**Checks:**
+- `make test` — 1654 pass (autobridge 91%, verifier 93.78%, simulators 96.55%; 90% gate) — 1343 autobridge (incl. W6 renames) + 92 verifier + 219 simulators; `make lint` green (ruff ARG002/B023 noqa), `make typecheck` green, `pytest tests/e2e/test_05...` 20 pass 2 skipped live.
+
+**Notes for next iteration:**
+- Next: P1.W7.1 FastAPI control plane (plan §2.11) — every endpoint incl. model-usage/bench/scorecards/inject-fault (labelled, proxy to sim admin); schemathesis contract tests.
+- P1.W6.5 closes W6 workstream: all 5 scenarios end-to-end, escalation bundle, regression gate, safety model; no open blockers.
+- Gotchas: `make test` gate only counts `test_autobridge_*.py` — future W6+ files must use that prefix; money 2dp via string split not Decimal equality to reject 90.000; gross_sum low-only prevents baseline false positive.
+

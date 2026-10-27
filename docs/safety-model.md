@@ -1,9 +1,10 @@
 # AutoBridge — safety model
 
-> First pass for P1.W2.9 (plan §4 W2, §2.7, §2.8). Covers the verifier
-> trust boundary, oracle, scenario catalog and the checks that gate every
-> release. Later workstreams extend this page (ladders, escalation, MCP
-> guardian); the final version is due in W10.
+> Complete through P1.W6 (plan §4 W6, §2.5–§2.8). Covers the verifier
+> trust boundary, oracle, scenario catalog, semantic invariants, drift
+> detection, escalation bundles and the regression gate on every release.
+> Phase 2 extensions (MCP guardian, Edge) will extend this page; the
+> final reference is updated in W10.
 
 ## 1. Why a separate verifier
 
@@ -52,23 +53,57 @@ Seeds are byte-identical: the same seed always yields the same
 `properties`/`reservations`/`folios` set, including late postings (00:00–04:00
 → next business date), duplicate injections and nullable fields.
 
-## 3. Canonical checks
+## 3. Canonical checks (verifier) and semantic invariants (engine)
 
-| Check | What it enforces | Bounded name(s) |
-|---|---|---|
-| Record set by key | reservation/charge ids match ground truth | `record_set_mismatch` |
-| No duplicates | each key appears once | `duplicate_records`, `unique_key` |
-| No loss | produced count ≥ expected | `no_loss`, `loss_detected` |
-| Money exact | `Decimal` with 2dp, exact value per record | `money_mismatch`, `money_format` |
-| Business date | `business_date` equals oracle; `posted_at`→`business_date` via property timezone cutoff 04:00 | `business_date_mismatch`, `date_order` |
-| Status mapping | status in closed canonical vocab | `unknown_status`, `unknown_enum`, `status_mapping` |
-| Field presence | required fields present (e.g. `guest_name` after rename) | `field_missing` |
-| Pagination & transport | strategy mismatch, repeated cursor, 429/503 without retry, 401/403/404, trap, duplicates, tz shift | `pagination_shape`, `repeated_cursor`, `rate_limited`, `transient_error`, `auth_expired`, `auth_revoked`, `endpoint_not_found`, `invalid_patch_trap` |
+Verifier checks compare `produced` to `expected` (Section 2). Engine
+invariants run on the canonical records after mapping, before the sync
+outcome is decided.
+
+| Check kind | Where | What it enforces | Bounded name(s) |
+|---|---|---|---|
+| Record set by key | verifier | reservation/charge ids match ground truth | `record_set_mismatch` |
+| No duplicates | verifier + engine `unique_key` | each key appears once | `duplicate_records`, `unique_key` |
+| No loss | verifier + engine `no_loss` | produced count ≥ expected | `no_loss`, `loss_detected` |
+| Money exact | verifier | `Decimal` with 2dp, exact value per record | `money_mismatch`, `money_format` |
+| Money invariant | **engine** | positive `Decimal` 2dp per record; when `compare_to: $.gross_sum` present, actual sum must not be more than 5% below expected (only low triggers, negative allowed for FolioCharge refunds) | `money_invariant` |
+| Business-date invariant | **engine** | `business_date` equals `posted_at`→`business_date` via property timezone cutoff 04:00; only late postings near the boundary fail | `business_date_invariant` |
+| Count invariant | **engine** | record count equals expected (`expected_count`, `compare_to: $.total`, or `compare_to_value`); over-count also fails | `count_invariant` |
+| Business date | verifier | `business_date` equals oracle; `posted_at`→`business_date` via property timezone cutoff 04:00 | `business_date_mismatch`, `date_order` |
+| Status mapping | verifier + engine `enum_map on_unknown: block` | status in closed canonical vocab | `unknown_status`, `unknown_enum`, `status_mapping` |
+| Field presence | verifier | required fields present (e.g. `guest_name` after rename) | `field_missing` |
+| Pagination & transport | verifier | strategy mismatch, repeated cursor, 429/503 without retry, 401/403/404, trap, duplicates, tz shift | `pagination_shape`, `repeated_cursor`, `rate_limited`, `transient_error`, `auth_expired`, `auth_revoked`, `endpoint_not_found`, `invalid_patch_trap` |
 
 Money is `Decimal` end to end (never float). Dates are property-local
 business dates: `business_date_for_posted_at(posted_at, tz, cutoff=04:00)`
 handles the 04:00 boundary — a `posted_at` at 02:00 UTC in `America/New_York`
 lands on the next business date.
+
+### 3.1 Semantic invariants → Degraded with named criteria
+
+Engine invariants are schema-valid but value-wrong drift — they mark the
+sync `Degraded` with the failing invariant named in `unmet_criteria` and
+classified as `SEMANTIC_VALUE_DRIFT` (never silently `Complete`):
+
+```
+# gross_to_net: server returns gross_sum = baseline sum as independent evidence;
+# money_invariant compares actual sum vs expected 5% tolerance, only when low.
+sync outcome: Degraded  unmet: [money_invariant]  class: SEMANTIC_VALUE_DRIFT  signal: invariant_failure
+
+# tz_boundary_shift: 30% of folio business_dates shifted +1 day via charge_id hash;
+# business_date_invariant detects posted_at→business_date mismatch via property_id→tz lookup.
+sync outcome: Degraded  unmet: [business_date_invariant]  class: SEMANTIC_VALUE_DRIFT
+
+# status_vocab_change: opaque status not in enum_map on_unknown:block
+sync outcome: Blocked  unmet: [unknown_enum, unknown_enum:status]  class: ENUM_NEW_VALUE  (Block before Degraded)
+
+# endpoint_removed: HttpError 404 → Blocked endpoint_not_found → escalate no patch
+# token_revoked:    HttpError 403 → Blocked auth_revoked        → escalate no patch
+```
+
+Surviving ambiguity after L2/L3 also yields `Degraded` with `open_questions`
+(plan §2.5). `tests/e2e/test_05_safety_and_semantic.py` asserts all five
+scenarios via fake transports and proves the engine never imports
+`verifier`/`simulators`.
 
 For each scenario the catalog lists the *primary* failed check. Secondary
 consequences (e.g. `no_loss` caused by a 429 truncation) are filtered so
@@ -192,7 +227,22 @@ unreachable handling, `regression_suite` forwarding, `create_release` and
 `oracle_verdict` check that the trap spec is rejected and a wrong pagination
 spec fails `pagination_shape`.
 
-## 8. Network topology (excerpt)
+## 8. Five scenarios wired end to end (P1.W6.2)
+
+The safety net proves that semantic and transport drift are distinguished
+and handled by the correct ladder path:
+
+| Scenario | Simulator fault | Engine sync outcome | Classifier | Ladder result | E2E proof |
+|---|---|---|---|---|---|
+| `gross_to_net` | Folio amounts switched gross→net; `gross_sum` = baseline sum as independent evidence | `Degraded` `money_invariant` | `SEMANTIC_VALUE_DRIFT` | `escalate` with evidence bundle (no deterministic rule for net drift; plausible-but-wrong `net→total_amount` is the `invalid_patch_trap` the verifier must reject) | `test_gross_to_net_fake_degraded` + `test_invalid_patch_trap_rejected_via_oracle` |
+| `tz_boundary_shift` | 30% folio `business_date` shifted +1 day via `charge_id` hash; `posted_at` unchanged | `Degraded` `business_date_invariant` | `SEMANTIC_VALUE_DRIFT` | `escalate` with bundle | `test_tz_boundary_shift_fake_degraded` |
+| `status_vocab_change` | Reservation `status` vocabulary changed | `Blocked` `unknown_enum` | `ENUM_NEW_VALUE` (ENUM before CAPABILITY) | `escalate` or `propose` only with evidence; never silently guessed `Degraded` | `test_status_vocab_change_fake_blocked` |
+| `endpoint_removed` | `GET /reservations` → 404 | `Blocked` `endpoint_not_found` | `CAPABILITY_REMOVED` | `escalate` no patch | `test_endpoint_removed_fake_blocked` |
+| `token_revoked` | `Authorization` → 403 | `Blocked` `auth_revoked` | `AUTH_REVOKED` | `escalate` no patch | `test_token_revoked_fake_blocked` |
+
+HttpError variants (401 `auth_expired`, 429 `rate_limited`, 503 `transient_error`) also map to `Blocked` with named criteria. `tests/e2e/test_05_safety_and_semantic.py` replays each via a fake `HttpError` client and live via the simulator admin API when the stack is up. Money is `Decimal` 2dp; a timestamp crossing the 04:00 business-date boundary lands on the right local date (§3.1).
+
+## 9. Network topology (excerpt)
 
 ```
 engine-net   control, worker, runtime-sandbox, ui, bench
@@ -204,8 +254,11 @@ admin-net    control ↔ sim admin :8001 (+ host 8109/8110 for e2e)
 No `internal: true` — host ports are required for `make smoke`/`make e2e`.
 A dedicated unit test (`test_autobridge_compose.py`) asserts the intended
 attachments statically; smoke probes assert reachability and isolation live.
+Negative test: `DockerSandbox` cannot reach the verifier or simulator admin
+(runtime target allowlist); host and `control` (admin-net) are the only paths
+with `X-Admin-Network: admin-net`.
 
-## 9. Escalation bundle (L4)
+## 10. Escalation bundle (L4)
 
 When no L0/L1 rule matches, the budget is exhausted, or the drift class is
 `CAPABILITY_REMOVED` / `AUTH_REVOKED`, the ladder emits an **escalation
@@ -221,24 +274,71 @@ EscalationBundle {
 }
 ```
 
-Storage: `RepairRun.escalation_bundle` (JSON, nullable). Every row with
-`decision == "escalate"` has a non-null bundle whose `question` passes
-validation (`from_dict` checks: non-empty, exactly one `?`, ends with `?`).
-`decision == "propose"` has `escalation_bundle == null`.
+Validation (`from_dict`): non-empty `reason`, non-empty `question`, exactly one `?`, ends with `?`.
+
+Storage: `RepairRun.escalation_bundle` (JSON, nullable, alembic `0003_escalation_bundle`).
+Every row with `decision == "escalate"` has a non-null bundle whose `question`
+passes validation; `decision == "propose"` has `escalation_bundle == null`.
+Seeded via `src/autobridge/repair/escalation.py` and persisted by
+`RepairController` + `repair_job_handler`.
 
 Producers:
 
 * `escalation_for_no_fix(reason, evidence_ids, question?)` — generic L4 path
   and the two non-fixable classes (`CAPABILITY_REMOVED`, `AUTH_REVOKED`) plus
-  `AUTH_EXPIRED` when refresh is not permitted.
+  `AUTH_EXPIRED` when refresh is not permitted (`oauth2_client_credentials` with
+  `token_url` can refresh instead).
 * `escalation_from_budget_exhausted(exc, evidence_ids, context)` — L2/L3
-  `BudgetExhausted` (probe vs token wording, single question).
+  `BudgetExhausted` (probe vs token wording, single question; `Budget` raises at
+  ceiling, never silently retries).
 
 Consumers: control API surfaces the bundle on `GET /repairs/{id}` and the
 `/repairs/[id]` screen renders the evidence bundle side-by-side with the
 question and Approve/Reject actions. The bundle never contains a credential
-value (redacted at the `EvidenceRecord` boundary, `evidence/redact.py`).
+value (redacted at the `EvidenceRecord` boundary, `evidence/redact.py`);
+`tests/e2e/test_05` asserts no `sk-`/secret leaks in bundles.
 
-W3–W10 extend this model with deterministic repair rules, the hypothesis
-engine and the MCP compatibility gateway.
+## 11. Safety invariants — what is guaranteed
+
+* **No silent guessing** — `unknown_enum` → `Blocked`, never `Degraded` with a
+  guessed mapping; `CAPABILITY_REMOVED`/`AUTH_REVOKED` → escalate with no patch
+  attempted; `BudgetExhausted` → escalate, never retry; surviving ambiguity →
+  `Degraded` with `open_questions`.
+* **Every sync is typed** — outcome is always `Complete | Degraded | Blocked`
+  with the unmet criterion named (`invariant_results[].check`), data readiness
+  (`freshness`/`completeness`), fingerprint id and checkpoint. `test_05`
+  asserts this for baseline, the five drift scenarios and HttpError variants.
+* **Money is Decimal, dates are business-local** — money `Decimal` 2dp end to
+  end (§3.1, connector spec `money` transform), business date via
+  `date_local` + `business_date_invariant` cutoff 04:00 (property `prop-00x` →
+  timezone map); verifier also enforces money exact and business-date equality.
+* **Deterministic first** — every `RepairRun` records `model_usage` with
+  `frontier_tokens`; known repairs show `frontier_tokens == 0` (L0/L1 only);
+  every model call goes through `LLMProvider` + `Budget` and lands in
+  `ModelCall`; `test_05` asserts frontier 0 for all W6 escalations.
+* **No fixture leakage** — verifier `POST /verify` in `hidden` mode returns
+  only bounded `failed_checks` names/counts + score; never fixture rows;
+  engine never imports `verifier`/`simulators`; `hidden_cases` never leaves its
+  package (`test_05` engine-import negative test + `_ensure_no_fixture_leak`).
+* **Secrets never in code/specs/evidence** — specs carry `credential_ref` (env
+  key name) never a value; `evidence/redact.py` strips values at the append
+  boundary; `generated/connectors/*/reference/spec.yaml` base_url is
+  `${ATLAS_BASE_URL}` placeholder; bundles and API responses carry only bounded
+  names; `test_05` searches specs/bundles/evidence for leaked `sk-`/secret.
+* **Regression gate on every release** — §7; candidate that breaks any
+  previously verified scenario or the `invalid_patch_trap` is blocked by
+  `GateBlockedError`; `test_05` proves this with a fake verifier and a live
+  oracle check (the `net→total_amount` trap).
+
+`tests/e2e/test_05_safety_and_semantic.py` is the W6 acceptance test: 14 fake-path
+tests + live admin-oracle checks when the Compose stack is up. The suite is
+independent, random-order safe and requires no prior state beyond the reference
+specs under `generated/connectors/`.
+
+## 12. Where to go next
+
+W7 adds the control plane (`/metrics/model-usage`, `POST /demo/inject-fault` with
+label) and the Next.js UI; W8 adds the matched-budget benchmark. Phase 2
+extends the model with LegacyStay, Edge targets and the MCP Guardian. This
+page is updated again in W10 with the final demo evidence.
 

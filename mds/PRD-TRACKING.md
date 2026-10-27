@@ -66,12 +66,12 @@
 - [x] P1.W5.6 `discovery/bootstrap.py` + `engine/build_run.py`: docs → draft spec → compile → visible tests → verify; Harbor connector produced from docs alone with no reference-spec access
 - [x] P1.W5.7 `tests/e2e/test_04_bootstrap_unfamiliar_api.py` with the negative test that the workspace has no path to `verifier/` or `simulators/`; `date` ambiguity resolved within the probe budget or reported `Degraded`
 
-#### W6 — Semantic drift + safety (plan §4 W6)
+#### W6 — Semantic drift + safety (plan §4 W6) — COMPLETE
 - [x] P1.W6.1 `SEMANTIC_VALUE_DRIFT` detection via invariants (schema-valid but a money / date / count invariant fails) with the failing invariant named in `unmet_criteria`
 - [x] P1.W6.2 Scenarios `gross_to_net`, `tz_boundary_shift`, `status_vocab_change`, `endpoint_removed`, `token_revoked` wired end to end: `gross_to_net` → `Degraded` with the money invariant named, then a verified repair backed by independent evidence or an escalation; `endpoint_removed` and `token_revoked` escalate with no patch attempted
 - [x] P1.W6.3 Escalation bundle format (evidence bundle + one precise question for a human) and its storage on `RepairRun`
 - [x] P1.W6.4 Regression gate on every candidate release: a release that breaks any previously verified scenario is blocked; the plausible-but-wrong patch is rejected by the verifier
-- [>] P1.W6.5 `tests/e2e/test_05_safety_and_semantic.py`; `docs/safety-model.md` complete — in progress: sbx1 since 2026-10-27 07:24
+- [x] P1.W6.5 `tests/e2e/test_05_safety_and_semantic.py`; `docs/safety-model.md` complete
 
 #### W7 — Control API + UI (plan §4 W7, §2.11)
 - [ ] P1.W7.1 FastAPI control plane (`src/autobridge/control/app.py`, `routes/`, `schemas.py`): every endpoint of plan §2.11 incl. `GET /metrics/model-usage`, `GET /bench/scorecards`, `POST /demo/inject-fault` (labelled, proxies to the simulator admin); schemathesis contract tests pass
