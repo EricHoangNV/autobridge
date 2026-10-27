@@ -1745,3 +1745,35 @@ CI green on main + records the labelled demo (docs/demo.md), then flips [x].
 **Notes for next iteration:**
 - REQ-006 (money float rejection) is the last open request and the natural next pick; Phase 2 stays closed until the Nov 1 stop-rule checkpoint
 - If CI or local runs construct `AnthropicProvider()`/`OpenAIProvider()` with no args and no model env, they will now raise — set the four env vars (see `.env.example`)
+
+## REQ-006 — Money transform rejects float; vendor JSON parsed as Decimal
+**Date:** 2026-10-27
+**Ref:** mds/REQUESTS.MD REQ-006 (owner decision 2026-10-27); plan §1.4/§2.4; DIRECTIVES Quick Reference 4/5
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- `transform_money` now rejects `float` with `TransformError` naming the field (`money: float input rejected for field 'total_amount': 42.5 (money is Decimal, never float)`); still accepts `Decimal`, `int` (non-bool) and numeric strings; `None` still passes through
+- `apply_transform` propagates `field_name` into `money` args (same pattern as `enum_map`) so pipeline errors name the field
+- `HttpClient.get` parses vendor JSON with `parse_float=Decimal`, so money fields arrive as `Decimal` from the HTTP response to the canonical record
+- Replaced `test_money_float_input` with `test_money_float_input_rejected` + `test_money_float_rejection_names_field`; added `test_get_money_parsed_as_decimal_not_float` (real `httpx.Response` via MockTransport)
+- Checked callers: no other src/test path passes floats into money (discovery/repair only construct spec fragments; `auth.py` `expires_in` float is time arithmetic, not money, left alone; `checks.py` money_invariant and `base._ensure_decimal` left unchanged — out of the owner decision's scope, no tests feed them floats)
+- Verified checkpoints are timestamp strings (`$.updated_at`, `$.posted_at`) so Decimal raw values cannot leak into the DB JSON checkpoint column
+- Updated `docs/connector-spec.md` money table row: "float input is rejected"
+
+**Key decisions:**
+- Used `resp.json(parse_float=Decimal)` (httpx 0.28.1 passes kwargs to `json.loads`) rather than manual `json.loads(resp.text)` — one-line change, same stdlib parser underneath
+- Error names the field via `args.get("field")` following the `enum_map` precedent instead of adding a new parameter to the transform signature (keeps the closed-set call convention)
+- Scope kept to the owner decision: did not touch `checks.py`/`_ensure_decimal` float laundering (no failing behavior, no tests cover it, would widen W6 semantics)
+
+**Files changed:**
+- `src/autobridge/runtime/transforms/money.py` — float branch raises field-naming TransformError; docstring updated
+- `src/autobridge/runtime/transforms/__init__.py` — field propagation extended to `money`
+- `src/autobridge/runtime/http.py` — `from decimal import Decimal`; `get()` uses `parse_float=Decimal`
+- `tests/unit/test_autobridge_transforms.py` — rejection tests replace acceptance test
+- `tests/unit/test_autobridge_runtime_http_interpreter.py` — Decimal HTTP parsing test
+- `docs/connector-spec.md` — money row documents float rejection
+- `mds/REQUESTS.MD` — REQ-006 IN_PROGRESS→DONE, moved to Resolved top
+
+**Notes for next iteration:**
+- No open requests remain; remaining Phase 1 items are both `[~]` owner steps (P1.W10.3 demo recording, P1.W2.8 heldout freeze); Phase 2 stays closed until the Nov 1 stop-rule checkpoint
+- Compose stack was left UP and readyz green after live e2e verification (test_01–05)
