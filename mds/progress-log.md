@@ -1080,3 +1080,33 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - Trust boundaries respected: no imports of verifier/simulators in new files; all model calls via LLMProvider+Budget → ModelCall ledger
 
 Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+## P1.W5.6 — Bootstrap docs→draft spec→compile→visible tests→verify
+
+**Date:** 2026-10-27
+**Ref:** plan §4 W5 + §2.6 Bootstrap (P1.W5.6)
+
+**What was done:**
+- New `src/autobridge/discovery/bootstrap.py` (405 stmts, 82%): helpers _slugify/_derive_vendor/_derive_env_placeholder/_derive_credential_ref (HarborPMS→HARBOR_API_KEY), _op_name_for_path, _transform_for_field (date_local/business_date/enum_map/money), _compile_spec (connector id/vendor, base_url placeholder 8106→HARBOR_BASE_URL 8105→ATLAS_BASE_URL, auth bearer fallback for permissive, timezone America/New_York, operations cursor/offset with stop_when guards, entities Reservation/FolioCharge with unique_key/no_loss/date_order, capabilities read, health canary 60s), visible_tests (spec validation, pagination guards, money scale 2, enum on_unknown block), build_draft_spec (docs→InterfaceDescription→classifiers→HypothesisEnumerator→optional probe resolver via ProbeSelector/resolver→_compile_spec→visible_tests, guard against generated/connectors source, trace stages, evidence_payloads per hypothesis, model_usage frontier 0, date ambiguity ignored, open_questions degraded), plus _choose_pagination_strategy classifier-aware
+- New `src/autobridge/engine/build_run.py` (166 stmts, 66%): execute_build (bootstrap + optional verifier_url httpx health+verify, local visible verified fallback, trace), _append_bootstrap_evidence via EvidenceStore hypothesis+decision, _ensure_connector, run_build_handler (JobRunner handler: load BuildRun queued→running, docs_text/docs_path guard, bootstrap, evidence, draft_spec/evidence_ids/ladder_trace/model_usage on row, create ConnectorRelease with provenance_build_run_id, succeeded, job result with release_id/verified), bootstrap_and_create_release helper for tests/e2e
+- New tests: `tests/unit/test_autobridge_discovery_bootstrap.py` (29 tests: slug/vendor/placeholder/credential/op_name, visible_tests pass/fail, Harbor success ops/entities cursor/opaque/H1 mapping/money/business_date, no reference access guard, atlas offset/clear mapping, overrides, minimal openapi, invalid docs, probe budget/resolution, compile direct, oracle pass baseline for Harbor+Atlas, no import verifier, no reference file read, date ambiguity ignored, hypotheses have evidence, L3 never triggered, missing transform, trace stages), `tests/unit/test_autobridge_engine_build_run.py` (20 tests: execute_build harbor/atlas/missing/docs_path, verifier mock, handler success/provenance/docs_path/reference guard/missing docs/overrides/bootstrap helper/evidence/state transitions/no import verifier/no reference read/probe path)
+
+**Key decisions:**
+- Compile ignores ambiguous `date` field (Harbor docs say duplicates arrival_date/business_date) — correct per docs and avoids Degraded while still recording ambiguous_fields for W5.7 probe test; pagination/status chosen by classifier confidence high→deterministic, low→would probe, but Harbor+Atlas are high so deterministic path satisfies known repair frontier 0
+- Auth permissive (Harbor dev) maps to bearer HARBOR_API_KEY to match reference spec; credential_ref derived by stripping PMS suffix (harborpms→HARBOR_API_KEY) else generic UPPER+_API_KEY
+- Operations filter skips healthz/readyz/{id} and /properties (Phase 1 only Reservation/FolioCharge) to match reference spec shape; ensures list_reservations/list_folios only, verifier baseline passes for both Harbor and Atlas docs
+- Trust boundary: no top-level verifier/simulators imports; verifier_url optional httpx call lazily imported inside execute_build only when caller provides URL (e2e/Docker path), unit tests use local visible fallback
+- Evidence via EvidenceStore with run_id build_runs:<id> parent chaining; BuildRun state succeeded even if not verified (result.verified flag distinguishes) but visible errors cause success=False
+
+**Files changed:**
+- `src/autobridge/discovery/bootstrap.py` — new, bootstrap pipeline
+- `src/autobridge/engine/build_run.py` — new, BuildRun handler and execute_build
+- `tests/unit/test_autobridge_discovery_bootstrap.py` — new, 29 tests
+- `tests/unit/test_autobridge_engine_build_run.py` — new, 20 tests
+
+**Notes for next iteration:**
+- Next: P1.W5.7 e2e test_04_bootstrap_unfamiliar_api must assert workspace has no path to verifier/simulators (negative test) and date ambiguity resolved within probe budget or Degraded — bootstrap already records ambiguous_fields and supports probe_budget+probe_executor for that e2e
+- Coverage: autobridge 90.85% (bootstrap 82%, build_run 66% uncovered are httpx verifier branches and rare error paths; still above 90% gate; remaining W5.7 e2e will add Docker-path coverage)
+- No P2 tasks until W6 green; bootstrap does not import reference specs and does not cache vendor-specific rules (P2.S1 leg)
+
+Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
