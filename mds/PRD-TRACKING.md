@@ -103,7 +103,7 @@
 ### Phase 2 — Stretch (plan §5; OPEN since 2026-10-27, owner decision in PRD.MD; each item keeps its own entry condition)
 
 - [x] P2.S1.1 LegacyStay third vendor (entry: W6 + W8): heldout-only unseen-generalization vendor (rate limits, misleading examples, nullable chaos); bootstrap + at least one repair verified with no vendor-specific rule added; `tests/e2e/test_s1_legacystay.py`
-- [ ] P2.S2.1 Simulated Edge target (entry: W7): `RuntimeTarget.Edge`, toy edge worker on an isolated Docker network running a verified, signed release against a sim POS reachable only there; control plane cannot reach the sim POS (negative test); `tests/e2e/test_s2_edge_target.py`
+- [>] P2.S2.1 Simulated Edge target (entry: W7): `RuntimeTarget.Edge`, toy edge worker on an isolated Docker network running a verified, signed release against a sim POS reachable only there; control plane cannot reach the sim POS (negative test); `tests/e2e/test_s2_edge_target.py` — in progress: sbx1 since 2026-10-27 13:46`
 - [ ] P2.S3.1 `DiscoveryResult` static import (entry: W7): reserved schema + `POST /discovery/import`; connectors list shows `discovered / needs confirmation / authorized / connected / healing` from a static fixture; state transitions only via explicit endpoints; `tests/e2e/test_s3_discovery_import.py`
 - [ ] P2.S4.1 MCP Guardian (entry: all W1–W8 + stop rule): `mcp_stretch/` mock `HotelToolsV1` → `V2`, catalog snapshot/diff, compatibility gateway, pinned-consumer workflow replay, comparison against plain tool rediscovery; `tests/e2e/test_s4_mcp_gateway.py`
 - [ ] P2.S5.1 OpenAI provider (entry: W8): fill the stub behind `LLMProvider`; one dev scenario reaches an identical ladder outcome on both providers; `tests/e2e/test_s5_provider_parity.py`
