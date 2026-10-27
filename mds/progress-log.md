@@ -495,4 +495,35 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - W2.8 heldout freeze will hash `verifier/hidden_cases/heldout` + scenarios — no YAML changes after W2.6; verifier fixtures mount already read-only in compose.yaml
 - No e2e file for W2.6 (workstream e2e is P1.W2.9 test_01_simulators_and_oracle); compose unchanged (verifier readyz now checks catalog consistency)
 
+## P1.W2.7 — Regression runner, mutation tests, invalid-patch trap
+**Date:** 2026-10-27
+**Ref:** plan §4 W2 + §2.7 (verifier regression, mutation tests, invalid-patch trap); task P1.W2.7. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `verifier/regression.py` (40 stmts→100% cov): `REGRESSION_SUITE` (baseline + all fixable from SCENARIO_CATALOG = 11 scenarios), `get_regression_suite(exclude)`, `run_regression_suite(spec, scenario_ids, exclude)` (calls oracle_verdict per scenario, returns regression/pass_failures/checked), `regression_gate_allows(spec, target_scenario)` (always checks baseline, filters target if pass)
+- New `verifier/mutations.py` (167 stmts→90%): 10 MUTATION_IDS (`flip_money_to_string`, `drop_money_transform`, `flip_enum_map_keys`, `drop_unique_key_check`, `drop_no_loss_check`, `flip_pagination_strategy`, `drop_retry`, `flip_date_transform` with fallback, `drop_field`, `add_wrong_field`), `mutate_spec(spec, id)` (deep copy + dispatch), `all_mutations_for_spec` helper
+- New `verifier/invalid_patches.py` (134 stmts→93%): 7 INVALID_PATCH_TRAPS (gross_to_net_net_to_total_amount [canonical example], gross_to_net_flip_factor, rename_guest_id_stale_path, status_vocab_identity_map, tz_boundary_keep_utc, pagination_keep_offset_on_cursor, pagination_drop_repeated_guard), `get_trap/get_trap_ids/get_traps_for_scenario`, `spec_contains_trap(spec, trap_id?)` (field path + pagination + enum_map absence; generic mode skips pagination structural check), `apply_trap_to_spec`, `is_trapped_spec_rejected` (oracle_verdict)
+- Updated `verifier/app.py`: added VerifyRequest.regression_suite + RegressionFailureDetail, VerifyResponse.regression_failures, response_model_exclude_none, _compute_regression now real: default baseline gate (oracle_verdict baseline fail → regression fail), explicit suite via run_regression_suite; backward compat for old 3-arg call via isinstance(list) detection (old test updated to unpack tuple)
+- New `tests/unit/test_verifier_w27.py` (41 tests): regression suite contains baseline/exclude/empty/unknown, gate allows, verify regression_suite param via API (pass/fail + bounded names), mutations (unknown raises, copy-no-side-effect, all ids, each helper unit-tested with structure asserts, non-dict graceful), traps (set size, get/copy/unknown, each trap rejected by oracle + via API, agnostic check, edge cases with BadDict/non-dict entities, coverage helpers)
+- Updated `tests/unit/test_verifier_app.py`: _compute_regression old call now indexes [0] for tuple return
+- Verified: `make test` 710 pass (autobridge 99.49% 399, verifier 93.67% 92, simulators 98.54% 219); every trap rejected (verdict fail with expected rejected_check); mutation flips change spec; regression with explicit suite correctly reports baseline pass vs rename fail + regression_failures containing failing scenario id
+
+**Key decisions:**
+- Regression suite is static fixable catalog (not DB lookups) — sufficient for W2; P1.W6.4 gate will extend to per-connector verified set
+- Default regression is baseline-only (cheap, always required); explicit suite allows full re-run for harm-free checks (W2.7 passing criteria: "every previously verified scenario re-runs on a candidate release" proven via regression_suite=['baseline','rename_guest_id'])
+- Mutations are structural (path/transform/check changes) not semantic oracle bypass — verifier must catch them via canonical checks; flip_date_transform fallback corrupts arrival_date path when no money/date transform found to ensure every mutation changes spec (otherwise test fails)
+- Trap detection uses same heuristic as verifier checks: net_amount path presence for gross_to_net trap, offset_param for pagination trap, absence of enum_map for status vocab — keeps verifier and trap set aligned; generic mode skips pagination structural to avoid baseline false positive
+- POST /verify returns regression_failures only when present (response_model_exclude_none) so existing response-schema tests (exact keys set) still pass for baseline calls
+- Verifier never imports autobridge (import-linter enforced); all three new modules import only simulators.common and verifier.oracle
+
+**Files changed:**
+- `verifier/regression.py` (new, 129 lines), `verifier/mutations.py` (new, 238 lines), `verifier/invalid_patches.py` (new, 293 lines), `verifier/app.py` (+RegressionFailureDetail, regression_suite param, real regression gate)
+- `tests/unit/test_verifier_app.py` (3 lines: old _compute_regression call unpacks tuple), `tests/unit/test_verifier_w27.py` (new, 602 lines, 41 tests)
+
+**Notes for next iteration:**
+- Next: P1.W2.8 heldout freeze (agents prepare SHA256SUMS manifest + make bench sha check; owner freezes — needs Docker)
+- P1.W2.9 test_01_simulators_and_oracle.py can now assert verifier verdicts for all 14 scenarios via oracle + regression gate; no new verifier code needed there
+- invalid_patches.py still has 7 uncovered lines (exception paths in pagination/status branches when specific trap not matched) — but per-package gate passes; can raise to 95% later if needed
+- Mutations currently structural only; W3.4 transform registry will add real money/date transforms that mutation tests can flip more meaningfully
+
 

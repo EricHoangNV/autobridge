@@ -2,7 +2,7 @@
 
 ## Current State
 
-W2.6 Verifier service done (2026-10-27): POST /verify with oracle regenerating ground truth, canonical checks (record set, money Decimal, business dates, status, dedup, loss), hidden mode never returns fixture rows; 14 scenarios verified.
+W2.7 Regression runner + mutations + invalid-patch trap done (2026-10-27): POST /verify regression gate with regression_suite param + baseline check, 10 mutation helpers, 7 trap specs rejected; 41 new tests.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -21,10 +21,10 @@ W2.6 Verifier service done (2026-10-27): POST /verify with oracle regenerating g
   - P1.W2.4: HarborPMS Markdown docs (one wrong example, one undocumented endpoint), cursor pagination with repeated-cursor bug, nested folios, opaque statuses, ambiguous date; readyz
   - P1.W2.5: Scenario catalog 14 YAMLs (dev|heldout + fixable|escalate), loader + isolation test (each scenario exactly one drift signal)
   - P1.W2.6: Verifier service POST /verify with oracle, canonical checks, hidden mode guard
-- Tests: 669 pass / 0 fail / 0 skip (autobridge 99.49%, verifier 93%, simulators 98.54%; ui –) + 8 e2e pass
+  - P1.W2.7: Verifier regression runner (regression_suite param, baseline + fixable suite), mutation helpers (10 ids, flip/drop helpers), invalid-patch trap set (7 traps, net→total_amount etc. rejected)
+- Tests: 710 pass / 0 fail / 0 skip (autobridge 99.49%, verifier 93.67%, simulators 98.54%; ui –) + 8 e2e pass
 - Stack: `make up` → all 8 readyz green (via TestClient) / `make smoke` green / `make e2e` green (8 pass, skip when no Docker) / `make lint` + `make typecheck` green
 
 ## Next tasks
-1. **P1.W2.7** — Regression runner + mutation + invalid-patch trap
-2. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check)
-
+1. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check)
+2. **P1.W2.9** — `tests/e2e/test_01_simulators_and_oracle.py` (every scenario via admin API vs verifier)
