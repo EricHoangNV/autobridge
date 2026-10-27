@@ -370,6 +370,9 @@ class ArmResult:
     output_tokens: int = 0
     frontier_tokens: int = 0
     cost_usd: Decimal | None = None
+    # Usage counters for W8.4 scoring (defaults keep old constructors green)
+    tool_calls: int = 0
+    model_calls: int = 0
     # Verifier outcome (when available)
     verdict: str | None = None
     score: float | None = None
@@ -397,6 +400,8 @@ class ArmResult:
             "total_tokens": self.total_tokens,
             "frontier_tokens": self.frontier_tokens,
             "cost_usd": str(self.cost_usd) if self.cost_usd is not None else None,
+            "tool_calls": self.tool_calls,
+            "model_calls": self.model_calls,
             "verdict": self.verdict,
             "score": self.score,
             "failed_checks": self.failed_checks,
@@ -672,6 +677,8 @@ def run_baseline_arm(
                 frontier_tokens=frontier,
                 cost_usd=cost,
                 model=getattr(result, "model", None) or "baseline-claude",
+                tool_calls=int(getattr(result, "tool_calls", 0) or 0),
+                model_calls=1,
             )
         elapsed = (time.monotonic() - start) * 1000.0
         return ArmResult(
@@ -743,6 +750,8 @@ def run_baseline_via_llm_provider(
             output_tokens=comp.usage.output_tokens,
             frontier_tokens=comp.usage.total_tokens,
             model="baseline-llm-fallback",
+            tool_calls=len(comp.tool_calls),
+            model_calls=1,
         )
     except Exception as exc:
         elapsed = (time.monotonic() - start) * 1000.0

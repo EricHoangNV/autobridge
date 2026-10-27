@@ -506,6 +506,8 @@ def run_one_shot_arm(
             cost_usd=result.cost_usd,
             model=result.model,
             spec=spec_payload,
+            tool_calls=0,
+            model_calls=1,
         )
     except Exception as exc:
         elapsed = (time.monotonic() - start) * 1000.0
