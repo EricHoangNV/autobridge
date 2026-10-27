@@ -411,3 +411,32 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Next: P1.W2.4 HarborPMS Markdown narrative docs (one wrong example, one undocumented endpoint), cursor pagination with repeated-cursor bug, nested folios, opaque status codes, property-local dates, ambiguous `date` field; readyz
 - HarborPMS should also mount its markdown docs from simulators/docs/ and keep auth permissive; its cursor bug is already implemented in helpers (even request_count repeat) — W2.4 is mostly docs content + endpoint shape confirmation
 - No new e2e file for W2.3 (workstream e2e is P1.W2.9); compose admin ports unchanged (8109/8110)
+
+## P1.W2.4 HarborPMS Markdown docs, opaque statuses, nested folios, ambiguous date
+**Date:** 2026-10-27
+**Ref:** plan §4 W2 + §2.8 (HarborPMS); task P1.W2.4. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Created `simulators/docs/harbor.md` (6.9 KB) + alias `harborpms.md`: narrative Markdown guide documenting GET /properties, /reservations, /reservations/{id}, /folios, /folios/{id}; pagination described as cursor (next_cursor) with known repeated-cursor bug note; status vocab listed as opaque H1..H5 with explicit note that earlier draft's 'confirmed' example was wrong (copied from Atlas); date section explains property-local business dates with 04:00 cutoff and documents ambiguous `date` field duplicating arrival_date/business_date; money section (2dp string); rate-limit fault note; undocumented endpoint section calling out GET /reservations/{id}/folios as not in guide but discoverable via probing.
+- Rewrote `simulators/harborpms/app.py` (291 lines): mounted docs/ as StaticFiles at /docs, readyz docs check (degraded if missing) + scenario check now returns `checks.scenario: ok` with top-level `scenario` id (fixes e2e all-checks-ok), HARBOR_STATUS_MAP H1..H5 with helper _to_harbor_reservation/_to_harbor_folio adding ambiguous `date` field, nested folios endpoint GET /reservations/{id}/folios (404 if reservation not found, cursor pagination, respects fault helpers), cursor default via pagination_mode_for_scenario default cursor, repeated-cursor bug via helper (even request_count), permissive auth, _harbor_docs alias outside /docs prefix, Decimal money, property-local dates preserved.
+- Fixed `simulators/atlaspms/app.py` readyz similarly (scenario: ok in checks + top-level id) so e2e test_readyz_checks_are_all_ok passes for both sims.
+- Added `tests/unit/test_simulators_harbor.py` (24 tests): healthz/readyz ok+degraded, markdown served (static + alias, byte-identical, contains wrong example + undocumented note), not OpenAPI, cursor shape (next_cursor, no offset, last null), opaque statuses H1..H5 + fault override, ambiguous date for reservations/folios (single + list), nested folios existence/undocumented note/consistency/404/filter+pagination/fault, property-local dates, faults still work (rate/expired/revoked/removed/offset_to_cursor/rename), import boundary, money 2dp, alias 404, offset branch mock, transform helpers direct, get not found, filter by property.
+
+**Key decisions:**
+- H1..H5 chosen as opaque codes (maximally opaque, single char + digit) to force hypothesis enumeration; fault mapping (active etc.) checked first via `if status in HARBOR_STATUS_MAP` else leave fault vocab, so status_vocab_change still works on Harbor.
+- Ambiguous `date` duplicates canonical date field (arrival_date for reservations, business_date for folios) and is documented as "the date" without typing — discovery must choose correct field via probing.
+- Nested folios endpoint is the undocumented endpoint: it returns same filtered shape as flat /folios?reservation_id= but scoped to path param; flat /folios stays documented for backward compat, nested is the discovery challenge.
+- Wrong example in Markdown is offset pagination JSON (next_offset) while reality is cursor (next_cursor) + status example shows Atlas English (confirmed) while reality is H1..H5.
+- Static mount at /docs would shadow any handler under /docs/*, so alias is at /_harbor_docs not /docs/harbor.md/alias.
+- readyz scenario check must be `ok` not id string else test_readyz_checks_are_all_ok fails — move id to top-level field, apply to both Atlas and Harbor.
+
+**Files changed:**
+- `simulators/docs/harbor.md` (new), `simulators/docs/harborpms.md` (alias)
+- `simulators/harborpms/app.py` (rewritten), `simulators/atlaspms/app.py` (readyz fix)
+- `tests/unit/test_simulators_harbor.py` (new, 24 tests)
+
+**Notes for next iteration:**
+- Next: P1.W2.5 scenario catalog `simulators/scenarios/*.yaml` (plan §2.8 list) tagged dev|heldout and fixable|escalate; test that each scenario applied to reference spec fails in exactly its intended drift class and no other.
+- Harbor's cursor bug is exercised via fault scenario cursor_repeat_token; W2.5 should include that scenario in catalog and W3.3 will test repeated_cursor Degraded handling.
+- No new e2e file for W2.4 (workstream e2e is P1.W2.9); compose ports unchanged.
+
