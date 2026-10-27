@@ -1817,3 +1817,32 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Mock HotelToolsV1 
 ## 2026-10-27 — P2.S6.1 Richer UI done (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 Per-run model-usage chart + evidence graph view on /repairs/[id], no new API surface; Playwright test_s6 (3 tests, mocked routes, test-results/s6 screenshots asserted) green and test_06 6/6 green; ui vitest 143 pass, tsc clean, make lint/typecheck green, make test 1830 pass @ 91.07% + 5 pre-existing REQ-007 fails. Build note in BUILD-NOTES.md under P2.S6.1. Next: P2.S7.1 CLI.
+
+## 2026-10-27 — P2.S7.1 CLI (sbx1)
+**Date:** 2026-10-27
+**Ref:** plan §5 S7 (entry: W7) — thin `ab` wrapper over the control API for CI; `ab build / sync / repairs approve` drive the same journey as the UI
+
+**What was done:**
+- New `src/autobridge/cli.py`: argparse CLI with `--control-url` (flag > `$AUTOBRIDGE_CONTROL_URL` > `http://localhost:8101`), `--output text|json`, `--timeout`; subcommands `connectors create/list/get`, `build` (docs-text/file/url, `--wait` polls `GET /jobs/{id}` to terminal), `sync [--release] [--wait]`, `runs get [--detail]`, `repairs list/get/approve/reject`, `drift list/get`, `health`; exit 0/1/2
+- Installed as the `ab` console script (`[project.scripts]`); verified `ab --help` / `ab build --help` render
+- New `tests/unit/test_autobridge_cli.py` (26 tests, MockTransport, no network): base-URL precedence, full dispatch sweep success + HTTP-500 + connection-error per command, `--wait` polling success/timeout/poll-failure, secrets pin (no credential-value flag), text/JSON emit edges; `cli.py` 99% covered (only the `__main__` guard, same as `demo.py`)
+- New `tests/e2e/test_s7_cli.py` (4 tests): fake-TestClient full journey (create → build --wait → sync --wait → runs get → drift/repairs list), approve/reject roundtrip against seeded propose repair + candidate release, missing-repair 404 is a clean exit-1, live stack health + connectors list (ran live green in sandbox)
+- `docs/architecture.md`: new §9.3 `ab` CLI paragraph (old §9.3 E2E journey renumbered §9.4, no other references)
+
+**Key decisions:**
+- Thin by construction: `cli.py` imports stdlib + `httpx` only — no engine/verifier/simulator code, every decision lives in the control plane; trust-boundary contracts KEPT
+- Only `credential_ref` env-key names travel; the CLI has no flag that accepts a credential value (pinned by a parser-walk test)
+- e2e fakes inject a fresh `TestClient` per CLI invocation via the `_make_client` seam (main() closes its client; sharing one across calls raises "client has been closed")
+- Approve roundtrip seeds the candidate release with `provenance_repair_run_id` at insert — release rows are immutable, post-flush UPDATE raises `ImmutableReleaseError`
+
+**Files changed:**
+- `src/autobridge/cli.py` — new (thin wrapper, ~450 lines)
+- `tests/unit/test_autobridge_cli.py` — new (26 tests)
+- `tests/e2e/test_s7_cli.py` — new (4 tests: 3 fake + 1 live)
+- `pyproject.toml` — `[project.scripts] ab = "autobridge.cli:main"`
+- `docs/architecture.md` — §9.3 CLI, §9.4 renumber
+
+**Notes for next iteration:**
+- `make test` autobridge arm: 1856 pass / 5 fail — all 5 pre-existing REQ-007 heldout-gate bench failures on files this task did not touch (also failing on clean main per prior runs); verifier/simulators/ui arms not rerun (make stops at first failing arm)
+- Phase 2 (S1–S7) is now complete; remaining work is owner steps (P1.W10.3 demo, P1.W2.8/REQ-007 heldout seeds + codeable bench-HELDOUT_DIR flow)
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation)
