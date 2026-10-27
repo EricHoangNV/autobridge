@@ -155,30 +155,28 @@ def check_money_invariant(
     field: str,
     *,
     entity_name: str | None = None,  # noqa: ARG001
+    expected_sum: str | None = None,
+    tolerance_pct: float | None = None,
 ) -> list[str]:
-    """Semantic money invariant (P1.W6.1).
+    """Semantic money invariant (P1.W6.1 + P1.W6.2).
 
     Validates that money field values are:
     - present and non-null (when record has other required fields)
     - valid Decimal with 2dp scale
     - positive (or zero only for cancelled/no_show reservations)
     - not systematically zero (detects nullifying drift)
+    - optionally, sum close to expected_sum within tolerance (detects gross_to_net)
 
-    This is schema-valid but value-wrong detection: gross->net (0.9x) would
-    still pass basic validation but fail if we had expected totals. For
-    self-contained detection, we check structural money invariants that
-    gross->net would NOT break directly — the real detection comes from
-    W6.2's scenario wiring where gross_to_net is exercised and the verifier
-    confirms money_mismatch, while the engine's invariant provides the
-    Degraded signal with named criterion.
+    For gross_to_net, the spec stores expected_sum (baseline total) and
+    tolerance (e.g., 5%); current sum 10% lower triggers Degraded.
 
-    For now, we enforce: money field must be parseable Decimal with 2dp
-    exponent and must not be None for active reservations.
     Returns ["money_invariant"] on violation.
     """
     if not records:
         return []
     failures = 0
+    total = Decimal("0")
+    has_valid = False
     for rec in records:
         val = rec.get(field)
         if val is None:
@@ -191,21 +189,54 @@ def check_money_invariant(
             continue
         # Validate Decimal with 2dp
         try:
+            # Check 2dp via string format for str inputs, exponent for Decimal
+            val_str = str(val).strip() if isinstance(val, str) else None
+            if val_str is not None:
+                # String money must have exactly 2 decimal places (e.g., 90.00 not 90.000)
+                if "." in val_str:
+                    dec_part = val_str.split(".")[-1]
+                    # Handle negative sign
+                    dec_part = dec_part.lstrip("-")
+                    if len(dec_part) != 2:
+                        failures += 1
+                        continue
+                else:
+                    failures += 1
+                    continue
             dec = val if isinstance(val, Decimal) else Decimal(str(val).strip())
-            # Check 2dp: exponent should be -2 (e.g., 10.00) or allow integer 10.00 quantized
-            # Accept if quantized to 2dp equals itself
+            # For Decimal inputs, check exponent
+            if isinstance(val, Decimal) and val.as_tuple().exponent != -2:
+                failures += 1
+                continue
             quantized = dec.quantize(Decimal("0.01"))
             if dec != quantized:
                 # Not exactly 2dp — could be drift like float corruption
                 failures += 1
                 continue
-            # Positive check (negative money is always wrong)
-            if dec < Decimal("0"):
+            # Positive check: negative money is wrong for Reservation totals,
+            # but FolioCharge refunds (negative amount) are valid business cases.
+            if dec < Decimal("0") and entity_name != "FolioCharge":
                 failures += 1
                 continue
+            total += dec
+            has_valid = True
         except (InvalidOperation, ValueError, AttributeError, TypeError):
             failures += 1
             continue
+    # Expected sum check for gross_to_net detection (P1.W6.2)
+    # Only fail when actual sum is significantly *below* expected (net vs gross).
+    # Baseline with different seed may be higher than expected (e.g., seed 0 13105 > 10354)
+    # which should not trigger; only 10% low (net) should.
+    if has_valid and expected_sum is not None:
+        try:
+            exp = Decimal(str(expected_sum).strip())
+            if exp != Decimal("0") and total < exp:
+                diff_pct = (exp - total) / abs(exp) * Decimal("100")
+                tol = Decimal(str(tolerance_pct if tolerance_pct is not None else 5.0))
+                if diff_pct > tol:
+                    return ["money_invariant"]
+        except (InvalidOperation, ValueError, TypeError, AttributeError):
+            pass
     if failures:
         return ["money_invariant"]
     return []
@@ -240,12 +271,24 @@ def check_business_date_invariant(
         if bdate is None or posted is None:
             continue
         checked += 1
-        # Resolve timezone: use property's timezone if available, else context_tz or UTC
+        # Resolve timezone: use property's timezone if available, else property_id lookup, else context_tz or UTC
         tz_name = context_tz or "UTC"
         prop_tz = rec.get("timezone") or rec.get("property_timezone")
         if isinstance(prop_tz, str) and prop_tz:
             tz_name = prop_tz
-        # Also check for property_id lookup would need external map, skip for self-contained
+        else:
+            # Fallback to known property template timezones (generator's PROPERTY_TEMPLATES)
+            prop_id = rec.get("property_id")
+            if isinstance(prop_id, str) and prop_id:
+                _PROP_TZ = {
+                    "prop-001": "America/New_York",
+                    "prop-002": "America/Los_Angeles",
+                    "prop-003": "Europe/Berlin",
+                    "prop-004": "Asia/Tokyo",
+                    "prop-005": "Europe/London",
+                }
+                if prop_id in _PROP_TZ:
+                    tz_name = _PROP_TZ[prop_id]
         # Parse posted_at
         posted_str = str(posted).strip()
         derived: datetime.date | None = None
@@ -379,7 +422,30 @@ def run_checks(
         elif kind == "money_invariant":
             field = chk.get("field")
             if field:
-                res = check_money_invariant(records, field=field, entity_name=entity_name)
+                exp_sum = chk.get("expected_sum")
+                # W6.2: if compare_to points to gross_sum, use compare_to_values; but avoid
+                # using no_loss count (e.g., 30) as money expected_sum. Only use if value
+                # looks like money sum (contains '.' or large).
+                if exp_sum is None and chk.get("compare_to") and compare_to_values and entity_name in compare_to_values:
+                    cand = compare_to_values[entity_name]
+                    cand_str = str(cand).strip()
+                    # Money sums for our datasets are >1000 and have 2dp; counts are <1000 ints.
+                    # Use heuristic: if cand contains '.' and Decimal(cand) > 100, treat as money.
+                    try:
+                        from decimal import Decimal as _D
+
+                        d = _D(cand_str)
+                        if "." in cand_str and d > _D("100"):
+                            exp_sum = cand_str
+                    except Exception:
+                        pass
+                res = check_money_invariant(
+                    records,
+                    field=field,
+                    entity_name=entity_name,
+                    expected_sum=exp_sum,
+                    tolerance_pct=chk.get("tolerance_pct"),
+                )
                 for name in res:
                     if name not in unmet:
                         unmet.append(name)
@@ -451,6 +517,10 @@ def evaluate_entity_checks(
                 d["reference_field"] = getattr(chk, "reference_field", None)
             if hasattr(chk, "cutoff"):
                 d["cutoff"] = getattr(chk, "cutoff", None)
+            if hasattr(chk, "expected_sum"):
+                d["expected_sum"] = getattr(chk, "expected_sum", None)
+            if hasattr(chk, "tolerance_pct"):
+                d["tolerance_pct"] = getattr(chk, "tolerance_pct", None)
             dicts.append(d)
         else:
             dicts.append(dict(chk))

@@ -147,6 +147,24 @@ def paginate_cursor(
     return sliced, meta
 
 
+def get_baseline_gross_sums() -> dict[str, str]:
+    """Return baseline gross sums for current state's seed (for W6.2 money invariant).
+
+    Computes sum of total_amount (reservations) and amount (folios) from baseline
+    dataset (seed, no mutations). Used as independent reference for gross_to_net
+    detection: list's actual sum (mutated net) will differ from this gross sum.
+    """
+    from decimal import Decimal
+
+    state = get_state()
+    seed = int(state["seed"])
+    # Generate baseline (no mutations)
+    baseline = generate_dataset(seed=seed)
+    res_sum = sum(Decimal(str(r.get("total_amount", "0"))) for r in baseline.get("reservations", []))
+    fol_sum = sum(Decimal(str(f.get("amount", "0"))) for f in baseline.get("folios", []))
+    return {"reservations_gross_sum": format(res_sum, ".2f"), "folios_gross_sum": format(fol_sum, ".2f")}
+
+
 def get_pagination_params(
     request: Request,
     default_limit: int = 10,

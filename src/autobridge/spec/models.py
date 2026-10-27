@@ -204,6 +204,9 @@ class EntityCheck(_Strict):
     field: str | None = None
     reference_field: str | None = None
     cutoff: int | None = None
+    # money_invariant: expected total sum for semantic drift detection (Decimal string)
+    expected_sum: str | None = None
+    tolerance_pct: float | None = None
 
     @field_validator("compare_to")
     @classmethod
@@ -234,6 +237,17 @@ class EntityCheck(_Strict):
             raise ValueError("money_invariant requires field (money field name)")
         if self.kind == "business_date_invariant" and (not self.field or not self.reference_field):
             raise ValueError("business_date_invariant requires field (business_date) and reference_field (posted_at)")
+        if self.expected_sum is not None:
+            try:
+                from decimal import Decimal as _D
+
+                _D(str(self.expected_sum))
+            except Exception as exc:
+                raise ValueError(f"expected_sum {self.expected_sum!r} must be a valid Decimal string") from exc
+        if self.tolerance_pct is not None and (
+            not isinstance(self.tolerance_pct, (int, float)) or not 0 < self.tolerance_pct < 100
+        ):
+            raise ValueError("tolerance_pct must be a number in (0, 100)")
         return self
 
 

@@ -168,8 +168,22 @@ def list_reservations(
 
     if mode == "cursor":
         sliced, meta = paginate_cursor(data, cursor, limit, scenario_id, count)
+        try:
+            from simulators.common.helpers import get_baseline_gross_sums
+
+            sums = get_baseline_gross_sums()
+            meta["gross_sum"] = sums["reservations_gross_sum"]
+        except Exception:
+            pass
         return {"data": sliced, **meta}
     sliced, meta = paginate_offset(data, limit, offset)
+    try:
+        from simulators.common.helpers import get_baseline_gross_sums
+
+        sums = get_baseline_gross_sums()
+        meta["gross_sum"] = sums["reservations_gross_sum"]
+    except Exception:
+        pass
     return {"data": sliced, **meta}
 
 
@@ -199,8 +213,22 @@ def list_folios(
     mode = pagination_mode_for_scenario(scenario_id, default="cursor")
     if mode == "cursor":
         sliced, meta = paginate_cursor(data, cursor, limit, scenario_id, count)
+        try:
+            from simulators.common.helpers import get_baseline_gross_sums
+
+            sums = get_baseline_gross_sums()
+            meta["gross_sum"] = sums["folios_gross_sum"]
+        except Exception:
+            pass
         return {"data": sliced, **meta}
     sliced, meta = paginate_offset(data, limit, offset)
+    try:
+        from simulators.common.helpers import get_baseline_gross_sums
+
+        sums = get_baseline_gross_sums()
+        meta["gross_sum"] = sums["folios_gross_sum"]
+    except Exception:
+        pass
     return {"data": sliced, **meta}
 
 

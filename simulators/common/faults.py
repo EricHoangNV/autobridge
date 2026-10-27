@@ -118,13 +118,27 @@ def apply_record_mutations(
                 except Exception:
                     pass
         elif scenario_id == "tz_boundary_shift" and record_type == "folio":
-            # Business date shifts by one day for late postings — we simulate
-            # by shifting business_date forward when posted_at hour < cutoff.
-            # Simplified: if business_date is X and posted_at is late, shift.
-            # For test purposes, we just append "_shifted" marker via date shift.
-            # Actual shift logic: move business_date one day forward (wrong).
-            # We do this for 30% of records to be detectable.
-            pass  # handled as behavior flag, not record mutation (see is_tz_shift_active)
+            # Business date cutoff shifted from 04:00 -> 02:00: late postings
+            # (posted_at 00:00-03:59 local) should count to prior business date
+            # with cutoff 4, but now API computes with cutoff 2, so some
+            # business_dates are off by +1 day. We simulate by deterministically
+            # shifting business_date forward for ~30% of records (hash-based).
+            try:
+                # Deterministic per-record selection via charge_id hash
+                cid = str(mutated.get("charge_id", ""))
+                # Simple hash: sum of char codes mod 10 < 3 => 30%
+                h = sum(ord(c) for c in cid) % 10
+                if h < 3 and mutated.get("business_date"):
+                    import datetime as _dt
+
+                    bdate_str = str(mutated["business_date"])
+                    try:
+                        bdate = _dt.date.fromisoformat(bdate_str)
+                        mutated["business_date"] = (bdate + _dt.timedelta(days=1)).isoformat()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         elif scenario_id == "duplicate_late_records" and record_type in ("reservation", "folio"):
             # Duplicates are handled at pagination/delivery level, not record mutation.
             pass

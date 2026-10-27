@@ -152,7 +152,49 @@ def execute_sync(
 
     spec = load_spec_from_dict(spec_dict)
     interp = Interpreter(spec, http_client=http_client)
-    results = interp.execute_all(checkpoint=checkpoint, max_pages=max_pages)
+    try:
+        results = interp.execute_all(checkpoint=checkpoint, max_pages=max_pages)
+    except Exception as exc:
+        # Transport / HTTP failure (404 endpoint_removed, 403 token_revoked, etc.)
+        # → Blocked with named criterion for classifier.
+
+        status = getattr(exc, "status_code", None)
+        msg = str(exc).lower()
+        unmet: list[str] = []
+        # Infer Blocked reason from status or message
+        if status == 404 or "404" in msg or "not found" in msg or "endpoint" in msg:
+            unmet = ["endpoint_not_found"]
+        elif status == 403 or "403" in msg or "revoked" in msg:
+            unmet = ["auth_revoked"]
+            if "token_revoked" not in unmet:
+                unmet.append("token_revoked")
+        elif status == 401 or "401" in msg or "expired" in msg:
+            unmet = ["auth_expired"]
+        elif status == 429 or "429" in msg:
+            unmet = ["rate_limited"]
+        elif status == 503 or "503" in msg:
+            unmet = ["transient_error"]
+        else:
+            unmet = ["http_error"]
+        # Also add generic auth/capability hints for classifier
+        if "revoked" in msg and "auth_revoked" not in unmet:
+            unmet.append("auth_revoked")
+        if "capability" in msg and "endpoint_not_found" not in unmet:
+            unmet.append("endpoint_not_found")
+        return {
+            "outcome": "Blocked",
+            "unmet_criteria": unmet,
+            "data_readiness": {"freshness": "stale", "completeness": "incomplete"},
+            "fingerprint_id": _fp.compute_fingerprint_id(spec_dict, {}, {}),
+            "operation_results": {},
+            "records_observed": {},
+            "checkpoint_values": {},
+            "canonical_records": {},
+            "blocked_records": {},
+            "invariant_results": [{"check": c, "status": "failed"} for c in unmet],
+            "error": str(exc),
+            "http_status": status,
+        }
 
     # Phase: mapping raw → canonical per entity
     canonical_records: dict[str, list[dict[str, Any]]] = {}
@@ -199,16 +241,28 @@ def execute_sync(
                         all_blocked_failures.append("unknown_enum")
 
         # Run checks for this entity
-        # Gather compare_to extraction for no_loss
+        # Gather compare_to extractions (no_loss count + money sum)
         compare_to_val: Any | None = None
+        money_expected_sum: Any | None = None
         for chk in ent_spec.checks:
             # chk may be pydantic model
+            kind = getattr(chk, "kind", None) if not isinstance(chk, dict) else chk.get("kind")
             compare_to = getattr(chk, "compare_to", None) if not isinstance(chk, dict) else chk.get("compare_to")
             if compare_to:
-                compare_to_val = _extract_compare_to_value(results, op_name, compare_to)
-                break
+                extracted = _extract_compare_to_value(results, op_name, compare_to)
+                if kind == "money_invariant":
+                    money_expected_sum = extracted
+                elif compare_to_val is None:
+                    compare_to_val = extracted
+                # For money, also keep as fallback in compare_to_val if no other
+                if money_expected_sum is None and kind == "money_invariant" and extracted is not None:
+                    money_expected_sum = extracted
 
         # Evaluate checks against canonical records
+        # Pass money sum via compare_to_values dict keyed by entity
+        if money_expected_sum is not None or compare_to_val is not None:
+            pass
+
         check_results = evaluate_entity_checks(
             ent_name,
             canonical,
@@ -216,6 +270,23 @@ def execute_sync(
             expected_count=compare_to_val if isinstance(compare_to_val, int) else None,
             compare_to_value=compare_to_val,
         )
+        # If money expected sum was separate, inject via run_checks directly
+        if money_expected_sum is not None:
+
+            # Re-run money check with correct expected sum (avoid double count for no_loss)
+            # We already evaluated all checks, but money with gross_sum may have used wrong compare_to
+            # So we patch: if money_invariant check used expected_sum from no_loss, fix it
+            for chk in ent_spec.checks:
+                k = getattr(chk, "kind", None) if not isinstance(chk, dict) else chk.get("kind")
+                if k == "money_invariant":
+                    field = getattr(chk, "field", None) if not isinstance(chk, dict) else chk.get("field")
+                    if field:
+                        from autobridge.runtime.checks import check_money_invariant as _cmi
+
+                        m_res = _cmi(canonical, field=field, entity_name=ent_name, expected_sum=str(money_expected_sum) if money_expected_sum is not None else None, tolerance_pct=5.0)
+                        for cr in m_res:
+                            if cr not in check_results and cr not in invariant_failures and cr not in all_blocked_failures:
+                                check_results.append(cr)
         for cr in check_results:
             if cr not in invariant_failures and cr not in all_blocked_failures:
                 invariant_failures.append(cr)

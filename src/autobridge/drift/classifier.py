@@ -362,13 +362,15 @@ def _match_semantic(grouped: dict[str, list[DriftSignal]]) -> tuple[str, list[st
 
 
 # Priority ordered matchers — most specific / highest severity first.
+# ENUM must precede CAPABILITY_REMOVED because status_vocab_change produces
+# zero_records + Blocked with unknown_enum, but should be ENUM not capability.
 _MATCHERS: list[Callable[..., tuple[str, list[str], str] | None]] = [
     _match_auth_revoked,
     _match_auth_expired,
+    _match_enum_new_value,
     _match_capability_removed,
     _match_rate_limit,
     _match_transient,
-    _match_enum_new_value,
     _match_pagination_change,
     _match_schema_from_types,
     _match_semantic,

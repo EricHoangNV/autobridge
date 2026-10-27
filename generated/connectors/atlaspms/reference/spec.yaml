@@ -124,6 +124,9 @@ entities:
       compare_to: null
       before: arrival_date
       after: departure_date
+    - kind: money_invariant
+      field: total_amount
+      compare_to: $.gross_sum
   FolioCharge:
     from: list_folios
     key: $.charge_id
@@ -167,6 +170,13 @@ entities:
       compare_to: $.total
       before: null
       after: null
+    - kind: money_invariant
+      field: amount
+      compare_to: $.gross_sum
+    - kind: business_date_invariant
+      field: business_date
+      reference_field: posted_at
+      cutoff: 4
 capabilities:
   read:
   - Reservation
