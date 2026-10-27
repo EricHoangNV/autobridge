@@ -108,4 +108,4 @@
 - [x] P2.S4.1 MCP Guardian (entry: all W1–W8 + stop rule): `mcp_stretch/` mock `HotelToolsV1` → `V2`, catalog snapshot/diff, compatibility gateway, pinned-consumer workflow replay, comparison against plain tool rediscovery; `tests/e2e/test_s4_mcp_gateway.py`
 - [x] P2.S5.1 OpenAI provider (entry: W8): fill the stub behind `LLMProvider`; one dev scenario reaches an identical ladder outcome on both providers; `tests/e2e/test_s5_provider_parity.py`
 - [x] P2.S6.1 Richer UI (entry: all W1–W8): model-usage charts per run, evidence graph view; Playwright screenshot tests; no new API surface
-- [ ] P2.S7.1 CLI (entry: W7): thin `ab` wrapper over the control API for CI; `ab build / sync / repairs approve` drive the same journey as the UI; `tests/e2e/test_s7_cli.py`
+- [>] P2.S7.1 CLI (entry: W7): thin `ab` wrapper over the control API for CI; `ab build / sync / repairs approve` drive the same journey as the UI; `tests/e2e/test_s7_cli.py` — in progress: sbx1 since 2026-10-27 15:03
