@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv
 
-RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.34"
+RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.34" "pydantic>=2.11" "pyyaml>=6.0"
 
 COPY . ./
 
