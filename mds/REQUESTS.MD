@@ -3,7 +3,7 @@
 ## Open Requests (read this section only)
 
 ### REQ-002 — Redesign the UI to the broadcast direction (2026-10-27)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-27 10:31)
 Restyle the four screens of `ui/` to the approved design: a dark "live broadcast graphic" look with
 one accent (broadcast yellow = "now / needs you"), Archivo (variable width) + Fragment Mono, radius 0.
 Desktop (1280 and 1440) is what gets demoed; phone only needs to not break.
