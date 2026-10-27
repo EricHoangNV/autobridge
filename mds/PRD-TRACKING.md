@@ -71,7 +71,7 @@
 - [x] P1.W6.2 Scenarios `gross_to_net`, `tz_boundary_shift`, `status_vocab_change`, `endpoint_removed`, `token_revoked` wired end to end: `gross_to_net` → `Degraded` with the money invariant named, then a verified repair backed by independent evidence or an escalation; `endpoint_removed` and `token_revoked` escalate with no patch attempted
 - [x] P1.W6.3 Escalation bundle format (evidence bundle + one precise question for a human) and its storage on `RepairRun`
 - [x] P1.W6.4 Regression gate on every candidate release: a release that breaks any previously verified scenario is blocked; the plausible-but-wrong patch is rejected by the verifier
-- [ ] P1.W6.5 `tests/e2e/test_05_safety_and_semantic.py`; `docs/safety-model.md` complete
+- [>] P1.W6.5 `tests/e2e/test_05_safety_and_semantic.py`; `docs/safety-model.md` complete — in progress: sbx1 since 2026-10-27 07:24
 
 #### W7 — Control API + UI (plan §4 W7, §2.11)
 - [ ] P1.W7.1 FastAPI control plane (`src/autobridge/control/app.py`, `routes/`, `schemas.py`): every endpoint of plan §2.11 incl. `GET /metrics/model-usage`, `GET /bench/scorecards`, `POST /demo/inject-fault` (labelled, proxies to the simulator admin); schemathesis contract tests pass
