@@ -367,8 +367,8 @@ def test_budgeted_provider_uses_inner_model_for_tier(session: Session) -> None:
 
 def test_budgeted_provider_fallback_model_when_no_method(session: Session) -> None:
     class BareProvider:
-        def complete(  # type: ignore[no-untyped-def]
-            self, messages, *, max_tokens=1024, tier="small", purpose="", tools=None
+        def complete(  # type: ignore[no-untyped-def]  # noqa: ARG001,ARG002
+            self, messages, *, max_tokens=1024, tier="small", purpose="", tools=None  # noqa: ARG001,ARG002
         ):
             return Completion(text="bare", usage=Usage(1, 1))
 

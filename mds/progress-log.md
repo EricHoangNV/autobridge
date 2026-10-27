@@ -265,3 +265,35 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 **Notes for next iteration:**
 - Next: P1.W1.9 test fakes (RuntimeTarget fake + coding-agent CLI fake) — bench drivers will reuse FakeProvider pattern (usage output capture)
 - P2.S5.1 fills OpenAIProvider with the same interface; keep model ids in config so the two providers stay symmetric
+
+## P1.W1.9 Test fakes for Docker sandbox + coding-agent CLI
+**Date:** 2026-10-27
+**Ref:** plan §4 W1 + §9 (test fakes for sandbox/CLI to reach 90%); task P1.W1.9. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `src/autobridge/runtime/targets.py`: `NetworkBlockedError`/`TargetTimeoutError`/`TargetConfigError`, `host_from_url` + `_host_allowed` (allowlist normalization stripping port/path, subdomain match, case-insensitive, empty-entry skip), `ExecutionResult` (is_ok), `BaseTarget` (timeout 1..3600, memory ≥64, edge reserved, `can_reach`/`check_network`), `LocalProcessTarget` + `DockerSandboxTarget` (minimal stubs that will be wired in W3.6, `fetch` enforces allowlist, `health_check`), `FakeRuntimeTarget` (in-memory, canned dict/list/ExecutionResult/callable/exception per URL/op, substring lookup, `fail_on` injection, `delay_s`→`TargetTimeoutError`, `calls`/`last_call`/`reset`), `FakeDockerSandbox` (strict allowlist) + `FakeLocalProcess` (allow-all valid host)
+- New `src/autobridge/bench/baseline_coding_agent.py`: `ClaudeCliResult` (text/usage/model/cost_usd/raw/duration), `build_fake_claude_output` (JSON contract), `parse_claude_output` (single JSON `result`/`content[]`/`text`, `cost_usd`/`cost`, usage clamp, line-delimited last-wins, plain-text fallback), `ClaudeCliError`, `ClaudeCodeDriver` (CLI path from `CLAUDE_CLI_PATH` env, `--model` + `extra_args`, `subprocess.run` with timeout, non-zero/timeout/not-found → `ClaudeCliError`, `last_prompt`), `CodexCliDriver` stub (NotImplementedError until P1.W8.2), `FakeClaudeDriver` (per-prompt substring mapping, string/callable/ClaudeCliResult coercion, `default_text`/`default_usage`/`default_model`, calls capture)
+- New `src/autobridge/bench/fake_cli.py`: re-export shim for `FakeClaudeDriver`/`build_fake_claude_output`/`parse_claude_output` under stable import path
+- New `scripts/fake_claude.py`: executable fake `claude -p` — parses `-p`/`--model`/`--output-format`, reads `FAKE_CLAUDE_RESPONSES` JSON mapping, `FAKE_CLAUDE_USAGE` `in,out`, `FAKE_CLAUDE_COST`, `FAKE_CLAUDE_MODEL`, `FAKE_CLAUDE_EXIT_CODE`, `FAKE_CLAUDE_VERBOSE` (stderr), emits `{type:result,result,usage,model,cost_usd}` JSON; never touches real credentials or network
+- New `tests/unit/test_autobridge_runtime_targets.py` (40 tests): host helpers, ExecutionResult, BaseTarget validation/timeout/memory/edge, can_reach local vs docker, check_network raise, LocalProcess/DockerSandbox execute/fetch/health, Fake fetch canned/callable/exception/default/blocked/fail_on/delay-timeout/delay-ok, execute default/canned dict/list/ExecutionResult/callable/timeout/substring/fail_on, health/reset/last_call, FakeDockerSandbox blocked/ok, FakeLocalProcess allow-all
+- New `tests/unit/test_autobridge_bench_agents.py` (56 tests): ClaudeCliResult, build output, parse empty/single-json/cost-invalid/content-array/text-field/unknown-shape/usage-invalid/negative/no-usage/not-dict/cost-key, line-delimited last-wins/plain fallback, error fields, driver defaults/env/explicit/model/extra_args, run via fake script subprocess, monkeypatched run success/non-zero/timeout/not-found/custom-timeout/last_prompt, FakeDriver default/direct/substring/result-object/callable-string/coercion/custom-usage/cwd, Codex stub/env, re-export, fake_claude script direct/mapping/exit-code/cost/model
+
+**Key decisions:**
+- Keep `FakeRuntimeTarget` strict by default (docker_sandbox, empty allowlist denies) so W3.6 negative test (`sandbox cannot reach verifier/admin`) stays meaningful; callers that don't care must pass an explicit allowlist — fixed the initial `test_fake_health_and_reset` that assumed permissive default
+- Normalize allowlist entries via `split(":")[0].split("/")[0]` before match so `atlas.example.com:8000` correctly allows `atlas.example.com`; initial `e in h` check was backwards (allowlist longer than host never matched)
+- Reuse `autobridge.llm.provider.Usage` in bench driver so token counting and `estimate_cost` stay single-source
+- Driver's `Path` import moved to `TYPE_CHECKING` (TC003) — annotations are strings via `from __future__ import annotations`; `BareProvider.complete` in old `test_autobridge_llm.py` needed `# noqa: ARG001,ARG002` after ruff 0.9 started flagging it
+
+**Files changed:**
+- `src/autobridge/runtime/targets.py` (new, 411 lines), `src/autobridge/bench/baseline_coding_agent.py` (new, 379 lines), `src/autobridge/bench/fake_cli.py` (new, 15 lines), `scripts/fake_claude.py` (new, 95 lines)
+- `tests/unit/test_autobridge_runtime_targets.py` (new, 40 tests), `tests/unit/test_autobridge_bench_agents.py` (new, 56 tests)
+- `tests/unit/test_autobridge_llm.py` (lint: add noqa for BareProvider)
+
+**Checks:**
+- Targeted: 96 pass (40 runtime + 56 bench); `make test` — 399 pass (380 autobridge @99.49%, 4 verifier @100%, 13 simulators @100%; 90% gate per package)
+- `make lint` / `make typecheck` green; compose untouched (no e2e file for W1.9; workstream e2e is P1.W1.10)
+
+**Notes for next iteration:**
+- Next: P1.W1.10 `tests/e2e/conftest.py` + `test_00_stack_up.py` + `docs/architecture.md` — will use `FakeDockerSandbox.can_reach` negative check as pattern for real sandbox test
+- W1.10 should add `make smoke` negative probes for bench harness later; no new Python package coverage risk
+- Learned: fake allowlist must be explicit in tests — document in BUILD-NOTES so W3.6 doesn't reintroduce permissive default
