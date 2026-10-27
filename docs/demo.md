@@ -5,7 +5,14 @@
 > the same evidence the UI screens show. Every step is reproducible from seeds and
 > release ids.
 
-Prerequisites: `make up` (stack green), reference specs under
+Prerequisites: `make up` (stack green) for the live path — `make demo` then
+drives every call through the control API (`CONTROL_URL`, default
+`http://localhost:8101`) and prints each call's redacted status beside the
+evidence. With the stack down it computes the same evidence locally through
+the engine (reference specs + deterministic rules + escalation bundle) and
+says so in its header/footer, so the script is reproducible anywhere
+(`DEMO_SEED=… make demo`, `--json` for the machine-readable report).
+Reference specs under
 `generated/connectors/{atlaspms,harborpms}/reference/`. Fault injection goes through
 the single labelled bridge `POST /demo/inject-fault` (proxied to the simulator admin
 API on `admin-net`; every request carries `demo: true, labelled: true`).

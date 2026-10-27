@@ -1560,3 +1560,13 @@ Agent: opencode meta/muse-spark-1.3 (escalation)
 
 **Notes for next iteration:**
 - P1.W10.2 (make demo) is next; `make demo` currently prints "not yet implemented" — docs/demo.md already describes the target behavior it must implement.
+
+## 2026-10-27 — P1.W10.2 `make demo` six steps (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Implemented
+`src/autobridge/bench/demo.py` + 22 unit tests; live-verified against the
+Compose stack (`live-control-api`, six [ok]) and offline (`local-evidence`).
+test_02 6/6 on the same stack; sims reset; stack down afterwards. Full suite
+2024 pass (1713/92/219, all gates ≥90%), lint + mypy green. Left for owner:
+P1.W10.3 clean-clone check + recording; P1.W2.8 heldout freeze. Note:
+`POST /demo/reset` returns 403 via control plane (missing admin-network
+header, pre-existing W7.1) — demo does not depend on it.

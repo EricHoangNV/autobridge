@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W10.1 docs pass complete (2026-10-27): README rewritten from skeleton stub to full reference (quickstart, ladder, layout, docs index, loop runbook); docs/demo.md written with the six plan §6 steps via control API calls + rendered evidence; docs/architecture.md §10 and docs/safety-model.md §§1/12 promoted from W1/W6 drafts to W10 final reference; .env.example extended with VERIFIER_URL, SIMULATOR_ADMIN_URL, ADMIN_NET_HOST, BASELINE_DRIVER, BENCH_*, CLAUDE/CODEX_CLI_PATH, E2E_* keys; connector-spec.md and benchmark.md verified complete, untouched.
+P1.W10.2 demo complete (2026-10-27): `make demo` drives plan §6 six steps via the control API when the stack is up (live-control-api, redacted call log per step) and computes the same engine evidence locally when down; step-2 live create idempotent by connector name; 22 unit tests, demo.py 96% line cover; live-verified + test_02 6/6, sims reset, stack down.
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -65,8 +65,10 @@ P1.W10.1 docs pass complete (2026-10-27): README rewritten from skeleton stub to
   - P1.W9.1: e2e harness complete (verified reset, env isolation, budget, random order)
   - P1.W9.2: make e2e + CI job (unit → smoke → e2e from clean clone)
   - P1.W10.1: README + docs/ pages + .env.example
-- Tests: 2002 pass / 0 fail (autobridge 1691 @ 90.63%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + e2e 66/66 live
-- Stack: compose down in sbx1 (docs-only change; unit suite re-run green) / lint + typecheck green
+  - P1.W10.2: make demo six steps via control API + local evidence
+- Tests: 2024 pass / 0 fail (autobridge 1713 @ 90.83%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + e2e test_02 6/6 live
+- Stack: compose down in sbx1 (after live demo verification; sims reset to baseline) / lint + typecheck green
 
 ## Next tasks
-1. **P1.W10.2** — make demo (six demo steps via control API)
+1. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)
+2. **P1.W2.8** — HUMAN heldout freeze (manifest + sha check ready; owner freezes)

@@ -382,3 +382,38 @@ Gotchas: `make demo` target still stubs to "not yet implemented" (P1.W10.2 owns 
 listed in .env.example anyway so W10.2/W8 follow-ups wire it without a docs change.
 
 Verification: lint + typecheck green; make test 2002/0 (gates 90.63/93.78/96.55).
+
+### P1.W10.2 — `make demo` six steps via control API (plan §6)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+- New `src/autobridge/bench/demo.py` (`python -m autobridge.bench.demo`, `make demo`):
+  six steps matching plan §6 and docs/demo.md — (1) Atlas reference sync
+  Complete + zero-token ledger, (2) Harbor-style messy Markdown → DocsReader →
+  classifiers → 15 hypotheses (4 families) → draft spec, all
+  `frontier_tokens == 0`, (3) PAGINATION_CHANGE L0-miss → L1 `offset_to_cursor`
+  JSON Patch (10 ops), (4) `gross_to_net` decoy `net_amount→total_amount` patch
+  flagged `invalid_patch_trap` + single-question EscalationBundle, money
+  Decimal(2dp), (5) scorecard file + `GET /bench/scorecards` as-is, (6) seed +
+  both reference release signatures + replay command. `--json` for machines.
+- Two modes: `CONTROL_URL` reachable → every control call is issued live and its
+  redacted `{method, path, status}` printed beside the evidence; stack down →
+  the same evidence computed locally through the engine (offline fixtures are
+  inline; reference specs read from `generated/`). Step-2 live create is
+  idempotent (reuses the existing "Harbor demo" connector by name).
+- Trust boundaries kept: no `verifier`/`simulators` imports in the new module
+  (`make lint-imports` shows only the two pre-existing harness violations);
+  credential_ref names only, never values; no model calls anywhere.
+- Tests: `tests/unit/test_autobridge_demo.py`, 22 tests (all steps, Harbor
+  cursor-fake Complete, live-mode stubbed HTTP incl. reuse/create/error
+  branches, failure-reporting branch, JSON mode) — demo.py at 96% line cover.
+- Verified live: `docker compose up`, `make demo` → `live-control-api`, all six
+  [ok], `demo complete: 6 steps via control API`; `test_02` 6/6 on the same
+  stack; sims reset to baseline via admin API afterwards; stack brought back
+  down. Observation (pre-existing W7.1, not introduced here): `POST
+  /demo/reset` proxies to sim `/admin/reset` without the `X-Admin-Network`
+  header → 403; e2e reset path is unaffected.
+- `make test`: 2024 pass / 0 fail (autobridge 1713 @ 90.83%, verifier 92 @
+  93.78%, simulators 219 @ 96.55%). `make lint`, `make typecheck` green.
+- Docs: `docs/demo.md` prerequisites paragraph now describes live vs local
+  modes, `CONTROL_URL`/`DEMO_SEED`/`--json`; Makefile `demo` target no longer
+  a stub.

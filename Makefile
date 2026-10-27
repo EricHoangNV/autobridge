@@ -56,7 +56,7 @@ bench-heldout:
 
 demo:
 	@echo ">> demo: six steps via control API (W10)"
-	uv run python -m autobridge.bench.demo 2>&1 || echo "demo not yet implemented (W10)"
+	uv run python -m autobridge.bench.demo
 
 # ---- Quality ----
 lint:
