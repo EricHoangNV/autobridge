@@ -1,6 +1,21 @@
 {
-  "name": "autobridge-ui-stub",
+  "name": "autobridge-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "AutoBridge UI stub (W1) — replaced by the Next.js app in W7"
+  "description": "AutoBridge UI - Next.js + typed OpenAPI client (W7.3)",
+  "scripts": {
+    "gen": "openapi-typescript ./openapi.json -o ./lib/api/schema.d.ts",
+    "gen:check": "npm run gen && git diff --exit-code -- ./lib/api/schema.d.ts ./openapi.json",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "openapi-typescript": "^7.6.0",
+    "typescript": "^5.8.0"
+  }
 }

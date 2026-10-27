@@ -1,7 +1,7 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down test smoke e2e bench demo lint typecheck lint-fix
+.PHONY: up down test smoke e2e bench demo lint typecheck lint-fix openapi openapi-check ui-typecheck
 
 # ---- Docker ----
 up:
@@ -45,6 +45,18 @@ lint-fix:
 
 typecheck:
 	uv run --extra dev mypy src/autobridge
+
+# ---- OpenAPI + UI ----
+openapi:
+	uv run python scripts/export_openapi.py
+	cd ui && npm run gen
+
+openapi-check:
+	uv run python scripts/export_openapi.py --check
+	cd ui && npm run gen && git diff --exit-code -- lib/api/schema.d.ts openapi.json
+
+ui-typecheck:
+	cd ui && npm run typecheck
 
 # ---- Import linter ----
 lint-imports:
