@@ -1220,3 +1220,31 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - Updated docs/safety-model.md with new §8 Escalation bundle (format, storage, producers, consumers, redaction)
 - Checks: make test 1600 pass (autobridge 90.00%, verifier 93.78%, simulators 96.55%) / make lint + make typecheck green / alembic history head 0003
 
+## 2026-10-27 — P1.W6.4 Regression gate on every candidate release: a release that breaks any previously verified scenario is blocked; the plausible-but-wrong patch is rejected by the verifier
+
+**Ref:** plan §4 W6 + §2.7/§2.8 regression; task P1.W6.4. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**Goal:** Every candidate release verified before it ships; breaking any previously verified scenario blocks it; plausible-but-wrong patch (net→total_amount) rejected with invalid_patch_trap.
+
+**What was built:**
+- `src/autobridge/engine/verification.py` (250 lines): `verify_spec(spec, scenario_id, verifier_url, regression_suite, mode)` POSTs to `/verify` via httpx, parses `GateOutcome(verdict,regression,failed_checks,regression_failures,allowed,block_reason)` — `allowed = verdict pass and regression pass`, trap wording `invalid_patch_trap (plausible-but-wrong…)` when failed name matches, `check_regression_gate` skips when verifier_url None (backward compat), `ensure_gate_passes` raises `GateBlockedError(result,reason)` with block_reason, never imports verifier/simulators.
+- `src/autobridge/engine/releases.py`: added `_maybe_verify` helper, extended `create_release` and `create_release_from_patch` with `verifier_url/scenario_id/verified_scenarios/mode` — when verifier_url given they call `ensure_gate_passes` before persisting, preserving existing validation/signature path.
+- `tests/unit/test_autobridge_verification_gate.py` (29 tests): verify_spec pass/fail/trap/regression/suite forwarding/url variants/empty-url/http500/unreachable/non-JSON, check_gate skip/pass/fail, ensure raises/ok/skip, create_release blocks on regression vs allows, create_from_patch blocks on trap/regression vs allows, skip when no URL, live oracle trap (net_amount path → invalid_patch_trap) and pagination_shape, no-verifier-import, mode hidden; _REAL_HTTPX_CLIENT saved to avoid FakeClient recursion.
+- `tests/e2e/test_03_known_repairs_zero_frontier.py`: fixed `assert new_release.spec == new_spec` to normalized compare via `load_spec_from_dict(new_spec).model_dump(...)` — raw vs normalized mismatch after W6.2 added expected_sum/tolerance_pct (None defaults added on dump, causing previous equality to fail).
+- `docs/safety-model.md`: new §7 regression gate (verifier client, gate logic `allowed = verdict pass and regression pass`, engine enforcement snippet, proven by 29 tests, trap and pagination_shape live oracle).
+
+**Key decisions:**
+- Gate opt-in via verifier_url param (None → skip) to keep unit tests without Docker green and preserve existing release creation path; plausible-but-wrong detection via verifier's `invalid_patch_trap` failed check, surfaced as block_reason substring.
+- regression_suite forwarded verbatim — caller supplies previously verified set (e.g. `["baseline","rename_guest_id"]`), None → verifier defaults to baseline-only (cheap always-required check).
+- Trust boundary maintained: verification.py only imports httpx, no verifier/simulators; secrets never in payload (credential_ref only).
+
+**Checks:**
+- `make test` — autobridge 90.00% (verification 98%), verifier 93.78%, simulators 96.55% — 1629 pass, 29 new gate tests; `make lint` + `make typecheck` green.
+- Live verifier: trap spec `gross_to_net_net_to_total_amount` rejected with `invalid_patch_trap`, wrong pagination `offset` rejected with `pagination_shape`.
+- e2e `test_03_known_repairs_zero_frontier.py` 5 pass after normalization fix.
+
+**Files changed:**
+- `src/autobridge/engine/verification.py` (new), `src/autobridge/engine/releases.py` (gate wiring), `tests/unit/test_autobridge_verification_gate.py` (new), `tests/e2e/test_03_known_repairs_zero_frontier.py` (normalization fix), `docs/safety-model.md` (§7 gate)
+
+**Next:** P1.W6.5 e2e test_05_safety_and_semantic + docs/safety-model complete
+
