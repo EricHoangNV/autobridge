@@ -197,7 +197,11 @@ See `docs/connector-spec.md` (W3.7) for the full reference.
 `Budget(max_frontier_tokens, max_small_tokens, max_calls, max_wall)`
 wrapper. `AnthropicProvider` is the W1 implementation (frontier + small
 tiers, model ids from `src/autobridge/config.py` env helpers, never literals);
-`OpenAIProvider` is a stub until P2.S5.1. `FakeProvider` powers unit tests.
+`OpenAIProvider` is the P2.S5.1 Chat Completions implementation behind the
+same `LLMProvider` contract (model ids from env, `system` messages passed
+through inline, Anthropic-style tool specs normalized to OpenAI function
+shape). `tests/e2e/test_s5_provider_parity.py` proves one dev scenario
+reaches an identical ladder outcome on both providers. `FakeProvider` powers unit tests.
 `BudgetedProvider` enforces ceilings and writes `ModelCall` rows; exceeding
 a ceiling raises `BudgetExhausted` and the ladder escalates to L4 — never a
 silent guess. `src/autobridge/evidence/redact.py` strips credential values

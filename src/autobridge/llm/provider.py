@@ -412,15 +412,43 @@ class AnthropicProvider:
 
 
 # ---------------------------------------------------------------------------
-# OpenAI provider (stub — P2.S5.1 fills it)
+# OpenAI provider (P2.S5.1 — Chat Completions, same LLMProvider contract)
 # ---------------------------------------------------------------------------
 
 
-class OpenAIProvider:
-    """Stub that satisfies :class:`LLMProvider` but raises until P2.S5.1.
+def _to_openai_tool(spec: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a tool spec to the OpenAI function-calling shape.
 
-    The stub exists so :mod:`autobridge.config` model ids and the
-    :class:`Budget` path can be exercised without a live key.
+    Accepts OpenAI-native specs (``{"type": "function", ...}``) unchanged and
+    converts the Anthropic-style specs the engine emits
+    (``{"name", "description", "input_schema"}``) to
+    ``{"type": "function", "function": {...}}``. Unknown shapes pass through
+    untouched — the API (not the prompt) enforces tool permissions.
+    """
+    if not isinstance(spec, dict):
+        return spec
+    if spec.get("type") == "function":
+        return spec
+    function: dict[str, Any] = {"name": spec.get("name", "")}
+    if spec.get("description") is not None:
+        function["description"] = spec["description"]
+    parameters = spec.get("input_schema", spec.get("parameters", {"type": "object"}))
+    function["parameters"] = parameters
+    return {"type": "function", "function": function}
+
+
+class OpenAIProvider:
+    """OpenAI Chat Completions adapter (P2.S5.1).
+
+    Mirrors :class:`AnthropicProvider` behind :class:`LLMProvider`:
+    model ids come from :mod:`autobridge.config` (env), not from code;
+    ``tier`` selects between the two model ids; unknown tiers raise
+    :class:`ValueError` before any network call. Unlike Anthropic, OpenAI
+    accepts ``system`` messages inline, so messages pass through unchanged.
+
+    Secrets: only the API key leaves the process (as the SDK's auth
+    header); prompts still carry only redacted docs/responses, and tool
+    permissions are enforced in code, not in the prompt (DIRECTIVES §3).
     """
 
     provider_name = "openai"
@@ -439,6 +467,7 @@ class OpenAIProvider:
         self.api_key = api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
         self.frontier_model = frontier_model or openai_frontier_model()
         self.small_model = small_model or openai_small_model()
+        self._client: Any | None = None
 
     def model_for_tier(self, tier: str) -> str:
         if tier == "frontier":
@@ -446,6 +475,13 @@ class OpenAIProvider:
         if tier == "small":
             return self.small_model
         raise ValueError(f"unknown tier {tier!r}; expected 'frontier' or 'small'")
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            import openai  # noqa: PLC0415
+
+            self._client = openai.OpenAI(api_key=self.api_key or None)
+        return self._client
 
     def complete(
         self,
@@ -456,8 +492,51 @@ class OpenAIProvider:
         purpose: str = "",
         tools: list[dict[str, Any]] | None = None,
     ) -> Completion:
-        _ = (messages, max_tokens, tier, purpose, tools)
-        raise NotImplementedError("OpenAIProvider is a stub until P2.S5.1")
+        _ = purpose  # ledger label is handled by BudgetedProvider
+        model = self.model_for_tier(tier)
+        client = self._get_client()
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": list(messages),
+        }
+        if tools:
+            kwargs["tools"] = [_to_openai_tool(t) for t in tools]
+        resp = client.chat.completions.create(**kwargs)
+        # Parse response: first choice message content + tool_calls + usage.
+        choices = list(getattr(resp, "choices", []) or [])
+        message = choices[0].message if choices else None
+        raw_text = getattr(message, "content", None) if message is not None else None
+        text = raw_text if isinstance(raw_text, str) else ""
+        tool_calls: list[ToolCall] = []
+        for tc in getattr(message, "tool_calls", None) or []:
+            fn = getattr(tc, "function", None)
+            raw_args = getattr(fn, "arguments", None) if fn is not None else None
+            args: Any = {}
+            if isinstance(raw_args, dict):
+                args = raw_args
+            elif isinstance(raw_args, str) and raw_args.strip():
+                import json as _json  # noqa: PLC0415
+
+                try:
+                    args = _json.loads(raw_args)
+                except Exception:
+                    args = {}
+            if not isinstance(args, dict):
+                args = {}
+            tool_calls.append(
+                ToolCall(
+                    id=str(getattr(tc, "id", "") or ""),
+                    name=str(getattr(fn, "name", "") or "") if fn is not None else "",
+                    arguments=dict(args),
+                )
+            )
+        usage_obj = getattr(resp, "usage", None)
+        usage = Usage(
+            input_tokens=int(getattr(usage_obj, "prompt_tokens", 0) or 0),
+            output_tokens=int(getattr(usage_obj, "completion_tokens", 0) or 0),
+        )
+        return Completion(text=text, tool_calls=tool_calls, usage=usage)
 
 
 # ---------------------------------------------------------------------------

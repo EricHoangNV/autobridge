@@ -555,7 +555,7 @@ def test_anthropic_provider_lazy_client_creation(monkeypatch: pytest.MonkeyPatch
 
 
 # ---------------------------------------------------------------------------
-# OpenAIProvider (stub)
+# OpenAIProvider (P2.S5.1 — live Chat Completions adapter)
 # ---------------------------------------------------------------------------
 
 
@@ -575,10 +575,149 @@ def test_openai_provider_explicit_models() -> None:
     assert p.small_model == "o-s"
 
 
-def test_openai_provider_complete_raises() -> None:
+def _openai_mock_client(
+    text: str = "hello world",
+    tool_calls: list | None = None,
+    prompt_tokens: int = 10,
+    completion_tokens: int = 25,
+) -> MagicMock:
+    """Mocked openai client: chat.completions.create returns a fixed response."""
+    from types import SimpleNamespace
+
+    fn_calls = []
+    for tc in tool_calls or []:
+        fn_calls.append(
+            SimpleNamespace(
+                id=tc.get("id", "call_1"),
+                function=SimpleNamespace(
+                    name=tc.get("name", "search"),
+                    arguments=tc.get("arguments", '{"q": "docs"}'),
+                ),
+            )
+        )
+    message = SimpleNamespace(content=text, tool_calls=fn_calls)
+    resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=message)],
+        usage=SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
+    )
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = resp
+    return mock_client
+
+
+def test_openai_provider_complete_parses_response() -> None:
     p = OpenAIProvider(frontier_model="f", small_model="s", api_key="k")
-    with pytest.raises(NotImplementedError, match="stub until P2.S5.1"):
-        p.complete([{"role": "user", "content": "hi"}])
+    p._client = _openai_mock_client(
+        tool_calls=[{"id": "call_1", "name": "search", "arguments": '{"q": "docs"}'}]
+    )
+    result = p.complete(
+        [{"role": "user", "content": "hi"}],
+        tier="small",
+        purpose="test",
+        max_tokens=512,
+    )
+    assert result.text == "hello world"
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].id == "call_1"
+    assert result.tool_calls[0].name == "search"
+    assert result.tool_calls[0].arguments == {"q": "docs"}
+    assert result.usage.input_tokens == 10
+    assert result.usage.output_tokens == 25
+    call_kwargs = p._client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["model"] == "s"
+    assert call_kwargs["max_tokens"] == 512
+
+
+def test_openai_provider_frontier_model_selected() -> None:
+    p = OpenAIProvider(frontier_model="f", small_model="s", api_key="k")
+    p._client = _openai_mock_client(text="frontier answer")
+    result = p.complete([{"role": "user", "content": "hi"}], tier="frontier")
+    assert result.text == "frontier answer"
+    assert p._client.chat.completions.create.call_args.kwargs["model"] == "f"
+
+
+def test_openai_provider_system_messages_pass_through() -> None:
+    """OpenAI accepts system roles inline: messages are forwarded unchanged."""
+    p = OpenAIProvider(frontier_model="f", small_model="s", api_key="k")
+    p._client = _openai_mock_client(text="")
+    messages = [
+        {"role": "system", "content": "you are helpful"},
+        {"role": "user", "content": "hi"},
+    ]
+    p.complete(messages, tier="small")
+    forwarded = p._client.chat.completions.create.call_args.kwargs["messages"]
+    assert forwarded == messages
+
+
+def test_openai_provider_anthropic_style_tools_converted() -> None:
+    p = OpenAIProvider(frontier_model="f", small_model="s", api_key="k")
+    p._client = _openai_mock_client(text="")
+    tools = [{"name": "search", "description": "x", "input_schema": {"type": "object"}}]
+    p.complete([{"role": "user", "content": "hi"}], tools=tools)
+    sent = p._client.chat.completions.create.call_args.kwargs["tools"]
+    assert sent == [
+        {
+            "type": "function",
+            "function": {"name": "search", "description": "x", "parameters": {"type": "object"}},
+        }
+    ]
+
+
+def test_openai_provider_native_tools_pass_through() -> None:
+    p = OpenAIProvider(frontier_model="f", small_model="s", api_key="k")
+    p._client = _openai_mock_client(text="")
+    native = [{"type": "function", "function": {"name": "search", "parameters": {"type": "object"}}}]
+    p.complete([{"role": "user", "content": "hi"}], tools=native)
+    assert p._client.chat.completions.create.call_args.kwargs["tools"] == native
+
+
+def test_openai_provider_no_tools_means_no_tools_kwarg() -> None:
+    p = OpenAIProvider(frontier_model="f", small_model="s", api_key="k")
+    p._client = _openai_mock_client(text="")
+    p.complete([{"role": "user", "content": "hi"}])
+    assert "tools" not in p._client.chat.completions.create.call_args.kwargs
+
+
+def test_openai_provider_bad_tool_arguments_become_empty_dict() -> None:
+    p = OpenAIProvider(frontier_model="f", small_model="s", api_key="k")
+    p._client = _openai_mock_client(
+        tool_calls=[{"id": "call_9", "name": "search", "arguments": "not-json{{{"}]
+    )
+    result = p.complete([{"role": "user", "content": "hi"}])
+    assert result.tool_calls[0].arguments == {}
+
+
+def test_openai_provider_null_content_becomes_empty_text() -> None:
+    p = OpenAIProvider(frontier_model="f", small_model="s", api_key="k")
+    p._client = _openai_mock_client(text=None)  # type: ignore[arg-type]
+    result = p.complete([{"role": "user", "content": "hi"}])
+    assert result.text == ""
+
+
+def test_openai_provider_unknown_tier_raises_before_network() -> None:
+    p = OpenAIProvider(frontier_model="f", small_model="s", api_key="k")
+    with pytest.raises(ValueError, match="unknown tier"):
+        p.complete([{"role": "user", "content": "hi"}], tier="mega")
+    assert p._client is None  # no client (hence no network) was built
+
+
+def test_openai_provider_lazy_client_creation(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No _client yet; _get_client creates one
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-lazy")
+    monkeypatch.setenv("OPENAI_FRONTIER_MODEL", "f-env")
+    monkeypatch.setenv("OPENAI_SMALL_MODEL", "s-env")
+    p = OpenAIProvider()
+    assert p._client is None
+    # Mock openai module
+    import sys
+
+    fake_openai = MagicMock()
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    fake_openai.OpenAI.return_value = MagicMock()
+    c = p._get_client()
+    assert c is not None
+    assert p._client is c
+    fake_openai.OpenAI.assert_called_once_with(api_key="sk-lazy")
 
 
 def test_openai_provider_api_key_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
