@@ -198,7 +198,7 @@ API response.
 
 ## 7. E2E harness (plan §4 W9, P1.W1.10)
 
-`tests/e2e/conftest.py` (first cut) is the session harness:
+`tests/e2e/conftest.py` (complete, P1.W9.1) is the session harness:
 
 - `SERVICE_PORTS` mirrors `compose.yaml` host ports.
 - `e2e_stack` (session scope) brings up Compose (`docker compose up -d
@@ -206,11 +206,21 @@ API response.
   down (`docker compose down -v`) unless `E2E_KEEP_STACK=1`. When Docker is
   not available the fixture **skips** the suite so `make test` stays green
   on a laptop. `E2E_SKIP_STACK=1` assumes `make up` already ran.
-- `reset_simulator_state` (function scope, autouse) best-effort POSTs
-  `POST /admin/reset` / `POST /admin/scenario {id: baseline}` when W2 wires
-  the admin API; on W1 it is a no-op.
-- Tests are independent and random-order safe; no test depends on another's
-  side effects.
+- `reset_simulator_state` (function scope, autouse) resets both simulators
+  via `POST /admin/reset` before and after every test. Tests that run
+  against the live stack get a *verified* reset (a failed reset fails the
+  test instead of leaking scenario state); fake-transport tests get a
+  best-effort reset that never fails.
+- `preserve_process_env` (function scope, autouse) snapshots and restores
+  `os.environ` around every test, so `*_BASE_URL` / `*_API_KEY` assignments
+  in one file cannot leak into another under a random order.
+- Tests are independent and random-order safe (`pytest-randomly` shuffles
+  every run); no test depends on another's side effects. Trust-boundary
+  negative tests pin the stale-allowlist failure mode: guard files that
+  enforce the boundary (`builds.py` 422 on reference-spec reads) and the
+  W8.5 heldout SHA gate (`check_heldout_sha`, returns None, fixture bytes
+  leave only as a hex digest) are allowlisted structurally, everything else
+  still fails the suite.
 
 `tests/e2e/test_00_stack_up.py` is the W1 acceptance test: it asserts every
 service's `/healthz` and `/readyz` return `200`, `status ok`, valid checks,
@@ -226,9 +236,12 @@ make e2e               # tests/e2e via pytest (needs Docker)
 E2E_SKIP_STACK=1 make e2e   # reuse an already-up stack
 ```
 
-Suite budget (W9 target): full suite under 5 minutes; `test_00` alone under
-30 seconds once the stack is warm. The harness documents this in its
-module docstring.
+Suite budget (P1.W9.1, enforced by constants in the harness):
+`SUITE_RUNTIME_BUDGET_SECONDS = 300` wall-clock on a warm stack excluding
+the one-off image build, `WARM_TEST00_BUDGET_SECONDS = 30` for `test_00`
+alone. Measured in the sandbox: 66 tests in ~5s warm, cold
+`compose up --build --wait` + `test_00` in ~20s. The harness documents this
+in its module docstring.
 
 ## 8. Verification ladder (plan §8)
 

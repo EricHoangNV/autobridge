@@ -1087,6 +1087,38 @@ def test_no_frontier_tokens_for_deterministic_paths() -> None:
                 assert res.model_usage["frontier_tokens"] == 0
 
 
+def _hidden_cases_confined_to_sha_gate(text: str) -> bool:
+    """Every ``hidden_cases`` mention lies inside ``check_heldout_sha``.
+
+    The W8.5 heldout integrity gate hashes heldout files against SHA256SUMS.
+    It must return None on all paths (bare ``return`` only): fixture bytes
+    flow into ``sha256()`` and out only as a hex digest, never into a prompt,
+    response, or caller. (Mirror of the helper in test_04; the two files
+    stay standalone so each e2e file reads independently.)
+    """
+    lines = text.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.startswith("def check_heldout_sha"))
+    except StopIteration:
+        return False
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith(("def ", "class "))),
+        len(lines),
+    )
+    if any("hidden_cases" in line for line in lines[:start]):
+        return False
+    if any("hidden_cases" in line for line in lines[end:]):
+        return False
+    if "-> None" not in lines[start]:
+        return False
+    # Every return inside the gate is bare: the function yields no bytes.
+    return all(
+        line.strip() == "return"
+        for line in lines[start + 1 : end]
+        if line.strip().startswith("return")
+    )
+
+
 def test_engine_never_imports_verifier_or_simulators() -> None:
     """Trust boundary: src/autobridge never imports or reads verifier/simulators; hidden fixtures never leave."""
     src_root = REPO_ROOT / "src" / "autobridge"
@@ -1098,10 +1130,16 @@ def test_engine_never_imports_verifier_or_simulators() -> None:
             assert pat not in top, (
                 f"{pyfile} imports {pat!r} in top 40 lines — trust boundary violation"
             )
-        assert "hidden_cases" not in text, f"{pyfile} references hidden_cases"
-        # heldout is allowed only if not referencing hidden fixtures? We check narrowly
-        if "heldout" in text.lower():
-            assert "hidden" not in text.lower(), f"{pyfile} references heldout+hidden"
+        if "hidden_cases" not in text and "heldout" not in text.lower():
+            continue
+        # Sole exception: bench/harness.py::check_heldout_sha (P1.W8.5 heldout
+        # integrity gate) — confined use asserted structurally below.
+        assert pyfile.name == "harness.py" and pyfile.parent.name == "bench", (
+            f"{pyfile} references hidden_cases/heldout — trust boundary violation"
+        )
+        assert _hidden_cases_confined_to_sha_gate(text), (
+            f"{pyfile}: hidden_cases use escaped check_heldout_sha"
+        )
 
 
 def test_sync_outcome_always_complete_degraded_blocked_with_criteria() -> None:

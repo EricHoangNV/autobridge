@@ -137,6 +137,37 @@ def _harbor_fake_client(dataset: dict[str, list[dict[str, Any]]]) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _hidden_cases_confined_to_sha_gate(text: str) -> bool:
+    """Every ``hidden_cases`` mention lies inside ``check_heldout_sha``.
+
+    The W8.5 heldout integrity gate hashes heldout files against SHA256SUMS.
+    It must return None on all paths (bare ``return`` only): fixture bytes
+    flow into ``sha256()`` and out only as a hex digest, never into a prompt,
+    response, or caller.
+    """
+    lines = text.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.startswith("def check_heldout_sha"))
+    except StopIteration:
+        return False
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith(("def ", "class "))),
+        len(lines),
+    )
+    if any("hidden_cases" in line for line in lines[:start]):
+        return False
+    if any("hidden_cases" in line for line in lines[end:]):
+        return False
+    if "-> None" not in lines[start]:
+        return False
+    # Every return inside the gate is bare: the function yields no bytes.
+    return all(
+        line.strip() == "return"
+        for line in lines[start + 1 : end]
+        if line.strip().startswith("return")
+    )
+
+
 def test_workspace_has_no_path_to_verifier_or_simulators() -> None:
     """Engine code never imports, reads or has a route to verifier/ or simulators/.
 
@@ -173,10 +204,12 @@ def test_workspace_has_no_path_to_verifier_or_simulators() -> None:
         # File reads of reference specs are only allowed behind guard (bootstrap.py has 2-3 occurrences of the string
         # in a guard clause, but never open() them). Count occurrences.
         if "generated/connectors" in text:
-            # bootstrap.py, build_run.py, and spec/registry.py are allowed to mention the path
-            # (guard + spec storage under generated/connectors/<id>/<release>)
+            # bootstrap.py, build_run.py, spec/registry.py and control/routes/builds.py
+            # are allowed to mention the path (guard + spec storage under
+            # generated/connectors/<id>/<release>; builds.py enforces the same
+            # guard at the control API layer with a 422 on reference-spec reads)
             # but must not open() reference specs.
-            if pyfile.name in ("bootstrap.py", "build_run.py", "registry.py"):
+            if pyfile.name in ("bootstrap.py", "build_run.py", "registry.py", "builds.py"):
                 # Allow up to 4 mentions (guard + comment + registry storage), but never open() reference
                 assert text.count("generated/connectors") <= 6, f"{pyfile} mentions generated/connectors too often"
                 assert 'open("generated' not in text and "open('generated" not in text, f"{pyfile} opens generated/connectors file"
@@ -190,11 +223,18 @@ def test_workspace_has_no_path_to_verifier_or_simulators() -> None:
     assert not bad.success
     assert "must not read reference" in bad.degradation_reason.lower()  # type: ignore[union-attr]
 
-    # Also verify hidden_cases never leak: engine files never reference hidden_cases
+    # Also verify hidden_cases never leak: engine files never reference hidden_cases,
+    # except bench/harness.py::check_heldout_sha (P1.W8.5 heldout integrity gate: it
+    # hashes files against SHA256SUMS and returns None — fixture bytes never leave
+    # the function except as a hex digest, asserted structurally below).
     for pyfile in src_root.rglob("*.py"):
         txt = pyfile.read_text(encoding="utf-8")
-        assert "hidden_cases" not in txt, f"{pyfile} references hidden_cases — trust boundary violation"
-        assert "heldout" not in txt.lower() or "heldout" in txt.lower() and "hidden" not in txt.lower(), f"{pyfile} references heldout"
+        if "hidden_cases" not in txt and "heldout" not in txt.lower():
+            continue
+        assert pyfile.name == "harness.py" and pyfile.parent.name == "bench", (
+            f"{pyfile} references hidden_cases/heldout — trust boundary violation"
+        )
+        assert _hidden_cases_confined_to_sha_gate(txt), f"{pyfile}: hidden_cases use escaped check_heldout_sha"
 
 
 def test_no_reference_spec_import_in_bootstrap() -> None:

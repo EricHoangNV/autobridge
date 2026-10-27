@@ -102,3 +102,8 @@ name = "autobridge must not import verifier or simulators"
 type = "forbidden"
 source_modules = ["autobridge"]
 forbidden_modules = ["verifier", "simulators"]
+
+[dependency-groups]
+dev = [
+    "pytest-randomly>=5.0.0",
+]

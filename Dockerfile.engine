@@ -8,7 +8,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv
 
-RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.34"
+# Install the engine's declared runtime dependencies (P1.W9.1: the image
+# previously installed only fastapi/uvicorn, so control/worker crashed on
+# `import sqlalchemy`). Installing the project keeps the image in sync with
+# pyproject.toml instead of duplicating the pin list here.
+COPY pyproject.toml README.md ./
+RUN pip install --no-cache-dir .
 
 COPY src/ ./src/
 

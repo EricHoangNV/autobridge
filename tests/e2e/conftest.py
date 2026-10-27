@@ -1,7 +1,7 @@
-"""E2E harness — first cut for P1.W1.10 (plan §4 W1, §3, §4 W9).
+"""E2E harness — complete for P1.W9.1 (plan §4 W9, §3).
 
 Brings up the Compose stack, waits on every service's ``/readyz``, resets
-simulator state between tests when the admin API exists, and tears down.
+simulator state before and after each test, and tears down.
 
 Usage:
   make e2e                          # host runs pytest against the stack
@@ -9,16 +9,27 @@ Usage:
   E2E_KEEP_STACK=1 make e2e         # keep containers after the run
   E2E_TIMEOUT=180 make e2e           # longer wait for slow CI
 
-Design (W9 complete version is in P1.W9.1):
+Design (complete):
   - Session fixture ``e2e_stack`` is the single place that touches Docker.
     If Docker is not available the fixture skips, so the suite is green
     on a laptop without Docker and informative in CI.
-  - Function fixture ``reset_simulator_state`` tries ``POST /admin/reset``
-    on each simulator's admin port and ``POST /admin/scenario {id: baseline}``
-    when those endpoints exist (W2.2). On W1 they do not, so it is a no-op.
-  - Tests are independent: no shared DB state, no ordering, random-order safe.
-  - Suite runtime budget (W9 target): full suite under 5 minutes; ``test_00``
-    alone under 30s once the stack is warm.
+  - Function fixture ``reset_simulator_state`` (autouse) resets both
+    simulators via ``POST /admin/reset`` on the admin ports before and
+    after every test. Tests that use the live stack (``e2e_stack`` in
+    their fixtures) get a *verified* reset: a failed reset fails the
+    test instead of leaking state into the next one. Tests running on
+    fakes get a best-effort reset that never fails.
+  - Function fixture ``preserve_process_env`` (autouse) snapshots and
+    restores ``os.environ`` around every test: several e2e files set
+    ``*_BASE_URL`` / ``*_API_KEY`` directly, and without this a random
+    order would leak values between tests.
+  - Tests are independent: no shared DB state, no ordering, random-order
+    safe (``pytest-randomly`` shuffles every run; ``make e2e`` passes
+    under at least two different seeds before a workstream is done).
+  - Suite runtime budget: full suite under 5 minutes
+    (``SUITE_RUNTIME_BUDGET_SECONDS``); ``test_00`` alone under 30s once
+    the stack is warm (``WARM_TEST00_BUDGET_SECONDS``). The budget is
+    wall-clock on a warm stack, excluding the one-off image build.
 
 Trust boundaries: this file lives in ``tests/e2e`` and never imports
 ``autobridge`` engine internals; it talks to services only over HTTP.
@@ -57,16 +68,18 @@ SIM_ADMIN_PORTS: Final[dict[str, int]] = {
     "sim-harbor": 8110,
 }
 
-# Admin endpoints are *not* host-mapped; they live on 8001 inside the
-# container. The host cannot reach them in W1 (negative network test).
-# The harness resets via ``control`` proxy when it exists (W7
-# POST /demo/inject-fault) and via direct admin-net from inside control
-# container. For the first cut we do best-effort via localhost admin
-# ports when W2 maps them; otherwise no-op.
-ADMIN_RESET_PATHS: Final[list[str]] = [
-    "/admin/reset",
-    "/admin/scenario",
-]
+# Simulators reset by the per-test fixture (plan §2.8: Atlas + Harbor).
+SIM_SERVICES: Final[tuple[str, str]] = ("sim-atlas", "sim-harbor")
+
+# Suite runtime budget, wall-clock on a warm stack excluding image build
+# (plan §4 W9 passing criteria; also documented in docs/architecture.md §7).
+SUITE_RUNTIME_BUDGET_SECONDS: Final[int] = 300
+WARM_TEST00_BUDGET_SECONDS: Final[int] = 30
+
+# Simulator admin API (W2.2): ``POST /admin/reset`` restores the pristine
+# dataset; ``POST /admin/scenario`` applies a catalog scenario. Both live
+# on the admin ports and require the admin-net header (sent by
+# ``_http_post_json(..., admin=True)``).
 
 
 def service_url(service: str, path: str = "/readyz") -> str:
@@ -217,42 +230,59 @@ def e2e_stack() -> str:
 
 
 @pytest.fixture(autouse=True)
-def reset_simulator_state(request: pytest.FixtureRequest) -> None:
-    """Reset simulator state between tests when the admin API exists.
+def preserve_process_env() -> None:
+    """Snapshot and restore ``os.environ`` around every test.
 
-    First cut (W1): the admin API does not yet exist, so this is a no-op
-    that never fails. W2.2 wires ``POST /admin/scenario`` and a reset
-    endpoint; this hook will then use them. Tests must not rely on the
-    reset having done anything in W1, only that it does not error.
-
-    This fixture is autouse but does not require the stack to be up — it
-    best-effort resets if reachable. Tests that need the stack should
-    explicitly depend on ``e2e_stack``.
+    Several e2e files assign ``*_BASE_URL`` / ``*_API_KEY`` directly
+    instead of via monkeypatch; without this fixture a random order
+    leaks those values into unrelated tests. Defined before
+    ``reset_simulator_state`` so the restore runs after the post-test
+    reset on teardown.
     """
-    # Check if e2e_stack fixture is active (i.e., stack is up or will be)
-    # If the test explicitly requests e2e_stack, that fixture will have been
-    # evaluated already; otherwise we just try best-effort without asserting.
-    _ = request
+    snapshot = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(snapshot)
 
-    def _do_reset() -> None:
-        for svc in ("sim-atlas", "sim-harbor"):
-            # Try control-proxied reset (W7 demo path) — available later.
-            _http_post_json(service_url("control", "/demo/inject-fault"), {"target": svc, "scenario": "baseline"})
-            # Direct admin port (W2.2) — public port also works for /admin/reset in single-process fallback,
-            # but prefer admin port with header.
-            for path in ADMIN_RESET_PATHS:
-                url = admin_url(svc, path)
-                if path == "/admin/scenario":
-                    _http_post_json(url, {"id": "baseline", "seed": 0}, admin=True)
-                else:
-                    _http_post_json(url, {}, admin=True)
-                # Fallback: try public port too (supports single-uvicorn mode during tests)
-                url2 = service_url(svc, path)
-                if path == "/admin/scenario":
-                    _http_post_json(url2, {"id": "baseline", "seed": 0})
-                else:
-                    _http_post_json(url2, {})
 
-    _do_reset()
+def _reset_simulators(*, enforce: bool) -> None:
+    """Reset both simulators to their pristine dataset.
+
+    Always tries the admin-port ``POST /admin/reset`` (W2.2) with the
+    admin-net header, falling back to the public port (single-uvicorn
+    mode), plus the control-plane ``POST /demo/inject-fault`` baseline
+    path (best-effort). When *enforce* is true (the test runs against
+    the live stack) a failed admin reset fails the test instead of
+    leaking scenario state; otherwise failures are ignored so
+    fake-transport tests stay green without Docker.
+    """
+    failures: list[str] = []
+    for svc in SIM_SERVICES:
+        ok = _http_post_json(admin_url(svc, "/admin/reset"), {}, admin=True)
+        if not ok:
+            ok = _http_post_json(service_url(svc, "/admin/reset"), {})
+        if not ok:
+            failures.append(svc)
+    # Control-plane demo path (W7): best-effort, never enforced.
+    for svc in SIM_SERVICES:
+        _http_post_json(service_url("control", "/demo/inject-fault"), {"target": svc, "scenario": "baseline"})
+    if enforce and failures:
+        pytest.fail(f"simulator reset failed for: {', '.join(failures)} — refusing to leak state")
+
+
+@pytest.fixture(autouse=True)
+def reset_simulator_state(request: pytest.FixtureRequest) -> None:
+    """Reset simulator state before and after each test.
+
+    A test that requests the ``e2e_stack`` fixture runs against the
+    live Compose stack (session fixtures are set up before function
+    ones, so if the stack were down this test would already have been
+    skipped): its reset is verified. All other tests run on fake
+    transports and get a best-effort reset that never fails.
+    """
+    live = "e2e_stack" in (request.fixturenames or ())
+    _reset_simulators(enforce=live)
     yield
-    _do_reset()
+    _reset_simulators(enforce=live)

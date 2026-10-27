@@ -121,9 +121,19 @@ def test_every_service_has_healthcheck(compose: dict) -> None:
         assert "healthcheck" in cfg, f"{svc} has no healthcheck"
 
 
-def test_verifier_build_context_is_verifier_only(compose: dict) -> None:
+def test_verifier_build_context_excludes_engine(compose: dict) -> None:
+    # P1.W9.1: the verifier image builds from the repo root (it needs the
+    # simulators package), but its Dockerfile must copy ONLY verifier/ and
+    # simulators/ — src/autobridge (engine) physically cannot leak in.
     build = compose["services"]["verifier"]["build"]
-    assert build["context"] in ("./verifier", "verifier")
+    assert build["context"] in (".", "./")
+    dockerfile = ROOT / build["dockerfile"]
+    assert dockerfile.is_file(), f"missing {dockerfile}"
+    text = dockerfile.read_text(encoding="utf-8")
+    assert "COPY verifier/" in text, "verifier image must copy the verifier package"
+    assert "COPY simulators/" in text, "verifier image must copy the simulators package"
+    assert "COPY src" not in text, "verifier image must never copy engine src/"
+    assert "COPY . " not in text and "COPY ./ " not in text, "verifier image must not blanket-copy the context"
 
 
 def test_sim_build_context_is_simulators_only(compose: dict) -> None:
