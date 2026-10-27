@@ -64,7 +64,7 @@
 - [x] P1.W5.4 `ProbeSelector` (`discovery/probes.py`): picks the allowed GET probe that best splits surviving hypotheses by expected information gain; budget of probes, requests, wall-clock, tokens per run
 - [x] P1.W5.5 Budgeted L2 / L3 wiring in the ladder: L3 only when the enumerator yields fewer than two hypotheses (asserted); `BudgetExhausted` → L4 escalation bundle, never a silent guess; surviving ambiguity → `Degraded` with open questions
 - [x] P1.W5.6 `discovery/bootstrap.py` + `engine/build_run.py`: docs → draft spec → compile → visible tests → verify; Harbor connector produced from docs alone with no reference-spec access
-- [ ] P1.W5.7 `tests/e2e/test_04_bootstrap_unfamiliar_api.py` with the negative test that the workspace has no path to `verifier/` or `simulators/`; `date` ambiguity resolved within the probe budget or reported `Degraded`
+- [>] P1.W5.7 `tests/e2e/test_04_bootstrap_unfamiliar_api.py` with the negative test that the workspace has no path to `verifier/` or `simulators/`; `date` ambiguity resolved within the probe budget or reported `Degraded` — in progress: sbx1 since 2026-10-27 06:18
 
 #### W6 — Semantic drift + safety (plan §4 W6)
 - [ ] P1.W6.1 `SEMANTIC_VALUE_DRIFT` detection via invariants (schema-valid but a money / date / count invariant fails) with the failing invariant named in `unmet_criteria`
