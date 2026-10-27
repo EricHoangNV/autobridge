@@ -1813,3 +1813,7 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Mock HotelToolsV1 
 **Notes for next iteration:**
 - `make test` autobridge arm has 5 pre-existing failures on origin/main (verified via stash): heldout-gate bench tests stale since the W2 freeze — REQ-007/P1.W2.8 scope, the natural next pickup alongside P2.S6.1
 - Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+## 2026-10-27 — P2.S6.1 Richer UI done (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+Per-run model-usage chart + evidence graph view on /repairs/[id], no new API surface; Playwright test_s6 (3 tests, mocked routes, test-results/s6 screenshots asserted) green and test_06 6/6 green; ui vitest 143 pass, tsc clean, make lint/typecheck green, make test 1830 pass @ 91.07% + 5 pre-existing REQ-007 fails. Build note in BUILD-NOTES.md under P2.S6.1. Next: P2.S7.1 CLI.
