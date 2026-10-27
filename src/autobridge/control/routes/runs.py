@@ -21,6 +21,10 @@ from autobridge.control.schemas import (
     RunOut,
     SyncRunOut,
 )
+from autobridge.control.sse import (
+    collect_secrets as sse_collect_secrets,
+)
+from autobridge.control.sse import evidence_to_sse_data, get_evidence_for_run
 from autobridge.evidence.redact import redact_payload
 
 router = APIRouter(tags=["runs"])
@@ -195,48 +199,14 @@ def get_evidence(evidence_id: str, db: Session = Depends(get_db)) -> EvidenceOut
 
 @router.get("/runs/{run_id}/evidence", response_model=list[EvidenceOut])
 def get_run_evidence(run_id: str, db: Session = Depends(get_db)) -> list[EvidenceOut]:
-    rows = db.execute(select(EvidenceRecord).order_by(EvidenceRecord.created_at)).scalars().all()
-    matched = [r for r in rows if r.run_id.endswith(f":{run_id}") or r.run_id == run_id]
-    secrets = _collect_secrets(db)
+    matched = get_evidence_for_run(db, run_id)
+    secrets = sse_collect_secrets(db)
     return [_evidence_to_out(e, secrets) for e in matched]
 
 
 def _collect_secrets(db: Session | None = None) -> list[str]:
-    import os
-    import re
-
-    # Collect from DB credential_refs if available
-    refs: list[str] = []
-    if db is not None:
-        try:
-            from autobridge.control.models import Connector
-
-            rows = db.execute(__import__("sqlalchemy").select(Connector.credential_ref)).scalars().all()
-            refs.extend(rows)
-        except Exception:
-            pass
-    # Add env-based refs (generic uppercase keys that look like credential refs)
-    # Include any env var matching credential ref pattern and with value length >=6
-    cred_re = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
-    skip = {"PATH", "HOME", "PWD", "OLDPWD", "SHELL", "USER", "LOGNAME", "LANG", "TERM", "DISPLAY", "DATABASE_URL", "VERIFIER_URL", "SIMULATOR_ADMIN_URL"}
-    for k, v in os.environ.items():
-        if k in skip:
-            continue
-        if not v or len(v) < 6:
-            continue
-        if cred_re.match(k) and k not in refs:
-            refs.append(k)
-    # Also include traditional suffixes
-    for k in os.environ.keys():
-        if k.endswith("_API_KEY") or k.endswith("_TOKEN") or k.endswith("_SECRET"):
-            if k not in refs:
-                refs.append(k)
-    values: list[str] = []
-    for ref in refs:
-        val = os.environ.get(ref)
-        if val:
-            values.append(val)
-    return values
+    """Backward-compat wrapper — collects via :mod:`autobridge.control.sse`."""
+    return sse_collect_secrets(db)
 
 
 @router.get("/runs/{run_id}/events")
@@ -255,26 +225,14 @@ async def get_run_events(run_id: str, request: Request, db: Session = Depends(ge
     if not exists:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
 
-    # Collect evidence for this run
-    rows = db.execute(select(EvidenceRecord).order_by(EvidenceRecord.created_at)).scalars().all()
-    matched = [r for r in rows if r.run_id.endswith(f":{run_id}") or r.run_id == run_id]
-    secrets = _collect_secrets(db)
+    matched = get_evidence_for_run(db, run_id)
+    secrets = sse_collect_secrets(db)
 
     async def generator():
         for rec in matched:
             if await request.is_disconnected():
                 break
-            payload = rec.payload
-            if secrets:
-                payload = redact_payload(payload, secrets)
-            data = {
-                "id": rec.id,
-                "kind": rec.kind,
-                "payload": payload,
-                "parent_ids": rec.parent_ids,
-                "run_id": rec.run_id,
-                "created_at": rec.created_at.isoformat() if rec.created_at else None,
-            }
+            data = evidence_to_sse_data(rec, secrets)
             yield {"event": rec.kind, "data": json.dumps(data, default=str)}
         # End-of-stream marker
         yield {"event": "done", "data": json.dumps({"run_id": run_id, "count": len(matched)})}
