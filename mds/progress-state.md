@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-002 slice 3 done (2026-10-27): the climb on live SSE — track rung = max(polled level, SSE max) from the source sync run's `/runs/{id}/events` (named-event fix in `useRunEvents`, `ladder-events` mapping, poll fallback), frontier counter ticks only at L3 (900 ms ease-out, reduced-motion snap), verdict/action gated on patch passed (`patchReady`, climbing headlines), zero badge hidden while climbing; every data-testid kept, e2e spec untouched.
+REQ-002 slice 4 done (2026-10-27): broadcast rundown (/connectors rows, headline, recent repairs, empty state) + masthead (/connectors/[id] facts, r-live numeral, waiting band); all testids kept, e2e untouched; learnings §4.
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -70,10 +70,11 @@ REQ-002 slice 3 done (2026-10-27): the climb on live SSE — track rung = max(po
   - REQ-002 slice 1: broadcast tokens + shell (TopBar, fonts, token swap, docs §9.2 note)
   - REQ-002 slice 2: /repairs/[id] call + scorebug in broadcast tokens
   - REQ-002 slice 3: the climb on live SSE (track, L3-only tick, gated verdict/action)
-- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.86%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 124 + e2e test_06 6/6 (mocked, chromium)
+  - REQ-002 slice 4: /connectors rundown + /connectors/[id] masthead in broadcast tokens
+- Tests: 2026 pass / 0 fail (autobridge 1715 @ 90.86%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + ui 125 + e2e test_06 6/6 (mocked, chromium)
 - Stack: compose down in sbx1 this run (no live e2e; mocked e2e via dev server on :3000 green) / make lint + make typecheck + ui typecheck + ui build green
 
 ## Next tasks
-1. **REQ-002 slices 4–5** — /connectors + /connectors/[id], /connectors/new + drawer (IN_PROGRESS sbx1)
+1. **REQ-002 slice 5** — /connectors/new + Inject Fault drawer (IN_PROGRESS sbx1)
 2. **P1.W10.3** — HUMAN clean-clone check + demo recording (codeable part done: make demo is idempotent)
 3. **P1.W2.8** — HUMAN heldout freeze (manifest + sha check ready; owner freezes)
