@@ -1491,3 +1491,8 @@ Agent: opencode meta/muse-spark-1.3 (escalation)
 
 **Notes for next iteration:**
 - W8.4 scorer consumes `TrialResult.to_dict()` — `one_shot` key present when the three-arm runner was used; handle its absence for two-arm JSONL.
+
+## 2026-10-27 — P1.W8.4 bench scoring + report (sbx1)
+Agent: opencode meta/muse-spark-1.3 (escalation)
+Task: P1.W8.4 `bench/scoring.py` + `bench/report.py` → `experiments/scorecard.md` (plan §2.10).
+What: `src/autobridge/bench/scoring.py` (VerifyOutcome normalize, verify_via_http hidden-mode POST, score_escalation_quality, score_arm/trial/bench, aggregate_scores, validate_scorecard_schema, all ten required metrics, Decimal cost); `src/autobridge/bench/report.py` (markdown render with aggregate table + per-trial table + Wins + Losses, JSON roundtrip, idempotent CLI); ArmResult gains `tool_calls`/`model_calls` defaults (harness baseline/one_shot populate model_calls). Trust boundary kept: no verifier/simulator imports, verification via injected verify_fn. 38 tests in tests/unit/test_autobridge_bench_scoring.py (scoring 96%, report 95%). Full make test green (1670+92+219), lint + mypy green. E2E not run (compose down in sbx1); W8.5 test_07 will exercise validate_scorecard_schema live.

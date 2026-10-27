@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W8.3 one_shot_generator done (2026-10-27): single LLMProvider completion producing ConnectorSpec YAML in one pass with the same HarnessInputs as both other arms (three-way assert_inputs_equal audit); Budget/BudgetedProvider ceilings, Decimal cost via estimate_cost, ArmResult(arm="one_shot") + TrialResult.one_shot for the W8.4 scorer; 68 new tests, one_shot.py 92% cover. Full suite green.
+P1.W8.4 bench scoring + report done (2026-10-27): `bench/scoring.py` scores every trial × arm via verifier hidden mode (verify_fn injection, no verifier import) across all ten required metrics — verified completion, repair success, false-fix/unsafe rate, escalation quality, elapsed, tool calls, model calls, frontier tokens, Decimal cost, zero-frontier solves; `bench/report.py` renders `experiments/scorecard.md` with wins AND losses plus `validate_scorecard_schema` for the W8.5 e2e; ArmResult gains backward-compatible `tool_calls`/`model_calls`. 38 new tests, scoring 96% / report 95% cover. Full suite green.
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -60,10 +60,10 @@ P1.W8.3 one_shot_generator done (2026-10-27): single LLMProvider completion prod
   - P1.W8.1: Bench harness matched-budget
   - P1.W8.2: Baseline drivers (claude/codex/llm fallback)
   - P1.W8.3: one_shot_generator secondary control
-- Tests: 1943 pass / 0 fail (autobridge 90.40%, verifier 93.78%, simulators 96.55%)
+  - P1.W8.4: bench scoring + report via verifier hidden mode
+- Tests: 1981 pass / 0 fail (autobridge 1670 @ 90.59%, verifier 92 @ 93.78%, simulators 219 @ 96.55%)
 - Stack: compose down in sbx1 (e2e not run; unit + fakes green) / lint + typecheck green
 
 ## Next tasks
-1. **P1.W8.4** — bench/scoring.py + report.py → experiments/scorecard.md
-2. **P1.W8.5** — make bench idempotent + heldout sha + test_07 + docs/benchmark.md
-3. **P1.W9.1** — tests/e2e/conftest.py complete (independent, random-order safe)
+1. **P1.W8.5** — make bench idempotent + heldout sha + test_07 + docs/benchmark.md
+2. **P1.W9.1** — tests/e2e/conftest.py complete (independent, random-order safe)
