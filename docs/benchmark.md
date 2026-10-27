@@ -91,6 +91,62 @@ If the agentic baseline beats the one-shot, the gain is from tool use/iteration,
 
 Scoring (P1.W8.4, `bench/scoring.py`) queries the verifier in hidden mode and reports: verified completion, repair success, false-fix/unsafe rate, escalation quality, elapsed, tool calls, model calls, frontier tokens, estimated cost, zero-frontier solves. `bench/report.py` writes `experiments/scorecard.md` listing wins and losses — both are reported.
 
+## `make bench` pipeline (P1.W8.5)
+
+One command runs the whole benchmark (plan §8 verification ladder:
+heldout sha check → matched-budget run → `experiments/scorecard.md`):
+
+```bash
+make bench                                    # dev split, seed 42
+BENCH_SCENARIOS=baseline BENCH_TRIALS=2 make bench
+BENCH_SEED=99 make bench                      # reproducible from seeds
+BENCH_NO_SCORE=1 make bench                   # harness JSONL only, skip scoring
+make bench-heldout                            # Nov 3 run: BENCH_VISIBILITY=heldout
+```
+
+Steps inside `python -m autobridge.bench.harness`:
+
+1. **Heldout SHA gate** (`check_heldout_sha`) — no-op until the owner
+   freezes heldout (P1.W2.8); once `verifier/hidden_cases/heldout/SHA256SUMS`
+   exists every listed file's sha256 must match or the run exits 2 before
+   anything executes.
+2. **Matched-budget run** — every scenario × trial through both arms with
+   byte-identical `HarnessInputs` (asserted pre-run and audited post-run).
+3. **JSONL output** — `experiments/benchmark_runs/<scenario>--trial-<n>.jsonl`
+   plus `_summary.json` (overwritten, never appended — re-runs are idempotent).
+4. **Scoring + report** (`score_and_report`) — every trial × arm scored via
+   verifier hidden mode over HTTP (unreachable verifier records losses,
+   never raises), then `experiments/benchmark_runs/_scorecard.json` and
+   `experiments/scorecard.md` (wins AND losses) via `bench/report.py`.
+
 ## Reproducibility
 
-`make bench` is idempotent and reproducible from seeds (`BENCH_SEED`, `BENCH_SCENARIOS`, `BENCH_TRIALS` env). Heldout SHA is checked before the run (`verifier/hidden_cases/heldout/SHA256SUMS`). `tests/e2e/test_07_benchmark_matched_budget.py` runs one dev scenario through both arms and validates the scorecard schema.
+`make bench` is idempotent and reproducible from seeds (`BENCH_SEED`,
+`BENCH_SCENARIOS`, `BENCH_TRIALS`, `BENCH_VISIBILITY` env, or the matching
+`--seed` / `--scenarios` / `--trials` / `--visibility` flags):
+
+* Same seed → same per-trial inputs, seeds and fingerprints
+  (`make_trial_inputs` hashes `seed:scenario:trial`); re-running overwrites
+  the same file names.
+* Byte-identity holds for everything except wall-clock timing:
+  `canonical_payload` / `canonical_json_bytes` /
+  `assert_results_reproducible` in `bench/harness.py` drop only
+  `elapsed_ms` / `started_at` / `finished_at` / `generated_at` — inputs,
+  budgets, verdicts, token counts and costs must all match.
+  `tests/unit/test_autobridge_bench_w85.py` proves two runs with the same
+  seed produce byte-identical JSONL and that a different seed (or different
+  arm outcomes) fails the check.
+
+## Heldout freeze runbook (owner step, P1.W2.8)
+
+Agents prepare the gate; the owner freezes. When the dev/heldout split is
+final, from the repo root:
+
+```bash
+cd verifier/hidden_cases/heldout && sha256sum ./*.yaml > SHA256SUMS && git add SHA256SUMS
+```
+
+From then on every `make bench` (and `make bench-heldout`) verifies the
+manifest first and refuses to run on tampered heldout fixtures (exit 2).
+`tests/e2e/test_07_benchmark_matched_budget.py` runs one dev scenario
+through both arms and validates the scorecard schema.

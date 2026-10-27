@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W8.4 bench scoring + report done (2026-10-27): `bench/scoring.py` scores every trial × arm via verifier hidden mode (verify_fn injection, no verifier import) across all ten required metrics — verified completion, repair success, false-fix/unsafe rate, escalation quality, elapsed, tool calls, model calls, frontier tokens, Decimal cost, zero-frontier solves; `bench/report.py` renders `experiments/scorecard.md` with wins AND losses plus `validate_scorecard_schema` for the W8.5 e2e; ArmResult gains backward-compatible `tool_calls`/`model_calls`. 38 new tests, scoring 96% / report 95% cover. Full suite green.
+P1.W8.5 bench pipeline done (2026-10-27): `make bench` runs heldout SHA gate → matched-budget run → idempotent JSONL → verifier hidden-mode scoring → `experiments/scorecard.md` (wins AND losses); reproducibility via `canonical_payload`/`assert_results_reproducible` (timing-only exclusions, proven live with identical sha256 across runs); `tests/e2e/test_07_benchmark_matched_budget.py` validates the scorecard schema; `make bench-heldout` + freeze runbook ready for Nov 3 (freeze itself stays P1.W2.8 HUMAN). W8 workstream complete (W8.1–W8.5).
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -61,9 +61,10 @@ P1.W8.4 bench scoring + report done (2026-10-27): `bench/scoring.py` scores ever
   - P1.W8.2: Baseline drivers (claude/codex/llm fallback)
   - P1.W8.3: one_shot_generator secondary control
   - P1.W8.4: bench scoring + report via verifier hidden mode
-- Tests: 1981 pass / 0 fail (autobridge 1670 @ 90.59%, verifier 92 @ 93.78%, simulators 219 @ 96.55%)
-- Stack: compose down in sbx1 (e2e not run; unit + fakes green) / lint + typecheck green
+  - P1.W8.5: make bench idempotent + heldout sha + test_07 + docs/benchmark.md
+- Tests: 1995 pass / 0 fail (autobridge 1684 @ 90.63%, verifier 92 @ 93.78%, simulators 219 @ 96.55%)
+- Stack: compose down in sbx1 (test_07 green without Docker via fakes; live verifier path when up) / lint + typecheck green
 
 ## Next tasks
-1. **P1.W8.5** — make bench idempotent + heldout sha + test_07 + docs/benchmark.md
-2. **P1.W9.1** — tests/e2e/conftest.py complete (independent, random-order safe)
+1. **P1.W9.1** — tests/e2e/conftest.py complete (independent, random-order safe)
+2. **P1.W9.2** — make e2e + CI job (unit → smoke → e2e from clean clone)

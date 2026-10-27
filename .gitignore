@@ -41,6 +41,9 @@ verifier/hidden_cases/heldout/*
 generated/connectors/*/
 !generated/connectors/.gitkeep
 experiments/benchmark_runs/*.jsonl
+experiments/benchmark_runs/_summary.json
+experiments/benchmark_runs/_scorecard.json
+experiments/scorecard.md
 
 # UI build cache
 ui/tsconfig.tsbuildinfo

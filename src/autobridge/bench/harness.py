@@ -916,6 +916,101 @@ def write_bench_summary(bench_result: BenchResult, path: str | pathlib.Path | No
 
 
 # ---------------------------------------------------------------------------
+# Reproducibility — canonical comparison ignoring wall-clock timing (P1.W8.5)
+# ---------------------------------------------------------------------------
+
+#: Payload keys that vary run to run even with the same seed (measured
+#: wall-clock durations and timestamps).  Idempotency / reproducibility
+#: comparisons drop these; everything else must be byte-identical for the
+#: same seed (plan §2.10: "reproducible from seeds").
+VOLATILE_KEYS: tuple[str, ...] = ("elapsed_ms", "started_at", "finished_at", "generated_at")
+
+
+def canonical_payload(payload: Any) -> Any:
+    """Return *payload* with volatile timing keys removed (recursively).
+
+    Used to prove two bench runs are reproducible: same seed + same code
+    must yield identical canonical bytes.  Only wall-clock measurements
+    and timestamps are excluded — inputs, seeds, fingerprints, verdicts,
+    token counts and costs must all match.
+    """
+    if isinstance(payload, dict):
+        return {k: canonical_payload(v) for k, v in payload.items() if k not in VOLATILE_KEYS}
+    if isinstance(payload, list):
+        return [canonical_payload(v) for v in payload]
+    if isinstance(payload, tuple):
+        return [canonical_payload(v) for v in payload]
+    return payload
+
+
+def canonical_json_bytes(payload: Any) -> bytes:
+    """Canonical JSON bytes for *payload* (sorted keys, timing excluded)."""
+    return json.dumps(canonical_payload(payload), default=str, sort_keys=True).encode("utf-8")
+
+
+def assert_results_reproducible(first: BenchResult, second: BenchResult) -> None:
+    """Assert two harness runs are reproducible (same seed → same results).
+
+    Raises :class:`AssertionError` naming the divergence.  Timing fields
+    (``elapsed_ms``, ``started_at``/``finished_at``) are excluded — live
+    wall-clock always varies; what must match is every input, seed,
+    fingerprint, budget field and arm fact.
+    """
+    if first.config != second.config:
+        raise AssertionError(f"bench configs differ: {first.config!r} != {second.config!r}")
+    if len(first.trials) != len(second.trials):
+        raise AssertionError(f"trial counts differ: {len(first.trials)} != {len(second.trials)}")
+    a = canonical_json_bytes([t.to_dict() for t in first.trials])
+    b = canonical_json_bytes([t.to_dict() for t in second.trials])
+    if a != b:
+        raise AssertionError(
+            "bench results differ for the same seed (canonical payloads mismatch "
+            "after excluding timing fields) — harness is not reproducible"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Scoring + report wiring — ``make bench`` produces experiments/scorecard.md
+# ---------------------------------------------------------------------------
+
+
+def score_and_report(
+    bench_result: BenchResult,
+    verify_fn: Any | None = None,
+    *,
+    output_dir: str | pathlib.Path = "experiments/benchmark_runs",
+    scorecard_path: str | pathlib.Path = "experiments/scorecard.md",
+    verifier_url: str | None = None,
+    verifier_timeout_s: float = 10.0,
+) -> dict[str, Any]:
+    """Score *bench_result* via verifier hidden mode and write scorecard files.
+
+    Writes ``<output_dir>/_scorecard.json`` (schema-validated) and renders
+    *scorecard_path* (default ``experiments/scorecard.md``) listing wins
+    **and** losses.  Returns the scorecard dict.
+
+    Trust boundary (DIRECTIVES §2): verification goes through *verify_fn*
+    (``(spec, scenario_id) -> dict``).  When ``None`` the scorer calls the
+    verifier's ``POST /verify`` hidden mode over HTTP — an unreachable
+    verifier records losses, never raises.
+    """
+    from autobridge.bench.report import write_scorecard, write_scorecard_json  # noqa: PLC0415
+    from autobridge.bench.scoring import score_bench, verify_via_http  # noqa: PLC0415
+
+    url = verifier_url or bench_result.config.verifier_url
+    fn = verify_fn
+    if fn is None:
+        import functools  # noqa: PLC0415
+
+        fn = functools.partial(verify_via_http, verifier_url=url, timeout_s=verifier_timeout_s)
+    scorecard = score_bench(bench_result, fn)
+    out_dir = pathlib.Path(output_dir)
+    write_scorecard_json(scorecard, out_dir / "_scorecard.json")
+    write_scorecard(scorecard, scorecard_path)
+    return scorecard
+
+
+# ---------------------------------------------------------------------------
 # CLI entrypoint — ``python -m autobridge.bench.harness``
 # ---------------------------------------------------------------------------
 
@@ -924,10 +1019,15 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for ``make bench``.
 
     Steps (W8.5):
-    1. Heldout SHA check (no-op until frozen).
-    2. Run harness for dev scenarios (or ``BENCH_SCENARIOS`` env).
-    3. Write ``experiments/benchmark_runs/*.jsonl`` (idempotent).
-    4. Print summary to stdout.
+    1. Heldout SHA check (no-op until frozen; hard fail on mismatch).
+    2. Run harness for dev scenarios (or ``BENCH_SCENARIOS`` /
+       ``--scenarios``; ``BENCH_VISIBILITY`` / ``--visibility`` selects
+       the dev/heldout split — the Nov 3 heldout run uses heldout).
+    3. Write ``experiments/benchmark_runs/*.jsonl`` (idempotent:
+       same seed overwrites the same files with identical canonical bytes).
+    4. Score via verifier hidden mode + render ``experiments/scorecard.md``
+       with wins and losses (skip with ``--no-score`` / ``BENCH_NO_SCORE=1``).
+    5. Print summary to stdout.
     """
     import argparse
 
@@ -936,6 +1036,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trials", type=int, default=None, help="Trials per scenario")
     parser.add_argument("--seed", type=int, default=None, help="Seed")
     parser.add_argument("--output-dir", type=str, default="experiments/benchmark_runs")
+    parser.add_argument(
+        "--visibility",
+        choices=("dev", "heldout", "all"),
+        default=None,
+        help="Scenario visibility split (default: dev; env BENCH_VISIBILITY)",
+    )
+    parser.add_argument("--scorecard", type=str, default="experiments/scorecard.md", help="Scorecard markdown path")
+    parser.add_argument("--no-score", action="store_true", help="Skip scoring/report (harness JSONL only)")
     parser.add_argument("--token-ceiling", type=int, default=None)
     parser.add_argument("--wall-clock", type=float, default=None)
     parser.add_argument("--control-api-url", type=str, default=None)
@@ -968,6 +1076,8 @@ def main(argv: list[str] | None = None) -> int:
     env_scenarios = os.environ.get("BENCH_SCENARIOS", "")
     env_seed = os.environ.get("BENCH_SEED", "")
     env_trials = os.environ.get("BENCH_TRIALS", "")
+    env_visibility = os.environ.get("BENCH_VISIBILITY", "")
+    env_no_score = os.environ.get("BENCH_NO_SCORE", "")
     if env_trials and "trials_per_scenario" not in cfg_kwargs:
         try:  # noqa: SIM105
             cfg_kwargs["trials_per_scenario"] = int(env_trials)
@@ -984,6 +1094,12 @@ def main(argv: list[str] | None = None) -> int:
     scenarios = args.scenarios
     if not scenarios and env_scenarios:
         scenarios = [s.strip() for s in env_scenarios.split(",") if s.strip()]
+    visibility = args.visibility or (env_visibility.strip() or None) or "dev"
+    if visibility not in ("dev", "heldout", "all"):
+        print(f"invalid visibility {visibility!r} (want dev|heldout|all)", flush=True)
+        return 2
+    if not scenarios:
+        scenarios = list_scenarios(visibility=visibility)
 
     print(f"bench harness: seed={cfg.seed} token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
     print(f"  sandbox_image={cfg.sandbox_image} sandbox_url={cfg.sandbox_url}", flush=True)
@@ -999,6 +1115,17 @@ def main(argv: list[str] | None = None) -> int:
     if matched != total:
         print("WARNING: some trials were not matched — harness bug", flush=True)
         return 1
+    # 5. Score via verifier hidden mode + render scorecard (wins and losses).
+    no_score = args.no_score or env_no_score.strip() == "1"
+    if not no_score:
+        scorecard = score_and_report(
+            bench_result,
+            output_dir=args.output_dir,
+            scorecard_path=args.scorecard,
+        )
+        wins = len(scorecard.get("wins", []))
+        losses = len(scorecard.get("losses", []))
+        print(f"bench scorecard: {args.scorecard} ({wins} wins, {losses} losses)", flush=True)
     return 0
 
 

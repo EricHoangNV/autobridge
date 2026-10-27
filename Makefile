@@ -1,7 +1,7 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down test smoke e2e bench demo lint typecheck lint-fix openapi openapi-check ui-typecheck
+.PHONY: up down test smoke e2e bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck
 
 # ---- Docker ----
 up:
@@ -29,8 +29,17 @@ smoke:
 e2e:
 	@if [ ! -f compose.yaml ]; then echo "no compose.yaml — skipping e2e (W1.2 creates it)"; else uv run --extra dev pytest tests/e2e -q --tb=short; fi
 
+# Env: BENCH_SCENARIOS (csv) · BENCH_SEED · BENCH_TRIALS · BENCH_VISIBILITY
+# (dev|heldout|all) · BENCH_NO_SCORE=1 (harness JSONL only). The harness
+# itself runs the heldout SHA gate first: no-op until the owner freezes
+# heldout (P1.W2.8), hard fail (exit 2) on mismatch.
 bench:
-	@if [ ! -f verifier/hidden_cases/heldout/SHA256SUMS ]; then echo "heldout not frozen — skipping"; else uv run python -m autobridge.bench.harness; fi
+	@echo ">> bench: heldout sha check + matched-budget run + scorecard (W8.5)"
+	uv run python -m autobridge.bench.harness
+
+bench-heldout:
+	@echo ">> bench (heldout split — frozen SHA256SUMS required, Nov 3 run)"
+	BENCH_VISIBILITY=heldout uv run python -m autobridge.bench.harness
 
 demo:
 	@echo ">> demo: six steps via control API (W10)"

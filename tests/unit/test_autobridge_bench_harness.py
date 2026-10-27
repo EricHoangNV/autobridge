@@ -950,7 +950,7 @@ def test_main_default_args(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPat
 
     monkeypatch.chdir(tmp_path)
     # Create simulators/scenarios dir structure via fallback catalog
-    ret = main(["--scenarios", "baseline", "--trials", "1", "--output-dir", str(tmp_path / "out")])
+    ret = main(["--scenarios", "baseline", "--trials", "1", "--output-dir", str(tmp_path / "out"), "--no-score"])
     assert ret == 0
     out = tmp_path / "out"
     assert (out / "baseline--trial-0.jsonl").exists()
@@ -960,7 +960,7 @@ def test_main_default_args(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPat
 def test_main_custom_seed(tmp_path: pathlib.Path) -> None:
     from autobridge.bench.harness import main
 
-    ret = main(["--scenarios", "baseline", "--trials", "1", "--seed", "99", "--output-dir", str(tmp_path / "out")])
+    ret = main(["--scenarios", "baseline", "--trials", "1", "--seed", "99", "--output-dir", str(tmp_path / "out"), "--no-score"])
     assert ret == 0
     data = json.loads((tmp_path / "out" / "baseline--trial-0.jsonl").read_text(encoding="utf-8"))
     # Seed in inputs should be derived from global seed 99
@@ -971,7 +971,7 @@ def test_main_with_bench_scenarios_env(tmp_path: pathlib.Path, monkeypatch: pyte
     from autobridge.bench.harness import main
 
     monkeypatch.setenv("BENCH_SCENARIOS", "baseline")
-    ret = main(["--output-dir", str(tmp_path / "out")])
+    ret = main(["--output-dir", str(tmp_path / "out"), "--no-score"])
     assert ret == 0
     assert (tmp_path / "out" / "baseline--trial-0.jsonl").exists()
 
