@@ -16,6 +16,8 @@ from autobridge.control.models import (
     SyncRun,
 )
 from autobridge.control.schemas import (
+    CONFLICT_409,
+    DOMAIN_ERROR_422,
     ConnectorCreate,
     ConnectorDetail,
     ConnectorOut,
@@ -105,7 +107,7 @@ def _dep_to_out(d: DependencyRegistration) -> DependencyOut:
     )
 
 
-@router.post("", response_model=ConnectorOut, status_code=201)
+@router.post("", response_model=ConnectorOut, status_code=201, responses=DOMAIN_ERROR_422)
 def create_connector(body: ConnectorCreate, db: Session = Depends(get_db)) -> ConnectorOut:
     rt = body.runtime_target or {"kind": "local_process"}
     # Validate runtime_target kind
@@ -183,7 +185,7 @@ def get_connector(connector_id: str, db: Session = Depends(get_db)) -> Connector
     )
 
 
-@router.post("/{connector_id}/dependencies", response_model=DependencyOut, status_code=201)
+@router.post("/{connector_id}/dependencies", response_model=DependencyOut, status_code=201, responses=CONFLICT_409)
 def create_dependency(connector_id: str, body: DependencyCreate, db: Session = Depends(get_db)) -> DependencyOut:
     conn = db.get(Connector, connector_id)
     if conn is None:

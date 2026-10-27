@@ -1660,3 +1660,33 @@ CI green on main + records the labelled demo (docs/demo.md), then flips [x].
 - Gaps fixed (this branch): bench harness violated the trust boundary it is codified against (import-linter BROKEN, and nothing ran lint-imports in lint/CI); control readyz forced verifier=True; UI component tests were in neither `make test` nor CI. All three fixed and re-verified.
 - Gaps deferred: REQ-003 directive-vs-plan contradiction on verifier→simulators.common shared code (owner), REQ-004/P1.W7.9 schemathesis contract tests claimed done but absent, REQ-005 model-id literals as config defaults, REQ-006 money transform accepting float input. Heldout freeze (P1.W2.8) and demo recording (P1.W10.3) remain owner steps.
 - Overall readiness: Phase 1 code-complete and green (unit 2026 + UI 128, coverage ≥90% per package, smoke + spot e2e live); Phase 1 exit is gated only on the two owner steps above and the Nov 1 stop-rule checkpoint. Phase 2 entry criteria not yet met.
+
+## [P1.W7.9 schemathesis OpenAPI contract tests]
+**Date:** 2026-10-27
+**Ref:** plan §4 W7 + DIRECTIVES §7; REQUESTS REQ-004 (owner-approved); makes the P1.W7.1 done-claim true
+**Agent:** opencode meta/muse-spark-1.3 (escalation)
+
+**What was done:**
+- Added `schemathesis>=4,<5` as a dev dependency and `tests/unit/test_autobridge_control_contract.py`: 34 tests (one per control-plane operation) generating cases from the live `app.openapi()` schema, seed-pinned (`Config(seed=20261027)`), asserting no-5xx + documented-response conformance + positive/negative-data acceptance; runs in `make test` via the existing glob.
+- Fixed fuzzer-found contract bugs: naive datetimes now serialize UTC-aware (`UtcDatetime`); `InjectFaultRequest.target` is a `Literal` of the 8 aliases; `seed` is `StrictInt`.
+- Documented real error responses instead of excluding the checks: app-wide 404+400 docs, 409 on dependency creation, `oneOf` string/array 422 on `POST /connectors` and `POST /demo/inject-fault`. Only `allow_header_conformance` is excluded (implicit OPTIONS is framework behavior, not our API).
+- Regenerated `ui/openapi.json` + `ui/lib/api/schema.d.ts` (deterministic) and updated `docs/architecture.md` §9; resolved REQ-004.
+
+**Key decisions:**
+- Document-error-responses over excluding `UndefinedStatusCode`/`response_schema_conformance`: keeps the strict checks meaningful and improves the generated TS client; oneOf keeps both the auto array-422 and the string-detail domain 422s valid.
+- Seed-pinned generation: reproducible CI on the pinned schemathesis version; schema evolution reshuffling cases is the test working as intended.
+- No `make test`/CI wiring change needed: the `test_autobridge_*` glob picks the file up, and CI's unit step runs `make test`.
+
+**Files changed:**
+- `tests/unit/test_autobridge_control_contract.py` (new)
+- `src/autobridge/control/schemas.py` — `UtcDatetime`, shared error-response docs, `Literal` target, `StrictInt` seed
+- `src/autobridge/control/app.py` — app-wide 404+400 `responses=`
+- `src/autobridge/control/routes/connectors.py` — 422/409 `responses=`
+- `src/autobridge/control/routes/demo.py` — 422 `responses=`
+- `pyproject.toml`, `uv.lock` — schemathesis dev dependency
+- `ui/openapi.json`, `ui/lib/api/schema.d.ts` — regenerated
+- `docs/architecture.md` — §9 counts + contract paragraph
+
+**Notes for next iteration:**
+- `make e2e-ui` (W7 Playwright journey) does not run in sbx1: repo-root `playwright.config.ts` cannot resolve `@playwright/test` from repo root, and no UI server/stack is up here (pre-existing, out of scope). UI covered by Vitest 128 green against the regenerated schema.
+- Watch: `runtime_target.kind` domain-422 (`POST /connectors`) is declared but the dict shape is loose; a future schemathesis reshuffle could surface an ST202 there — constraining `kind` to a Literal would close it if it ever fires.

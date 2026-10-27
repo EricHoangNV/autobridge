@@ -33,6 +33,7 @@ dev = [
     "mypy>=1.15",
     "import-linter>=2.2",
     "types-pyyaml>=6.0",
+    "schemathesis>=4,<5",
 ]
 
 [build-system]

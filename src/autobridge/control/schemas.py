@@ -3,10 +3,75 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field, StrictInt
+
+
+def _coerce_naive_to_utc(value: Any) -> Any:
+    """Attach UTC to naive datetimes read from SQLite (which drops tzinfo).
+
+    The OpenAPI schema declares these fields ``format: date-time`` (RFC 3339),
+    which requires an explicit offset; naive ``isoformat()`` output violates
+    it (P1.W7.9 schemathesis contract).
+    """
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+#: Response-model timestamps: always RFC 3339 with an explicit offset.
+UtcDatetime = Annotated[datetime, BeforeValidator(_coerce_naive_to_utc)]
+
+#: Shared OpenAPI error responses (P1.W7.9 schemathesis contract).
+#: FastAPI auto-documents only request-validation 422s (array-shaped
+#: ``HTTPValidationError``); routes that raise domain errors with a string
+#: ``detail`` declare both shapes so every documented response validates.
+STRING_DETAIL_OBJECT: dict[str, Any] = {
+    "type": "object",
+    "properties": {"detail": {"type": "string"}},
+    "required": ["detail"],
+}
+NOT_FOUND_404: dict[int | str, Any] = {
+    404: {
+        "description": "Resource not found",
+        "content": {"application/json": {"schema": STRING_DETAIL_OBJECT}},
+    }
+}
+#: FastAPI itself returns 400 when the request body cannot be decoded
+#: (e.g. non-UTF-8 bytes under an ``application/json`` content type).
+BAD_REQUEST_400: dict[int | str, Any] = {
+    400: {
+        "description": "Malformed request body",
+        "content": {"application/json": {"schema": STRING_DETAIL_OBJECT}},
+    }
+}
+CONFLICT_409: dict[int | str, Any] = {
+    409: {
+        "description": "Conflict (e.g. dependency already exists)",
+        "content": {"application/json": {"schema": STRING_DETAIL_OBJECT}},
+    }
+}
+DOMAIN_ERROR_422: dict[int | str, Any] = {
+    422: {
+        "description": "Request validation failure or domain error",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {"detail": {"type": "array", "items": {"type": "object"}}},
+                            "required": ["detail"],
+                        },
+                        STRING_DETAIL_OBJECT,
+                    ]
+                }
+            }
+        },
+    }
+}
 
 
 class HealthResponse(BaseModel):
@@ -29,7 +94,7 @@ class ReleaseOut(BaseModel):
     verification_report_id: str | None = None
     signature: str
     approved_by: str | None = Field(default=None, description="Actor of the latest approval for this release (REQ-001)")
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class OperatorOut(BaseModel):
@@ -44,7 +109,7 @@ class ApprovalOut(BaseModel):
     from_release_id: str | None = None
     to_release_id: str | None = None
     rollback_of_release_id: str | None = None
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class RollbackRequest(BaseModel):
@@ -72,16 +137,16 @@ class BuildRunOut(BaseModel):
     evidence_ids: list[str]
     draft_spec: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
     kind: Literal["build"] = "build"
 
 
 class SyncRunOut(BaseModel):
     id: str
     release_id: str
-    started_at: datetime
-    finished_at: datetime | None = None
+    started_at: UtcDatetime
+    finished_at: UtcDatetime | None = None
     records_observed: dict[str, int]
     records_emitted: dict[str, int]
     checkpoint: dict[str, Any]
@@ -105,7 +170,7 @@ class RepairRunOut(BaseModel):
     decision: str
     model_usage: dict[str, Any]
     escalation_bundle: dict[str, Any] | None = None
-    created_at: datetime
+    created_at: UtcDatetime
     kind: Literal["repair"] = "repair"
 
 
@@ -117,8 +182,8 @@ class DriftEventOut(BaseModel):
     evidence_ids: list[str]
     source_sync_run_id: str | None = None
     status: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class DependencyOut(BaseModel):
@@ -128,7 +193,7 @@ class DependencyOut(BaseModel):
     entity: str
     policy: str
     paused: bool
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class DependencyCreate(BaseModel):
@@ -158,8 +223,8 @@ class ConnectorOut(BaseModel):
     runtime_target: dict[str, Any]
     active_release_id: str | None = None
     health_status: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class ConnectorDetail(ConnectorOut):
@@ -207,7 +272,7 @@ class RunOut(BaseModel):
     state: str | None = None
     outcome: str | None = None
     decision: str | None = None
-    created_at: datetime | None = None
+    created_at: UtcDatetime | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -217,7 +282,7 @@ class EvidenceOut(BaseModel):
     payload: dict[str, Any]
     parent_ids: list[str]
     run_id: str
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class RepairDecisionRequest(BaseModel):
@@ -242,14 +307,16 @@ class JobOut(BaseModel):
     result: dict[str, Any] | None = None
     last_error: str | None = None
     worker_id: str | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class InjectFaultRequest(BaseModel):
-    target: str = Field(description="Simulator target id: sim-atlas, sim-harbor, atlas, harbor, atlaspms, harborpms")
+    target: Literal["sim-atlas", "sim-harbor", "atlas", "harbor", "atlaspms", "harborpms", "atlas-pms", "harbor-pms"] = Field(
+        description="Simulator target id: sim-atlas, sim-harbor, atlas, harbor, atlaspms, harborpms"
+    )
     scenario_id: str = Field(description="Scenario id to inject (e.g. rename_guest_id, baseline)")
-    seed: int | None = Field(default=None, description="Optional seed override")
+    seed: StrictInt | None = Field(default=None, description="Optional seed override")
 
     model_config = {"extra": "allow"}
 

@@ -513,3 +513,34 @@ demo step, (b) record the labelled 3–4 min demo (script: docs/demo.md, plan
 ### AUDIT 2026-10-27 — daily directives audit (first audit, 184 commits of Phase 1)
 Agent: opencode meta/muse-wonder-1.0 (escalation)
 Fixed: removed `simulators` imports from `src/autobridge/bench/harness.py` (import-linter contract BROKEN→KEPT); `make lint` now runs lint-imports and CI runs lint+typecheck; `make test`/CI now gate the UI Vitest suite; control `/readyz` honestly probes the verifier (was forced True) with 3 tests updated. Deferred: REQ-003 (§2 vs plan §2.7 shared-code contradiction), REQ-004 + task P1.W7.9 (schemathesis claimed, absent), REQ-005 (model-id literals in config), REQ-006 (money float acceptance). Full record: `mds/AUDIT.md`.
+
+### P1.W7.9 — schemathesis OpenAPI contract tests (REQ-004)
+Agent: opencode meta/muse-spark-1.3 (escalation)
+Claim is now true: `tests/unit/test_autobridge_control_contract.py` (34 tests, one per
+operation) builds `schemathesis.openapi.from_asgi("/openapi.json", app, config=Config(seed=20261027))`
+from the live app object and asserts no-5xx + documented-response conformance + positive-data
+acceptance on every generated case. Runs inside `make test` via the existing
+`test_autobridge_*` glob (no Makefile change needed; CI runs it as part of unit).
+- **Files:** `tests/unit/test_autobridge_control_contract.py` (new: autouse file-DB fixture mirroring
+  control_api tests, `@schema.parametrize()`, only `allow_header_conformance` excluded — implicit OPTIONS
+  is not in our OpenAPI/plan and its Allow header is Starlette-computed);
+  `src/autobridge/control/schemas.py` (`UtcDatetime` coercing naive SQLite datetimes to UTC,
+  shared `NOT_FOUND_404`/`BAD_REQUEST_400`/`CONFLICT_409`/`DOMAIN_ERROR_422` response docs,
+  `InjectFaultRequest.target` Literal of the 8 aliases, `seed` StrictInt);
+  `control/app.py` (app-wide 404+400 docs); `routes/connectors.py` (oneOf-422 on POST, 409 on
+  dependencies POST); `routes/demo.py` (oneOf-422 on inject-fault); `pyproject.toml`+`uv.lock`
+  (`schemathesis>=4,<5` dev); `ui/openapi.json` + `ui/lib/api/schema.d.ts` (regen, deterministic);
+  `docs/architecture.md` §9 (32 paths/29 schemas + contract paragraph).
+- **Genuine contract bugs fixed (found by the fuzzer):** naive datetimes serialized without offset
+  violate `format: date-time` (ST108); `target: str` accepted "" then 422'd — schema now states the
+  enum (ST202); `seed: false` coerced to 0 — StrictInt (negative-data check). Undocumented-but-real
+  404/400/409 and string-detail domain 422s are now documented instead of excluded (ST103 stays strict).
+- **Gotchas:** FastAPI returns 400 (not 422) for non-UTF8 bodies (`UnicodeDecodeError` escapes the
+  `JSONDecodeError` handler) — documented app-wide. `make e2e-ui` does NOT run in sbx1: repo-root
+  `playwright.config.ts` requires `@playwright/test` resolvable only from `ui/node_modules`, plus no
+  UI server/stack is up here (pre-existing, untouched by this task); UI covered by green Vitest suite
+  (128) against the regenerated schema instead. `make openapi-check` fails on a dirty tree by design
+  (diffs working tree vs HEAD) — pass after commit; generator verified deterministic (md5-stable).
+- **Verification:** new file 34/34; `make test` 2060 pass/0 fail (autobridge 1749 @ 91.06%, verifier 92 @
+  93.78%, simulators 219 @ 96.55%) + ui 128 pass; `make lint` (ruff+import-linter KEPT) + `make typecheck`
+  green; `make openapi` regen + UI tests green.

@@ -18,6 +18,7 @@ from fastapi import FastAPI
 
 from autobridge.control.deps import get_engine
 from autobridge.control.routes.bench import router as bench_router
+from autobridge.control.schemas import BAD_REQUEST_400, NOT_FOUND_404
 from autobridge.control.routes.builds import router as builds_router
 from autobridge.control.routes.connectors import router as connectors_router
 from autobridge.control.routes.demo import router as demo_router
@@ -45,6 +46,7 @@ app = FastAPI(
     description="Generic Connect + Heal engine — control plane (plan §2.11). Every repair is a JSON Patch; transforms are closed; money is Decimal; dates are property-local.",
     version="0.1.0",
     lifespan=lifespan,
+    responses={**NOT_FOUND_404, **BAD_REQUEST_400},
 )
 
 # Register routers (order determines OpenAPI grouping)

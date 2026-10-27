@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from autobridge.control.schemas import InjectFaultRequest, InjectFaultResponse
+from autobridge.control.schemas import DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 
@@ -47,7 +47,7 @@ def _admin_url_for_target(resolved: str) -> str:
     return f"http://localhost:{port}"
 
 
-@router.post("/inject-fault", response_model=InjectFaultResponse)
+@router.post("/inject-fault", response_model=InjectFaultResponse, responses=DOMAIN_ERROR_422)
 def inject_fault(body: InjectFaultRequest) -> InjectFaultResponse:
     resolved = _resolve_target(body.target)
     base = _admin_url_for_target(resolved)

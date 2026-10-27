@@ -266,7 +266,7 @@ its readyz checks green + its docs page updated (plan §3).
 ## 9. Control plane + UI (plan §2.11, §4 W7)
 
 The control plane is a FastAPI app (`src/autobridge/control/app.py`) with
-30 paths and 28 schemas (OpenAPI at `ui/openapi.json`, typed client in
+32 paths and 29 schemas (OpenAPI at `ui/openapi.json`, typed client in
 `ui/lib/api/client.ts` via `openapi-typescript`). Every service has
 `/healthz`/`/readyz`; the UI has its own readyz proxy to control.
 
@@ -281,7 +281,15 @@ name from `AUTOBRIDGE_OPERATOR`; approve/reject/rollback always record
 carries `approved_by`), `POST /demo/inject-fault` (labelled, proxies
 to simulator admin on `admin-net`), `GET /metrics/model-usage`,
 `GET /bench/scorecards`, plus `healthz`/`readyz`. Schemathesis contract tests
-run against the live OpenAPI.
+(`tests/unit/test_autobridge_control_contract.py`, P1.W7.9) generate cases
+from the live OpenAPI on every run (seed-pinned for reproducible CI): no 5xx
+on any generated input, documented responses conform to the schema, and
+schema-valid input is accepted. Error responses are documented alongside the
+auto-generated validation shape — app-wide `404`/`400`, `409` on dependency
+creation, and a `oneOf` string/array `422` on the two routes that raise domain
+errors (`POST /connectors`, `POST /demo/inject-fault`); response timestamps
+are UTC-aware RFC 3339 (`UtcDatetime`), and `InjectFaultRequest.target`/`seed`
+are a `Literal`/`StrictInt` so the schema states exactly what is accepted.
 
 ### 9.2 UI screens (Next.js 15, App Router, Tailwind, SWR + SSE)
 
