@@ -1690,3 +1690,31 @@ CI green on main + records the labelled demo (docs/demo.md), then flips [x].
 **Notes for next iteration:**
 - `make e2e-ui` (W7 Playwright journey) does not run in sbx1: repo-root `playwright.config.ts` cannot resolve `@playwright/test` from repo root, and no UI server/stack is up here (pre-existing, out of scope). UI covered by Vitest 128 green against the regenerated schema.
 - Watch: `runtime_target.kind` domain-422 (`POST /connectors`) is declared but the dict shape is loose; a future schemathesis reshuffle could surface an ST202 there — constraining `kind` to a Literal would close it if it ever fires.
+
+## REQ-003 — Trust boundaries: sanction verifier use of simulators shared code
+**Date:** 2026-10-27
+**Ref:** REQUESTS.MD REQ-003 (audit 2026-10-27; owner decision same day); DIRECTIVES §2
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Amended DIRECTIVES §2 bullet 1 in place: `verifier/` may import the shared simulator data-generator code (`simulators/common/` generator+faults, `simulators/scenarios/` catalog) and nothing else under `simulators/`; engine isolation unchanged; `src/autobridge/bench/` filesystem reads of scenario YAMLs and the heldout dir declared a harness concern, never an import
+- Added import-linter contract "verifier must not import autobridge" in `pyproject.toml` (existing engine contract kept; both KEPT)
+- Added `tests/unit/test_autobridge_trust_boundaries.py`: 4 AST-scan tests (engine imports neither package; verifier never imports engine; verifier simulators-imports confined to common/scenarios; simulators never import engine)
+- One-sentence note in `docs/architecture.md`
+- Moved REQ-003 to Resolved with Resolution line
+
+**Key decisions:**
+- Owner's "(generator, faults, scenarios)" read as common/generator + common/faults + scenarios catalog loader: the verifier genuinely imports `simulators.scenarios`, so a common-only sanction would have failed the new check against live code
+- import-linter forbidden contracts have no allowlist, so the narrowed exception ("nothing else under simulators/") is enforced by the AST unit test while import-linter guards both engine-isolation directions
+- No Quick Reference change: item 2 constrains the engine and stays accurate
+
+**Files changed:**
+- `mds/DIRECTIVES.MD` — §2 bullet amended (593 chars)
+- `pyproject.toml` — second import-linter contract
+- `tests/unit/test_autobridge_trust_boundaries.py` (new)
+- `docs/architecture.md` — trust-boundary paragraph
+- `mds/REQUESTS.MD` — REQ-003 OPEN→DONE, moved to Resolved top
+
+**Notes for next iteration:**
+- REQ-005 (model-id literals) and REQ-006 (money float) remain OPEN and are the natural next picks; Phase 2 stays closed until the Nov 1 stop-rule checkpoint
+- If a new vendor sim package lands (e.g. P2 legacy work), the AST test automatically flags any verifier import outside common/scenarios
