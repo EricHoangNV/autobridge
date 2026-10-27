@@ -2,7 +2,7 @@
 
 ## Current State
 
-W1.5 Core data model done (2026-10-27): 10 plan §2.3 tables in `control/models.py` (portable types, String+CHECK vocabs, Decimal money, tz-aware timestamps, credential_ref with no secret column, ConnectorRelease immutability via mapper events) + Alembic scaffold and `0001_core_data_model` (SQLite-safe batch FK) + 26 unit tests incl. migration cycle and Postgres DDL compile.
+W1.6 JobRunner done (2026-10-27): DB-backed `control/jobs.py` (`submit_build/sync/repair`, atomic claim, retries to `max_attempts`, `reclaim_orphaned` for worker restart) + `Job` model and `0002_job_queue` migration + 14 unit tests incl. kill-mid-job restart and flaky-handler retry.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -10,10 +10,11 @@ W1.5 Core data model done (2026-10-27): 10 plan §2.3 tables in `control/models.
   - P1.W1.3: ConnectorSpec v1 (models, connector-spec.v1.json, patch, registry)
   - P1.W1.4: Canonical entity schemas (4 schema files, entities.py models + reference examples)
   - P1.W1.5: SQLAlchemy core data model + Alembic migrations (10 tables, immutability, spec_signature)
-- Tests: 224 pass / 0 fail / 0 skip (autobridge 100%, verifier 100%, simulators 100%; ui –)
-- Stack: compose untouched by W1.5, as W1.2 left it / `make test` green / `make lint` green / `make typecheck` green
+  - P1.W1.6: DB-backed JobRunner + jobs table (retries, restart recovery, stub executors)
+- Tests: 238 pass / 0 fail / 0 skip (autobridge 99.73%, verifier 100%, simulators 100%; ui –)
+- Stack: compose untouched by W1.6, as W1.2 left it / `make test` green / `make lint` green / `make typecheck` green
 
 ## Next tasks
-1. **P1.W1.6** — DB-backed JobRunner
-2. **P1.W1.7** — EvidenceStore + redact.py
-3. **P1.W1.8** — LLMProvider + Budget + ModelCall ledger
+1. **P1.W1.7** — EvidenceStore + redact.py
+2. **P1.W1.8** — LLMProvider + Budget + ModelCall ledger
+3. **P1.W1.9** — Test fakes (RuntimeTarget, coding-agent CLI)

@@ -182,3 +182,31 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 **Notes for next iteration:**
 - Next: P1.W1.6 DB-backed JobRunner builds on `session_factory` + `init_db` here; control/worker services will need `DATABASE_URL` wired in compose (left for W1.6/W7, not this task)
 - `init_db` (create_all) emits the benign FK-cycle SAWarning on SQLite; migrations are the prod path and are cycle-clean
+
+## P1.W1.6 DB-backed JobRunner + jobs table
+**Date:** 2026-10-27
+**Ref:** plan §4 W1 (JobRunner deliverable + passing criteria); task P1.W1.6. Agent: opencode meta/muse-spark-1.3 (escalation).
+
+**What was done:**
+- New `src/autobridge/control/jobs.py`: `JobRunner` with `submit_build/submit_sync/submit_repair`, atomic claim (`UPDATE ... WHERE state='queued'`, rowcount-checked), `run_once` / `run_until_empty`, retries to `max_attempts` with `last_error` on the row, `reclaim_orphaned` (re-queues `running` rows of dead workers, attempts preserved), `register_handler`, pluggable `JobHandler` protocol + `JobContext`
+- Stub executors per kind (W3/W4/W5 replace them): build drives BuildRun queued → running → succeeded; sync inserts a Blocked SyncRun with the unmet criterion named; repair inserts an escalating RepairRun; sync/repair backfill `job.run_id`
+- `control/models.py`: new `Job` table (kind/run_id/state/attempts/max_attempts/payload/result/last_error/worker_id, String+CHECK vocabs, portable types only); new Alembic `0002_job_queue` (upgrade + downgrade)
+- New `tests/unit/test_autobridge_jobs.py` (14 tests): build/sync/repair execution, flaky-handler retry-then-success, exhaustion → failed with rollback of partial writes, kill-mid-job (SystemExit between committed claim and completion) → restart reclaims and finishes exactly once, reclaim respects live workers, submit validation, missing/non-dict handler failures, payload-carries-no-secrets, vocab rejections, 0002 migration cycle
+
+**Key decisions:**
+- Claim commits before execution (a second session runs the handler): the claim is immediately visible to other workers, and a failed attempt rolls back handler partial writes while the job row keeps attempts/last_error — failures are row data, never raised (except BaseException, which propagates and still leaves a reclaimable `running` row)
+- No new BuildRun/SyncRun state columns: build lifecycle lives in `BuildRun.state` (constants owned by jobs.py), sync/repair rows are created by the handler at execution time (SyncRun needs its terminal outcome at insert), and the `jobs` table is the single retry/lease ledger for all three kinds
+- `run_once` returns the job id even on failure (it did work); `run_until_empty` terminates because attempts strictly increase per claim
+
+**Files changed:**
+- `src/autobridge/control/jobs.py` (new), `src/autobridge/control/models.py` (`Job` + `JOB_KINDS`/`JOB_STATES`), `alembic/versions/0002_job_queue.py` (new)
+- `tests/unit/test_autobridge_jobs.py` (new, 14 tests)
+
+**Checks:**
+- Targeted: 14 pass; `make test` — 238 pass (221 autobridge @99.73%, 4 verifier @100%, 13 simulators @100%; 90% gate per package)
+- `make lint`, `make typecheck`, `lint-imports` (1 kept) — green; compose untouched (no e2e file for W1.6; workstream e2e is P1.W1.10)
+
+**Notes for next iteration:**
+- Next: P1.W1.7 EvidenceStore (handlers should emit EvidenceRecords once it exists); P1.W1.8 Budget/ModelCall (handlers will need the ledger)
+- W3/W4/W5 replace the three stub executors via `register_handler` or `default_handlers`; the stub Blocked/escalate outcomes keep every run terminal in the meantime
+- Learned: mypy DML `rowcount` needs `cast("CursorResult", ...)` with the import in TYPE_CHECKING (LEARNINGS #3)
