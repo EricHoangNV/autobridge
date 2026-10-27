@@ -3,7 +3,7 @@
 ## Open Requests (read this section only)
 
 ### REQ-001 — Show the operator's name on approvals (2026-10-27)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-27 10:05)
 There is no login (plan §2.11 has none, and the demo runs locally), but the human rung of the ladder
 should have a name. Add a fixed operator name, set by the server, shown next to every approval action
 and recorded on every `Approval`.
