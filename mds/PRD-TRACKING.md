@@ -84,7 +84,7 @@
 - [x] P1.W7.8 Network test that the UI never calls simulators or the verifier directly; `tests/e2e/test_06_ui_journey.spec.ts` (Playwright) completing the v2 §7.4 user journey
 
 #### W8 — Benchmark (plan §4 W8, §2.10)
-- [ ] P1.W8.1 `bench/harness.py`: per scenario × trial runs AutoBridge via the control API and the baseline inside the same `runtime-sandbox` image with the same docs volume, sandbox URL, credentials, visible tests, token ceiling and wall-clock; harness self-test asserts both arms get identical inputs
+- [>] P1.W8.1 `bench/harness.py`: per scenario × trial runs AutoBridge via the control API and the baseline inside the same `runtime-sandbox` image with the same docs volume, sandbox URL, credentials, visible tests, token ceiling and wall-clock; harness self-test asserts both arms get identical inputs — in progress: sbx1 since 2026-10-27 08:24
 - [ ] P1.W8.2 Baseline drivers: `claude_code_headless` (headless CLI with usage/token capture, using the W1 fake in tests) and a `codex_cli` adapter stub; fallback documented (route the baseline through `LLMProvider` with an equivalent agent loop, plan §9)
 - [ ] P1.W8.3 `one_shot_generator` secondary diagnostic control
 - [ ] P1.W8.4 `bench/scoring.py` (verified completion, repair success, false-fix/unsafe rate, escalation quality, elapsed, tool calls, model calls, frontier tokens, estimated cost, zero-frontier solves) via verifier hidden mode; `bench/report.py` → `experiments/scorecard.md` listing wins and losses
