@@ -526,4 +526,26 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - invalid_patches.py still has 7 uncovered lines (exception paths in pagination/status branches when specific trap not matched) — but per-package gate passes; can raise to 95% later if needed
 - Mutations currently structural only; W3.4 transform registry will add real money/date transforms that mutation tests can flip more meaningfully
 
+## P1.W2.9 e2e simulators+oracle via admin API + safety-model first pass
+**Date:** 2026-10-27
+**Ref:** plan §4 W2 + §2.7/§2.8; task P1.W2.9. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `tests/e2e/test_01_simulators_and_oracle.py` (9 tests): sims+verifier readyz green, admin API accepts every scenario (POST + GET round-trip for all 14 on both sims), verifier verdicts match catalog expected via admin API (every scenario: fails flag + exact failed_checks names, hidden mode leak guard), sim data endpoints honor faults (baseline offset/cursor shape, rename_guest_id guest_identifier, offset_to_cursor cursor, token_expired 401, token_revoked 403, endpoint_removed 404, status_vocab_change opaque, invalid_patch_trap net_amount/decoy, duplicate check), admin reset/get + invalid id 400, hidden never returns fixture rows (all 14 scenarios, bounded names), catalog expected structure (fails/failed_checks/http_status/pagination_mode), regression suite includes fixable, docs endpoints (Atlas OpenAPI, Harbor markdown)
+- New `docs/safety-model.md` first pass (7 sections): verifier trust boundary + HTTP contract, oracle seed regeneration, 8-check canonical table (money Decimal, business date 04:00 cutoff, status vocab, no dup/loss, pagination/transport), 14-scenario catalog table with drift_class/fixable/visibility/failed_checks, simulators (Atlas clean vs Harbor messy + admin header isolation), response schema + leak guard, network topology
+
+**Key decisions:**
+- e2e uses urllib + admin_url/service_url from conftest (no new deps); each test loops catalog internally rather than parametrizing to keep tests independent and random-order safe (reset_simulator_state autouse resets to baseline after each test); admin header X-Admin-Network required for every admin write (403 without)
+- Verifier oracle is seed-based not HTTP, but test still exercises admin path to prove sims are actually in scenario state; then checks verifier verdict exactly matches catalog expected failed_checks (primary-only filtered set)
+- Sim HTTP spot-checks are per-fault not per-scenario exhaustive: rate_limit_429/transient_503 need 3rd/4th request to trigger so verified via verifier, not direct HTTP; duplicate_late_records verified via data presence + verifier flag
+
+**Files changed:**
+- `tests/e2e/test_01_simulators_and_oracle.py` (new, 380 lines, 9 tests)
+- `docs/safety-model.md` (first pass, 7 sections, replaces 3-line skeleton)
+
+**Notes for next iteration:**
+- Next: P1.W2.8 heldout freeze (agent prepares SHA256SUMS manifest + bench sha check; owner freezes with SHA256SUMS commit)
+- P1.W3.1 runtime interpreter (ConnectorSpec execution with retry/backoff, ModelCall 0 on reference sync) — test_01 gives confidence that oracle vs sim vs catalog are aligned before runtime interprets specs
+- No new unit coverage impact; e2e file is outside make test 90% gate; make e2e now 17 pass (8 test_00 + 9 test_01) when Docker up, 9 skipped when missing
+
 
