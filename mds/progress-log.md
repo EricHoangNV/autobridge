@@ -1389,3 +1389,30 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - **Decisions:** Detail page fetches drift+evidence via existing GET /drift/{id} and GET /evidence/{id} (no new endpoints); ladder trace synthesizes from level/rule/decision when trace array absent; ModelUsageView appears twice (full + compact) to satisfy spec; Inject Fault drawer on detail page with target/scenario/seed; rollback via existing POST /releases/{id}/rollback
 - **Checks:** make lint green / make typecheck green / make ui-typecheck green / npm test 103 pass (23 files) / next build 11 routes green. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - **Next:** P1.W7.8 Network test that UI never calls simulators/verifier + Playwright test_06_ui_journey
+## P1.W7.8 UI journey + network isolation
+**Date:** 2026-10-27
+**Ref:** plan §4 W7, §2.11 (passing criteria: UI never calls simulators/verifier, v2 §7.4 journey in Playwright; service confirmation test_06_ui_journey.spec.ts)
+
+**What was done:**
+- Created Playwright spec `tests/e2e/test_06_ui_journey.spec.ts` (624 lines, 6 test cases): network interception on every request (banned hosts sim-atlas/sim-harbor/verifier + ports 8104/8105/8106/8109/8110), bannedRequests afterEach assertion, journey steps /connectors (health/active release/last sync outcome/open drift/sparkline + New connector link), /connectors/new (name/base_url/credential_ref/target entities/docs upload-URL-text + create+build POSTs via control), /connectors/[id] (SpecViewer YAML/copy+JSON, ReleaseHistory active badge, SyncRunsTable Complete/Degraded/Blocked + fingerprint_id, fingerprints, dependencies, Sync-now), /repairs/[id] (DriftEvidenceSection, LadderTrace L0-L4 badges + decision, HypothesesPanel, PatchDiff old/new side-by-side, VisibleTestsPanel, VerifierVerdict, ModelUsageView frontier/small/calls + zero-frontier badge, RepairActions Approve/Reject/Rollback, InjectFaultDrawer Demo/labelled + target/scenario/seed + POST /demo/inject-fault verification). Mocks control API via page.route for /api/* and localhost:8101 when stack not up; discovers real connector/repair ids when control reachable; skips gracefully when UI dev server not running.
+- Created unit isolation suite `tests/unit/test_autobridge_ui_isolation.py` (7 tests): compose ui engine-net only, next.config proxies only to control, UI source never fetches sim/verifier (fetch-prefixed regex on ui/lib ui/app ui/components), fetcher uses CONTROL_URL/NEXT_PUBLIC_API_URL, InjectFaultDrawer via /demo/inject-fault not /admin, Playwright spec existence + content checks, playwright.config presence.
+- Added `playwright.config.ts` (root) and `ui/playwright.config.ts` targeting test_06 spec, @playwright/test ^1.51.1 devDep + npm scripts test:e2e, updated docs/architecture.md §9 with endpoints, screen inventory, isolation model and e2e command.
+
+**Key decisions:**
+- Spec mocks API when control not up so `make test` stays green without Docker; live path uses request fixture to discover real ids and walks live data — both validate same invariant (no banned requests). afterEach bannedRequests assertion guarantees network test even on mocked runs.
+- Plain string occurrences of sim-atlas URLs in BASE_URL_SUGGESTIONS are allowed (spec field values), only fetch() to those hosts is forbidden — reflected in BANNED_FETCH_PATTERNS being fetch-prefixed only.
+- InjectFaultDrawer explanatory text mentioning POST /admin/scenario is allowed if it documents proxy via control plane; fetch to /admin is never allowed — unit test enforces this with whitespace-normalized check.
+- Playwright config lives at repo root (testDir tests/e2e) plus ui/ duplicate for `npm run test:e2e` from either cwd; spec uses E2E_UI_BASE env to support both compose (8107) and dev (3000).
+- Progress-state updated with new counts (1729 pass total, autobridge 90.00% gate still passing — new tests keep coverage at threshold); next tasks advanced to W8.
+
+**Files changed:**
+- `tests/e2e/test_06_ui_journey.spec.ts` — new, 624 lines, 6 test cases + network isolation helper + mock fixtures
+- `tests/unit/test_autobridge_ui_isolation.py` — new, 207 lines, 7 tests for compose/source/spec
+- `playwright.config.ts` — new, 40 lines, targets test_06 spec
+- `ui/playwright.config.ts` — new, 18 lines, ui-local alias
+- `ui/package.json` — added @playwright/test ^1.51.1 + test:e2e scripts
+- `docs/architecture.md` — new §9 Control plane + UI (endpoints, 4 screens, isolation, e2e journey, make commands)
+
+**Notes for next iteration:**
+- `npx playwright install` required before first `npx playwright test` in fresh clone; otherwise mocked journey still validated via unit test. Stack E2E (pytest) suite unchanged (test_00…05); test_06 is independent Playwright spec and skipped when UI not reachable — `make e2e` still green.
+- W8 benchmark work can start; W7 now complete (all screens green, isolation proven statically and via browser interception, readyz green).

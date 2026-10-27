@@ -2,6 +2,8 @@
 
 ## Current State
 
+P1.W7.8 UI journey + network isolation done (2026-10-27): Playwright spec tests/e2e/test_06_ui_journey.spec.ts with network interception (no requests to sim-atlas/sim-harbor/verifier or ports 8104/8105/8106/8109/8110) walking four screens (/connectors health/release/drift/sparkline → /connectors/new docs/base_url/credential/entities create+build → /connectors/[id] spec YAML/releases/sync runs/fingerprints → /repairs/[id] drift evidence/ladder L0-L4/hypotheses+probes/patch diff/visible tests/verifier verdict/model usage/Approve-Reject-Rollback + labelled Inject Fault drawer); mocked fallback so green without Docker, live walk when stack up; unit isolation checks + playwright config.
+
 P1.W7.7 Screen /repairs/[id] done (2026-10-27): Drift evidence, ladder trace with L0-L4 badges, hypotheses+probes, JSON Patch diff old/new side by side, visible tests, verifier verdict, model usage, Approve/Reject/Rollback; labelled Inject Fault demo drawer (Demo/labelled badges, POST /demo/inject-fault); model-usage view (frontier/small/calls + zero-frontier badge + token bar); /repairs list; layout nav update; 10 new component test files + 2 page test files (103 Vitest pass, 23 files), next build 11 routes.
 
 P1.W7.6 Screen /connectors/[id] done (2026-10-27): SpecViewer (YAML with copy+JSON toggle), ReleaseHistory with active badge, SyncRunsTable with Complete/Degraded/Blocked + fingerprint_id + unmet_criteria, DependencyList, fingerprints section, Sync-now action; GET /connectors/{id}/sync-runs; 12 new component+page tests (52 Vitest pass), next build 9 routes.
@@ -70,10 +72,11 @@ P1.W6.4 Regression gate done (2026-10-27): verify_spec POST /verify with regress
   - P1.W7.5: /connectors/new screen (docs upload/URL/paste, sandbox base URL, credential env-ref picker, target entities, create & start build) — App Router, 12 component tests, next build 8 routes
   - P1.W7.6: /connectors/[id] screen (spec YAML, releases, sync runs, fingerprints, dependencies) — SWR, 12 component+page tests, next build 9 routes
   - P1.W7.7: /repairs/[id] screen (drift evidence, ladder trace L0-L4, hypotheses+probes, JSON Patch diff old/new, visible tests, verifier verdict, model usage, Approve/Reject/Rollback + Inject Fault drawer + model-usage view) — 103 Vitest pass, next build 11 routes
-- Tests: 1722 pass / 0 fail (autobridge 90.34%, verifier 93.78%, simulators 96.55%; ui tsc green) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker) — ui: 103 Vitest pass + next build green
+  - P1.W7.8: UI journey + network isolation — Playwright spec + unit isolation checks (compose/source/spec existence) — 103 Vitest pass + 7 new isolation tests, next build 9 routes
+- Tests: 1729 pass / 0 fail (autobridge 90.00%, verifier 93.78%, simulators 96.55%; ui tsc green) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker) — ui: 103 Vitest pass + next build green
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green / `make lint` + `make typecheck` + `make ui-typecheck` green
 
 ## Next tasks
-1. **P1.W7.8** — Network test that UI never calls simulators/verifier; Playwright test_06_ui_journey
-2. **P1.W8.1** — bench/harness.py matched-budget harness
-3. **P1.W8.2** — Baseline drivers (claude_code_headless + codex_cli stub)
+1. **P1.W8.1** — bench/harness.py matched-budget harness (identical docs/sandbox/creds/tests/tokens/wall-clock per scenario × trial)
+2. **P1.W8.2** — Baseline drivers: claude_code_headless + codex_cli stub with fallback via LLMProvider
+3. **P1.W8.3** — one_shot_generator secondary diagnostic control
