@@ -600,3 +600,32 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Next: P1.W3.3 pagination (offset/cursor/page with stop_when guards, repeated_cursor → Degraded no_loss)
 - Auth is now complete and never logs secrets; verifier's HttpClient usage should go through same path (no direct env read elsewhere)
 - No new e2e file for W3.2 (workstream e2e is test_02_reference_sync); make test now 820 pass (509 autobridge @99.05% incl. auth 100%, verifier 93.67%, simulators 98.54%)
+
+## P1.W3.3 Pagination with stop_when guards (offset/cursor/page, repeated_cursor → Degraded)
+**Date:** 2026-10-27
+**Ref:** plan §4 W3 + §2.4; task P1.W3.3. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `src/autobridge/runtime/pagination.py` (189 lines): `PaginationState` dataclass (strategy/offset/cursor/page/previous_cursor/pages_fetched + copy), `initial_state`, `build_request_params` (per-strategy offset_param/cursor_param/page_param + limit_param merging base_params), `is_null_cursor` (None or ""), `is_repeated_cursor` (cursor == next or previous == next, cursor-only), `evaluate_stop` (empty_page → null_cursor → no_next → repeated_cursor → page_limit → no_next_token → empty_page_implicit, returns should_stop/reason/repeated_flag), `advance_state` (offset int parse fallback to offset+len(items) or limit, cursor previous→current, page increment)
+- Refactored `src/autobridge/runtime/interpreter.py` to delegate pagination loop to `pagination.py` helpers (`initial_state`/`build_request_params`/`evaluate_stop`/`advance_state`); OperationResult.repeated_cursor and stop_reason behavior preserved (all 72 existing tests still pass)
+- New `src/autobridge/engine/sync_run.py` (223 lines): `determine_outcome` (repeated_cursor or stop_reason==repeated_cursor → Degraded with no_loss, plus invariant failures), `compute_data_readiness` (Complete→complete else partial, freshness current), `_fingerprint_id` (sha256 over spec signature + pages/stop_reasons), `execute_sync` (load spec, Interpreter.execute_all, outcome/data_readiness/fingerprint/records_observed/checkpoint_values), `create_sync_run_row` (DB insert), `run_sync_handler` (JobRunner handler wiring spec lookup + http_client_factory injection + SyncRun persistence)
+- New `tests/unit/test_autobridge_pagination.py` (42 tests): initial_state, is_null/repeated, copy, build_params for offset/cursor/page/base-preserved, evaluate_stop for empty_page/null_cursor/no_next/repeated/previous/page_limit/no_next_token/empty_page_implicit/continue, advance_state offset/cursor/page, interpreter integration for offset/cursor/page/repeated via pagination helpers
+- New `tests/unit/test_autobridge_sync_run.py` (12 tests): determine_outcome Complete/Degraded via repeated flag or stop_reason/invariant/dedup, compute_data_readiness, execute_sync Complete vs Degraded, fingerprint stable, create row + handler integration with in-memory DB, handler guard branches
+
+**Key decisions:**
+- Keep pagination helpers pure (no HTTP, no DB) so W3.3 can be unit-tested at 100% without Docker; interpreter owns HTTP loop but delegates decision logic — minimal churn (one method rewritten, public OperationResult unchanged)
+- repeated_cursor detection mirrors simulator parity: current cursor equality plus previous equality catches the cycle case where even requests repeat the token two pages later
+- SyncRun outcome is deterministic first: no model calls, no guessing; repeated_cursor always yields Degraded with unmet_criteria=['no_loss'] so P1.W3.6 regression gate can treat it as a drift signal; Blocked reserved for W3.4 enum/ auth cases
+- Fingerprint computed from spec signature + per-operation page counts + stop reasons — stable across identical runs, changes when pagination shape drifts (future W4 fingerprinting will extend it)
+
+**Files changed:**
+- `src/autobridge/runtime/pagination.py` (new)
+- `src/autobridge/runtime/interpreter.py` (refactored _paginated_fetch to use pagination helpers)
+- `src/autobridge/engine/sync_run.py` (new)
+- `tests/unit/test_autobridge_pagination.py` (new, 31 tests pagination helpers + 4 integration)
+- `tests/unit/test_autobridge_sync_run.py` (new, 11 tests)
+
+**Notes for next iteration:**
+- Next: P1.W3.4 closed transform registry (date_local, money Decimal, enum_map block, flatten/coalesce/const/concat/business_date), checks.py (unique_key/no_loss/date_order), checkpoint.py; unknown enum → Blocked
+- P1.W3.5 will expand sync_run.py with invariant_results (no_loss via compare_to, date_order) and data_readiness freshness/completeness docs page
+- No new e2e file for W3.3 (workstream e2e is test_02_reference_sync); make test now 862 pass (551 autobridge @99.06%, verifier 93.67%, simulators 98.54%)

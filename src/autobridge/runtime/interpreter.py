@@ -21,6 +21,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from autobridge.runtime.http import HttpClient  # noqa: TC001
+from autobridge.runtime.pagination import (
+    advance_state,
+    build_request_params,
+    evaluate_stop,
+    initial_state,
+)
 from autobridge.spec.models import ConnectorSpec, OperationSpec, Pagination  # noqa: TC001
 
 try:
@@ -204,114 +210,43 @@ class Interpreter:
         items_path = pagination.items_path
         next_path = pagination.next_path
         stop_when = set(pagination.stop_when or [])
-        limit_param = pagination.limit_param
-        # Determine limit value to send.
         limit_value = limit_override or 50
-        # For offset/cursor/page, default limit 50 if not overridden.
 
-        # Pagination state
-        offset = 0
-        cursor: str | None = None
-        page = 1
-        previous_cursor: str | None = None
-
+        state = initial_state(strategy)
         all_records: list[dict[str, Any]] = []
         raw_pages: list[dict[str, Any]] = []
         repeated_cursor = False
         stop_reason: str | None = None
-
         pages_fetched = 0
 
         for _ in range(max_pages):
-            # Build per-page params
-            page_params = dict(base_params)
-            if strategy == "offset":
-                if pagination.offset_param:
-                    page_params[pagination.offset_param] = str(offset)
-                if limit_param:
-                    page_params[limit_param] = str(limit_value)
-            elif strategy == "cursor":
-                if cursor is not None and pagination.cursor_param:
-                    page_params[pagination.cursor_param] = cursor
-                if limit_param:
-                    page_params[limit_param] = str(limit_value)
-            elif strategy == "page":
-                if pagination.page_param:
-                    page_params[pagination.page_param] = str(page)
-                if limit_param:
-                    page_params[limit_param] = str(limit_value)
+            page_params = build_request_params(state, pagination, base_params, limit_value)
 
-            # Fetch
             raw = self.http.get(op.path, params=page_params)
             raw_pages.append(raw)
             pages_fetched += 1
+            state.pages_fetched = pages_fetched
 
             items = _extract_items(raw, items_path)
             all_records.extend(items)
 
-            # Guards that inspect current page before deciding to continue
-            if "empty_page" in stop_when and not items:
-                stop_reason = "empty_page"
-                break
-
-            # Extract next token
             next_token = _extract_next_token(raw, next_path)
 
-            # null_cursor guard: next token is None / empty string / missing
-            if "null_cursor" in stop_when and (
-                next_token is None or (isinstance(next_token, str) and next_token == "")
-            ):
-                stop_reason = "null_cursor"
-                break
-
-            # no_next guard: next_path yields None and next_token is None (same as null but for any strategy)
-            if "no_next" in stop_when and next_token is None:
-                stop_reason = "no_next"
-                break
-
-            # repeated_cursor guard: next cursor equals current cursor
-            if "repeated_cursor" in stop_when and strategy == "cursor":
-                cur_str = str(cursor) if cursor is not None else None
-                nxt_str = str(next_token) if next_token is not None else None
-                # Also consider case where next_token repeats previous cursor
-                if nxt_str is not None and nxt_str == cur_str and cur_str is not None:
+            should_stop, reason, is_repeated = evaluate_stop(
+                state=state,
+                items=items,
+                next_token=next_token,
+                stop_when=stop_when,  # type: ignore[arg-type]
+                max_pages=max_pages,
+            )
+            if should_stop:
+                stop_reason = reason
+                if is_repeated:
                     repeated_cursor = True
-                    stop_reason = "repeated_cursor"
-                    break
-                if previous_cursor is not None and nxt_str == previous_cursor:
-                    repeated_cursor = True
-                    stop_reason = "repeated_cursor"
-                    break
-
-            # page_limit guard
-            if pages_fetched >= max_pages:
-                stop_reason = "page_limit"
                 break
 
-            # If no next token at all, stop (even without guard — prevents infinite loop)
-            if next_token is None:
-                stop_reason = stop_reason or "no_next_token"
-                break
-
-            # Advance pagination state
-            if strategy == "offset":
-                # next_token is next offset value (may be int or str)
-                try:
-                    offset = int(next_token)
-                except (TypeError, ValueError):
-                    # If token not parseable, fallback to offset + len(items)
-                    offset += len(items) if items else limit_value
-                previous_cursor = str(offset)  # for generic comparison
-            elif strategy == "cursor":
-                previous_cursor = str(cursor) if cursor is not None else None
-                cursor = str(next_token)
-            elif strategy == "page":
-                page += 1
-
-            # Safety: if items empty and we haven't stopped, break to avoid loop
-            if not items and "empty_page" not in stop_when:
-                stop_reason = "empty_page_implicit"
-                break
+            # Advance pagination state for next iteration
+            state = advance_state(state, next_token, items, limit_value)
 
         # Checkpoint value: compute max/min over checkpoint field if defined
         checkpoint_value = None
