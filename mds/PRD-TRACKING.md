@@ -37,7 +37,7 @@
 - [x] P1.W2.6 Verifier service (`verifier/app.py`): `POST /verify {release_id, spec, scenario_id, mode}` → `{verdict, score, failed_checks, regression}`; oracle regenerating ground truth from the scenario seed; canonical checks (record set by key, money exact as `Decimal`, business-date dates, status mapping, no duplicates, no loss); response-schema test that hidden mode never returns fixture rows
 - [x] P1.W2.7 Regression runner (every previously verified scenario re-runs on a candidate release), mutation tests (flip a transform or drop a check → fail), invalid-patch trap set (e.g. `net` → `total_amount` after gross→net) rejected
 - [ ] P1.W2.8 HUMAN — `verifier/hidden_cases/dev` and `heldout` split; heldout frozen at the end of W2 with `SHA256SUMS` committed (owner freezes; agents prepare the manifest and the `make bench` sha check)
-- [ ] P1.W2.9 `tests/e2e/test_01_simulators_and_oracle.py`: applies every scenario via the admin API and checks verifier verdicts against the catalog's expected outcome; `docs/safety-model.md` first pass
+- [>] P1.W2.9 `tests/e2e/test_01_simulators_and_oracle.py`: applies every scenario via the admin API and checks verifier verdicts against the catalog's expected outcome; `docs/safety-model.md` first pass — in progress: sbx1 since 2026-10-27 09:00
 
 #### W3 — Runtime / interpreter (plan §4 W3, §2.4)
 - [ ] P1.W3.1 `src/autobridge/runtime/interpreter.py` + `http.py`: executes a `ConnectorSpec` operation with retry/backoff from `rate_limit.retry`; `ModelCall` count stays 0 on a reference sync
