@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autobridge.local/schemas/reservation.schema.json",
+  "title": "Reservation (canonical entity)",
+  "description": "Canonical Reservation emitted by every connector. Money is an exact decimal string with 2 fraction digits (never float). Dates are property-local business dates YYYY-MM-DD (never UTC instants). Status is the closed canonical vocabulary; unknown vendor values Block, never guessed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "reservation_id",
+    "property_id",
+    "arrival_date",
+    "departure_date",
+    "status",
+    "total_amount",
+    "currency"
+  ],
+  "properties": {
+    "reservation_id": {
+      "description": "Canonical key shared by the connector, runtime and verifier.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "property_id": {
+      "description": "Owning property; selects the property-local business-date calendar.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "guest_name": {
+      "description": "Nullable demo field; vendors may omit or null it.",
+      "type": ["string", "null"],
+      "maxLength": 256
+    },
+    "arrival_date": {
+      "description": "Property-local business date of arrival.",
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "departure_date": {
+      "description": "Property-local business date of departure; on or after arrival_date.",
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "status": {
+      "description": "Closed canonical vocabulary (plan §2.4 enum_map with on_unknown: block).",
+      "type": "string",
+      "enum": ["confirmed", "checked_in", "checked_out", "cancelled", "no_show"]
+    },
+    "total_amount": {
+      "description": "Exact decimal string with 2 fraction digits; Decimal end to end, never float.",
+      "type": "string",
+      "pattern": "^-?\\d+\\.\\d{2}$"
+    },
+    "currency": {
+      "description": "ISO 4217 alphabetic code.",
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "updated_at": {
+      "description": "Source timestamp of last change; an aware UTC instant, never a naive business date.",
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

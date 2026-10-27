@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autobridge.local/schemas/folio-charge.schema.json",
+  "title": "FolioCharge (canonical entity)",
+  "description": "Canonical folio charge emitted by every connector. business_date is the property-local business date the charge posts to (late postings across midnight count to the prior business date). Money is an exact decimal string with 2 fraction digits (never float).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "charge_id",
+    "reservation_id",
+    "property_id",
+    "business_date",
+    "amount",
+    "currency"
+  ],
+  "properties": {
+    "charge_id": {
+      "description": "Canonical key shared by the connector, runtime and verifier.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "reservation_id": {
+      "description": "Parent reservation's canonical key.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "property_id": {
+      "description": "Owning property; selects the property-local business-date calendar.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "business_date": {
+      "description": "Property-local business date the charge posts to.",
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "amount": {
+      "description": "Exact decimal string with 2 fraction digits; Decimal end to end, never float. Negative values are refunds/adjustments.",
+      "type": "string",
+      "pattern": "^-?\\d+\\.\\d{2}$"
+    },
+    "currency": {
+      "description": "ISO 4217 alphabetic code.",
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "description": {
+      "description": "Nullable demo field; vendors may omit or null it.",
+      "type": ["string", "null"],
+      "maxLength": 512
+    },
+    "posted_at": {
+      "description": "Source timestamp of posting; an aware UTC instant, never a naive business date.",
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

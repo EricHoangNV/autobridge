@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autobridge.local/schemas/runtime-target.json",
+  "title": "RuntimeTarget",
+  "description": "Where a verified connector release executes (plan §2.2 targets.py; implemented in W3.6). Discriminated by kind. The edge variant is reserved for Phase 2 S2 and is rejected by the v1 engine at runtime.",
+  "oneOf": [
+    { "$ref": "#/$defs/local_process" },
+    { "$ref": "#/$defs/docker_sandbox" },
+    { "$ref": "#/$defs/edge" }
+  ],
+  "$defs": {
+    "local_process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "const": "local_process",
+          "description": "In-process execution for tests and local runs."
+        },
+        "timeout_s": {
+          "description": "Per-operation timeout in seconds.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 60
+        },
+        "workdir": {
+          "description": "Working directory for the run; defaults to the release directory.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "docker_sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "const": "docker_sandbox",
+          "description": "Isolated container with a network allowlist, timeout and resource limits."
+        },
+        "image": {
+          "description": "Sandbox image; defaults to the runtime-sandbox image.",
+          "type": "string",
+          "minLength": 1
+        },
+        "network_allowlist": {
+          "description": "Egress hosts the sandbox may reach; never includes the verifier or the simulator admin.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "timeout_s": {
+          "description": "Per-operation timeout in seconds.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 60
+        },
+        "memory_mb": {
+          "description": "Container memory limit in MiB.",
+          "type": "integer",
+          "minimum": 64,
+          "default": 512
+        }
+      }
+    },
+    "edge": {
+      "description": "Reserved for Phase 2 S2 (simulated Edge target); the v1 engine rejects it at runtime.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "const": "edge",
+          "description": "Reserved: simulated edge worker on an isolated network."
+        },
+        "endpoint": {
+          "description": "Edge worker endpoint; reserved.",
+          "type": "string",
+          "minLength": 1
+        },
+        "timeout_s": {
+          "description": "Per-operation timeout in seconds.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 60
+        }
+      }
+    }
+  }
+}

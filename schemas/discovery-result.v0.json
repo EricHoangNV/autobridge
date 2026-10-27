@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autobridge.local/schemas/discovery-result.v0.json",
+  "$comment": "Reserved v0 schema for Phase 2 S3 (DiscoveryResult static import only). Not consumed by the v1 engine; state transitions happen only via explicit endpoints.",
+  "title": "DiscoveryResult v0 (reserved)",
+  "description": "Static import record for a discovered vendor (plan §2.3 DiscoveryResult, Phase 2 S3). Reserved: the v1 engine neither produces nor consumes it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["discovery_id", "status", "vendor"],
+  "properties": {
+    "discovery_id": {
+      "description": "Stable id for the discovery record.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "status": {
+      "description": "Lifecycle state; transitions only via explicit endpoints (Phase 2 S3).",
+      "type": "string",
+      "enum": [
+        "discovered",
+        "needs_confirmation",
+        "authorized",
+        "connected",
+        "healing"
+      ]
+    },
+    "vendor": {
+      "description": "Vendor display name.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "base_url": {
+      "description": "Observed or declared base URL of the vendor API.",
+      "type": "string",
+      "minLength": 1
+    },
+    "candidate_entities": {
+      "description": "Canonical entity names this vendor may supply.",
+      "type": "array",
+      "items": { "type": "string", "enum": ["Reservation", "FolioCharge"] },
+      "default": []
+    },
+    "evidence_refs": {
+      "description": "Evidence record ids supporting this discovery.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": []
+    },
+    "created_at": {
+      "description": "Aware UTC instant the record was created.",
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
