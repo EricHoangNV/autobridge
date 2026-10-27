@@ -947,3 +947,24 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 
 Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 
+## P1.W5.1 Docs reader
+**Date:** 2026-10-27
+**Ref:** plan §4 W5, §2.6 Hypothesis engine (P1.W5.1 docs reader)
+
+**What was done:**
+- Created `src/autobridge/discovery/docs_reader.py` (633 lines, 93%): Provenance with source+line+snippet, InterfaceDescription with doc_type/base_url/auth/operations/schemas/pagination_notes/status_notes/date_notes, OperationDescription with params/pagination_hint/provenance, parse_openapi_dict/parse_openapi_text/parse_markdown/read_docs_text/read_docs_file; OpenAPI handles bearer/apiKey/oauth2/basic, offset/cursor/page hints, enum status vocab, date fields; Markdown handles Harbor narrative (permissive auth, cursor with repeated bug, H1..H5, ambiguous date, JSON examples), query-string strip, dedup, bounded ctx for pagination, inline Query parameters fallback
+- Created `tests/unit/test_autobridge_discovery_docs_reader.py` (42 tests): openapi minimal/auth variants/pagination/invalid, text json/yaml, markdown basic/properties/folios/invalid/real fixtures atlas+harbor
+
+**Key decisions:**
+- Provenance per field via line search on raw doc lines (cheap) so classifiers can link every hypothesis to evidence record
+- Markdown param scan bounded to next operation heading to avoid cross-contamination (properties vs reservations cursor); auth prefers content lines over headings
+
+**Files changed:**
+- `src/autobridge/discovery/docs_reader.py` — new
+- `tests/unit/test_autobridge_discovery_docs_reader.py` — new, 42 tests
+
+**Notes for next iteration:**
+- Next: P1.W5.2 Classifiers (auth/pagination/date/status from docs+probes); no e2e file for W5.1 (workstream e2e is P1.W5.7 test_04_bootstrap)
+
+Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
