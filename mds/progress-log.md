@@ -1718,3 +1718,30 @@ CI green on main + records the labelled demo (docs/demo.md), then flips [x].
 **Notes for next iteration:**
 - REQ-005 (model-id literals) and REQ-006 (money float) remain OPEN and are the natural next picks; Phase 2 stays closed until the Nov 1 stop-rule checkpoint
 - If a new vendor sim package lands (e.g. P2 legacy work), the AST test automatically flags any verifier import outside common/scenarios
+## REQ-005 — Model ids from env only, no literal defaults
+**Date:** 2026-10-27
+**Ref:** mds/REQUESTS.MD REQ-005 (audit 2026-10-27; owner decision: fix it)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Dropped the four `DEFAULT_*` literals from `src/autobridge/config.py`; all four model-id helpers now go through `require_env`, so a missing variable raises `RuntimeError("Missing required env var: <NAME>")`
+- Replaced the real model ids in `src/autobridge/bench/baseline_coding_agent.py` docstring CLI examples (`:18` claude shape, `:418` codex shape) with `<MODEL_ID_FROM_ENV>`; kept `fake-claude`/`fake-codex` fake names (not real ids, used by the W1 fakes)
+- Amended DIRECTIVES §6 bullet in place: `.env.example` lists every secret (not every key) with an empty value; `.env.example` itself needed no change (the four engine model-id vars were already empty; ralph-loop ids keep their values per the owner decision)
+- Updated `tests/unit/test_autobridge_llm.py`: missing-env test now asserts `RuntimeError` naming each var; renamed the override test to `test_config_env_provides_model_id`; four api-key/lazy-client tests now set model env vars
+
+**Key decisions:**
+- `require_env` (not a new error type) because it already exists, names the var, and the owner asked for "fails loudly with a clear message naming the env var"
+- Also replaced the `codex-mini-latest` docstring id even though the request named only `:18`: same rule (§3 "model ids in config, not code"), zero test impact
+- Left `docs/benchmark.md`'s CLI-output example untouched: it documents observed CLI output, not a code default, and the owner decision named only the two `.py` files
+- No provider `__init__` changes needed: explicit-arg construction short-circuits the env lookup, so only no-arg construction without env now raises
+
+**Files changed:**
+- `src/autobridge/config.py` — removed DEFAULT_* constants, helpers use require_env
+- `src/autobridge/bench/baseline_coding_agent.py` — docstring placeholders
+- `tests/unit/test_autobridge_llm.py` — missing-env + four api-key tests
+- `mds/DIRECTIVES.MD` — §6 wording ("every secret")
+- `mds/REQUESTS.MD` — REQ-005 OPEN→DONE, moved to Resolved top
+
+**Notes for next iteration:**
+- REQ-006 (money float rejection) is the last open request and the natural next pick; Phase 2 stays closed until the Nov 1 stop-rule checkpoint
+- If CI or local runs construct `AnthropicProvider()`/`OpenAIProvider()` with no args and no model env, they will now raise — set the four env vars (see `.env.example`)
