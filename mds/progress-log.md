@@ -210,3 +210,29 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Next: P1.W1.7 EvidenceStore (handlers should emit EvidenceRecords once it exists); P1.W1.8 Budget/ModelCall (handlers will need the ledger)
 - W3/W4/W5 replace the three stub executors via `register_handler` or `default_handlers`; the stub Blocked/escalate outcomes keep every run terminal in the meantime
 - Learned: mypy DML `rowcount` needs `cast("CursorResult", ...)` with the import in TYPE_CHECKING (LEARNINGS #3)
+
+## P1.W1.7 EvidenceStore + redact.py
+**Date:** 2026-10-27
+**Ref:** plan §4 W1 (EvidenceStore + redact.py deliverables and passing criteria); task P1.W1.7. Agent: opencode meta/muse-spark-1.3 (escalation).
+
+**What was done:**
+- New `src/autobridge/evidence/store.py`: `EvidenceStore` (append-only) over the W1.5 `EvidenceRecord` table — `append` (kind/parent/run validation, JSON-serializability check, redaction at the boundary), `get`, `list_for_run` (oldest first), `children`, `chain` (root-first, diamond-safe), `dump_jsonl` / `load_jsonl` (idempotent, preserves ids and timestamps); `UnknownKindError` / `UnknownParentError`
+- Upgraded `src/autobridge/evidence/redact.py` from stub: `redact` (longest-first, skips empties, non-str passthrough), `redact_payload` (recursive over dict/list incl. keys, input never mutated), `secrets_for_refs` (refs → env values, missing skipped), `redact_prompt` (strips every credential-ref value from a fixture prompt); `REDACTED = "***"`
+- New `tests/unit/test_autobridge_evidence.py` (24 tests): round-trip, all 8 plan kinds, kind/parent/run-id/payload validation, linear + diamond chains, run scoping/ordering, append-time redaction with caller-copy intact, JSONL round-trip + idempotent reload + orphan/bad-kind traps, planted-secrets prompt test (both values stripped, 3 placeholders, surrounding text intact)
+
+**Key decisions:**
+- No second table: the store writes through the existing `EvidenceRecord` model, so the W1.5 schema, CHECK vocabularies and migrations stay the single source of truth
+- Secrets are passed per `append` call, never read from the environment inside the store and never logged — the store cannot leak what it was never given
+- `parent_ids` filtering in Python (portable JSON list, no Postgres ARRAY); caller commits (matches the jobs/session fixture pattern)
+
+**Files changed:**
+- `src/autobridge/evidence/store.py` (new), `src/autobridge/evidence/redact.py` (upgraded), `src/autobridge/evidence/__init__.py` (exports)
+- `tests/unit/test_autobridge_evidence.py` (new, 24 tests)
+
+**Checks:**
+- Targeted: 24 pass with evidence files at 100% coverage; `make test` — 262 pass (245 autobridge @99.76%, 4 verifier @100%, 13 simulators @100%; 90% gate per package)
+- `make lint`, `make typecheck` — green; compose untouched (no e2e file for W1.7; workstream e2e is P1.W1.10)
+
+**Notes for next iteration:**
+- Next: P1.W1.8 LLMProvider + Budget + ModelCall ledger (model_call evidence kind already reserved); job handlers (W3/W4/W5) should emit EvidenceRecords via this store once they exist
+- Full-run event-stream redaction test (DIRECTIVES §6) belongs to W7.2 SSE work — the store + redact helpers it needs are in place
