@@ -1367,3 +1367,9 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - **Impact:** UI is no longer a stub — `make up` will build Next.js image (multi-stage), /connectors renders live data from control, readyz gates on control, foundation for /connectors/new and detail screens.
 - **Next:** P1.W7.5 /connectors/new (docs upload/URL, sandbox base URL, credential env-ref picker, target entities, start build).
 - **Agent:** opencode baseten/meta-models/muse-spark-open-1026 (worker)
+### 2026-10-27 — P1.W7.5 Screen /connectors/new (sbx1)
+- Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+- What: Built Next.js 15 /connectors/new page with NewConnectorForm (name, sandbox base URL with suggestions + validation, credential env-ref picker with 4 known refs + custom input, target entity checkboxes, docs file upload/URL/paste with file precedence), two-step submit POST /connectors → POST /connectors/{id}/build via control plane only, busy/success/error UI with links.
+- Why: Plan §2.11 screen 2 — docs upload/URL, sandbox base URL, credential env-ref picker, target entities, start build; fold into /connectors if behind was not needed.
+- Tests: 12 NewConnectorForm + 1 page test; 28 UI tests green; next build 8 routes including /connectors/new (3.42kB); make lint/typecheck/test/ui-typecheck green; coverage unchanged (90.34%/93.78%/96.55%).
+- Decisions: File content → docs_text priority; custom credential via select→input to keep secrets out of spec (only ref name sent); base via NEXT_PUBLIC_API_URL→window fallback; no user-event dep — fireEvent only.
