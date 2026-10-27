@@ -82,7 +82,12 @@ def test_determine_outcome_repeated_plus_invariant_no_dup() -> None:
 def test_compute_data_readiness() -> None:
     assert compute_data_readiness("Complete", {}) == {"freshness": "current", "completeness": "complete"}
     assert compute_data_readiness("Degraded", {}) == {"freshness": "current", "completeness": "partial"}
-    assert compute_data_readiness("Blocked", {}) == {"freshness": "current", "completeness": "partial"}
+    assert compute_data_readiness("Blocked", {}) == {"freshness": "stale", "completeness": "incomplete"}
+    # Degraded with zero records -> stale
+    assert compute_data_readiness("Degraded", {}, {"Reservation": 0}) == {"freshness": "stale", "completeness": "partial"}
+    assert compute_data_readiness("Degraded", {}, {"Reservation": 5}) == {"freshness": "current", "completeness": "partial"}
+    # Unknown outcome fallback
+    assert compute_data_readiness("Unknown", {}) == {"freshness": "current", "completeness": "partial"}
 
 
 def _fake_http(pages: list[dict]) -> httpx.MockTransport:
@@ -299,3 +304,194 @@ def test_run_sync_handler_unknown_release() -> None:
         ctx = JobContext(job_id="j", kind="sync", run_id=None, payload={"release_id": "nope"}, attempt=1, session=s, worker_id="w")
         with pytest.raises(ValueError, match="not found"):
             run_sync_handler(ctx)
+
+
+def test_fingerprint_includes_pagination_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.engine.sync_run import _fingerprint_id
+    from autobridge.runtime.interpreter import OperationResult
+
+    spec = _spec_dict(
+        {
+            "strategy": "cursor",
+            "cursor_param": "cursor",
+            "next_path": "$.meta.next_cursor",
+            "items_path": "$.data",
+            "stop_when": ["null_cursor"],
+        }
+    )
+    spec2 = _spec_dict(
+        {
+            "strategy": "offset",
+            "offset_param": "offset",
+            "limit_param": "limit",
+            "next_path": "$.meta.next_cursor",
+            "items_path": "$.data",
+            "stop_when": ["empty_page"],
+        }
+    )
+    results = {
+        "list_reservations": OperationResult(
+            operation="list_reservations", records=[{"reservation_id": "R1"}], pages_fetched=1, stop_reason="null_cursor"
+        )
+    }
+    fp1 = _fingerprint_id(spec, results, {"Reservation": [{"reservation_id": "R1"}]})
+    fp2 = _fingerprint_id(spec2, results, {"Reservation": [{"reservation_id": "R1"}]})
+    assert fp1 != fp2
+
+
+def test_fingerprint_keys_types_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.engine.sync_run import _fingerprint_id
+    from autobridge.runtime.interpreter import OperationResult
+
+    base_spec = _spec_dict(
+        {
+            "strategy": "cursor",
+            "cursor_param": "cursor",
+            "next_path": "$.meta.next_cursor",
+            "items_path": "$.data",
+            "stop_when": ["null_cursor"],
+        }
+    )
+    # Disable keys and types via health.fingerprint
+    spec_no_keys = dict(base_spec)
+    spec_no_keys["health"] = {"canary": {"every": "60s", "operation": "list_reservations"}, "fingerprint": {"keys": False, "types": False, "pagination_shape": True}}
+    results = {
+        "list_reservations": OperationResult(operation="list_reservations", records=[{"reservation_id": "R1"}], pages_fetched=1, stop_reason="null_cursor")
+    }
+    # Different keys should not affect fingerprint when disabled
+    fp_a = _fingerprint_id(spec_no_keys, results, {"Reservation": [{"reservation_id": "R1"}]})
+    fp_b = _fingerprint_id(spec_no_keys, results, {"Reservation": [{"reservation_id": "R99"}]})
+    assert fp_a == fp_b
+    # But enabled should differ
+    fp_c = _fingerprint_id(base_spec, results, {"Reservation": [{"reservation_id": "R1"}]})
+    fp_d = _fingerprint_id(base_spec, results, {"Reservation": [{"reservation_id": "R99"}]})
+    assert fp_c != fp_d
+
+
+def test_fingerprint_pages_different_changes_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.engine.sync_run import _fingerprint_id
+    from autobridge.runtime.interpreter import OperationResult
+
+    spec = _spec_dict(
+        {
+            "strategy": "cursor",
+            "cursor_param": "cursor",
+            "next_path": "$.meta.next_cursor",
+            "items_path": "$.data",
+            "stop_when": ["null_cursor"],
+        }
+    )
+    results1 = {"list_reservations": OperationResult(operation="list_reservations", records=[{"reservation_id": "R1"}], pages_fetched=1, stop_reason="null_cursor")}
+    results2 = {"list_reservations": OperationResult(operation="list_reservations", records=[{"reservation_id": "R1"}, {"reservation_id": "R2"}], pages_fetched=2, stop_reason="null_cursor")}
+    fp1 = _fingerprint_id(spec, results1, {"Reservation": [{"reservation_id": "R1"}]})
+    fp2 = _fingerprint_id(spec, results2, {"Reservation": [{"reservation_id": "R1"}, {"reservation_id": "R2"}]})
+    assert fp1 != fp2
+
+
+def test_fingerprint_with_decimal_and_null(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from decimal import Decimal
+
+    from autobridge.engine.sync_run import _fingerprint_id
+    from autobridge.runtime.interpreter import OperationResult
+
+    spec = _spec_dict(
+        {
+            "strategy": "cursor",
+            "cursor_param": "cursor",
+            "next_path": "$.meta.next_cursor",
+            "items_path": "$.data",
+            "stop_when": ["null_cursor"],
+        }
+    )
+    results = {"list_reservations": OperationResult(operation="list_reservations", records=[], pages_fetched=1, stop_reason="null_cursor")}
+    # Decimal field type should be captured
+    fp = _fingerprint_id(spec, results, {"Reservation": [{"reservation_id": "R1", "total_amount": Decimal("10.00")}]})
+    assert len(fp) == 16
+    # Empty records
+    fp2 = _fingerprint_id(spec, results, {"Reservation": []})
+    assert len(fp2) == 16
+
+
+def test_fingerprint_no_pagination_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.engine.sync_run import _fingerprint_id
+    from autobridge.runtime.interpreter import OperationResult
+
+    spec = _spec_dict(
+        {
+            "strategy": "cursor",
+            "cursor_param": "cursor",
+            "next_path": "$.meta.next_cursor",
+            "items_path": "$.data",
+            "stop_when": ["null_cursor"],
+        }
+    )
+    spec["health"] = {"canary": {"every": "60s", "operation": "list_reservations"}, "fingerprint": {"keys": True, "types": True, "pagination_shape": False}}
+    results = {"list_reservations": OperationResult(operation="list_reservations", records=[{"reservation_id": "R1"}], pages_fetched=1, stop_reason="null_cursor")}
+    fp = _fingerprint_id(spec, results, {"Reservation": [{"reservation_id": "R1"}]})
+    assert len(fp) == 16
+
+
+def test_execute_sync_blocked_unknown_enum(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    pagination = {
+        "strategy": "cursor",
+        "cursor_param": "cursor",
+        "next_path": "$.meta.next_cursor",
+        "items_path": "$.data",
+        "stop_when": ["null_cursor"],
+    }
+    spec_dict = _spec_dict(pagination)
+    # Add enum field that will block on unknown value
+    spec_dict["entities"]["Reservation"]["fields"]["status"] = {
+        "path": "$.status",
+        "transform": [{"name": "enum_map", "args": {"map": {"CONFIRMED": "confirmed"}, "on_unknown": "block"}}],
+    }
+    pages = [{"data": [{"reservation_id": "R1", "status": "UNKNOWN_X"}], "meta": {"next_cursor": None}}]
+    http = _fake_http(pages)
+    from autobridge.engine.sync_run import execute_sync
+
+    summary = execute_sync(spec_dict, http)
+    assert summary["outcome"] == "Blocked"
+    assert "unknown_enum" in summary["unmet_criteria"]
+    assert summary["data_readiness"]["freshness"] == "stale"
+    assert summary["data_readiness"]["completeness"] == "incomplete"
+    assert summary["fingerprint_id"]
+    assert len(summary["fingerprint_id"]) == 16
+
+
+def test_execute_sync_data_readiness_complete_and_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.engine.sync_run import execute_sync
+
+    pagination = {
+        "strategy": "cursor",
+        "cursor_param": "cursor",
+        "next_path": "$.meta.next_cursor",
+        "items_path": "$.data",
+        "stop_when": ["null_cursor"],
+    }
+    spec_dict = _spec_dict(pagination)
+    pages = [{"data": [{"reservation_id": "R1"}], "meta": {"next_cursor": None}}]
+    summary = execute_sync(spec_dict, _fake_http(pages))
+    assert summary["outcome"] == "Complete"
+    assert summary["data_readiness"] == {"freshness": "current", "completeness": "complete"}
+    # Degraded via invariant (no_loss)
+    spec_dict2 = _spec_dict(pagination)
+    spec_dict2["entities"]["Reservation"]["checks"] = [{"kind": "no_loss", "compare_to": "$.meta.total_count"}]
+    pages2 = [{"data": [{"reservation_id": "R1"}], "meta": {"total_count": 5, "next_cursor": None}}]
+    summary2 = execute_sync(spec_dict2, _fake_http(pages2))
+    assert summary2["outcome"] == "Degraded"
+    assert summary2["data_readiness"] == {"freshness": "current", "completeness": "partial"}
+
+
+def test_fingerprint_config_defaults() -> None:
+    from autobridge.engine.sync_run import _fingerprint_config
+
+    assert _fingerprint_config({}) == {"keys": True, "types": True, "pagination_shape": True}
+    assert _fingerprint_config({"health": {"fingerprint": {"keys": False}}}) == {"keys": False, "types": True, "pagination_shape": True}
+    assert _fingerprint_config({"health": {"fingerprint": "bad"}}) == {"keys": True, "types": True, "pagination_shape": True}
