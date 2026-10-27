@@ -2,6 +2,8 @@
 
 ## Current State
 
+P1.W7.6 Screen /connectors/[id] done (2026-10-27): SpecViewer (YAML with copy+JSON toggle), ReleaseHistory with active badge, SyncRunsTable with Complete/Degraded/Blocked + fingerprint_id + unmet_criteria, DependencyList, fingerprints section, Sync-now action; GET /connectors/{id}/sync-runs; 12 new component+page tests (52 Vitest pass), next build 9 routes.
+
 P1.W7.5 Screen /connectors/new done (2026-10-27): NewConnectorForm with docs upload/URL/paste, sandbox base URL, credential env-ref picker (known refs + custom), target entities, create+build two-step via control plane, 12 component tests + page test, next build 8 routes.
 
 P1.W7.4 Next.js 15 scaffold + /connectors screen done (2026-10-27): Next.js 15 App Router (TS, Tailwind, SWR polling + SSE), Vitest + Testing Library, readyz proxy to control, /connectors table with health/active release/last sync outcome/open drift/sparkline, healthz/readyz route handlers, 15 component tests pass, `next build` 7 routes.
@@ -66,10 +68,12 @@ P1.W6.4 Regression gate done (2026-10-27): verify_spec POST /verify with regress
   - P1.W7.3: OpenAPI → ui typed client via openapi-typescript (export script + schema.d.ts + client.ts + tsc check)
   - P1.W7.4: Next.js 15 scaffold + /connectors screen (health, active release, last sync outcome, open drift, sparkline) — App Router, TS, Tailwind, SWR polling + SSE, Vitest + RTL, readyz
   - P1.W7.5: /connectors/new screen (docs upload/URL/paste, sandbox base URL, credential env-ref picker, target entities, create & start build) — App Router, 12 component tests, next build 8 routes
-- Tests: 1722 pass / 0 fail (autobridge 90.34%, verifier 93.78%, simulators 96.55%; ui tsc green) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker) — ui: 28 Vitest pass + next build green
+  - P1.W7.6: /connectors/[id] screen (spec YAML, releases, sync runs, fingerprints, dependencies) — SWR, 12 component+page tests, next build 9 routes
+- Tests: 1722 pass / 0 fail (autobridge 90.34%, verifier 93.78%, simulators 96.55%; ui tsc green) + 59 e2e pass (8 test_00 + 9 test_01 + 4 test_02 + 5 test_03 + 13 test_04 + 20 test_05, 23 skipped when no Docker) — ui: 52 Vitest pass + next build green
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green / `make lint` + `make typecheck` + `make ui-typecheck` green
 
 ## Next tasks
-1. **P1.W7.6** — Screen /connectors/[id] (spec YAML, releases, sync runs, fingerprints, dependencies)
-2. **P1.W7.7** — Screen /repairs/[id] + Inject Fault drawer + model-usage view
-3. **P1.W7.8** — Network test that UI never calls simulators/verifier; Playwright test_06_ui_journey
+1. **P1.W7.7** — Screen /repairs/[id] + Inject Fault drawer + model-usage view
+2. **P1.W7.8** — Network test that UI never calls simulators/verifier; Playwright test_06_ui_journey
+3. **P1.W8.1** — bench/harness.py matched-budget harness
+

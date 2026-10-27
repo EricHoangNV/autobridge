@@ -1373,3 +1373,12 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 - Why: Plan §2.11 screen 2 — docs upload/URL, sandbox base URL, credential env-ref picker, target entities, start build; fold into /connectors if behind was not needed.
 - Tests: 12 NewConnectorForm + 1 page test; 28 UI tests green; next build 8 routes including /connectors/new (3.42kB); make lint/typecheck/test/ui-typecheck green; coverage unchanged (90.34%/93.78%/96.55%).
 - Decisions: File content → docs_text priority; custom credential via select→input to keep secrets out of spec (only ref name sent); base via NEXT_PUBLIC_API_URL→window fallback; no user-event dep — fireEvent only.
+
+## 2026-10-27 — P1.W7.6 /connectors/[id] detail screen — sbx1
+
+- **What:** Spec viewer (YAML with copy + raw JSON toggle), release history (version/signature/created with active badge), sync runs table (Complete/Degraded/Blocked badges, fingerprint_id, unmet_criteria, records obs/emit, started_at), fingerprints section (run→fingerprint mapping), dependency registrations (consumer/entity/policy/paused), connector meta header (credential_ref, target_entities, runtime_target, open drift count), release selector for spec viewer, Sync-now action via POST /connectors/{id}/sync; backend GET /connectors/{id}/sync-runs (31 OpenAPI paths, typed listSyncRuns wrapper)
+- **Why:** Plan §2.11 screen 3 of 4; spec is declarative ConnectorSpec rendered as YAML (no generated code), fingerprints from SyncRun.fingerprint_id, outcomes Complete|Degraded|Blocked with named unmet_criteria
+- **How:** `SpecViewer` minimal YAML serializer (nested objects/arrays/scalars, no dep), `ReleaseHistory` sorted vN newest first, `SyncRunsTable` with SyncOutcomeBadge + fingerprint slice, `DependencyList` with paused badge; page uses SWR polling for detail + sync-runs, back link, header HealthBadge; backend joins releases to sync_runs; OpenAPI export → openapi-typescript → typed client
+- **Checks:** make lint green / make typecheck green / make test 1722 pass 90.34%/93.78%/96.55% / Vitest 52 pass (12 files: SpecViewer 5+ReleaseHistory 4+SyncRunsTable 4+DependencyList 3+detail page 5) / tsc green / next build 9 routes (was 8, +/connectors/[id] 4.52kB) / OpenAPI 31 paths 28 schemas
+
+Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
