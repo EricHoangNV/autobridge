@@ -2,7 +2,7 @@
 
 ## Current State
 
-W3.7 Reference specs for Atlas/Harbor + test_02_reference_sync done (2026-10-27): both sync Complete with ModelCall 0 via fake and live transports, Decimal money, date_local/business_date, enum_map block, fingerprint drift, docs/connector-spec.md.
+W4.1 Fingerprinting + drift signals done (2026-10-27): drift/fingerprint.py (keys/types/pagination_shape) + drift/signals.py (sync+canary signals) with fingerprint delta and http/auth/pagination signals; engine/sync_run delegates to fingerprint module.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -30,9 +30,10 @@ W3.7 Reference specs for Atlas/Harbor + test_02_reference_sync done (2026-10-27)
   - P1.W3.5: SyncRun outcome Complete|Degraded|Blocked + data_readiness + fingerprint_id per run
   - P1.W3.6: RuntimeTarget LocalProcess + DockerSandbox (network allowlist, timeout, resource limits), Edge reserved; negative network test that DockerSandbox cannot reach verifier or simulator admin
   - P1.W3.7: Reference specs for Atlas/Harbor under generated/connectors/ that sync Complete with ModelCall 0 via test_02 + docs/connector-spec.md
-- Tests: 962 pass / 0 fail / 0 skip (autobridge 94.15%, verifier 93.78%, simulators 98.54%; ui –) + 21 e2e pass (8 test_00 + 9 test_01 + 4 test_02 reference sync, 2 test_02 live skipped when no Docker)
-- Stack: `make up` → all 8 readyz green (runtime_target + interpreter checks) / `make smoke` green / `make e2e` green (21 pass, 2 skipped when no Docker) / `make lint` + `make typecheck` green
+  - P1.W4.1: Fingerprinting (keys/types/pagination_shape delta) + drift signals from sync & canary (fingerprint.py 98% + signals.py 92% + sync_run delegation)
+- Tests: 1041 pass / 0 fail / 0 skip (autobridge 94.33%, verifier 93.78%, simulators 98.54%; ui –) + 21 e2e pass (8 test_00 + 9 test_01 + 4 test_02 reference sync, 2 test_02 live skipped when no Docker)
+- Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (21 pass, 2 skipped) / `make lint` + `make typecheck` green
 
 ## Next tasks
 1. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check; owner freezes SHA256SUMS)
-2. **P1.W4.1** — Fingerprinting (drift/fingerprint.py: keys, types, pagination shape) and drift/signals.py from sync runs and the canary
+2. **P1.W4.2** — Drift classifier (12 classes, evidence ids, per-class tests from catalog)

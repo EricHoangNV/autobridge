@@ -16,12 +16,11 @@ Trust boundary: no import of ``verifier`` or ``simulators``.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import UTC, datetime
 from typing import Any
 
 from autobridge.control.models import SyncRun, utcnow
+from autobridge.drift import fingerprint as _fp
 from autobridge.runtime.checkpoint import compute_checkpoint_for_operation
 from autobridge.runtime.checks import evaluate_entity_checks
 from autobridge.runtime.interpreter import Interpreter, OperationResult
@@ -29,20 +28,13 @@ from autobridge.runtime.mapping import map_records_to_entities
 
 
 def _fingerprint_config(spec: dict[str, Any]) -> dict[str, bool]:
-    """Extract health.fingerprint toggles (default all true)."""
-    health = spec.get("health", {})
-    fp = health.get("fingerprint", {}) if isinstance(health, dict) else {}
-    if not isinstance(fp, dict):
-        return {"keys": True, "types": True, "pagination_shape": True}
-    return {
-        "keys": bool(fp.get("keys", True)),
-        "types": bool(fp.get("types", True)),
-        "pagination_shape": bool(fp.get("pagination_shape", True)),
-    }
+    """Re-export for back-compat tests (delegates to drift.fingerprint)."""
+    return _fp.fingerprint_config(spec)
 
 
 def _hash_string(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    """Re-export for back-compat tests (delegates to drift.fingerprint)."""
+    return _fp._hash_string(value)
 
 
 def _fingerprint_id(
@@ -50,99 +42,8 @@ def _fingerprint_id(
     results: dict[str, OperationResult],
     canonical_records: dict[str, list[dict[str, Any]]] | None = None,
 ) -> str:
-    """Stable fingerprint id for this run.
-
-    Hashes:
-    - spec_signature (full spec canonical JSON)
-    - pagination_shape per operation (strategy, params, paths, stop_when, pages, stop_reason, repeated)
-    - keys sample (first 10 canonical keys per entity, sorted) when fingerprint.keys true
-    - types histogram (field name → type name) when fingerprint.types true
-    """
-    cfg = _fingerprint_config(spec)
-    payload: dict[str, Any] = {
-        "spec_signature": hashlib.sha256(
-            json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest(),
-    }
-
-    if cfg["pagination_shape"]:
-        ops_raw = spec.get("operations", {})
-        ops: dict[str, Any] = ops_raw if isinstance(ops_raw, dict) else {}
-        pagination_shape: dict[str, Any] = {}
-        for op_name, op_spec in ops.items():
-            if not isinstance(op_spec, dict):
-                continue
-            pag_raw = op_spec.get("pagination")
-            pag: dict[str, Any] = pag_raw if isinstance(pag_raw, dict) else {}
-            res = results.get(op_name)
-            stop_when_raw = pag.get("stop_when", [])
-            stop_when_sorted = sorted(stop_when_raw) if isinstance(stop_when_raw, list) else []
-            pagination_shape[op_name] = {
-                "strategy": pag.get("strategy"),
-                "cursor_param": pag.get("cursor_param"),
-                "offset_param": pag.get("offset_param"),
-                "page_param": pag.get("page_param"),
-                "limit_param": pag.get("limit_param"),
-                "next_path": pag.get("next_path"),
-                "items_path": pag.get("items_path"),
-                "stop_when": stop_when_sorted,
-                "pages_fetched": res.pages_fetched if res else 0,
-                "stop_reason": res.stop_reason if res else None,
-                "repeated_cursor": bool(res.repeated_cursor) if res else False,
-            }
-        payload["pagination_shape"] = pagination_shape
-    else:
-        payload["pages"] = {k: v.pages_fetched for k, v in results.items()}
-        payload["stop_reasons"] = {k: v.stop_reason for k, v in results.items()}
-
-    if canonical_records is not None:
-        if cfg["keys"]:
-            keys_hash: dict[str, str] = {}
-            for ent, records in canonical_records.items():
-                # Sample first 10 keys sorted for stability
-                sample_keys: list[str] = []
-                for r in records[:10]:
-                    # Try common key fields
-                    for kf in ("reservation_id", "charge_id", "id", "key"):
-                        if kf in r and r[kf] is not None:
-                            sample_keys.append(str(r[kf]))
-                            break
-                    else:
-                        # Fallback: first value
-                        if r:
-                            sample_keys.append(str(next(iter(r.values()))))
-                sample_keys = sorted(sample_keys)
-                keys_hash[ent] = _hash_string("|".join(sample_keys)) if sample_keys else "empty"
-            payload["keys_sample"] = keys_hash
-        if cfg["types"]:
-            types_hash: dict[str, dict[str, str]] = {}
-            for ent, records in canonical_records.items():
-                if not records:
-                    continue
-                field_types: dict[str, str] = {}
-                sample = records[0]
-                for fname, fval in sample.items():
-                    if isinstance(fval, bool):
-                        tname = "bool"
-                    elif isinstance(fval, int):
-                        tname = "int"
-                    elif isinstance(fval, float):
-                        tname = "float"
-                    elif hasattr(fval, "quantize"):
-                        tname = "Decimal"
-                    elif isinstance(fval, str):
-                        tname = "str"
-                    elif fval is None:
-                        tname = "null"
-                    else:
-                        tname = type(fval).__name__
-                    field_types[fname] = tname
-                types_hash[ent] = field_types
-            if types_hash:
-                payload["types"] = types_hash
-
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    """Re-export for back-compat tests (delegates to drift.fingerprint)."""
+    return _fp.compute_fingerprint_id(spec, results, canonical_records)
 
 
 def determine_outcome(
