@@ -81,7 +81,7 @@
 - [x] P1.W7.5 Screen `/connectors/new` (docs upload/URL, sandbox base URL, credential env-ref picker, target entities, start build) — fold into `/connectors` if behind
 - [x] P1.W7.6 Screen `/connectors/[id]` (spec viewer YAML, release history, sync runs with Complete/Degraded/Blocked, fingerprints, dependency registrations)
 - [x] P1.W7.7 Screen `/repairs/[id]` (drift evidence, ladder trace with level badges, hypotheses + probes, JSON Patch diff old/new side by side, visible tests, verifier verdict, model usage, Approve / Reject / Rollback) + the labelled Inject Fault demo drawer + model-usage view
-- [ ] P1.W7.8 Network test that the UI never calls simulators or the verifier directly; `tests/e2e/test_06_ui_journey.spec.ts` (Playwright) completing the v2 §7.4 user journey
+- [>] P1.W7.8 Network test that the UI never calls simulators or the verifier directly; `tests/e2e/test_06_ui_journey.spec.ts` (Playwright) completing the v2 §7.4 user journey — in progress: sbx1 since 2026-10-27 08:17
 
 #### W8 — Benchmark (plan §4 W8, §2.10)
 - [ ] P1.W8.1 `bench/harness.py`: per scenario × trial runs AutoBridge via the control API and the baseline inside the same `runtime-sandbox` image with the same docs volume, sandbox URL, credentials, visible tests, token ceiling and wall-clock; harness self-test asserts both arms get identical inputs
