@@ -835,3 +835,32 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - P1.W4.4 is RepairController + ladder L0/L1 wiring (rate_limit/transient no-patch backoff only, token_expired → refresh if permitted else escalate, CAPABILITY_REMOVED/AUTH_REVOKED escalate with no patch)
 - Coverage autobridge 92.27% (per-file 70-87% for new rules but package gate is 90% per package, not per file — passes); verifier 93.78%, simulators 98.54%; `make lint`/`typecheck` green
 - No new e2e file for W4.3; workstream e2e remains test_03_known_repairs_zero_frontier (requires W4.4-4.7)
+
+## P1.W4.4 RepairController + ladder L0/L1
+**Date:** 2026-10-27
+**Ref:** plan §4 W4, §2.5 Repair ladder and escalation
+**Agent:** opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Implemented `repair/knowledge.py` L0 profile cache keyed by vendor + fingerprint delta (sha16 signature, case-insensitive vendor, dict/dataclass delta support, put/lookup/contains/clear, for_spec helpers, singleton)
+- Implemented `repair/ladder.py` with L0/L1 wiring: non-fixable CAPABILITY_REMOVED/AUTH_REVOKED → escalate level 4 no patch; AUTH_EXPIRED → refresh if oauth2_client_credentials+token_url else escalate; RATE_LIMIT/TRANSIENT → backoff_only via retry_backoff_only rule (empty patch → no release, missing status → patch); L0 cache hit validates patch via apply_patch then proposes level 0; L1 iterates matching_rules respecting produces_patch and validates patch; unknown/semantic without evidence → escalate; all paths ladder_trace + evidence_ids + model_usage frontier_tokens 0
+- Implemented `repair/controller.py` RepairController orchestrating classify→ladder→RepairRun persistence and L0 caching, plus helpers handle_classified/handle_from_signals/handle_sync_summary and repair_job_handler for JobRunner
+- Added 46 unit tests in `tests/unit/test_autobridge_ladder.py` covering KnowledgeCache operations, L0 hit/miss/invalid, L1 rules for rename/offset/cursor/nested/type_coerce, special drift handling (rate_limit/transient backoff, token_expired refresh/escalate, capability/auth revoked escalate), escalation for unknown, controller persistence/caching/backoff/escalate/frontier zero/job handler
+
+**Key decisions:**
+- L0 key = lowercased vendor + sha16(json delta sorted) so same vendor+delta hits regardless of case and cross-vendor miss; stores full rule patch validated via apply_patch so stale cached patches fall through to L1
+- Ladder priority order mirrors classifier severity: non-fixable first (no patch attempted even if cache populated), then AUTH_EXPIRED refresh check via auth.type==oauth2+token_url, then backoff-only, then L0, then L1; matches plan §2.5 deterministic-first ladder
+- _can_refresh_token only permits oauth2_client_credentials with token_url (AuthSpec requirement) — bearer/api_key/basic always escalate as required by task
+- RATE_LIMIT/TRANSIENT delegates to retry_backoff_only rule: if retry already covers 429/503 returns empty patch backoff_only True requires_release False else adds missing status patch; keeps ladder consistent with rule registry
+- All deterministic paths keep frontier_tokens 0, small_tokens 0, calls 0 to satisfy W4.7 zero-frontier assertion
+
+**Files changed:**
+- `src/autobridge/repair/knowledge.py` — new, KnowledgeCache + helpers
+- `src/autobridge/repair/ladder.py` — new, run_ladder with L0/L1 and special handling
+- `src/autobridge/repair/controller.py` — new, RepairController + job handler
+- `tests/unit/test_autobridge_ladder.py` — new, 46 tests
+
+**Notes for next iteration:**
+- P1.W4.5 releases will use LadderResult.candidate_patch to create ConnectorRelease rows with parent linkage and verifier gate; controller already creates RepairRun with candidate_patch and ladder_level_reached
+- L0 cache is in-memory singleton for W4.4; later can be backed by DB lookup of prior verified releases by spec_signature+drift_class
+- Coverage autobridge 91.70% (knowledge 82%, ladder 82%, controller 68% but package passes 90% gate); verifier 93.78%, simulators 98.54%; `make lint`/`typecheck` green; no new e2e file for W4.4 (workstream e2e is test_03_known_repairs_zero_frontier requiring W4.5-4.7)
