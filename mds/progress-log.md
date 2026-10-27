@@ -124,3 +124,33 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 **Notes for next iteration:**
 - Next: P1.W1.4 canonical entity schemas, then P1.W1.5 SQLAlchemy models. The registry's `spec_signature` is the future `ConnectorRelease.signature`.
 - Runtime transforms in W3 must accept exactly `TRANSFORMS` from `autobridge.spec.models` — import it, do not redefine the set.
+
+## P1.W1.4 Canonical entity schemas
+**Date:** 2026-10-27
+**Ref:** plan §4 W1 + §2.3 (core data model) / §2.4 (canonical entities); task P1.W1.4. Agent: opencode meta/muse-spark-1.3 (escalation).
+
+**What was done:**
+- Committed 4 JSON Schemas (draft 2020-12) in `schemas/`: `reservation.schema.json`, `folio-charge.schema.json` (money = exact decimal string `^-?\d+\.\d{2}$`, dates = property-local `YYYY-MM-DD`, closed status enum confirmed/checked_in/checked_out/cancelled/no_show, `additionalProperties: false`), `runtime-target.json` (oneOf local_process/docker_sandbox/edge, edge reserved for Phase 2 S2), `discovery-result.v0.json` (reserved, 5 S3 lifecycle states)
+- New `src/autobridge/spec/entities.py`: `Reservation` / `FolioCharge` / `RuntimeTarget` (discriminated union) / `DiscoveryResult` pydantic models, `Money` (rejects float/bool/int, requires exactly 2dp, Decimal end to end) and `BusinessDate` (rejects datetimes, enforces real calendar dates) validated types, reference examples incl. a late-posting folio (UTC instant past midnight, business date prior day), `validate_against_schema` / `validate_entity` / `schema_path` helpers
+- New `tests/unit/test_autobridge_entities.py` (60 tests): every reference example validates against model AND schema; model→JSON→schema round-trip; float/short-scale/bool money rejected; datetime/naive-instant/impossible-date rejected; departure<arrival rejected; unknown status/currency/kind rejected by both layers; extras/missing keys rejected; all 5 discovery statuses accepted; model-fields↔schema-properties consistency guards
+- Exported the new API from `src/autobridge/spec/__init__.py`
+
+**Key decisions:**
+- Schemas hand-written (not generated from `model_json_schema` like connector-spec.v1) because they are cross-package interop contracts where explicit patterns matter; drift is guarded behaviorally (round-trip tests) plus structurally (field/required-set equality tests)
+- Canonical money on the wire is a 2dp string; the model requires exponent exactly -2 (so `Decimal("20")` is rejected — the W3 money transform with scale 2 will always emit 2dp)
+- JSON Schema pattern checks shape only; calendar validity (Feb 30) lives in the model and later the verifier checks — the test asserts this split explicitly instead of pretending the schema covers it
+- `departure_date == arrival_date` accepted (same-day stay); negative folio amounts accepted (refunds); `guest_name`/`description` nullable per the simulators' nullable-fields requirement
+- No docs page touched: `docs/connector-spec.md` is a W10 skeleton; no e2e file for W1.4 (workstream e2e is P1.W1.10)
+
+**Files changed:**
+- `schemas/reservation.schema.json`, `schemas/folio-charge.schema.json`, `schemas/runtime-target.json`, `schemas/discovery-result.v0.json` (new)
+- `src/autobridge/spec/entities.py` (new), `src/autobridge/spec/__init__.py` (exports)
+- `tests/unit/test_autobridge_entities.py` (new, 60 tests)
+
+**Checks:**
+- Targeted: 60 pass; `make test` — 198 pass (181 autobridge @100%, 4 verifier @100%, 13 simulators @100%; 90% gate per package)
+- `make lint`, `make typecheck` — green; compose untouched (no e2e file for W1.4)
+
+**Notes for next iteration:**
+- Next: P1.W1.5 SQLAlchemy models. W2.1 (seeded generator) and W2.6 (verifier canonical checks) should emit/consume exactly these schemas — `validate_entity` is the shared assertion; `REFERENCE_*` are the first fixtures.
+- W3.6 `targets.py` must accept exactly the `runtime-target.json` kinds and reject `edge` at runtime until Phase 2 S2.
