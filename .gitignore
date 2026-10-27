@@ -47,3 +47,6 @@ experiments/scorecard.md
 
 # UI build cache
 ui/tsconfig.tsbuildinfo
+
+# Scratch and design work (local only)
+tmp/

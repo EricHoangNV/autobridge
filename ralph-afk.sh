@@ -9,7 +9,7 @@
 #   opencode  OpenCode (sbx agent "opencode") with a provider/model picked per iteration:
 #               baseten  → $BASETEN_MODEL   (Spark Open)        tier "worker"
 #               modal    → $MODAL_MODEL     (Spark Open)        tier "backup"
-#               meta     → $META_MODEL      (Spark 1.3 / Wonder) tier "escalation"
+#               meta     → $META_MODEL      (Spark 1.3 / Contributor / Wonder) tier "escalation"
 #   auto      starts on the worker tier and moves up the ladder on failures (see choose_tier)
 #
 #   sh ralph-afk.sh [--validate] [--agent claude|opencode|auto] [--provider baseten|modal|meta] [--model <id>] <sbx1|sbx-mini> <iterations>
@@ -293,7 +293,9 @@ trailer_for() {  # <agent> <model id>
            | awk '{for(i=1;i<=NF;i++)$i=toupper(substr($i,1,1))substr($i,2)}1')
     printf 'Co-Authored-By: Claude %s <noreply@anthropic.com>' "$name"
   else
-    name=$(basename "$2" | sed -E 's/-[0-9]+[bB]-[aA][0-9]+[bB]$//; s/-[0-9]{4}$//; s/-/ /g' | awk '{for(i=1;i<=NF;i++)$i=toupper(substr($i,1,1))substr($i,2)}1')
+    # Meta's Contributor tier is the same model at another price: the trailer names the model.
+    id=${id%-contributor}
+    name=$(basename "$2" | sed -E 's/-contributor$//; s/-[0-9]+[bB]-[aA][0-9]+[bB]$//; s/-[0-9]{4}$//; s/-/ /g' | awk '{for(i=1;i<=NF;i++)$i=toupper(substr($i,1,1))substr($i,2)}1')
     printf 'Co-Authored-By: %s <%s@models.noreply>' "$name" "$id"
   fi
 }
