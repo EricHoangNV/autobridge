@@ -2,7 +2,7 @@
 
 ## Current State
 
-W4.2 Drift classifier done (2026-10-27): drift/classifier.py with 12 canonical classes, priority matching, evidence ids, and fingerprint delta analysis; 54 per-class tests from scenario catalog.
+W4.3 7 deterministic repair rules done (2026-10-27): repair/rules/ 7 modules + registry with precondition/patch/confidence/verification_level; 65 tests for precondition true/false and patch shape.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -32,10 +32,11 @@ W4.2 Drift classifier done (2026-10-27): drift/classifier.py with 12 canonical c
   - P1.W3.7: Reference specs for Atlas/Harbor under generated/connectors/ that sync Complete with ModelCall 0 via test_02 + docs/connector-spec.md
   - P1.W4.1: Fingerprinting (keys/types/pagination_shape delta) + drift signals from sync & canary (fingerprint.py 98% + signals.py 92% + sync_run delegation)
   - P1.W4.2: Drift classifier for 12 classes (classifier.py with priority matchers, evidence ids, fingerprint delta analysis, 54 tests from catalog)
-- Tests: 1095 pass / 0 fail / 0 skip (autobridge 94.16%, verifier 93.78%, simulators 98.54%; ui –) + 21 e2e pass (8 test_00 + 9 test_01 + 4 test_02 reference sync, 2 test_02 live skipped when no Docker)
+  - P1.W4.3: 7 deterministic rules in repair/rules/ (rename_field, offset_to_cursor, cursor_to_offset, retry_backoff_only, enum_extend_requires_evidence, nested_path_shift, type_coerce_string_number), each with precondition/patch generator/confidence/verification level, and unit tests for precondition true/false and patch shape; repair/registry.py
+- Tests: 1160 pass / 0 fail / 0 skip (autobridge 92.27%, verifier 93.78%, simulators 98.54%; ui –) + 21 e2e pass (8 test_00 + 9 test_01 + 4 test_02 reference sync, 2 test_02 live skipped when no Docker)
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (21 pass, 2 skipped) / `make lint` + `make typecheck` green
 
 ## Next tasks
 1. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check; owner freezes SHA256SUMS)
-2. **P1.W4.3** — 7 deterministic rules in repair/rules/ with registry and unit tests
-3. **P1.W4.4** — RepairController + ladder L0/L1 wiring (rate_limit/transient no-patch, token refresh/escalate, CAPABILITY_REMOVED escalate)
+2. **P1.W4.4** — RepairController + ladder L0/L1 wiring (rate_limit/transient no-patch, token refresh/escalate, CAPABILITY_REMOVED escalate)
+3. **P1.W4.5** — Releases: ConnectorRelease creation from verified patch, approve/reject/rollback endpoints

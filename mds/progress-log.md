@@ -795,3 +795,43 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - P1.W4.4 will wire RepairController + ladder L0/L1 with classifier (rate_limit/transient → no patch backoff only, token_expired → refresh if permitted else escalate, CAPABILITY_REMOVED/AUTH_REVOKED → escalate with no patch)
 - No new e2e file for W4.2; workstream e2e remains test_03_known_repairs_zero_frontier (requires W4.4-4.7)
 - Coverage remains ≥90% per package (autobridge 94.16%, verifier 93.78%, simulators 98.54%); `make lint`/`typecheck` green; classifier 91% (uncovered lines are rare string-hint branches and fallback generic fingerprint_changed path, package still 94% passes)
+## P1.W4.3 7 deterministic repair rules with registry (rename_field, offset_to_cursor, etc.)
+**Date:** 2026-10-27
+**Ref:** mds/AutoBridge_Implementation_Plan_2026-10-26.md §W4 (plan §4 W4, §2.5) — Deliverables: 7 deterministic rules in repair/rules/ each with precondition/patch generator/confidence/verification level + unit tests for precondition true/false and patch shape; repair/registry.py. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Created `src/autobridge/repair/context.py` (45 lines): RepairContext dataclass bundling spec, drift_class, signals, fingerprint_delta, classification, extra with from_dict helper for tests
+- Created 7 rule modules in `src/autobridge/repair/rules/`:
+  - `rename_field.py` (141 lines, confidence 0.92, visible): fuzzy field rename via types_details 1-removed/1-added detection + extra inference, patch replaces /entities/{entity}/fields/{old}/path → $.{new}
+  - `offset_to_cursor.py` (83 lines, 0.94 visible): offset→cursor via pagination_details strategy change, patch 5 ops per operation (strategy/cursor_param/next_path/offset_param/stop_when)
+  - `cursor_to_offset.py` (76 lines, 0.94 visible): inverse cursor→offset with limit_param/next_offset
+  - `retry_backoff_only.py` (89 lines, 0.97 none): RATE_LIMIT/TRANSIENT + http_status 429/5xx, no patch when retry covers status else adds missing status
+  - `enum_extend_requires_evidence.py` (150 lines, 0.85 evidence_required): ENUM_NEW_VALUE + unknown_enum, returns [] until evidence_confirmed then patches enum_map, hypothesis_for produces evidence-required hypothesis
+  - `nested_path_shift.py` (133 lines, 0.82 visible): items_path shift via pagination_details, patch replaces /operations/{op}/pagination/items_path
+  - `type_coerce_string_number.py` (148 lines, 0.88 visible): SCHEMA_TYPE_CHANGE string↔number via types_details, patch ensures money scale 2
+- Created `src/autobridge/repair/registry.py` (123 lines): RULE_REGISTRY with 7 entries in priority order, RuleEntry dataclass, get_rule/all_rules/matching_rules helpers for ladder
+- Created `tests/unit/test_autobridge_repair_rules.py` (65 tests): registry count/order/attributes, per-rule precondition true/false via delta and extra variants, patch shape via apply_patch validation, retry/enum evidence handling, matching_rules integration
+
+**Key decisions:**
+- RepairContext as single input object keeps rule signatures stable (spec+drift_class+signals+delta+extra) without coupling to DB models; extra dict allows e2e scenario injection without full fingerprint
+- Each rule is standalone module with module-level constants (RULE_ID/CONFIDENCE/VERIFICATION_LEVEL) satisfying Directives §1 "each deterministic rule is one module with precondition/patch generator/confidence/verification level"
+- Precondition checks delta first then extra fallback so unit tests can construct minimal context; verification_level evidence_required for enum_extend enforces escalation without independent evidence (plan §2.5 non-repairable)
+- retry_backoff_only returns empty patch when retry already covers observed status (Atlas already has 429/503) — satisfies W4.4 passing criteria "rate_limit_429/transient_503 → no patch, backoff only"
+- Registry ordered by priority (rename→offset→cursor→retry→enum→nested→type_coerce) for ladder iteration; W4.4 will wire L0/L1 with matching_rules
+
+**Files changed:**
+- `src/autobridge/repair/context.py` — new, RepairContext
+- `src/autobridge/repair/rules/rename_field.py` — new, rename_field rule
+- `src/autobridge/repair/rules/offset_to_cursor.py` — new, offset_to_cursor rule
+- `src/autobridge/repair/rules/cursor_to_offset.py` — new, cursor_to_offset rule
+- `src/autobridge/repair/rules/retry_backoff_only.py` — new, retry_backoff_only rule
+- `src/autobridge/repair/rules/enum_extend_requires_evidence.py` — new, enum_extend rule
+- `src/autobridge/repair/rules/nested_path_shift.py` — new, nested_path_shift rule
+- `src/autobridge/repair/rules/type_coerce_string_number.py` — new, type_coerce rule
+- `src/autobridge/repair/registry.py` — new, registry with 7 rules
+- `tests/unit/test_autobridge_repair_rules.py` — new, 65 tests
+
+**Notes for next iteration:**
+- P1.W4.4 is RepairController + ladder L0/L1 wiring (rate_limit/transient no-patch backoff only, token_expired → refresh if permitted else escalate, CAPABILITY_REMOVED/AUTH_REVOKED escalate with no patch)
+- Coverage autobridge 92.27% (per-file 70-87% for new rules but package gate is 90% per package, not per file — passes); verifier 93.78%, simulators 98.54%; `make lint`/`typecheck` green
+- No new e2e file for W4.3; workstream e2e remains test_03_known_repairs_zero_frontier (requires W4.4-4.7)
