@@ -107,6 +107,20 @@ services:
       - "8110:8001"
     healthcheck: *healthcheck-py
 
+  sim-legacystay:
+    build:
+      context: ./simulators
+      dockerfile: Dockerfile
+    environment:
+      APP_MODULE: simulators.legacystay.app:app
+    networks:
+      - vendor-net
+      - admin-net
+    ports:
+      - "8111:8000"
+      - "8112:8001"
+    healthcheck: *healthcheck-py
+
   ui:
     build:
       context: ./ui

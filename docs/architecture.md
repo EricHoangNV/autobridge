@@ -38,6 +38,7 @@ Design principles (plan §1):
 | `verifier` | `verifier` | `verifier.app:app` | verifier | 8104 | Oracle + canonical checks; hidden fixtures at `/fixtures` (ro) |
 | `sim-atlas` | `simulators` | `simulators.atlaspms.app:app` | simulator | 8105 | AtlasPMS synthetic vendor (clean OpenAPI) + admin API |
 | `sim-harbor` | `simulators` | `simulators.harborpms.app:app` | simulator | 8106 | HarborPMS synthetic vendor (messy docs, quirks) + admin API |
+| `sim-legacystay` | `simulators` | `simulators.legacystay.app:app` | simulator | 8111 | LegacyStay synthetic vendor Phase 2 (offset, strict Bearer, throttle, nullable chaos) + admin API |
 | `ui` | `ui` | Node stub → Next.js 15 (W7) | user | 8107 | Four screens over the control plane |
 | `bench` | `autobridge.bench` | `autobridge.bench.app:app` | engine | 8108 | Matched-budget harness (AutoBridge vs baseline) |
 
@@ -50,9 +51,9 @@ mounted read-only into the verifier container and nowhere else.
 
 ```
 engine-net   — control, worker, runtime-sandbox, ui, bench
-vendor-net   — runtime-sandbox ↔ sim-atlas/sim-harbor public API (8000)
+vendor-net   — runtime-sandbox ↔ sim-atlas/sim-harbor/sim-legacystay public API (8000)
 verifier-net — control ↔ verifier, bench ↔ verifier
-admin-net    — control ↔ sim-atlas/sim-harbor admin API (8001, W2.2)
+admin-net    — control ↔ sim-atlas/sim-harbor/sim-legacystay admin API (8001, W2.2)
 ```
 
 Isolation is by **attachment only** — no `internal: true`. An internal-only
@@ -67,7 +68,7 @@ probes asserted in `scripts/smoke.sh` and statically in
 
 Positive probes guard against a blanket outage masquerading as isolation:
 
-- `runtime-sandbox → sim-atlas/sim-harbor :8000` must succeed
+- `runtime-sandbox → sim-atlas/sim-harbor/sim-legacystay :8000` must succeed
 - `control → verifier :8000` must succeed
 
 ### 2.3 Health contracts (plan §3)
@@ -345,7 +346,7 @@ E2E_UI_BASE=http://localhost:3000 npx playwright test
 `make test` covers the same invariant without a browser via
 `tests/unit/test_autobridge_ui_isolation.py` (compose + source + spec
 existence checks). `make e2e` runs the pytest suite (`test_00` … `test_05`,
-`test_07`); the Playwright spec is independent — run it with `make e2e-ui`
+`test_07`, `test_s1`); the Playwright spec is independent — run it with `make e2e-ui`
 — and skips gracefully when the UI is not reachable.
 
 ## 10. Final state (W10)

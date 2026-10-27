@@ -25,6 +25,7 @@ EXPECTED_SERVICES = {
     "verifier",
     "sim-atlas",
     "sim-harbor",
+    "sim-legacystay",
     "ui",
     "bench",
 }
@@ -39,6 +40,7 @@ EXPECTED_ATTACHMENT = {
     "verifier": {"verifier-net"},
     "sim-atlas": {"vendor-net", "admin-net"},
     "sim-harbor": {"vendor-net", "admin-net"},
+    "sim-legacystay": {"vendor-net", "admin-net"},
     "ui": {"engine-net"},
     "bench": {"engine-net", "verifier-net"},
 }
@@ -51,6 +53,7 @@ EXPECTED_PORTS = {
     "verifier": 8104,
     "sim-atlas": 8105,
     "sim-harbor": 8106,
+    "sim-legacystay": 8111,
     "ui": 8107,
     "bench": 8108,
 }
@@ -137,7 +140,7 @@ def test_verifier_build_context_excludes_engine(compose: dict) -> None:
 
 
 def test_sim_build_context_is_simulators_only(compose: dict) -> None:
-    for svc in ("sim-atlas", "sim-harbor"):
+    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay"):
         build = compose["services"][svc]["build"]
         assert build["context"] in ("./simulators", "simulators")
 

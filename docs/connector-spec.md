@@ -25,6 +25,7 @@ creates a new directory.
 |---|---|---|---|---|---|---|
 | `atlaspms` | AtlasPMS | `generated/connectors/atlaspms/reference/spec.yaml` | `${ATLAS_BASE_URL}` → `http://sim-atlas:8000` in Compose, `http://localhost:8105` on the host | bearer `ATLAS_API_KEY` | offset (`limit`/`offset`/`next_offset`) | clear English (`confirmed`…) |
 | `harborpms` | HarborPMS | `generated/connectors/harborpms/reference/spec.yaml` | `${HARBOR_BASE_URL}` → `http://sim-harbor:8000` / `8106` | bearer `HARBOR_API_KEY` (Harbor is permissive, but the spec still carries a `credential_ref`) | cursor (`cursor`/`next_cursor` base64) | opaque codes `H1`…`H5` |
+| `legacystay` | LegacyStay | bootstrapped from `simulators/docs/legacystay.md` — no reference spec (Phase 2 S1, unseen-generalization vendor) | `${LEGACYSTAY_BASE_URL}` → `http://sim-legacystay:8000` / `8111` | bearer `LEGACYSTAY_API_KEY` (strict, missing/empty → 401) | offset (`limit`/`offset`/`next_offset`) | clear English (`confirmed`…) |
 
 Both reference specs sync `Complete` with `ModelCall` count `0` — the runtime
 never calls an LLM for a baseline sync.
@@ -313,3 +314,25 @@ The only behavioral differences are:
 
 See `simulators/docs/atlaspms-openapi.json` and `simulators/docs/harbor.md`
 for the vendor contract each spec was built from.
+
+## 9. LegacyStay — bootstrapped third vendor (Phase 2 S1)
+
+LegacyStay (`simulators/legacystay/app.py`, docs `simulators/docs/legacystay.md`,
+host ports `8111` public / `8112` admin) is the heldout-only unseen-generalization
+vendor: wire-compatible canonical shapes, but strict `Bearer` auth (401 without
+it), `offset` pagination, plain-English statuses, an ambiguous `date` duplicator,
+nullable chaos (`guest_name` / `description` often null), and an always-on
+baseline throttle (roughly every 8th request `429` + `Retry-After: 1` — a
+different cadence from the catalog's every-3rd `rate_limit_429`, so the generic
+retry rule cannot be overfit to it).
+
+Its docs carry three deliberate traps the generic pipeline ignores without any
+vendor-specific code: an outdated cursor-envelope example (reality is `offset`),
+a wrong `active` / `in-house` status example (reality is the plain words), and
+the ambiguous `date` note. Bootstrap from docs alone yields a valid spec
+(`id: legacystay`, `${LEGACYSTAY_BASE_URL}`, `LEGACYSTAY_API_KEY`) that syncs
+`Complete` with `ModelCall` count `0` and passes the verifier oracle; a
+`rename_guest_id` drift repairs via the generic `rename_field` L1 rule with
+`frontier_tokens == 0` and a verified release. Proven in
+`tests/e2e/test_s1_legacystay.py`, which also asserts no file under
+`src/autobridge` mentions the vendor.

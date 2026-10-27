@@ -57,19 +57,21 @@ SERVICE_PORTS: Final[dict[str, int]] = {
     "verifier": 8104,
     "sim-atlas": 8105,
     "sim-harbor": 8106,
+    "sim-legacystay": 8111,
     "ui": 8107,
     "bench": 8108,
 }
 
 # Simulator admin ports (separate listener on admin-net, W2.2).
-# Public on 8105/8106 (8000), admin on 8109/8110 (8001).
+# Public on 8105/8106/8111 (8000), admin on 8109/8110/8112 (8001).
 SIM_ADMIN_PORTS: Final[dict[str, int]] = {
     "sim-atlas": 8109,
     "sim-harbor": 8110,
+    "sim-legacystay": 8112,
 }
 
-# Simulators reset by the per-test fixture (plan §2.8: Atlas + Harbor).
-SIM_SERVICES: Final[tuple[str, str]] = ("sim-atlas", "sim-harbor")
+# Simulators reset by the per-test fixture (plan §2.8: Atlas + Harbor; P2.S1.1: + LegacyStay).
+SIM_SERVICES: Final[tuple[str, str, str]] = ("sim-atlas", "sim-harbor", "sim-legacystay")
 
 # Suite runtime budget, wall-clock on a warm stack excluding image build
 # (plan §4 W9 passing criteria; also documented in docs/architecture.md §7).
