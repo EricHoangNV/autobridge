@@ -199,6 +199,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Discoveries */
+        get: operations["list_discoveries_discovery_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Discoveries */
+        post: operations["import_discoveries_discovery_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/{discovery_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Discovery */
+        get: operations["get_discovery_discovery__discovery_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/{discovery_id}/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Authorize Discovery */
+        post: operations["authorize_discovery_discovery__discovery_id__authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/{discovery_id}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Connect Discovery */
+        post: operations["connect_discovery_discovery__discovery_id__connect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/{discovery_id}/mark-healing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark Healing */
+        post: operations["mark_healing_discovery__discovery_id__mark_healing_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/{discovery_id}/request-confirmation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Confirmation */
+        post: operations["request_confirmation_discovery__discovery_id__request_confirmation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/{discovery_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Healing */
+        post: operations["resolve_healing_discovery__discovery_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/drift": {
         parameters: {
             query?: never;
@@ -776,6 +912,73 @@ export interface components {
             paused: boolean;
             /** Policy */
             policy: string;
+        };
+        /** DiscoveryImportRequest */
+        DiscoveryImportRequest: {
+            /** Records */
+            records: components["schemas"]["DiscoveryRecordIn"][];
+        };
+        /** DiscoveryImportResponse */
+        DiscoveryImportResponse: {
+            /** Imported */
+            imported: components["schemas"]["DiscoveryRecordOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * DiscoveryRecordIn
+         * @description One reserved DiscoveryResult record for static import (Phase 2 S3).
+         *
+         *     Closed Literals mirror ``schemas/discovery-result.v0.json``; unknown
+         *     ``status`` or entity values are rejected by request validation (422,
+         *     never guessed).
+         */
+        DiscoveryRecordIn: {
+            /** Base Url */
+            base_url?: string | null;
+            /** Candidate Entities */
+            candidate_entities?: ("Reservation" | "FolioCharge")[];
+            /** Created At */
+            created_at?: string | null;
+            /** Discovery Id */
+            discovery_id: string;
+            /** Evidence Refs */
+            evidence_refs?: string[];
+            /**
+             * Status
+             * @description Lifecycle state; transitions only via explicit endpoints
+             * @enum {string}
+             */
+            status: "discovered" | "needs_confirmation" | "authorized" | "connected" | "healing";
+            /** Vendor */
+            vendor: string;
+        };
+        /** DiscoveryRecordOut */
+        DiscoveryRecordOut: {
+            /** Base Url */
+            base_url?: string | null;
+            /** Candidate Entities */
+            candidate_entities: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Discovery Id */
+            discovery_id: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Vendor */
+            vendor: string;
         };
         /** DriftEventOut */
         DriftEventOut: {
@@ -1898,6 +2101,456 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    list_discoveries_discovery_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryRecordOut"][];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    import_discoveries_discovery_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoveryImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryImportResponse"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Conflict (e.g. dependency already exists) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    get_discovery_discovery__discovery_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                discovery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryRecordOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    authorize_discovery_discovery__discovery_id__authorize_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                discovery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryRecordOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    connect_discovery_discovery__discovery_id__connect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                discovery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryRecordOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    mark_healing_discovery__discovery_id__mark_healing_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                discovery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryRecordOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    request_confirmation_discovery__discovery_id__request_confirmation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                discovery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryRecordOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    resolve_healing_discovery__discovery_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                discovery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryRecordOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
                         detail: string;
                     };
                 };

@@ -11,10 +11,12 @@ import {
 import type {
   ConnectorOut,
   ConnectorDetail,
+  DiscoveryRecordOut,
   DriftEventOut,
   ModelUsageResponse,
   RepairRunOut,
 } from "@/lib/api/client";
+import { DiscoveryList } from "@/components/DiscoveryList";
 
 // Reuse the same fetcher pattern as hooks: base resolved per env.
 function getBaseUrl(): string {
@@ -75,6 +77,10 @@ export default function ConnectorsPage() {
     },
     { refreshInterval: 5000 }
   );
+
+  const { data: discoveries } = useSWR<DiscoveryRecordOut[]>("/discovery", fetcher, {
+    refreshInterval: 10000,
+  });
 
   // Repairs + drift events resolve "who waits" and the recent-repairs list.
   const { data: repairs } = useSWR<RepairRunOut[]>("/repairs", fetcher, { refreshInterval: 5000 });
@@ -159,6 +165,8 @@ export default function ConnectorsPage() {
           repairsByConnector={repairsByConnector}
         />
       )}
+
+      <DiscoveryList records={discoveries ?? []} />
 
       {(connectors?.length ?? 0) > 0 ? (
         <p data-testid="connectors-count" className="num mt-3 px-10 text-xs text-ink-2">

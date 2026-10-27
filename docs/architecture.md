@@ -273,7 +273,7 @@ its readyz checks green + its docs page updated (plan §3).
 ## 9. Control plane + UI (plan §2.11, §4 W7)
 
 The control plane is a FastAPI app (`src/autobridge/control/app.py`) with
-32 paths and 29 schemas (OpenAPI at `ui/openapi.json`, typed client in
+40 paths and 33 schemas (OpenAPI at `ui/openapi.json`, typed client in
 `ui/lib/api/client.ts` via `openapi-typescript`). Every service has
 `/healthz`/`/readyz`; the UI has its own readyz proxy to control.
 
@@ -298,10 +298,25 @@ errors (`POST /connectors`, `POST /demo/inject-fault`); response timestamps
 are UTC-aware RFC 3339 (`UtcDatetime`), and `InjectFaultRequest.target`/`seed`
 are a `Literal`/`StrictInt` so the schema states exactly what is accepted.
 
+Phase 2 S3 adds the reserved `DiscoveryResult` static import (7 paths,
+`discovery_records` table via migration `0004_discovery_records.py`):
+`POST /discovery/import` validates every record against the reserved
+`DiscoveryResult` contract (closed `Literal` status/entity vocabularies plus
+the committed `schemas/discovery-result.v0.json`, parity-pinned by unit
+tests; the request path uses the model so it works in the container image,
+which ships `src/` without `schemas/`), `GET /discovery` lists the
+`discovered / needs_confirmation / authorized / connected / healing` states
+from the static fixture
+(`tests/e2e/fixtures/discovery_s3_static.json`), and five explicit endpoints
+(`request-confirmation`, `authorize`, `connect`, `mark-healing`, `resolve`)
+own the only legal transitions — anything else is a 422, never guessed.
+Acceptance: `tests/e2e/test_s3_discovery_import.py` (fakes + live).
+
 ### 9.2 UI screens (Next.js 15, App Router, Tailwind, SWR + SSE)
 
 1. `/connectors` — table: health, active release, last sync outcome, open drift,
-   model-usage sparkline.
+   model-usage sparkline; plus the `DiscoveryList` section showing statically
+   imported vendors and their lifecycle state (P2.S3.1).
 2. `/connectors/new` — docs upload/URL/paste, sandbox base URL, credential
    env-ref picker (known refs + custom), target entities, create & build two-step.
 3. `/connectors/[id]` — spec viewer (YAML), release history, sync runs with

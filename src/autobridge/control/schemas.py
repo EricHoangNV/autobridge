@@ -367,3 +367,72 @@ class ScorecardEntry(BaseModel):
 class ScorecardsResponse(BaseModel):
     scorecards: list[ScorecardEntry]
     total: int
+
+
+#: Closed vocabularies for the reserved DiscoveryResult import (Phase 2 S3).
+#: They mirror ``autobridge.spec.entities.DISCOVERY_STATUSES`` /
+#: ``CandidateEntity`` exactly so the OpenAPI schema only generates
+#: contract-valid values (unknown values are rejected by request validation,
+#: never guessed). A unit test pins the two sides together.
+DiscoveryImportStatus = Literal[
+    "discovered", "needs_confirmation", "authorized", "connected", "healing"
+]
+DiscoveryImportEntity = Literal["Reservation", "FolioCharge"]
+
+
+def _reject_non_string_instant(value: Any) -> Any:
+    """Reject non-string datetimes before pydantic coercion runs.
+
+    Pydantic datetimes accept int/float unix timestamps, which would admit
+    schema-violating input; only RFC3339 strings (or null) pass through to
+    the datetime parser, which rejects anything unparseable with a 422.
+    """
+    if value is not None and not isinstance(value, str):
+        raise ValueError("must be an RFC3339 instant string with a UTC offset")
+    return value
+
+
+class DiscoveryRecordIn(BaseModel):
+    """One reserved DiscoveryResult record for static import (Phase 2 S3).
+
+    Closed Literals mirror ``schemas/discovery-result.v0.json``; unknown
+    ``status`` or entity values are rejected by request validation (422,
+    never guessed).
+    """
+
+    discovery_id: str = Field(min_length=1, max_length=128)
+    status: DiscoveryImportStatus = Field(description="Lifecycle state; transitions only via explicit endpoints")
+    vendor: str = Field(min_length=1, max_length=256)
+    base_url: str | None = Field(default=None, min_length=1)
+    candidate_entities: list[DiscoveryImportEntity] = Field(default_factory=list)
+    evidence_refs: list[Annotated[str, Field(min_length=1)]] = Field(default_factory=list)
+    # Aware instant: the BeforeValidator rejects ints/floats/bools (which
+    # pydantic datetimes would otherwise coerce from unix timestamps), so the
+    # OpenAPI ``date-time`` shape matches the acceptance set exactly and
+    # anything unparseable is a 422, never guessed.
+    created_at: Annotated[UtcDatetime | None, BeforeValidator(_reject_non_string_instant)] = Field(default=None)
+
+    model_config = {"extra": "forbid"}
+
+
+class DiscoveryImportRequest(BaseModel):
+    records: list[DiscoveryRecordIn] = Field(min_length=1)
+
+    model_config = {"extra": "forbid"}
+
+
+class DiscoveryRecordOut(BaseModel):
+    id: str
+    discovery_id: str
+    vendor: str
+    base_url: str | None = None
+    candidate_entities: list[str]
+    evidence_refs: list[str]
+    status: str
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
+
+
+class DiscoveryImportResponse(BaseModel):
+    imported: list[DiscoveryRecordOut]
+    total: int

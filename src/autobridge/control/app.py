@@ -22,6 +22,7 @@ from autobridge.control.schemas import BAD_REQUEST_400, NOT_FOUND_404
 from autobridge.control.routes.builds import router as builds_router
 from autobridge.control.routes.connectors import router as connectors_router
 from autobridge.control.routes.demo import router as demo_router
+from autobridge.control.routes.discovery import router as discovery_router
 from autobridge.control.routes.drift import router as drift_router
 from autobridge.control.routes.metrics import router as metrics_router
 from autobridge.control.routes.repairs import router as repairs_router
@@ -56,6 +57,7 @@ app.include_router(runs_router)
 app.include_router(drift_router)
 app.include_router(repairs_router)
 app.include_router(demo_router)
+app.include_router(discovery_router)
 app.include_router(metrics_router)
 app.include_router(bench_router)
 

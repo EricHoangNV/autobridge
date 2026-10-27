@@ -42,6 +42,8 @@ export type RunOut = components["schemas"]["RunOut"];
 export type DependencyCreate = components["schemas"]["DependencyCreate"];
 export type DependencyOut = components["schemas"]["DependencyOut"];
 export type OperatorOut = components["schemas"]["OperatorOut"];
+export type DiscoveryRecordOut = components["schemas"]["DiscoveryRecordOut"];
+export type DiscoveryImportResponse = components["schemas"]["DiscoveryImportResponse"];
 
 // ---------------------------------------------------------------------------
 // Client factory

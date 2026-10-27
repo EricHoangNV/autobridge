@@ -1,0 +1,49 @@
+{
+  "records": [
+    {
+      "discovery_id": "disc-s3-atlas-001",
+      "status": "discovered",
+      "vendor": "AtlasPMS",
+      "base_url": "https://atlas.example.com",
+      "candidate_entities": ["Reservation", "FolioCharge"],
+      "evidence_refs": [],
+      "created_at": "2026-10-27T02:00:00+00:00"
+    },
+    {
+      "discovery_id": "disc-s3-harbor-001",
+      "status": "needs_confirmation",
+      "vendor": "HarborPMS",
+      "base_url": "https://harbor.example.com",
+      "candidate_entities": ["Reservation"],
+      "evidence_refs": [],
+      "created_at": "2026-10-27T02:01:00+00:00"
+    },
+    {
+      "discovery_id": "disc-s3-legacy-001",
+      "status": "authorized",
+      "vendor": "LegacyStay",
+      "base_url": "https://legacy.example.com",
+      "candidate_entities": ["Reservation", "FolioCharge"],
+      "evidence_refs": [],
+      "created_at": "2026-10-27T02:02:00+00:00"
+    },
+    {
+      "discovery_id": "disc-s3-edge-001",
+      "status": "connected",
+      "vendor": "EdgePOS",
+      "base_url": "http://sim-edgepos:8000",
+      "candidate_entities": ["Reservation"],
+      "evidence_refs": [],
+      "created_at": "2026-10-27T02:03:00+00:00"
+    },
+    {
+      "discovery_id": "disc-s3-heal-001",
+      "status": "healing",
+      "vendor": "HealPMS",
+      "base_url": "https://heal.example.com",
+      "candidate_entities": ["FolioCharge"],
+      "evidence_refs": [],
+      "created_at": "2026-10-27T02:04:00+00:00"
+    }
+  ]
+}

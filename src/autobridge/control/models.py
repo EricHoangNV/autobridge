@@ -83,6 +83,20 @@ EVIDENCE_KINDS = frozenset(
 )
 MODEL_TIERS = frozenset({"small", "frontier"})
 DEPENDENCY_POLICIES = frozenset({"pause_on_release_change", "notify"})
+#: Discovery lifecycle states (Phase 2 S3, plan §5 S3): static import only,
+#: transitions happen exclusively via the discovery endpoints. Stored as
+#: String + CHECK so the DDL stays portable (SQLite now, Postgres-ready).
+DISCOVERY_STATUSES = frozenset(
+    {"discovered", "needs_confirmation", "authorized", "connected", "healing"}
+)
+#: Allowed explicit transitions: current -> {endpoint-name -> next}.
+DISCOVERY_TRANSITIONS: dict[str, dict[str, str]] = {
+    "discovered": {"request-confirmation": "needs_confirmation"},
+    "needs_confirmation": {"authorize": "authorized"},
+    "authorized": {"connect": "connected"},
+    "connected": {"mark-healing": "healing"},
+    "healing": {"resolve": "connected"},
+}
 #: Job queue vocabularies (P1.W1.6): one job per BuildRun / SyncRun /
 #: RepairRun execution attempt series. ``run_id`` points at the domain row
 #: the job drives (``<kind>_runs.id``); it is null until a sync/repair
@@ -562,6 +576,50 @@ class DependencyRegistration(Base):
     def _validate_policy(self, key: str, value: str) -> str:
         if value not in DEPENDENCY_POLICIES:
             raise ValueError(f"{key} must be one of {sorted(DEPENDENCY_POLICIES)}")
+        return value
+
+
+class DiscoveryRecord(Base):
+    """A statically imported discovery candidate (Phase 2 S3, plan §5 S3).
+
+    Reserved ``DiscoveryResult`` schema rows imported via
+    ``POST /discovery/import``. The v1 engine neither produces nor consumes
+    these rows; status moves only through the explicit discovery endpoints
+    (see ``DISCOVERY_TRANSITIONS``). No secret values are stored: the record
+    carries ``base_url`` and candidate entity names only.
+    """
+
+    __tablename__ = "discovery_records"
+    __table_args__ = (
+        _check(
+            "discovery_records", "status", "status", DISCOVERY_STATUSES
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    discovery_id: Mapped[str] = mapped_column(
+        String(128), nullable=False, unique=True, index=True
+    )
+    vendor: Mapped[str] = mapped_column(String(256), nullable=False)
+    base_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_entities: Mapped[list[str]] = mapped_column(
+        GenericJSON, nullable=False, default=list
+    )
+    evidence_refs: Mapped[list[str]] = mapped_column(
+        GenericJSON, nullable=False, default=list
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="discovered")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+    @validates("status")
+    def _validate_status(self, key: str, value: str) -> str:
+        if value not in DISCOVERY_STATUSES:
+            raise ValueError(f"{key} must be one of {sorted(DISCOVERY_STATUSES)}")
         return value
 
 
