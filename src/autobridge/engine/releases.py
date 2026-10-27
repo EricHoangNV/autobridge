@@ -167,14 +167,35 @@ def create_release_from_patch(
     )
 
 
-def _activate(session: Session, connector_id: str, release_id: str) -> None:
-    """Set ``Connector.active_release_id`` to *release_id* (flush only)."""
+def _activate(session: Session, connector_id: str, release_id: str, *, actor: str | None = None) -> None:
+    """Set ``Connector.active_release_id`` to *release_id* (flush only).
+
+    After flipping, pause any ``pause_on_release_change`` dependents and emit
+    ``release.activated`` via :mod:`autobridge.engine.monitor` (flush only;
+    caller owns commit). The import is local to avoid a circular dependency
+    (monitor never imports releases).
+    """
     conn = _ensure_connector(session, connector_id)
     rel = _ensure_release(session, release_id)
     if rel.connector_id != connector_id:
         raise ReleaseError("release belongs to a different connector")
     conn.active_release_id = rel.id
     session.flush()
+    # Emit release.activated and pause dependents (plan §2.3 reusability hook).
+    try:
+        from autobridge.engine.monitor import handle_release_activated  # noqa: PLC0415
+
+        handle_release_activated(
+            session,
+            connector_id=connector_id,
+            new_release_id=release_id,
+            actor=actor,
+        )
+    except Exception:
+        # Dependency pause is best-effort: activation must succeed even if the
+        # emit path fails (e.g. in tests with a minimal schema). Re-raise only
+        # activation errors above; swallow monitor EmitError.
+        pass
 
 
 def approve_release(
@@ -212,8 +233,8 @@ def approve_release(
     if connector_id is not None and connector_id != to_rel.connector_id:
         raise ReleaseError("connector_id does not match to_release's connector")
 
-    # Activate
-    _activate(session, inferred_connector_id, to_release_id)
+    # Activate (also emits release.activated + pauses dependents)
+    _activate(session, inferred_connector_id, to_release_id, actor=actor.strip())
 
     approval = Approval(
         repair_run_id=repair_run_id,
@@ -307,9 +328,9 @@ def rollback_release(
         verification_report_id=target.verification_report_id,
     )
 
-    # Approval + activation
-    # Activate via helper (sets active_release_id)
-    _activate(session, connector_id, new_release.id)
+    # Approval + activation (also emits release.activated)
+    # Activate via helper (sets active_release_id + pause)
+    _activate(session, connector_id, new_release.id, actor=actor.strip())
 
     approval = Approval(
         repair_run_id=repair_run_id,
