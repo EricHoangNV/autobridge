@@ -1,12 +1,15 @@
-"""SyncRun execution with outcome determination (P1.W3.3 / P1.W3.5).
+"""SyncRun execution with outcome determination (P1.W3.3 / P1.W3.4 / P1.W3.5).
 
 Every sync run ends ``Complete | Degraded | Blocked`` with ``unmet_criteria``
-named. For this workstream the only ``Degraded`` trigger is a
-``repeated_cursor`` pagination stop — it is surfaced as ``no_loss`` so
-consumers know records may be missing. Money is ``Decimal`` end-to-end and
-dates are property-local business dates; the transform and check layers
-(W3.4) flesh that out, so this module keeps the wiring but does not yet
-implement them.
+named. Triggers:
+
+* ``repeated_cursor`` → ``Degraded`` with ``no_loss``.
+* invariant failures from checks → ``Degraded``.
+* unknown enum (``enum_map`` on_unknown block) → ``Blocked`` with ``unknown_enum``.
+
+Money is ``Decimal`` end-to-end and dates are property-local business dates via
+the closed transform registry (``runtime/transforms``). Checks (``unique_key``,
+``no_loss``, ``date_order``) and checkpoint extraction are wired here.
 
 Trust boundary: no import of ``verifier`` or ``simulators``.
 """
@@ -19,7 +22,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from autobridge.control.models import SyncRun, utcnow
+from autobridge.runtime.checkpoint import compute_checkpoint_for_operation
+from autobridge.runtime.checks import evaluate_entity_checks
 from autobridge.runtime.interpreter import Interpreter, OperationResult
+from autobridge.runtime.mapping import map_records_to_entities
 
 
 def _fingerprint_id(spec: dict[str, Any], results: dict[str, OperationResult]) -> str:
@@ -39,16 +45,21 @@ def determine_outcome(
     results: dict[str, OperationResult],
     *,
     invariant_failures: list[str] | None = None,
+    blocked_failures: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     """Map pagination + invariant results to (outcome, unmet_criteria).
 
+    * ``blocked_failures`` non-empty → ``Blocked`` (unknown enum, etc.).
     * ``repeated_cursor`` → ``Degraded`` with ``no_loss``.
     * ``invariant_failures`` non-empty → ``Degraded`` with those names.
     * otherwise → ``Complete``.
 
-    ``Blocked`` is reserved for unknown enum values (W3.4) and auth
-    failures (W6) and is not produced here.
+    Blocked takes precedence over Degraded.
     """
+    blocked = list(blocked_failures or [])
+    if blocked:
+        return "Blocked", blocked
+
     unmet: list[str] = list(invariant_failures or [])
 
     # repeated_cursor is the W3.3 Degraded trigger
@@ -76,6 +87,30 @@ def compute_data_readiness(
     return {"freshness": "current", "completeness": "partial"}
 
 
+def _extract_compare_to_value(
+    results: dict[str, OperationResult],
+    operation_name: str,
+    compare_to: str | None,
+) -> Any | None:
+    """Extract compare_to value from the first raw page of an operation."""
+    if not compare_to:
+        return None
+    res = results.get(operation_name)
+    if res is None or not res.raw_pages:
+        return None
+    # Try first page
+    for page in res.raw_pages:
+        try:
+            from autobridge.runtime.interpreter import extract_jsonpath
+
+            val = extract_jsonpath(page, compare_to)
+            if val is not None:
+                return val
+        except Exception:
+            continue
+    return None
+
+
 def execute_sync(
     spec_dict: dict[str, Any],
     http_client: Any,
@@ -85,8 +120,15 @@ def execute_sync(
 ) -> dict[str, Any]:
     """Execute *spec_dict* via the interpreter and return sync summary.
 
+    Steps:
+      1. Fetch raw pages per operation via :class:`Interpreter`.
+      2. Map raw records to canonical entities via transforms (may Block on unknown enum).
+      3. Run entity checks (unique_key, no_loss, date_order).
+      4. Determine outcome (Complete | Degraded | Blocked) and data_readiness.
+
     Returns dict with keys: outcome, unmet_criteria, data_readiness,
-    fingerprint_id, operation_results, records_observed, checkpoint_values.
+    fingerprint_id, operation_results, records_observed, canonical_records,
+    blocked_records, invariant_results, checkpoint_values.
 
     Does not touch the DB — callers create the SyncRun row from this.
     """
@@ -96,23 +138,117 @@ def execute_sync(
     interp = Interpreter(spec, http_client=http_client)
     results = interp.execute_all(checkpoint=checkpoint, max_pages=max_pages)
 
-    outcome, unmet = determine_outcome(results)
-    data_readiness = compute_data_readiness(outcome, results)
-    fingerprint_id = _fingerprint_id(spec_dict, results)
+    # Phase: mapping raw → canonical per entity
+    canonical_records: dict[str, list[dict[str, Any]]] = {}
+    blocked_records: dict[str, list[dict[str, Any]]] = {}
+    all_blocked_failures: list[str] = []
+    invariant_failures: list[str] = []
 
-    records_observed: dict[str, int] = {}
     for ent_name, ent_spec in spec.entities.items():
         op_name = ent_spec.from_operation
         res = results.get(op_name)
-        if res is not None:
-            records_observed[ent_name] = len(res.records)
-        else:
-            records_observed[ent_name] = 0
+        if res is None:
+            canonical_records[ent_name] = []
+            continue
+        raw_records = res.records
 
+        # Map via transforms
+        canonical, blocked = map_records_to_entities(
+            raw_records,
+            ent_spec,
+            source_spec=spec.source,
+            entity_name=ent_name,
+        )
+        canonical_records[ent_name] = canonical
+        if blocked:
+            blocked_records[ent_name] = blocked
+            # Unknown enum → Blocked with unmet_criteria naming the failure
+            # Collect distinct blocked reasons
+            for b in blocked:
+                # b may contain 'field' for enum
+                field = b.get("field")
+                if field:
+                    tag = f"unknown_enum:{field}"
+                    if tag not in all_blocked_failures:
+                        all_blocked_failures.append(tag)
+                    # Also add generic for verifier parity
+                    if "unknown_enum" not in all_blocked_failures:
+                        all_blocked_failures.append("unknown_enum")
+                elif b.get("blocked") is False:
+                    # Non-blocking transform error → degrade
+                    if "transform_error" not in invariant_failures:
+                        invariant_failures.append("transform_error")
+                else:
+                    if "unknown_enum" not in all_blocked_failures:
+                        all_blocked_failures.append("unknown_enum")
+
+        # Run checks for this entity
+        # Gather compare_to extraction for no_loss
+        compare_to_val: Any | None = None
+        for chk in ent_spec.checks:
+            # chk may be pydantic model
+            compare_to = getattr(chk, "compare_to", None) if not isinstance(chk, dict) else chk.get("compare_to")
+            if compare_to:
+                compare_to_val = _extract_compare_to_value(results, op_name, compare_to)
+                break
+
+        # Evaluate checks against canonical records
+        check_results = evaluate_entity_checks(
+            ent_name,
+            canonical,
+            ent_spec.checks,
+            expected_count=compare_to_val if isinstance(compare_to_val, int) else None,
+            compare_to_value=compare_to_val,
+        )
+        for cr in check_results:
+            if cr not in invariant_failures and cr not in all_blocked_failures:
+                invariant_failures.append(cr)
+
+        # Update checkpoint via checkpoint.py (override interpreter's if needed)
+        # Interpreter already computed checkpoint_value per operation, but we recompute from canonical if field differs
+        # Keep existing but also recompute from canonical for correctness
+        if ent_spec and canonical:
+            # Checkpoint is per operation, not entity; we use operation's checkpoint spec
+            op = spec.operations.get(op_name)
+            if op and op.checkpoint:
+                canon_cp = compute_checkpoint_for_operation(canonical, op.checkpoint)
+                # Prefer canonical-derived if present
+                if canon_cp is not None:
+                    # Store per-operation canonical checkpoint later
+                    pass
+
+    # Determine outcome
+    if all_blocked_failures:
+        outcome, unmet = determine_outcome(results, invariant_failures=invariant_failures, blocked_failures=all_blocked_failures)
+    else:
+        outcome, unmet = determine_outcome(results, invariant_failures=invariant_failures)
+
+    data_readiness = compute_data_readiness(outcome, results)
+    fingerprint_id = _fingerprint_id(spec_dict, results)
+
+    # Records observed: canonical counts (post-transform)
+    records_observed: dict[str, int] = {}
+    for ent_name in spec.entities:
+        records_observed[ent_name] = len(canonical_records.get(ent_name, []))
+
+    # Checkpoint values: prefer interpreter's but also include canonical
     checkpoint_values: dict[str, Any] = {}
     for op_name, res in results.items():
         if res.checkpoint_value is not None:
             checkpoint_values[op_name] = res.checkpoint_value
+    # Recompute from canonical per operation (overrides if present)
+    for ent_name, ent_spec in spec.entities.items():
+        op_name = ent_spec.from_operation
+        op = spec.operations.get(op_name)
+        if op and op.checkpoint and canonical_records.get(ent_name):
+            canon_cp = compute_checkpoint_for_operation(canonical_records[ent_name], op.checkpoint)
+            if canon_cp is not None:
+                checkpoint_values[op_name] = canon_cp
+
+    # Build invariant_results for DB (list of dicts)
+    invariant_results: list[dict[str, Any]] = []
+    for name in unmet:
+        invariant_results.append({"check": name, "status": "failed"})
 
     return {
         "outcome": outcome,
@@ -122,6 +258,9 @@ def execute_sync(
         "operation_results": results,
         "records_observed": records_observed,
         "checkpoint_values": checkpoint_values,
+        "canonical_records": canonical_records,
+        "blocked_records": blocked_records,
+        "invariant_results": invariant_results,
     }
 
 
@@ -210,7 +349,7 @@ def run_sync_handler(
         records_observed=summary["records_observed"],
         fingerprint_id=summary["fingerprint_id"],
         checkpoint=summary["checkpoint_values"],
-        invariant_results=[],
+        invariant_results=summary.get("invariant_results", []),
     )
     ctx.run_id = run.id
     return {
