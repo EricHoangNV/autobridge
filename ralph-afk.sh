@@ -629,12 +629,16 @@ ${LATEST_VERDICTS}
       bash -c 'echo $$ > /tmp/ralph-agent.pid; export PATH="$HOME/.local/bin:$PATH"; exec claude -p "$1" --output-format stream-json --verbose --dangerously-skip-permissions' _ "$PROMPT" \
       < /dev/null 2>&1 | tee "$iter_log" | \
       jq --unbuffered -rR '(fromjson? // {type: "raw", text: .}) |
-        if .type == "assistant" then (.message.content[]? | select(.type == "text") | .text)
+        if .type == "assistant" then (.message.content[]? |
+          if .type == "text" then .text
+          elif .type == "tool_use" then ("  · " + .name + "  " + ((.input.file_path // .input.command // .input.pattern // .input.description // "") | tostring | gsub("\\S*/\\.worktrees/[^/]+/"; "") | gsub("\\s+"; " ") | .[0:120]))
+          else empty end)
         elif .type == "raw" then .text
         else empty end' &
   else
     # OpenCode: provider key as a bare -e (read from this script's environment, never on the command line);
-    # --model provider/model; --format json streams raw events; --auto approves what opencode.json does not deny.
+    # --model provider/model; --format json streams step_start/step_finish/tool_use/text/error events (confirmed
+    # 2026-10-27, opencode 1.18.32); the filter prints text and one line per tool call; --auto approves what opencode.json does not deny.
     # OPENCODE_PERMISSION keeps edits/bash/webfetch allowed even if opencode.json is missing in the worktree.
     PROVIDER_KEY_VAR=$(provider_env "$PROVIDER")
     export "$PROVIDER_KEY_VAR"
@@ -644,6 +648,7 @@ ${LATEST_VERDICTS}
       < /dev/null 2>&1 | tee "$iter_log" | \
       jq --unbuffered -rR '(fromjson? // {type: "raw", text: .}) |
         if .type == "raw" then .text
+        elif .type == "tool_use" then ("  · " + (.part.tool // "tool") + "  " + ([.part.state.title, .part.state.input.filePath, .part.state.input.command, .part.state.input.pattern] | map(select(. != null and . != "")) | first // "" | tostring | gsub("\\S*/\\.worktrees/[^/]+/"; "") | gsub("\\s+"; " ") | .[0:120]) + (if .part.state.status == "error" then "  ✗" else "" end))
         elif (.part.type? == "text") then (.part.text // empty)
         elif .type == "text" then (.text // .part.text // empty)
         elif .type == "error" then ("ERROR: " + ((.error // .message // .) | tostring))
