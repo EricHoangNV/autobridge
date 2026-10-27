@@ -465,3 +465,34 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - No new e2e file for W2.5 (workstream e2e is P1.W2.9); `make test` now 622 pass (autobridge 99.49%, verifier 100%, simulators 98.54%); `make lint`/`typecheck` green
 - W2.8 heldout freeze will compute SHA256SUMS over `simulators/scenarios/*.yaml` + `verifier/hidden_cases/heldout` — keep YAMLs stable after this point
 
+## P1.W2.6 Verifier service with oracle and canonical checks
+**Date:** 2026-10-27
+**Ref:** plan §4 W2 + §2.7 (verifier/oracle); task P1.W2.6. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `verifier/oracle.py` (363 lines): `get_scenario_seed`, `generate_baseline/mutated/expected_canonical` via shared generator (no HTTP), `_spec_has_field_path/_pagination_strategy/_stop_when/_enum_mapping/_retry` introspection helpers, `simulate_produced_records` (spec-aware: rename guest_identifier→guest_name, pagination strategy/cursor guard, rate-limit/transient retry, auth/endpoint empty, duplicate handling, tz/business_date), `oracle_verdict` (score 1.0 pass else (8-len)/8, failed via checks)
+- New `verifier/checks.py` (500 lines): canonical checks `check_record_set_by_key` (reservation_id/charge_id sets), `check_no_duplicates` (duplicate_records+unique_key), `check_no_loss` (no_loss+loss_detected), `check_money_exact` (Decimal exact 2dp, money_mismatch+money_format), `check_business_date` (business_date mismatch via business_date_for_posted_at with ZoneInfo cutoff 04:00 + date_order), `check_status_mapping` (unknown_status/unknown_enum/status_mapping), `check_field_presence` (field_missing for rename), `check_pagination_and_transport` (pagination_shape/repeated_cursor/rate_limited/transient_error/auth_expired/auth_revoked/endpoint_not_found/invalid_patch_trap/duplicate_records/business_date_mismatch), `run_all_checks` (dedup by max count, primary-filter to catalog expected names, status_vocab collapse to unknown_status, duplicate collapse)
+- Rewrote `verifier/app.py` (316 lines): FastAPI with GET /healthz, GET /readyz (catalog+fixtures checks), POST /verify (validate_scenario_id, release_id file fallback via generated/connectors/*/spec.yaml, direct records mode, oracle path, sanitize to BOUNDED names, regression placeholder, hidden mode leak guard _ensure_no_fixture_leak checking list keys and RES-/CHG- bulk), GET /verify 405
+- Updated `verifier/pyproject.toml` (+pyyaml) and `verifier/Dockerfile` (+pydantic/pyyaml)
+- New `tests/unit/test_verifier_oracle.py` (18 tests: deterministic seed, baseline vs mutated, expected canonical, verdict baseline pass, all 14 fail without fix with catalog name match, fixed specs for rename/pagination/rate-limit/trap), `tests/unit/test_verifier_app.py` (10 tests: healthz/readyz, all 14 scenarios vs catalog, hidden mode no leak + bounded names, invalid scenario, fixed spec, direct records, regression, GET 405, release_id fallback), `tests/unit/test_verifier_extra.py` (11 tests: catalog degraded readyz, fixtures missing, sanitize unknown/truncation, leak raises, release_id real file, records without key, spec helpers edge, money/business_date/pagination edge, baseline empty, trap, rate-limit), `tests/unit/test_verifier_oracle_extra2.py` (3 tests: spec helpers exception paths, truncation, sanitize)
+- Verified 14 scenarios: baseline pass, rename field_missing, offset pagination_shape, cursor repeat, rate_limited, transient_error, auth_expired/revoked, unknown_status, money_mismatch, business_date_mismatch, duplicate_records, endpoint_not_found, invalid_patch_trap (matching YAML expected); fixed specs pass; hidden mode never returns fixture rows (checked via response keys and RES-/CHG- count)
+
+**Key decisions:**
+- Oracle regenerates via generator+mutate not HTTP — deterministic, no fixture leak, hidden seeds stay local; verifier never imports autobridge (trust boundary) but imports simulators.common (shared code) — allowed per directives §2
+- Produced simulation is minimal spec-aware mapping not full runtime: guest_identifier→guest_name conversion, cursor vs offset truncation, retry guard, net_amount trap detection; enough to prove verifier can distinguish fixed vs unfixed specs for zero-frontier checks (W3.4/W4.7)
+- Failed checks filtered to catalog primary names (rate_limited etc. suppress secondary no_loss) so e2e test_01 can assert exact match; status_vocab collapsed to unknown_status, duplicate to duplicate_records, else catalog would have extra entries
+- Money is Decimal exact with exponent -2 check (format error separate from mismatch); business_date uses generator's business_date_for_posted_at with ZoneInfo and cutoff 04:00 — same code as generator
+- Hidden mode leak guard is defense in depth: check top-level list keys (reservations/folios/properties/records) and bulk RES-/CHG- count >5, not just absence of known keys; _sanitize maps unknown names to record_set_mismatch to keep bounded set
+- Release_id fallback searches generated/connectors/*/<id>/spec.yaml then rglob — W2.7 regression runner will use this to load prior releases; direct records mode is test helper for mutation tests
+
+**Files changed:**
+- `verifier/app.py` (new, 316 lines), `verifier/oracle.py` (new, 363 lines), `verifier/checks.py` (new, 500 lines), `verifier/pyproject.toml` (+pyyaml), `verifier/Dockerfile` (+pydantic/pyyaml)
+- `tests/unit/test_verifier_app.py` (new), `tests/unit/test_verifier_extra.py` (new), `tests/unit/test_verifier_oracle.py` (new), `tests/unit/test_verifier_oracle_extra2.py` (new)
+- `uv.lock` (pyyaml dep)
+
+**Notes for next iteration:**
+- Next: P1.W2.7 regression runner (re-run every previously verified scenario on candidate release), mutation tests (flip transform/drop check → fail), invalid-patch trap set rejected; will reuse verifier POST /verify with direct records and spec inspection
+- W2.8 heldout freeze will hash `verifier/hidden_cases/heldout` + scenarios — no YAML changes after W2.6; verifier fixtures mount already read-only in compose.yaml
+- No e2e file for W2.6 (workstream e2e is P1.W2.9 test_01_simulators_and_oracle); compose unchanged (verifier readyz now checks catalog consistency)
+
+

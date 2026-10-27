@@ -2,7 +2,7 @@
 
 ## Current State
 
-W2.5 Scenario catalog done (2026-10-27): 14 YAML files tagged dev|heldout + fixable|escalate, loader with validation + catalog consistency check, drift-class isolation test (each mutation triggers exactly one signal).
+W2.6 Verifier service done (2026-10-27): POST /verify with oracle regenerating ground truth, canonical checks (record set, money Decimal, business dates, status, dedup, loss), hidden mode never returns fixture rows; 14 scenarios verified.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -20,10 +20,11 @@ W2.5 Scenario catalog done (2026-10-27): 14 YAML files tagged dev|heldout + fixa
   - P1.W2.3: AtlasPMS clean OpenAPI 3.1 docs, bearer auth, offset pagination, clear statuses; readyz
   - P1.W2.4: HarborPMS Markdown docs (one wrong example, one undocumented endpoint), cursor pagination with repeated-cursor bug, nested folios, opaque statuses, ambiguous date; readyz
   - P1.W2.5: Scenario catalog 14 YAMLs (dev|heldout + fixable|escalate), loader + isolation test (each scenario exactly one drift signal)
-- Tests: 622 pass / 0 fail / 0 skip (autobridge 99.49%, verifier 100%, simulators 98.54%; ui –) + 8 e2e pass
-- Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (8 pass) / `make lint` + `make typecheck` green
+  - P1.W2.6: Verifier service POST /verify with oracle, canonical checks, hidden mode guard
+- Tests: 669 pass / 0 fail / 0 skip (autobridge 99.49%, verifier 93%, simulators 98.54%; ui –) + 8 e2e pass
+- Stack: `make up` → all 8 readyz green (via TestClient) / `make smoke` green / `make e2e` green (8 pass, skip when no Docker) / `make lint` + `make typecheck` green
 
 ## Next tasks
-1. **P1.W2.6** — Verifier service `verifier/app.py` with oracle, canonical checks, hidden mode
-2. **P1.W2.7** — Regression runner + mutation + invalid-patch trap
+1. **P1.W2.7** — Regression runner + mutation + invalid-patch trap
+2. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check)
 
