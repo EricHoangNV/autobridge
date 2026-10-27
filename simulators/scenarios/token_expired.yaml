@@ -1,0 +1,12 @@
+id: token_expired
+drift_class: AUTH_EXPIRED
+fixable: fixable
+visibility: dev
+vendor: both
+seed: 42
+description: Bearer token considered expired (401 token_expired); refresh if credential allows, else escalate.
+expected:
+  fails: true
+  http_status: 401
+  pagination_mode: offset
+  failed_checks: [auth_expired]

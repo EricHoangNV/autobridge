@@ -1,0 +1,12 @@
+id: transient_503
+drift_class: TRANSIENT_ERROR
+fixable: fixable
+visibility: dev
+vendor: both
+seed: 42
+description: Every 4th request returns 503 transient error; retried automatically, no patch.
+expected:
+  fails: true
+  http_status: 503
+  pagination_mode: offset
+  failed_checks: [transient_error]

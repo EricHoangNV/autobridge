@@ -1,0 +1,12 @@
+id: rate_limit_429
+drift_class: RATE_LIMIT
+fixable: fixable
+visibility: dev
+vendor: both
+seed: 42
+description: Every 3rd request returns 429 Too Many Requests with Retry-After; retry/backoff required, no patch.
+expected:
+  fails: true
+  http_status: 429
+  pagination_mode: offset
+  failed_checks: [rate_limited]

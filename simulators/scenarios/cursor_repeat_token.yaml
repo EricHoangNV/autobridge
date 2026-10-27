@@ -1,0 +1,12 @@
+id: cursor_repeat_token
+drift_class: PAGINATION_BUG
+fixable: fixable
+visibility: dev
+vendor: both
+seed: 42
+description: Cursor pagination returns the same next_cursor on every even request causing an infinite loop if not guarded.
+expected:
+  fails: true
+  http_status: 200
+  pagination_mode: cursor
+  failed_checks: [repeated_cursor]

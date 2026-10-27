@@ -1,0 +1,12 @@
+id: tz_boundary_shift
+drift_class: SEMANTIC_VALUE_DRIFT
+fixable: fixable
+visibility: heldout
+vendor: both
+seed: 42
+description: Business-date cutoff shifted (04:00 -> 02:00); late postings land on wrong local date.
+expected:
+  fails: true
+  http_status: 200
+  pagination_mode: offset
+  failed_checks: [business_date_mismatch]

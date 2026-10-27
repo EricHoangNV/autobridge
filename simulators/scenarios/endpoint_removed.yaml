@@ -1,0 +1,12 @@
+id: endpoint_removed
+drift_class: CAPABILITY_REMOVED
+fixable: escalate
+visibility: heldout
+vendor: both
+seed: 42
+description: Core endpoints /reservations and /folios removed (404); no patch can recover, must escalate.
+expected:
+  fails: true
+  http_status: 404
+  pagination_mode: offset
+  failed_checks: [endpoint_not_found]

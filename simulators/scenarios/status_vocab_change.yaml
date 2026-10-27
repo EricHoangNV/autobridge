@@ -1,0 +1,12 @@
+id: status_vocab_change
+drift_class: STATUS_VOCAB
+fixable: fixable
+visibility: dev
+vendor: both
+seed: 42
+description: Reservation status vocabulary replaced (confirmed->active etc.); enum_map missing the new values.
+expected:
+  fails: true
+  http_status: 200
+  pagination_mode: offset
+  failed_checks: [unknown_status]

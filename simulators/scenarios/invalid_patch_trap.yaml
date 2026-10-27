@@ -1,0 +1,12 @@
+id: invalid_patch_trap
+drift_class: SEMANTIC_VALUE_DRIFT
+fixable: escalate
+visibility: heldout
+vendor: both
+seed: 42
+description: Trap scenario — total_amount kept as gross but decoy net_amount added; naive net->total_amount patch is wrong and must be rejected by verifier.
+expected:
+  fails: true
+  http_status: 200
+  pagination_mode: offset
+  failed_checks: [invalid_patch_trap]

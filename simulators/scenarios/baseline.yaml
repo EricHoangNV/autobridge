@@ -1,0 +1,12 @@
+id: baseline
+drift_class: none
+fixable: fixable
+visibility: dev
+vendor: both
+seed: 42
+description: No fault injected — the reference spec must pass every check.
+expected:
+  fails: false
+  http_status: 200
+  pagination_mode: offset
+  failed_checks: []

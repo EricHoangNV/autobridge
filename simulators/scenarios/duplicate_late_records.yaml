@@ -1,0 +1,12 @@
+id: duplicate_late_records
+drift_class: DUPLICATE_DELIVERY
+fixable: fixable
+visibility: dev
+vendor: both
+seed: 42
+description: At-least-once delivery duplicates 20% of records; dedup / no_loss check fails.
+expected:
+  fails: true
+  http_status: 200
+  pagination_mode: offset
+  failed_checks: [duplicate_records]

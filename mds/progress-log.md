@@ -440,3 +440,28 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - Harbor's cursor bug is exercised via fault scenario cursor_repeat_token; W2.5 should include that scenario in catalog and W3.3 will test repeated_cursor Degraded handling.
 - No new e2e file for W2.4 (workstream e2e is P1.W2.9); compose ports unchanged.
 
+## P1.W2.5 Scenario catalog 14 YAMLs + drift-class isolation test
+**Date:** 2026-10-27
+**Ref:** plan §4 W2 + §2.8 (scenario catalog); task P1.W2.5. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Created 14 scenario YAML files in `simulators/scenarios/` (one per plan §2.8 id): `baseline` (none/dev/fixable), `rename_guest_id` (FIELD_RENAME/dev/fixable), `offset_to_cursor` (PAGINATION_CHANGE/dev/fixable), `cursor_repeat_token` (PAGINATION_BUG/dev/fixable), `rate_limit_429` (RATE_LIMIT/dev/fixable), `transient_503` (TRANSIENT_ERROR/dev/fixable), `token_expired` (AUTH_EXPIRED/dev/fixable), `status_vocab_change` (STATUS_VOCAB/dev/fixable), `gross_to_net` (SEMANTIC_VALUE_DRIFT/dev/fixable), `duplicate_late_records` (DUPLICATE_DELIVERY/dev/fixable), `tz_boundary_shift` (SEMANTIC_VALUE_DRIFT/heldout/fixable), `endpoint_removed` (CAPABILITY_REMOVED/heldout/escalate), `token_revoked` (AUTH_REVOKED/heldout/escalate), `invalid_patch_trap` (SEMANTIC_VALUE_DRIFT/heldout/escalate); each with `id, drift_class, fixable, visibility, vendor, seed, description, expected {fails, http_status, pagination_mode, failed_checks}`; removed `.gitkeep`
+- Created `simulators/scenarios/__init__.py` loader (150 lines): `Scenario` dataclass, `load_scenario(id)`, `load_all_scenarios()`, `catalog_check_consistency()` cross-validating YAML vs `simulators.common.faults.SCENARIO_CATALOG` on id/drift_class/fixable/visibility, `_validate_scenario_dict` with enum/type/id-filename checks; all 14 files load and validate
+- Updated `simulators/common/faults.py` SCENARIO_CATALOG visibility: `tz_boundary_shift`, `endpoint_removed`, `token_revoked`, `invalid_patch_trap` now `heldout` (10 dev / 4 heldout) to match YAMLs
+- Created `tests/unit/test_simulators_scenarios.py` (40 tests): catalog structure (count 14, ids match faults, required keys, visibility split dev+heldout, fixable split, baseline no-fail, non-baseline fail, drift class coverage, id-filename match), drift-class isolation (baseline triggers zero signals, each scenario triggers exactly its intended signal and no other via 13 detectors against baseline→mutated dataset, exactly-one-signal guard, drift_class/fixable/pagination_mode/http_status consistency with faults), loader validation branches (missing key, invalid enum, bad types, non-dict top-level, id-filename mismatch), catalog consistency error branches (drift_class/fixable/visibility/extra-id mismatches), detector edge cases
+
+**Key decisions:**
+- YAML is source of truth for scenario metadata; `faults.py` SCENARIO_CATALOG stays the runtime source but loader asserts they are identical (fails fast on drift) — verifier will import faults.py or YAML, never diverge; 10 dev / 4 heldout split keeps most fixable cases dev-exposed for ladder tuning while escrow of semantic trap + capability/auth revoked for heldout evaluation
+- Drift isolation test models "reference spec" as baseline dataset (generator output) and checks that mutating it triggers exactly one detector — isolates field_rename to guest_name, pagination_change to cursor shape, rate_limit to 429, etc.; SEMANTIC_VALUE_DRIFT sub-types (gross_to_net money factor, tz_boundary flag, invalid_patch net_amount) each have their own detector so they don't cross-trigger
+- Loader validates `expected.failed_checks` as list but leaves content permissive (verifier W2.6 will tighten canonical check names); YAML includes `pagination_mode` and `http_status` to bind expected HTTP behavior for e2e test_01 later
+
+**Files changed:**
+- `simulators/scenarios/baseline.yaml` + 13 others (new, 14 total), `simulators/scenarios/__init__.py` (new, loader + validator + consistency check)
+- `simulators/common/faults.py` (visibility: 4 scenarios dev→heldout)
+- `tests/unit/test_simulators_scenarios.py` (new, 40 tests)
+
+**Notes for next iteration:**
+- Next: P1.W2.6 verifier service `verifier/app.py` POST /verify {release_id, spec, scenario_id, mode} → {verdict, score, failed_checks, regression} with oracle regenerating ground truth from scenario seed + YAML expected; canonical checks for record set/money/ dates/status/dup/loss; hidden mode never returns fixture rows
+- No new e2e file for W2.5 (workstream e2e is P1.W2.9); `make test` now 622 pass (autobridge 99.49%, verifier 100%, simulators 98.54%); `make lint`/`typecheck` green
+- W2.8 heldout freeze will compute SHA256SUMS over `simulators/scenarios/*.yaml` + `verifier/hidden_cases/heldout` — keep YAMLs stable after this point
+

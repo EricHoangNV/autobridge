@@ -36,11 +36,11 @@ SCENARIO_CATALOG: list[dict[str, str]] = [
     {"id": "token_expired", "drift_class": "AUTH_EXPIRED", "fixable": "fixable", "visibility": "dev"},
     {"id": "status_vocab_change", "drift_class": "STATUS_VOCAB", "fixable": "fixable", "visibility": "dev"},
     {"id": "gross_to_net", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "fixable", "visibility": "dev"},
-    {"id": "tz_boundary_shift", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "fixable", "visibility": "dev"},
+    {"id": "tz_boundary_shift", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "fixable", "visibility": "heldout"},
     {"id": "duplicate_late_records", "drift_class": "DUPLICATE_DELIVERY", "fixable": "fixable", "visibility": "dev"},
-    {"id": "endpoint_removed", "drift_class": "CAPABILITY_REMOVED", "fixable": "escalate", "visibility": "dev"},
-    {"id": "token_revoked", "drift_class": "AUTH_REVOKED", "fixable": "escalate", "visibility": "dev"},
-    {"id": "invalid_patch_trap", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "escalate", "visibility": "dev"},
+    {"id": "endpoint_removed", "drift_class": "CAPABILITY_REMOVED", "fixable": "escalate", "visibility": "heldout"},
+    {"id": "token_revoked", "drift_class": "AUTH_REVOKED", "fixable": "escalate", "visibility": "heldout"},
+    {"id": "invalid_patch_trap", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "escalate", "visibility": "heldout"},
 ]
 
 KNOWN_SCENARIO_IDS: set[str] = {s["id"] for s in SCENARIO_CATALOG}

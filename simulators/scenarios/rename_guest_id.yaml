@@ -1,0 +1,14 @@
+id: rename_guest_id
+drift_class: FIELD_RENAME
+fixable: fixable
+visibility: dev
+vendor: both
+seed: 42
+description: Reservation field guest_name renamed to guest_identifier; the spec's extraction path breaks.
+expected:
+  fails: true
+  http_status: 200
+  pagination_mode: offset
+  failed_checks: [field_missing]
+  field: guest_name
+  new_field: guest_identifier

@@ -2,7 +2,7 @@
 
 ## Current State
 
-W2.4 HarborPMS done (2026-10-27): Markdown narrative docs (wrong example + undocumented endpoint), cursor pagination with repeated-cursor bug, nested folios, opaque status codes (H1..H5), ambiguous `date` field, property-local dates; readyz with docs check + scenario fix.
+W2.5 Scenario catalog done (2026-10-27): 14 YAML files tagged dev|heldout + fixable|escalate, loader with validation + catalog consistency check, drift-class isolation test (each mutation triggers exactly one signal).
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -19,10 +19,11 @@ W2.4 HarborPMS done (2026-10-27): Markdown narrative docs (wrong example + undoc
   - P1.W2.2: Fault switchboard (14 mutations) + admin API on 8001/admin-net, state reset; Atlas/Harbor fault-aware
   - P1.W2.3: AtlasPMS clean OpenAPI 3.1 docs, bearer auth, offset pagination, clear statuses; readyz
   - P1.W2.4: HarborPMS Markdown docs (one wrong example, one undocumented endpoint), cursor pagination with repeated-cursor bug, nested folios, opaque statuses, ambiguous date; readyz
-- Tests: 590 pass / 0 fail / 0 skip (autobridge 99.49%, verifier 100%, simulators 98.40%; ui –) + 8 e2e pass
+  - P1.W2.5: Scenario catalog 14 YAMLs (dev|heldout + fixable|escalate), loader + isolation test (each scenario exactly one drift signal)
+- Tests: 622 pass / 0 fail / 0 skip (autobridge 99.49%, verifier 100%, simulators 98.54%; ui –) + 8 e2e pass
 - Stack: `make up` → all 8 readyz green / `make smoke` green / `make e2e` green (8 pass) / `make lint` + `make typecheck` green
 
 ## Next tasks
-1. **P1.W2.5** — Scenario catalog `simulators/scenarios/*.yaml` (dev|heldout, fixable|escalate) + exact drift-class test
-2. **P1.W2.6** — Verifier service `verifier/app.py` with oracle, canonical checks, hidden mode
+1. **P1.W2.6** — Verifier service `verifier/app.py` with oracle, canonical checks, hidden mode
+2. **P1.W2.7** — Regression runner + mutation + invalid-patch trap
 
