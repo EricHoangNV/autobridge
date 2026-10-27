@@ -2,7 +2,7 @@
 
 ## Current State
 
-W3.6 RuntimeTarget LocalProcess + DockerSandbox done (2026-10-27): network allowlist + /admin path guard, timeout 1..3600, memory 64..8192, Edge reserved, negative network test (sandbox -/-> verifier/admin), factory + readyz.
+W3.7 Reference specs for Atlas/Harbor + test_02_reference_sync done (2026-10-27): both sync Complete with ModelCall 0 via fake and live transports, Decimal money, date_local/business_date, enum_map block, fingerprint drift, docs/connector-spec.md.
 
 - Completed:
   - P1.W1.1: Repo scaffold (uv workspace, Makefile, lint/typecheck/test, import-linter, smoke tests)
@@ -29,9 +29,10 @@ W3.6 RuntimeTarget LocalProcess + DockerSandbox done (2026-10-27): network allow
   - P1.W3.4: Closed transform registry (date_local, money, enum_map, etc.), checks, checkpoint; money Decimal, date boundary, Blocked on unknown enum
   - P1.W3.5: SyncRun outcome Complete|Degraded|Blocked + data_readiness + fingerprint_id per run
   - P1.W3.6: RuntimeTarget LocalProcess + DockerSandbox (network allowlist, timeout, resource limits), Edge reserved; negative network test that DockerSandbox cannot reach verifier or simulator admin
-- Tests: 969 pass / 0 fail / 0 skip (autobridge 94.16%, verifier 93.67%, simulators 98.54%; ui –) + 17 e2e pass (8 test_00 + 9 test_01, skip when no Docker)
-- Stack: `make up` → all 8 readyz green (runtime_target + interpreter checks) / `make smoke` green / `make e2e` green (17 pass, skip when no Docker) / `make lint` + `make typecheck` green
+  - P1.W3.7: Reference specs for Atlas/Harbor under generated/connectors/ that sync Complete with ModelCall 0 via test_02 + docs/connector-spec.md
+- Tests: 962 pass / 0 fail / 0 skip (autobridge 94.15%, verifier 93.78%, simulators 98.54%; ui –) + 21 e2e pass (8 test_00 + 9 test_01 + 4 test_02 reference sync, 2 test_02 live skipped when no Docker)
+- Stack: `make up` → all 8 readyz green (runtime_target + interpreter checks) / `make smoke` green / `make e2e` green (21 pass, 2 skipped when no Docker) / `make lint` + `make typecheck` green
 
 ## Next tasks
 1. **P1.W2.8** — HUMAN heldout freeze (agents prepare manifest + sha check; owner freezes SHA256SUMS)
-2. **P1.W3.7** — Reference specs for Atlas/Harbor + test_02_reference_sync + docs/connector-spec.md
+2. **P1.W4.1** — Fingerprinting (drift/fingerprint.py: keys, types, pagination shape) and drift/signals.py from sync runs and the canary

@@ -1,0 +1,183 @@
+spec_version: 1
+connector:
+  id: atlaspms
+  vendor: AtlasPMS
+  runtime_target: cloud
+source:
+  base_url: ${ATLAS_BASE_URL}
+  auth:
+    type: bearer
+    credential_ref: ATLAS_API_KEY
+    header_name: null
+    username: null
+    token_url: null
+    scopes: []
+  rate_limit:
+    max_rps: 5.0
+    retry:
+      statuses:
+      - 429
+      - 503
+      backoff: exponential
+      max_attempts: 5
+  timezone_source:
+    kind: static
+    value: America/New_York
+    path: null
+operations:
+  list_reservations:
+    method: GET
+    path: /reservations
+    params: {}
+    pagination:
+      strategy: offset
+      cursor_param: null
+      offset_param: offset
+      page_param: null
+      limit_param: limit
+      next_path: $.next_offset
+      items_path: $.data
+      stop_when:
+      - null_cursor
+      - empty_page
+    checkpoint:
+      field: $.updated_at
+      mode: max
+  list_folios:
+    method: GET
+    path: /folios
+    params: {}
+    pagination:
+      strategy: offset
+      cursor_param: null
+      offset_param: offset
+      page_param: null
+      limit_param: limit
+      next_path: $.next_offset
+      items_path: $.data
+      stop_when:
+      - null_cursor
+      - empty_page
+    checkpoint:
+      field: $.posted_at
+      mode: max
+entities:
+  Reservation:
+    from: list_reservations
+    key: $.reservation_id
+    fields:
+      reservation_id:
+        path: $.reservation_id
+        transform: []
+      property_id:
+        path: $.property_id
+        transform: []
+      guest_name:
+        path: $.guest_name
+        transform: []
+      arrival_date:
+        path: $.arrival_date
+        transform:
+        - name: date_local
+          args:
+            tz: source
+      departure_date:
+        path: $.departure_date
+        transform:
+        - name: date_local
+          args:
+            tz: source
+      status:
+        path: $.status
+        transform:
+        - name: enum_map
+          args:
+            map:
+              confirmed: confirmed
+              checked_in: checked_in
+              checked_out: checked_out
+              cancelled: cancelled
+              no_show: no_show
+            on_unknown: block
+      total_amount:
+        path: $.total_amount
+        transform:
+        - name: money
+          args:
+            scale: 2
+      currency:
+        path: $.currency
+        transform: []
+      updated_at:
+        path: $.updated_at
+        transform: []
+    checks:
+    - kind: unique_key
+      compare_to: null
+      before: null
+      after: null
+    - kind: no_loss
+      compare_to: $.total
+      before: null
+      after: null
+    - kind: date_order
+      compare_to: null
+      before: arrival_date
+      after: departure_date
+  FolioCharge:
+    from: list_folios
+    key: $.charge_id
+    fields:
+      charge_id:
+        path: $.charge_id
+        transform: []
+      reservation_id:
+        path: $.reservation_id
+        transform: []
+      property_id:
+        path: $.property_id
+        transform: []
+      business_date:
+        path: $.business_date
+        transform:
+        - name: date_local
+          args:
+            tz: source
+      amount:
+        path: $.amount
+        transform:
+        - name: money
+          args:
+            scale: 2
+      currency:
+        path: $.currency
+        transform: []
+      description:
+        path: $.description
+        transform: []
+      posted_at:
+        path: $.posted_at
+        transform: []
+    checks:
+    - kind: unique_key
+      compare_to: null
+      before: null
+      after: null
+    - kind: no_loss
+      compare_to: $.total
+      before: null
+      after: null
+capabilities:
+  read:
+  - Reservation
+  - FolioCharge
+  action: []
+health:
+  canary:
+    every: 60s
+    operation: list_reservations
+    max_pages: 1
+  fingerprint:
+    keys: true
+    types: true
+    pagination_shape: true
