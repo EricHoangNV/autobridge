@@ -40,6 +40,12 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
+      # ---- lint + types + trust-boundary contract (DIRECTIVES §2/§5) ----
+      - name: Lint (ruff + import-linter) and typecheck
+        run: |
+          make lint
+          make typecheck
+
       # ---- unit: coverage gate per package (plan §3) ----
       - name: Unit tests (90% coverage gate per package)
         run: make test
@@ -58,6 +64,10 @@ jobs:
       # ---- e2e-ui: Playwright journey (green with mocks if stack down) ----
       - name: Install UI dependencies
         run: npm ci
+        working-directory: ui
+
+      - name: UI component tests (Vitest, DIRECTIVES §5)
+        run: npm run test
         working-directory: ui
 
       - name: Install Playwright chromium

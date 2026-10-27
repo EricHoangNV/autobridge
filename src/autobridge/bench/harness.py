@@ -211,16 +211,8 @@ def docs_ref_for_scenario(scenario_id: str, docs_volume: str = DEFAULT_DOCS_VOLU
     points at the vendor docs relevant to the scenario (Atlas or Harbor).
     For vendor-agnostic scenarios the volume root is returned.
     """
-    # Heuristic: map scenario vendors via faults catalog if available
-    try:
-        from simulators.common.faults import SCENARIO_CATALOG
-
-        for entry in SCENARIO_CATALOG:
-            if entry["id"] == scenario_id:
-                # Use docs_volume as base; scenario-specific docs are under it
-                return f"{docs_volume}/{scenario_id}"
-    except Exception:
-        pass
+    # Trust boundary (DIRECTIVES §2): the engine package never imports
+    # simulators; the docs ref is derived from the volume layout alone.
     return f"{docs_volume}/{scenario_id}"
 
 
@@ -228,7 +220,8 @@ def list_scenarios(visibility: str | None = "dev") -> list[str]:
     """List scenario ids from ``simulators/scenarios/*.yaml`` filtered by visibility.
 
     ``visibility`` may be ``"dev"``, ``"heldout"`` or ``None`` (all).
-    Falls back to the faults catalog if YAML files are unavailable.
+    Returns an empty list when the scenario directory is unavailable
+    (the engine package never imports simulators; DIRECTIVES §2).
     """
     root = pathlib.Path(__file__).resolve().parents[3] / "simulators" / "scenarios"
     ids: list[str] = []
@@ -251,17 +244,7 @@ def list_scenarios(visibility: str | None = "dev") -> list[str]:
                 continue
         if ids:
             return ids
-    # Fallback to catalog
-    try:
-        from simulators.common.faults import SCENARIO_CATALOG
-
-        return [
-            e["id"]
-            for e in SCENARIO_CATALOG
-            if visibility is None or e.get("visibility") == visibility
-        ]
-    except Exception:
-        return []
+    return []
 
 
 def make_trial_inputs(

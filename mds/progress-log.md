@@ -1649,3 +1649,14 @@ Verified live: up green (8 readyz), demo 6/6 twice, sims reset to baseline,
 smoke OK, test_00 8/8, demo unit 22/22, lint+typecheck green, make test 2026
 pass (90.83/93.78/96.55%), stack down afterwards. Task left [~]: owner confirms
 CI green on main + records the labelled demo (docs/demo.md), then flips [x].
+
+## [Daily directives audit — first audit of Phase 1]
+**Date:** 2026-10-27
+**Ref:** mds/AUDIT.md (audit of origin/main 3e4093b8, last 24h = 184 commits, W1–W10 + REQ-001/002)
+**Agent:** opencode meta/muse-wonder-1.0 (escalation)
+
+- Sections validated: DIRECTIVES §1–§8 + Quick Reference (size limits pass: 8 one-line items ≤300 chars, ≈1784/2048 bytes; all § bullets <600 chars), plan §1 standing rules, every Phase 1 workstream deliverable W1–W10.
+- Status: engine, verifier, simulators, UI and bench all present with the plan's passing criteria met, except the gaps below. No FEEDBACKS FAIL items exist (Cycle 0, no reviews yet); no open requests existed before this audit.
+- Gaps fixed (this branch): bench harness violated the trust boundary it is codified against (import-linter BROKEN, and nothing ran lint-imports in lint/CI); control readyz forced verifier=True; UI component tests were in neither `make test` nor CI. All three fixed and re-verified.
+- Gaps deferred: REQ-003 directive-vs-plan contradiction on verifier→simulators.common shared code (owner), REQ-004/P1.W7.9 schemathesis contract tests claimed done but absent, REQ-005 model-id literals as config defaults, REQ-006 money transform accepting float input. Heldout freeze (P1.W2.8) and demo recording (P1.W10.3) remain owner steps.
+- Overall readiness: Phase 1 code-complete and green (unit 2026 + UI 128, coverage ≥90% per package, smoke + spot e2e live); Phase 1 exit is gated only on the two owner steps above and the Nov 1 stop-rule checkpoint. Phase 2 entry criteria not yet met.

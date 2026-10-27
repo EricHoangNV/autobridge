@@ -78,24 +78,19 @@ def get_readyz() -> dict[str, object]:
         checks["db"] = True
     except Exception:
         checks["db"] = False
-    # Verifier reachability (best-effort; degraded not failed if unreachable in test)
+    # Verifier reachability: readyz reports the dependency as it is
+    # (plan §3) — unreachable means "fail"/degraded, never a forced pass.
     try:
         import os
 
-        verifier_url = os.environ.get("VERIFIER_URL", "http://verifier:8000")
-        # In test/host mode, verifier may be on localhost:8104
-        # We consider verifier check optional — only fail if explicitly required
-        # For now mark ok if we can import verifier models (tables exist)
-        checks["verifier"] = True
-        # Try HTTP only when inside Docker (has verifier host)
-        if os.path.exists("/.dockerenv"):
-            import httpx
+        import httpx
 
-            with httpx.Client(timeout=2) as client:
-                r = client.get(f"{verifier_url.rstrip('/')}/healthz")
-                checks["verifier"] = r.status_code == 200
+        verifier_url = os.environ.get("VERIFIER_URL", "http://verifier:8000")
+        with httpx.Client(timeout=2) as client:
+            r = client.get(f"{verifier_url.rstrip('/')}/healthz")
+            checks["verifier"] = r.status_code == 200
     except Exception:
-        checks["verifier"] = True  # do not block readyz in unit tests
+        checks["verifier"] = False
 
     checks["default"] = all(checks.values())
     return readyz(checks)  # type: ignore[return-value]

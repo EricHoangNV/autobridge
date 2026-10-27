@@ -18,6 +18,8 @@ test:
 	uv run --extra dev pytest tests/unit/test_verifier_*.py --cov=verifier --cov-report=$(COV_REPORT) --cov-fail-under=90 -q
 	@echo ">> test: simulators package (90% gate)"
 	uv run --extra dev pytest tests/unit/test_simulators_*.py --cov=simulators --cov-report=$(COV_REPORT) --cov-fail-under=90 -q
+	@echo ">> test: UI component tests (Vitest)"
+	@if [ -d ui/node_modules ]; then cd ui && npm run test; else echo "UI tests skipped: ui/node_modules missing (run: cd ui && npm ci) — CI runs them unconditionally"; fi
 	@echo ">> test: all green"
 
 smoke:
@@ -61,6 +63,7 @@ demo:
 # ---- Quality ----
 lint:
 	uv run --extra dev ruff check .
+	uv run --extra dev lint-imports
 
 lint-fix:
 	uv run --extra dev ruff check --fix .

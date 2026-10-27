@@ -509,3 +509,7 @@ Learning §5 (Docker COPY of uncommitted scaffold dirs) added.
 Leftover OWNER STEP: (a) confirm the CI run on main is green with the new
 demo step, (b) record the labelled 3–4 min demo (script: docs/demo.md, plan
 §6); then flip P1.W10.3 to [x].
+
+### AUDIT 2026-10-27 — daily directives audit (first audit, 184 commits of Phase 1)
+Agent: opencode meta/muse-wonder-1.0 (escalation)
+Fixed: removed `simulators` imports from `src/autobridge/bench/harness.py` (import-linter contract BROKEN→KEPT); `make lint` now runs lint-imports and CI runs lint+typecheck; `make test`/CI now gate the UI Vitest suite; control `/readyz` honestly probes the verifier (was forced True) with 3 tests updated. Deferred: REQ-003 (§2 vs plan §2.7 shared-code contradiction), REQ-004 + task P1.W7.9 (schemathesis claimed, absent), REQ-005 (model-id literals in config), REQ-006 (money float acceptance). Full record: `mds/AUDIT.md`.
