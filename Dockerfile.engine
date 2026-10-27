@@ -1,0 +1,18 @@
+# Engine-zone image: control, worker, runtime-sandbox, bench (plan §2.1).
+# Build context is the repo root; serves any engine app via $APP_MODULE.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/srv/src
+
+WORKDIR /srv
+
+RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.34"
+
+COPY src/ ./src/
+
+EXPOSE 8000
+
+# APP_MODULE is set per service in compose.yaml, e.g. autobridge.control.app:app
+CMD ["sh", "-c", "uvicorn \"$APP_MODULE\" --host 0.0.0.0 --port 8000"]

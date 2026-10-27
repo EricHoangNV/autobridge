@@ -1,0 +1,151 @@
+# AutoBridge Compose stack (plan §2.1). P1.W1.2: every service as a stub app
+# with GET /healthz + GET /readyz, on the four trust-zone networks.
+#
+# Networks (plan §2.1):
+#   engine-net   control, worker, runtime-sandbox, ui (+ bench reaches control)
+#   vendor-net   runtime-sandbox <-> simulator public API (8000) ONLY
+#   verifier-net control <-> verifier ONLY
+#   admin-net    control <-> simulator admin API (8001, W2.2) ONLY
+#
+# Negative checks enforced by attachment (asserted in `make smoke`):
+#   runtime-sandbox has no route to verifier-net / admin-net
+#   (sandbox -/-> verifier fixtures, sandbox -/-> simulator admin)
+#   ui is on engine-net only (ui -/-> simulators, ui -/-> verifier)
+#   worker is on engine-net only (no verifier / simulator-admin route)
+
+x-healthcheck-py: &healthcheck-py
+  test:
+    [
+      "CMD-SHELL",
+      "python -c \"import urllib.request; raise SystemExit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)\"",
+    ]
+  interval: 5s
+  timeout: 5s
+  retries: 12
+  start_period: 10s
+
+services:
+  control:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    environment:
+      APP_MODULE: autobridge.control.app:app
+    networks:
+      - engine-net
+      - verifier-net
+      - admin-net
+    ports:
+      - "8101:8000"
+    healthcheck: *healthcheck-py
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    environment:
+      APP_MODULE: autobridge.engine.app:app
+    networks:
+      - engine-net
+    ports:
+      - "8102:8000"
+    healthcheck: *healthcheck-py
+
+  runtime-sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    environment:
+      APP_MODULE: autobridge.runtime.app:app
+    networks:
+      - engine-net
+      - vendor-net
+    ports:
+      - "8103:8000"
+    healthcheck: *healthcheck-py
+
+  verifier:
+    build:
+      context: ./verifier
+      dockerfile: Dockerfile
+    networks:
+      - verifier-net
+    ports:
+      - "8104:8000"
+    volumes:
+      # Hidden fixtures are mounted read-only here; no other service mounts
+      # this volume and worker / runtime-sandbox have no route to this net.
+      - ./verifier/hidden_cases:/fixtures:ro
+    healthcheck: *healthcheck-py
+
+  sim-atlas:
+    build:
+      context: ./simulators
+      dockerfile: Dockerfile
+    environment:
+      APP_MODULE: simulators.atlaspms.app:app
+    networks:
+      - vendor-net
+      - admin-net
+    ports:
+      - "8105:8000"
+    healthcheck: *healthcheck-py
+
+  sim-harbor:
+    build:
+      context: ./simulators
+      dockerfile: Dockerfile
+    environment:
+      APP_MODULE: simulators.harborpms.app:app
+    networks:
+      - vendor-net
+      - admin-net
+    ports:
+      - "8106:8000"
+    healthcheck: *healthcheck-py
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    networks:
+      - engine-net
+    ports:
+      - "8107:3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  bench:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    environment:
+      APP_MODULE: autobridge.bench.app:app
+    networks:
+      - engine-net
+      - verifier-net
+    ports:
+      - "8108:8000"
+    healthcheck: *healthcheck-py
+
+networks:
+  engine-net:
+    driver: bridge
+  vendor-net:
+    driver: bridge
+  # Isolation is by attachment (see the service network lists above), NOT by
+  # `internal: true`: an internal-only attachment silently drops the host
+  # port publishing, so /readyz for a single-network service (verifier)
+  # would be unreachable from `make smoke` on the host.
+  verifier-net:
+    driver: bridge
+  admin-net:
+    driver: bridge
