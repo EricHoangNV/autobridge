@@ -1459,3 +1459,35 @@ Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
 
 **Gotchas:** Previous CodexCliDriver raised NotImplementedError — updated existing test to expect CodexCliError with fallback hint; mypy unused-ignore on union-attr removed after fixing type.
 
+
+## 2026-10-27 — P1.W8.3 one_shot_generator secondary diagnostic control (sbx1)
+
+Agent: opencode meta/muse-spark-1.3 (escalation)
+
+**Date:** 2026-10-27
+**Ref:** Plan §2.10 / §4 W8 (P1.W8.3)
+
+**What was done:**
+- New `src/autobridge/bench/one_shot.py`: `OneShotGenerator` (single `LLMProvider.complete` via `Budget`/`BudgetedProvider`, purpose `bench-one-shot`), `build_one_shot_prompt` (scenario/trial/seed, docs volume+ref, sandbox URL/image/runtime_target, credential refs names-only, visible tests, ceilings + vendor docs text), `extract_spec_yaml`/`try_parse_spec_yaml` (fenced-or-bare YAML → dict or None), `load_docs_text` (docs_ref → volume fallbacks, 120k cap), `run_one_shot_arm` (→ `ArmResult(arm="one_shot")`, default Budget from inputs ceilings), `run_trial_with_one_shot` (three arms + three-way matched audit → `TrialResult` with `one_shot`).
+- `harness.py`: `ArmResult.arm` accepts `one_shot`; `TrialResult` gains `one_shot: ArmResult | None = None` (to_dict includes it when present); `verify_matched_trial` audits three-way when present.
+- `baseline_coding_agent.py`: `get_baseline_driver("one_shot")` factory (lazy import, no cycle); `fake_cli.py` re-exports; `docs/benchmark.md` documents the control + `BASELINE_DRIVER=one_shot`.
+- Fixed 9 inherited test failures: `TrialResult` is frozen+slots so the old setattr-attach raised `AttributeError` (now a real field, constructed directly); test `_inputs` helper ignored its `docs_ref` arg so docs tests resolved real scenario docs (now `dataclasses.replace`).
+- Fixed 22 ruff findings in the new test file (unused imports, ARG/F841 noqas per repo style).
+
+**Key decisions:**
+- Real `TrialResult` field over dynamic attach: frozen+slots forbids monkey-patching; default `None` keeps two-arm `run_trial`/JSONL backward compatible.
+- `run_trial_with_one_shot` constructs `TrialResult` directly instead of delegating to `run_trial` (avoids double-running arms).
+- Default Budget derived from `inputs.token_ceiling`/`wall_clock_s` so the matched-budget contract holds without caller wiring; `BudgetExhausted` surfaces as failed arm (never silent retry).
+
+**Files changed:**
+- `src/autobridge/bench/one_shot.py` (new, 647 lines)
+- `src/autobridge/bench/harness.py` (ArmResult literal, TrialResult.one_shot, to_dict, verify_matched_trial)
+- `src/autobridge/bench/baseline_coding_agent.py` (one_shot factory branch)
+- `src/autobridge/bench/fake_cli.py` (re-exports)
+- `tests/unit/test_autobridge_bench_oneshot.py` (new, 68 tests)
+- `docs/benchmark.md` (secondary-control section)
+
+**Checks:** 68/68 new tests pass; bench files 195 pass; `make lint` green; `make typecheck` green (86 files); `make test` green — autobridge 90.40% / verifier 93.78% / simulators 96.55% (1943 pass). Compose stack down in sandbox so no e2e; W8 e2e (test_07) belongs to W8.5.
+
+**Notes for next iteration:**
+- W8.4 scorer consumes `TrialResult.to_dict()` — `one_shot` key present when the three-arm runner was used; handle its absence for two-arm JSONL.
