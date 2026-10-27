@@ -548,4 +548,30 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - P1.W3.1 runtime interpreter (ConnectorSpec execution with retry/backoff, ModelCall 0 on reference sync) — test_01 gives confidence that oracle vs sim vs catalog are aligned before runtime interprets specs
 - No new unit coverage impact; e2e file is outside make test 90% gate; make e2e now 17 pass (8 test_00 + 9 test_01) when Docker up, 9 skipped when missing
 
+## P1.W3.1 Runtime interpreter + http (retry/backoff, pagination, ModelCall 0)
+**Date:** 2026-10-27
+**Ref:** plan §4 W3 + §2.4; task P1.W3.1. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- New `src/autobridge/runtime/http.py` (346 lines): resolve_env_placeholders/resolve_base_url (placeholder ${ENV} expansion), compute_backoff (exponential/linear/constant), _retry_after_seconds (Retry-After override), build_auth_headers (bearer/api_key_header/basic/oauth2 stub with env credential_ref, AuthError on missing), HttpClient (base_url+auth+retry, url_for, _auth_headers/_ensure_oauth_token with caching/expiry, request with retry loop on statuses + Retry-After + backoff, HttpError on exhaustion/non-retryable, get JSON wrapper), supports timeout/base_delay/sleep_fn/client_factory injection for tests, never logs credential values
+- New `src/autobridge/runtime/interpreter.py` (374 lines): JSONPath helpers via jsonpath-ng, resolve_checkpoint_templates ({{checkpoint.X}} exact + substring), _extract_items/_extract_next_token, OperationResult (records/pages_fetched/raw_pages/repeated_cursor/stop_reason/checkpoint_value), Interpreter (spec+http_client, execute_operation with single-request fallback and paginated fetch for offset/cursor/page strategies, limit_param handling, stop_when guards null_cursor/repeated_cursor/empty_page/no_next/page_limit plus implicit no_next_token/empty_page_implicit, checkpoint max/min computation, execute_all, execute_spec_dict convenience)
+- New `tests/unit/test_autobridge_runtime_http_interpreter.py` (72 tests): env placeholder/base_url/backoff/auth headers, HttpClient url_for/auth, request retry on 429/Retry-After/exhaustion/404/network no-retry, get success/non-json/non-dict, oauth2 success/missing/non-200/not-json/missing-token/network/expiry/cache/request integration, JSONPath helpers, checkpoint templates, extract_items/next_token, interpreter no-pagination/cursor/offset/page/repeated_cursor/previous/empty_page/no_next/null_empty/page_limit/implicit paths/checkpoint max/min/mixed/unknown op/execute_all/spec_dict/param template/default client/modelcall zero/retry integration, ModelCall zero assertion via in-memory DB
+
+**Key decisions:**
+- HttpClient per-source not per-operation so base_url/auth/retry shared; client_factory MockTransport for tests avoids real network; base_delay 0.05s keeps tests fast; Retry-After numeric header overrides computed backoff (simulators send 1s on 429)
+- Pagination state machine mirrors simulators helpers: offset uses next_offset token int parse fallback to len, cursor uses previous_cursor tracking for repeated_cursor detection, page increments; stop_when guards checked in spec order plus implicit guards prevent infinite loops even without guard
+- Checkpoint templates resolved once per operation not per page (checkpoint is sync-level); exact match returns typed value as string, substring replaces all occurrences
+- Interpreter never imports llm (ModelCall 0 proven by in-memory DB test); transforms/checks are W3.4/W3.5 — W3.1 returns raw items only
+- No-pagination fallback prefers raw["data"] list (common wrapper) over generic JSONPath "$" which would wrap whole dict
+
+**Files changed:**
+- `src/autobridge/runtime/http.py` (new), `src/autobridge/runtime/interpreter.py` (new)
+- `tests/unit/test_autobridge_runtime_http_interpreter.py` (new, 72 tests)
+
+**Notes for next iteration:**
+- Next: P1.W3.2 auth strategies (bearer already done, add api_key_header/basic/oauth2 client-credentials full coverage + secrets never logged test)
+- P1.W3.3 pagination already handles stop_when but needs W3.3 e2e marking Degraded with no_loss and dedicated pagination.py module if plan expects split
+- W3.4 transforms registry will consume interpreter records; ensure money stays Decimal and business-date cutoff 04:00 via ZoneInfo
+
+
 
