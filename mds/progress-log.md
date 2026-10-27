@@ -1528,3 +1528,20 @@ What: `src/autobridge/bench/scoring.py` (VerifyOutcome normalize, verify_via_htt
 **Notes for next iteration:**
 - PRE-EXISTING (on origin/main, not mine): `lint-imports` contract `autobridge must not import simulators` is BROKEN by `src/autobridge/bench/harness.py:216,256` (`from simulators.common.faults import SCENARIO_CATALOG`, function-local) plus `list_scenarios()` reading `simulators/scenarios/*.yaml` off disk. Remediation needs a W8 decision (scenario discovery via API/verifier vs vendored catalog). Also the e2e top-40-lines import grep misses function-local imports — consider a whole-file import-pattern scan once the harness is fixed.
 - P1.W9.2 (CI job) is next; `.github/` does not exist yet so that task creates it.
+
+## 2026-10-27 — P1.W9.2 make e2e + CI job (sbx1)
+
+Agent: opencode meta/muse-spark-1.3 (escalation)
+
+**What was done (plan §4 W9):**
+- `make e2e` now enforces random order explicitly (`-p randomly`: fails fast if pytest-randomly is missing instead of silently running ordered); Makefile comment documents E2E_SKIP_STACK / E2E_KEEP_STACK / E2E_TIMEOUT and the 300s warm suite budget
+- New `make e2e-ui` target (`cd ui && npm run test:e2e`) for the Playwright UI journey — test_06 is independent of the pytest harness by design (per its own header), so CI runs both
+- Created `.github/workflows/ci.yml`: one ordered job from a clean clone — `make test` (coverage gate) → `make up` → `make smoke` → `make e2e` → npm ci + Playwright chromium install + `make e2e-ui`, with `make down` unconditional (`if: always()`); Python 3.12, uv, Node 22
+- New `tests/unit/test_autobridge_ci_e2e.py` (7 tests): static contract — triggers on push+PR, clean-checkout first step, unit→up→smoke→e2e order, unconditional teardown, pytest+Playwright e2e coverage, Makefile targets
+- `docs/architecture.md` §7/§8 + README ladder updated (e2e-ui target, CI file reference)
+
+**Verification:** `make test` 2002 pass (1691+92+219, gates 90.63/93.78/96.55); `make e2e` 66/66 green live via the hardened target (~56s incl. managed bring-up + teardown, stack confirmed down after); lint + typecheck green; directives-for §5 checked (random-order e2e, per-package gates, new code with tests, no secrets in CI YAML, no trust-boundary imports — test parses YAML only).
+
+**Notes for next iteration:**
+- Playwright spec itself was NOT run here (browsers not installed in sandbox; CI installs chromium) — owner should confirm the new CI workflow goes green on first push to main.
+- PRE-EXISTING (unchanged): `lint-imports` contract still broken on main by W8 harness (`bench/harness.py` simulators import) — CI deliberately does not gate on it; needs owner decision.

@@ -2,7 +2,7 @@
 
 ## Current State
 
-P1.W9.1 e2e harness complete (2026-10-27): conftest has verified per-test simulator reset (live) + best-effort (fakes), autouse `os.environ` restore, `SUITE_RUNTIME_BUDGET_SECONDS=300` / `WARM_TEST00_BUDGET_SECONDS=30`; `pytest-randomly` shuffles every run; suite 66/66 green live on seeds 123+777 (~5s warm) and via fakes, cold managed bring-up + teardown green (~20s); `make smoke` green incl. negative network checks. Fixed live blockers: verifier image now ships simulators/ (was ModuleNotFoundError), Dockerfile.engine installs project deps (was missing sqlalchemy). Trust-boundary e2e tests updated for W7 builds.py guard + W8.5 SHA gate (structural confinement). PRE-EXISTING FLAG: `lint-imports` contract broken on main by W8 harness (`bench/harness.py` imports/reads simulators/) — left untouched, needs owner decision.
+P1.W9.2 make e2e + CI complete (2026-10-27): `make e2e` enforces random order (`-p randomly`, fail-fast if pytest-randomly missing) with env knobs + 300s budget documented; new `make e2e-ui` runs the Playwright UI journey (test_06, independent of the pytest harness by design); `.github/workflows/ci.yml` is one ordered job from a clean clone — make test (coverage gate) → make up → make smoke → make e2e → make e2e-ui, `make down` unconditional (`if: always()`); `tests/unit/test_autobridge_ci_e2e.py` pins the contract statically (7 tests); suite 66/66 green live via the hardened target (~56s incl. bring-up); `docs/architecture.md` §7/§8 + README ladder updated.
 
 - Completed:
   - P1.W1.1: Repo scaffold
@@ -63,9 +63,10 @@ P1.W9.1 e2e harness complete (2026-10-27): conftest has verified per-test simula
   - P1.W8.4: bench scoring + report via verifier hidden mode
   - P1.W8.5: make bench idempotent + heldout sha + test_07 + docs/benchmark.md
   - P1.W9.1: e2e harness complete (verified reset, env isolation, budget, random order)
-- Tests: 1995 pass / 0 fail (autobridge 1684 @ 90.63%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + e2e 66/66 live
-- Stack: compose down in sbx1 (full live suite green; smoke green) / lint + typecheck green
+  - P1.W9.2: make e2e + CI job (unit → smoke → e2e from clean clone)
+- Tests: 2002 pass / 0 fail (autobridge 1691 @ 90.63%, verifier 92 @ 93.78%, simulators 219 @ 96.55%) + e2e 66/66 live
+- Stack: compose down in sbx1 (hardened make e2e green live; smoke green) / lint + typecheck green
 
 ## Next tasks
-1. **P1.W9.2** — make e2e + CI job (unit → smoke → e2e from clean clone)
-2. **P1.W10.1** — README + docs/ pages + .env.example
+1. **P1.W10.1** — README + docs/ pages + .env.example
+2. **P1.W10.2** — make demo (six demo steps via control API)

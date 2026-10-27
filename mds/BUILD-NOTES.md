@@ -352,3 +352,11 @@ Checks: make test 1670+92+219 green (90.59/93.78/96.55%), ruff + mypy green; e2e
 - **Gotchas:** `docker compose up --build --wait` exit 1 from the fixture surfaces only as skip — rerun manually to see which service died; verifier `COPY . ./` + `app:app` CMD was doubly broken (missing sims pkg AND `verifier.oracle` package import); engine image needed full project install, not two pins.
 - **Checks:** e2e 66/66 live (seeds 123, 777, ~5s warm), fakes 3 seeds, cold managed bring-up+teardown ~20s; `make test` 1995 pass (90.63/93.78/96.55); lint, typecheck, smoke (incl. negative nets) green. `lint-imports` contract broken on main by W8 harness (pre-existing, flagged).
 - Agent: opencode meta/muse-spark-1.3 (escalation)
+
+### P1.W9.2 — make e2e + CI job unit → smoke → e2e from clean clone (plan §4 W9)
+- `Makefile`: `e2e` target runs `pytest tests/e2e -q --tb=short -p randomly` (explicit random-order enforcement); comment documents env knobs (E2E_SKIP_STACK/E2E_KEEP_STACK/E2E_TIMEOUT) + 300s warm budget; new `e2e-ui` target (`cd ui && npm run test:e2e`) for the Playwright journey; `.PHONY` updated.
+- `.github/workflows/ci.yml` (new): single `ci` job, ubuntu-latest, 30min timeout — checkout → Python 3.12 → uv → Node 22 (npm cache on ui/package-lock.json) → `make test` → `make up` → `make smoke` → `make e2e` → `npm ci` + `playwright install --with-deps chromium` + `make e2e-ui` → `make down` (`if: always()`).
+- `tests/unit/test_autobridge_ci_e2e.py` (new, 7 tests): workflow triggers, clean-checkout first, step order, unconditional teardown, e2e phase covers pytest + Playwright, Makefile targets. Static YAML parsing only — no Docker, no engine imports (trust-boundary clean).
+- `docs/architecture.md` §7 (e2e-ui row, §8 CI paragraph naming the workflow file) + `README.md` ladder (e2e-ui row, CI order line).
+- Gotchas: `on:` parses as boolean `True` in YAML 1.1 — test reads `data.get(True, ...)`; Playwright browsers not installed in sandbox so test_06 itself runs only in CI/local with `npx playwright install`.
+- Verified: make test 2002 pass (gates 90.63/93.78/96.55), make e2e 66/66 live (~56s), lint + typecheck green.
