@@ -174,9 +174,9 @@ def test_verify_regression_logic() -> None:
     # We test the helper directly
     from verifier.app import _compute_regression
 
-    assert _compute_regression("baseline", "fail", []) == "fail"
-    assert _compute_regression("baseline", "pass", []) == "pass"
-    assert _compute_regression("rename_guest_id", "fail", []) == "pass"
+    assert _compute_regression("baseline", "fail", [])[0] == "fail"
+    assert _compute_regression("baseline", "pass", [])[0] == "pass"
+    assert _compute_regression("rename_guest_id", "fail", [])[0] == "pass"
 
 
 def test_verify_get_not_allowed() -> None:

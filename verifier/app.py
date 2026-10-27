@@ -88,6 +88,13 @@ class VerifyRequest(BaseModel):
     mode: Literal["visible", "hidden"] = Field(default="visible", description="Response mode")
     # Optional direct record submission for unit tests that bypass spec execution
     records: dict[str, list[dict[str, Any]]] | None = Field(default=None, description="Direct produced records (for tests)")
+    # Regression suite: scenarios to re-run as regression gate; None = use default
+    regression_suite: list[str] | None = Field(default=None, description="Scenarios for regression gate")
+
+
+class RegressionFailureDetail(BaseModel):
+    scenario_id: str
+    failed_checks: list[FailedCheck]
 
 
 class FailedCheck(BaseModel):
@@ -101,8 +108,11 @@ class VerifyResponse(BaseModel):
     score: float = Field(ge=0.0, le=1.0)
     failed_checks: list[FailedCheck]
     regression: Literal["pass", "fail"] = "pass"
+    regression_failures: list[RegressionFailureDetail] | None = Field(default=None)
     scenario_id: str
     mode: Literal["visible", "hidden"]
+
+    model_config = {"extra": "ignore"}
 
 
 # ---------------------------------------------------------------------------
@@ -165,24 +175,55 @@ def _sanitize_failed_checks(raw: list[dict[str, Any]]) -> list[FailedCheck]:
 
 
 def _compute_regression(
-    scenario_id: str, verdict: str, failed_checks: list[FailedCheck] | None = None  # noqa: ARG001
-) -> Literal["pass", "fail"]:
-    """Regression gate placeholder (P1.W2.7).
+    scenario_id: str,
+    verdict: str,
+    spec: dict[str, Any] | list[Any] | None = None,
+    suite: list[str] | None = None,
+    failed_checks: list[FailedCheck] | None = None,  # noqa: ARG001
+) -> tuple[Literal["pass", "fail"], list[RegressionFailureDetail] | None]:
+    """Regression gate (P1.W2.7).
 
-    For W2.6, we implement minimal logic: if the candidate release fails a
-    scenario that baseline passed, regression is fail. Since we only evaluate
-    one scenario at a time, we check: baseline always passes, so any fail
-    for non-baseline is not considered regression yet (needs history).
-    We return pass for baseline and for any scenario where verdict is pass;
-    fail only if scenario_id is baseline and verdict is fail (which would be
-    a regression against the original baseline).
-    For future W2.7, this will re-run all previously verified scenarios.
+    Re-runs every previously verified scenario on the candidate spec.
+    - If suite is None, uses the default REGRESSION_SUITE (baseline + fixable).
+    - If spec is None, baseline passes but non-baseline fails — so regression
+      will fail unless suite is just ['baseline'] (which is the old behavior).
+    - Returns (regression, failures_or_None).
+    - Backward compat: third positional arg may be the old failed_checks list,
+      in which case spec is treated as None (placeholder behavior).
     """
-    # Simplest: regression fails only if baseline fails (which should never happen)
-    if scenario_id == "baseline" and verdict == "fail":
-        return "fail"
-    # Otherwise pass — full regression runner in W2.7
-    return "pass"
+    from verifier.regression import run_regression_suite
+
+    # Backward compat: old call was _compute_regression(scenario_id, verdict, failed_checks)
+    if isinstance(spec, list):
+        if scenario_id == "baseline" and verdict == "fail":
+            return "fail", None  # type: ignore[return-value]
+        return "pass", None  # type: ignore[return-value]
+
+    # Determine suite: explicit suite wins, else run regression on baseline
+    # to ensure baseline is never broken.
+    if suite is not None:
+        if not suite:
+            return "pass", None
+        result = run_regression_suite(spec, scenario_ids=suite)  # type: ignore[arg-type]
+        regression: Literal["pass", "fail"] = result["regression"]  # type: ignore[assignment]
+        failures = result["failures"]
+        if not failures:
+            return "pass", None
+        details: list[RegressionFailureDetail] = []
+        for f in failures:
+            fc_sanitized = _sanitize_failed_checks(f.get("failed_checks", []))
+            details.append(RegressionFailureDetail(scenario_id=f["scenario_id"], failed_checks=fc_sanitized))
+        return regression, details
+
+    # Default: check baseline only (cheap, always required)
+    # A candidate that breaks baseline is a regression regardless of target
+    from verifier.oracle import oracle_verdict
+
+    b_verdict, _score, b_failed = oracle_verdict("baseline", spec)  # type: ignore[arg-type]
+    if b_verdict == "fail":
+        details = [RegressionFailureDetail(scenario_id="baseline", failed_checks=_sanitize_failed_checks(b_failed))]
+        return "fail", details
+    return "pass", None
 
 
 def _ensure_no_fixture_leak(response_dict: dict[str, Any]) -> None:
@@ -208,7 +249,7 @@ def _ensure_no_fixture_leak(response_dict: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@app.post("/verify", response_model=VerifyResponse)
+@app.post("/verify", response_model=VerifyResponse, response_model_exclude_none=True)
 def post_verify(body: VerifyRequest) -> VerifyResponse:
     """Verify a spec (or release) against a scenario.
 
@@ -288,13 +329,14 @@ def post_verify(body: VerifyRequest) -> VerifyResponse:
         verdict, score, failed_raw = oracle_verdict(body.scenario_id, spec)
         failed_checks = _sanitize_failed_checks(failed_raw)  # type: ignore[arg-type]
 
-    regression: Literal["pass", "fail"] = _compute_regression(body.scenario_id, verdict, failed_checks)
+    regression, regression_failures = _compute_regression(body.scenario_id, verdict, spec, body.regression_suite, failed_checks)
 
     resp = VerifyResponse(
         verdict=verdict,  # type: ignore[arg-type]
         score=score,
         failed_checks=failed_checks,
         regression=regression,
+        regression_failures=regression_failures,
         scenario_id=body.scenario_id,
         mode=body.mode,
     )
