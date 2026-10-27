@@ -773,3 +773,25 @@ Append-only task history. One entry per completed task, newest at the bottom. Se
 - P1.W4.3 is 7 deterministic rules (rename_field etc.) with precondition/patch generator/confidence/verification level + registry; they will use fingerprint delta to match repair
 - No new e2e file for W4.1; workstream e2e is test_03_known_repairs_zero_frontier (requires W4.4-4.7)
 - Coverage remains ≥90% per package (autobridge 94.33%, verifier 93.78%, simulators 98.54%); `make lint`/`typecheck` green; engine/sync_run.py coverage 87% (uncovered lines are defensive sync_run branches, package still 94% passes)
+
+## P1.W4.2 Drift classifier for 12 classes (plan §2.5) with evidence ids
+**Date:** 2026-10-27
+**Ref:** mds/AutoBridge_Implementation_Plan_2026-10-26.md §W4 (plan §4 W4, §2.5) — Deliverables: drift/classifier.py for 12 classes with evidence ids. Agent: opencode baseten/meta-models/muse-spark-open-1026 (worker)
+
+**What was done:**
+- Created `src/autobridge/drift/classifier.py` (222 lines, 91% coverage): 12 canonical DRIFT_CLASSES from plan §2.5 (AUTH_EXPIRED, AUTH_REVOKED, RATE_LIMIT, TRANSIENT, SCHEMA_RENAME, SCHEMA_REMOVED, SCHEMA_TYPE_CHANGE, PAGINATION_CHANGE, ENUM_NEW_VALUE, SEMANTIC_VALUE_DRIFT, CAPABILITY_REMOVED, UNKNOWN), SEVERITY_BY_CLASS/CONFIDENCE_BY_CLASS/_NON_FIXABLE, DriftClassification dataclass (drift_class/confidence/severity/evidence_ids/reason/supporting_signal_kinds/details/fixable), helpers (_group_by_kind, _evidence_for_kinds, _http_status, _analyze_types_delta, _collect_fingerprint_deltas), 9 priority matchers (_match_auth_revoked, _match_auth_expired, _match_capability_removed, _match_rate_limit, _match_transient, _match_enum_new_value, _match_pagination_change, _match_schema_from_types, _match_semantic) in critical-first order, classify() deterministic aggregation of evidence_ids and classify_sync() wrapper via signals_from_sync with sync_outcome preservation
+- Created `tests/unit/test_autobridge_drift_classifier.py` (54 tests): drift_classes_exactly_12, empty/unknown fallback, per-class tests for all 12 (auth 401/403, rate_limit 429, transient 5xx, enum unknown_enum, pagination repeated_cursor/pagination_changed, schema rename/removed/type_change via fingerprint delta, semantic invariant_failure/no_loss/degraded, capability 404/zero+Blocked), evidence dedup/determinism/priority (auth over pagination, capability over schema, rate over semantic), classify_sync per 14 scenario catalog entries (baseline→UNKNOWN, rename→SCHEMA_RENAME, offset_to_cursor/cursor_repeat→PAGINATION_CHANGE, rate_limit→RATE_LIMIT, transient→TRANSIENT, token_expired→AUTH_EXPIRED, token_revoked→AUTH_REVOKED, status_vocab→ENUM_NEW_VALUE, gross_to_net/tz_boundary/duplicate/invalid_trap→SEMANTIC_VALUE_DRIFT, endpoint_removed→CAPABILITY_REMOVED), fingerprint delta direct tests, all-12 reachable, non-fixable, reason/details
+
+**Key decisions:**
+- Priority order critical-first ensures correct classification when multiple signals co-occur (e.g., rate_limit scenario also emits zero_records+capability_removed in synthetic case — fixed by using Degraded+nonzero records and by ordering RATE_LIMIT before CAPABILITY_REMOVED check that requires zero+Blocked); AUTH_REVOKED before AUTH_EXPIRED distinguished by http_status 403 vs 401; SCHEMA_* sub-classes via _analyze_types_delta inspecting delta.types_details per-entity (1 removed/1 added same type→RENAME, removed without added→REMOVED, common field type differs→TYPE_CHANGE); fingerprint delta carried on DriftSignal so classifier can distinguish schema drift without refetching; evidence_ids aggregated from supporting signals with dedup preserving order for DriftEvent persistence
+- classify_sync builds signals via signals_from_sync then delegates to classify, preserving sync_outcome in details for debugging; empty/None sync→UNKNOWN with confidence 0.5; signals empty→UNKNOWN; UNKNOWN fallback preserves all evidence_ids for audit
+
+**Files changed:**
+- `src/autobridge/drift/classifier.py` — new, 222 lines, 91% coverage
+- `tests/unit/test_autobridge_drift_classifier.py` — new, 54 tests
+
+**Notes for next iteration:**
+- P1.W4.3 is 7 deterministic rules (rename_field, offset_to_cursor, cursor_to_offset, retry_backoff_only, enum_extend_requires_evidence, nested_path_shift, type_coerce_string_number) each with precondition/patch generator/confidence/verification level + registry; they will consume DriftClassification + fingerprint delta to generate candidate JSON Patch
+- P1.W4.4 will wire RepairController + ladder L0/L1 with classifier (rate_limit/transient → no patch backoff only, token_expired → refresh if permitted else escalate, CAPABILITY_REMOVED/AUTH_REVOKED → escalate with no patch)
+- No new e2e file for W4.2; workstream e2e remains test_03_known_repairs_zero_frontier (requires W4.4-4.7)
+- Coverage remains ≥90% per package (autobridge 94.16%, verifier 93.78%, simulators 98.54%); `make lint`/`typecheck` green; classifier 91% (uncovered lines are rare string-hint branches and fallback generic fingerprint_changed path, package still 94% passes)
