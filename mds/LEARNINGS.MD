@@ -249,3 +249,19 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - How it was fixed: tests point dependency URLs at refused loopback (`http://127.0.0.1:9`, a literal IP needing no resolution) or mock the HTTP/resolver layer; the guard trips on any non-literal `getaddrinfo` host, including `localhost`, and fails at teardown so worker-thread trips swallowed by fail-open handlers are still caught.
 
 **Rule:** Unit tests must never resolve a hostname — use literal-IP refused-loopback URLs or mock the transport, and scope dependency-URL env vars to the tests that need them.
+
+## 26. A stream splitter that reports a signal only on termination loses it exactly on close
+
+**Context:** REQ-022 sub-step D (sbx1 2026-10-28) — the PABX's zeros-then-drop never surfaced as a resync: the host counted `resyncs: 0` and the e2e failed.
+
+- `FrameSplitter.feed` emits `zeros` only when a non-zero byte *ends* the run (or on `flush()`). The PABX sends exactly 3 zero bytes then closes, so the run sat buffered in the splitter while the next `recv` returned `b""` — every close site raised "peer closed" without ever flushing, and the zeros item was discarded with the dead session.
+- Fix: a `_flush_zeros` helper consulted at all 4 close sites (`_on_peer_closed`): trailing zeros become `LinkDropped("zeros: peer out of sync")` + `resyncs += 1`; anything else keeps its original close message. Same class of fix as LEARNINGS #20 (one splitter per connection): the splitter's contract hides state the caller must drain.
+- **Rule:** Whenever a stream parser reports a condition only on termination (run-end, flush, sentinel), every connection-close path must flush first and map a pending condition to its meaning — otherwise the signal is lost precisely in the case it was designed for (clean close after the signal).
+
+## 27. A renamed wire id corrupts silently; the sync outcome cannot detect it
+
+**Context:** REQ-022 sub-step D (sbx1 2026-10-28) — v3-shaped postings (TA→TM) synced `Complete` with `amount: None`: the mapping omits missing paths and no check requires the amount, so the run looked green while every charge was worthless.
+
+- Detection had to come from the handshake (announced layout vs mapped wire ids), not from the outcome — the e2e asserts the silent `None` first, then the detector + ladder repair, then `Complete` with an exact `Decimal`.
+- Two resolution traps on the way: every key/date/time id is digit-shaped too, so money-shape alone cannot pick TM out of P#/RN/DA/TI — exclude ids the spec already consumes elsewhere first; and `$['P#']` (bracket form for `#`) must normalize to the same wire id as `$.TA` or P# looks unconsumed and poisons the candidate set.
+- **Rule:** For rename-class drift on event feeds, compare the announced layout against mapped wire ids (never the sync outcome), resolve candidates by transform-shape among spec-unconsumed ids only, and normalize all JSONPath spellings to wire ids before set arithmetic.
