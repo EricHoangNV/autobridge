@@ -40,6 +40,7 @@ Design principles (plan §1):
 | `sim-harbor` | `simulators` | `simulators.harborpms.app:app` | simulator | 8106 | HarborPMS synthetic vendor (messy docs, quirks) + admin API |
 | `sim-legacystay` | `simulators` | `simulators.legacystay.app:app` | simulator | 8111 | LegacyStay synthetic vendor Phase 2 (offset, strict Bearer, throttle, nullable chaos) + admin API |
 | `sim-meridian` | `simulators` | `simulators.meridianpms.app:app` | simulator | 8116 | MeridianPMS synthetic vendor REQ-020 (Mews-style POST/JSON, body auth, Limitation cursor, UTC instants) + admin API |
+| `sim-fias-pabx` | `simulators` | `simulators.fias_pabx.app:app` | simulator | 8118 | FIAS PABX simulator REQ-022 sub-step A (on-premise exchange over TCP: dials the host, admin API; edge-net only) |
 | `mcp-hotel` | `mcp_stretch` | `mcp_stretch.app:app` | engine | 8115 | MCP Guardian Phase 2 (mock HotelTools V1→V2 + compatibility gateway, pinned-consumer replay) |
 | `ui` | `ui` | Node stub → Next.js 15 (W7) | user | 8107 | Four screens over the control plane |
 | `bench` | `autobridge.bench` | `autobridge.bench.app:app` | engine | 8108 | Matched-budget harness (AutoBridge vs baseline) |
@@ -77,7 +78,7 @@ engine-net   — control, worker, runtime-sandbox, ui, bench, mcp-hotel
 vendor-net   — runtime-sandbox ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian public API (8000)
 verifier-net — control ↔ verifier, bench ↔ verifier
 admin-net    — control ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian admin API (8001, W2.2)
-edge-net     — edge-worker ↔ sim-edgepos public API (8000) ONLY (P2.S2)
+edge-net     — edge-worker ↔ sim-edgepos public API (8000) ONLY (P2.S2); edge-worker ↔ sim-fias-pabx (REQ-022: the PABX dials out to the host, FIAS TCP; admin 8001 loopback-only)
 ```
 
 Isolation is by **attachment only** — no `internal: true`. An internal-only

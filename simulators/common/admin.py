@@ -13,7 +13,7 @@ import hmac
 import os
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from simulators.common.faults import KNOWN_SCENARIO_IDS, validate_scenario_id
@@ -63,8 +63,11 @@ def _require_admin_network(request: Request) -> None:
         raise HTTPException(status_code=403, detail="admin token required")
 
 
-def create_admin_app() -> FastAPI:
+def create_admin_app(extra_router: APIRouter | None = None) -> FastAPI:
     app = FastAPI(title="Simulator Admin API")
+
+    if extra_router is not None:
+        app.include_router(extra_router)
 
     @app.get("/healthz")
     def get_healthz(request: Request) -> dict[str, str]:

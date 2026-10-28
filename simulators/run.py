@@ -54,8 +54,20 @@ def main() -> None:
     public_module = os.getenv("APP_MODULE", "simulators.atlaspms.app:app")
     public_app = _load_app(public_module)
 
-    # Admin app is always the same
-    admin_app = _load_app("simulators.common.admin:admin_app")
+    # Admin app is the same, plus an optional simulator-specific router
+    # (e.g. REQ-022 FIAS link knobs: ADMIN_EXTRA_ROUTER set to
+    # "simulators.fias_pabx.admin:router"). Unset by default: behaviour of
+    # every other simulator is unchanged.
+    extra_router = None
+    extra_ref = os.getenv("ADMIN_EXTRA_ROUTER", "").strip()
+    if extra_ref:
+        try:
+            extra_router = _load_app(extra_ref)
+        except (ImportError, AttributeError) as exc:
+            raise SystemExit(f"ADMIN_EXTRA_ROUTER {extra_ref!r} failed to load: {exc}") from exc
+    from simulators.common.admin import create_admin_app
+
+    admin_app = create_admin_app(extra_router)
 
     public_port, admin_port = _listen_ports()
 

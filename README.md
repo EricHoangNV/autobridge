@@ -32,6 +32,7 @@ AutoBridge reads in `simulators/docs/`:
 | HarborPMS (messy wiki) | http://localhost:8106/developers | `harbor.md` |
 | LegacyStay (2000s website) | http://localhost:8111/developers | `legacystay.md` |
 | MeridianPMS (Mews-style POST/JSON: body-field auth, Limitation cursor, UTC instants; names via customers, money via order items) | http://localhost:8116/developers | `meridian-openapi.yaml` |
+| FIAS PABX (on-premise exchange over TCP: STX/ETX framing, link handshake, PS postings answered with PA; viewed as an uploaded document) | http://localhost:8118/developers | `fias-pabx.md` |
 
 CI (`.github/workflows/ci.yml`) runs the same order from a clean clone:
 `make test → make up → make smoke → make e2e → make e2e-ui → make demo`.
@@ -107,7 +108,7 @@ autobridge/
 ├── schemas/         reservation / folio-charge / connector-spec.v1 / runtime-target / discovery-result.v0
 ├── src/autobridge/  spec/ runtime/ discovery/ drift/ repair/ llm/ evidence/ control/ engine/ bench/
 ├── verifier/        own pyproject; oracle, canonical checks, hidden_cases/{dev,heldout}
-├── simulators/      own pyproject; common/ atlaspms/ harborpms/ docs/ scenarios/ (17 YAMLs)
+├── simulators/      own pyproject; common/ atlaspms/ harborpms/ meridianpms/ fias_pabx/ docs/ scenarios/ (17 YAMLs)
 ├── generated/       connectors/<id>/<release>/spec.yaml + build-report.json
 ├── ui/              Next.js 15 + TypeScript + Tailwind; lib/api (openapi-typescript client)
 ├── experiments/     benchmark_runs/*.jsonl  scorecard.md

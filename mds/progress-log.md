@@ -2628,3 +2628,28 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation).
   left IN_PROGRESS for the owner to flip on verification.
 - **Next:** REQ-022 (FIAS PABX + edge agent) per owner order.
 Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-022 sub-step A: FIAS PABX simulator merged (sbx1)
+
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+Built the on-premise PABX side from `simulators/docs/fias-pabx.md`
+(single source): new `simulators/fias_pabx/` package (frame codec,
+link engine with handshake/LR-announce/postings/PA-resend/guest/wakeup/
+key/DB-swap/keep-alive/resync/oversize/silence faults, admin router,
+public app with document-viewer portal), `simulators/run.py`
+`ADMIN_EXTRA_ROUTER` hook, and full wiring (compose edge-net service
+8118/8119, smoke + readyz, local-up/down, e2e conftest, demo reset +
+target map, schemas Literal, README, architecture docs, regenerated
+OpenAPI + UI client).
+
+Verification: `make lint` + `make typecheck` + `make ui-typecheck`
+green; `make test` green (2195 + 99 + 328 + ui 156; gates 91/94/90);
+`make up` + `make smoke` green with all new probes; new
+`tests/e2e/test_fias_pabx_admin.py` 4/4 green; local-mode launch
+verified. No EdgePOS remnants added; EdgePOS removal + simulator index
+move to sub-step B/E (see build note for the split rationale).
+
+Remaining for REQ-022: B edge agent (outbound-only, outbox/inbox,
+supervision), C FIAS spec vocabulary (before/after), D fault scenarios
++ verifier checks, E demo step + docs + README/index.

@@ -1316,3 +1316,76 @@ Decisions/gotchas:
 - `rows, key` tuple unpack across fake branches needed explicit `list[dict[str, Any]]`/`str` annotations (mypy).
 - Trust guard counts docstring prose as code (only `#` comments split out) — the fake's base URL reuses `https://demo.invalid` like the other fakes instead of adding `meridian.example.com` to the allowlist.
 - render footer test with a synthetic 1-step report now asserts the dynamic "1 steps via control API".
+
+### REQ-022 sub-step A — FIAS PABX simulator (simulator + viewer + wiring, edge agent deferred to B)
+
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+What landed (sub-step A only; B agent, C vocabulary, D scenarios, E demo remain):
+- `simulators/fias_pabx/`: `protocol.py` (STX/ETX codec, incremental
+  `FrameSplitter` with 64 KB oversize + zero-run resync signal), `pabx.py`
+  (PABX-side link engine: dial-out + §2.2 handshake with own-LR announce,
+  PS postings on seeded Grand Plaza rooms, resend-until-PA with same P#,
+  GI/GC/GO room state, WR past→WA/UR + future→scheduled WA/OK, KR/KD→KA,
+  KZ→KZ card answer, DR→DS/GI/DE swap, keep-alive/dead-link, all-zero
+  resync, oversize close, ACK-timeout silence), `admin.py` (link state +
+  fault hooks behind the shared admin auth), `app.py` (public
+  healthz/readyz/developers/docs; link thread in lifespan).
+- `simulators/devportal/fias.html`: uploaded-document viewer (file header
+  bar, grey canvas + white A4 pages, thumbnail rail, zoom, serif print
+  typography). Renders `fias-pabx.md` at load time from
+  `/developers/source` (absolute); command list (one table per direction:
+  record, name, fields from the record's own table incl. ✓-columns,
+  answer with section cite) derived from the §2.1 table + §3/§4 sections
+  (+ DS/DE from §3.4 prose, listed explicitly).
+- Wiring: compose `sim-fias-pabx` (edge-net only, public
+  127.0.0.1:8118:8000, admin 127.0.0.1:8119:8001, FIAS_HOST=edge-worker,
+  per-service SIM_STATE_FILE), smoke + wait_readyz entries, positive
+  edge-worker→pabx and negative control/sandbox/ui/worker−/→pabx plus
+  edge-worker−/→admin probes, local-up/down, e2e conftest ports/reset
+  list, `/demo` TARGET_MAP + port map + reset loop (incl. the extra
+  `/admin/fias/reset`), InjectFaultRequest Literal, README vendor row,
+  docs/architecture.md service table + edge-net line, ui/openapi.json +
+  schema.d.ts regenerated.
+- `simulators/run.py`: `ADMIN_EXTRA_ROUTER="module:attr"` hook for
+  simulator-specific admin routers (default unset = unchanged behavior);
+  `create_admin_app(extra_router=None)`.
+- Tests: `tests/unit/test_simulators_fias_pabx.py` (codec + full link
+  engine against an in-process spec-faithful host over real TCP loopback
+  + admin/app/launcher; ~40 tests), devportal mirror tests (page markers
+  + absolute source + Python re-derivation of record→dir/fields from the
+  .md), compose/static updates, `tests/e2e/test_fias_pabx_admin.py`
+  (inprocess target-map + live health/viewer/state/faults/reset/isolation).
+
+Decisions:
+- The simulator dials OUT (PABX side per spec: host listens :5010,
+  PABX reconnects every 10 s). No agent exists yet, so the live link is
+  down and readyz reports it in checks while staying green (a missing
+  peer is not a readiness failure; the nightly-restart rule flaps links
+  by design).
+- EdgePOS removal deferred to sub-step B (with the agent rework + S2
+  rewrite) so every sub-step stays green; nothing runs both vendors'
+  logic at once. Simulators index page likewise deferred to E.
+- No new scenario catalog ids in A (count is pinned at 17 = YAML files);
+  FIAS faults are admin knobs now, `fias_*.yaml` + catalog entries land in D.
+- Spec fidelity note: the §2.2 example FL `RNP#DATITADDUSO` does not parse
+  into the 8 field ids (missing a D); the sim announces the mathematically
+  concatenated `RNP#DATITADDDUSO`, which does. Example is illustrative,
+  the "concatenated field ids, in order" rule is normative.
+- Replay semantics: one-shot flags fire at serve-loop checkpoints and
+  survive a no-ACK drop to the next link (exactly once); reshaping to the
+  announced layout happens at send time (covers replays AND queued-but-
+  unsent stay postings); requeues go first, oldest P# first.
+
+Bugs found while testing (see LEARNINGS #20–21): per-call FrameSplitter
+swallowed split oversize frames; nested `threading.Lock` deadlocks in the
+stay planner; shape-at-send vs stale pending; abandoned for-loop items
+dropping coalesced peer frames; test-host pump overshoot (fixed 2 s
+socket timeout vs 0.1 s poll budget).
+
+Verification: targeted unit files green; `make lint` (ruff +
+import-linter) + `make typecheck` + `make ui-typecheck` green;
+`make test` green (autobridge 2195 / 91.3%, verifier 99 / 93.6%,
+simulators 328 / 90.5%, ui 156); `make up` + `make smoke` green
+(sim-fias-pabx :8118 readyz ok, all new probes pass); new e2e file green
+(4/4, E2E_KEEP_STACK=1); local-mode launch verified on scratch ports.

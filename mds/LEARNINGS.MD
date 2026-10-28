@@ -194,3 +194,20 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Workstream-scoped e2e selection ("run only your file") means a cross-cutting invariant checked in exactly one e2e file is unchecked by every workstream except that file's own: 5a/5c ran the meridian e2e file, which never touches `generated/connectors/*/reference`, while unit tests store+load in tmp dirs so both sides of the round-trip used the new code and agreed.
 - The fix pattern: pin committed bytes in unit tests that `make test` always runs — (1) the committed files load clean, (2) golden hex of each committed signature with a "do not re-sign, fix the code" note, (3) the new feature still moves the value when actually used. An invariant that must survive every future change belongs in the cheapest always-run gate, not in the most relevant-looking file.
 - **Rule:** When a change touches shared canonical bytes (signatures, hashes, golden files), add the regression pin to the unit suite even if an e2e file already covers it — e2e files are selected per-workstream and may not run.
+
+## 20. One FrameSplitter per TCP connection, never one per read
+
+**Context:** REQ-022 sub-step A (FIAS PABX link engine, 2026-10-28). The 70 KB oversize-frame test never tripped the 64 KB limit even though every byte arrived.
+
+- `_send_and_wait_ack` created a fresh `FrameSplitter` per call and discarded it on return. A hostile frame split across two reads landed half in the spent splitter (discarded) and half in the next one — neither half ever exceeded the limit, so no `OversizeFrameError` ever fired. The same loss applied to legitimate coalesced peer frames: an ACK processed first caused an early return that dropped a peer command queued behind it in the same chunk (flaky KR/KA test).
+- Fix: one splitter per connection, created in `_serve_one_link` and shared by the handshake, the send-and-wait loop and the serve poll; every item in every chunk is dispatched before any ACK completes the wait.
+- **Rule:** On a byte-stream protocol, the frame splitter is connection state, not call state. If a function that reads from the socket constructs its own splitter, partial frames and coalesced peer data are silently lost — and size limits become unenforceable.
+
+## 21. A threaded socket server deadlocks on the second lock, and its test host lies about time
+
+**Context:** REQ-022 sub-step A link-engine bring-up (2026-10-28). Three independent hangs/flakes, all in test and simulator glue, none in the protocol itself.
+
+- `threading.Lock` is not reentrant: the stay planner held the lock while calling a posting builder that re-acquired it (via a layout helper), freezing the link thread and every admin snapshot. Audited every `with self.lock` + callee for nesting; builders called under lock must be documented lock-free (or take the layout as a parameter).
+- `threading.Thread._stop()` is a method: naming an `Event` attribute `_stop` breaks `Thread.join()` with `TypeError: 'Event' object is not callable`. Name it `_halt`/`_shutdown`.
+- The in-process test host's `pump(0.1)` used a fixed 2 s socket timeout, so every quiet poll cost 2 s and the suite took 300 s+. Bound `settimeout` to the remaining poll budget (`max(0.01, min(remaining, 2.0))`).
+- **Rule:** When a threaded server hangs, suspect your own locking before the protocol: grep nested acquisition, never shadow `Thread` internals, and make test socket timeouts budget-aware — a fixed recv timeout turns every idle poll into a multi-second stall.

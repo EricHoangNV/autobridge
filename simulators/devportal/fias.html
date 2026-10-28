@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grand Plaza PABX Interface Specification (FIAS) - Document viewer</title>
+<link rel="stylesheet" href="/developers/assets/banner.css">
+<style>
+  :root { --zoom: 1; }
+  body { margin: 0; background: #8a8a8a; color: #1a1a1a; font: 14px/1.5 Georgia, "Times New Roman", serif; }
+  a { color: #1a4a8a; }
+  .sim-banner { position: sticky; top: 0; z-index: 20; }
+  .filebar { background: #2b2b2b; color: #eee; display: flex; align-items: center; gap: 12px; padding: 8px 14px; font: 13px/1.4 Verdana, sans-serif; position: sticky; top: 0; z-index: 10; }
+  .filebar .fname { font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .filebar .meta { color: #bbb; white-space: nowrap; }
+  .filebar .dl { margin-left: auto; color: #fff; text-decoration: none; border: 1px solid #777; border-radius: 4px; padding: 2px 10px; white-space: nowrap; }
+  .toolbar { background: #3d3d3d; color: #ddd; display: flex; align-items: center; gap: 8px; padding: 6px 14px; font: 13px Verdana, sans-serif; }
+  .toolbar button { background: #555; color: #fff; border: 1px solid #777; border-radius: 4px; padding: 2px 10px; cursor: pointer; }
+  .toolbar .pages { margin-left: auto; }
+  .workspace { display: flex; align-items: flex-start; gap: 16px; padding: 16px; }
+  .rail { width: 120px; flex: none; position: sticky; top: 12px; max-height: 88vh; overflow: auto; }
+  .rail a { display: block; background: #fff; color: #333; text-decoration: none; border: 1px solid #666; margin: 0 0 10px; padding: 6px 4px 4px; text-align: center; font: 10px Verdana, sans-serif; }
+  .rail a.active { outline: 3px solid #c9a227; }
+  .rail .thumb { height: 60px; background: linear-gradient(#fff 60%, #ddd); border-bottom: 1px solid #ccc; margin-bottom: 4px; }
+  .papers { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 20px; align-items: center; }
+  .paper { background: #fff; width: calc(820px * var(--zoom)); max-width: 100%; box-shadow: 0 4px 18px rgba(0,0,0,.55); padding: calc(64px * var(--zoom)) calc(72px * var(--zoom)) calc(56px * var(--zoom)); box-sizing: border-box; }
+  .paper .running { font: 11px Verdana, sans-serif; color: #666; border-bottom: 1px solid #999; padding-bottom: 6px; margin-bottom: 18px; }
+  .paper .pageno { font: 11px Verdana, sans-serif; color: #666; border-top: 1px solid #999; padding-top: 6px; margin-top: 22px; text-align: center; }
+  .paper h1 { font-size: 26px; margin: 6px 0 12px; }
+  .paper h2 { font-size: 19px; margin: 22px 0 8px; border-bottom: 2px solid #333; padding-bottom: 4px; }
+  .paper h3 { font-size: 16px; margin: 18px 0 6px; }
+  .paper h4 { font-size: 14px; margin: 14px 0 4px; }
+  .paper table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }
+  .paper th, .paper td { border: 1px solid #444; padding: 4px 8px; text-align: left; vertical-align: top; }
+  .paper th { background: #eee; }
+  .paper code { font-family: "Courier New", monospace; font-size: 12.5px; background: #f4f4f4; padding: 0 3px; }
+  .paper pre.code { background: #f6f6f2; border: 1px solid #999; padding: 10px 12px; overflow: auto; }
+  .paper pre.code code { background: none; padding: 0; }
+  .paper blockquote { margin: 10px 0; padding: 8px 12px; border-left: 4px solid #7a1f1f; background: #faf6ec; }
+  .paper ul { padding-left: 22px; }
+  .titleblock { text-align: center; padding: 60px 0 40px; }
+  .titleblock .conf { letter-spacing: 3px; color: #7a1f1f; font: bold 13px Verdana, sans-serif; border: 2px solid #7a1f1f; display: inline-block; padding: 6px 14px; margin-top: 30px; }
+  .cmd-dir { font: bold 15px Verdana, sans-serif; color: #fff; background: #33507a; padding: 5px 10px; margin: 20px 0 6px; }
+  .load-error { color: #7a1f1f; font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="sim-banner">Simulated vendor documentation for the AutoBridge demo · rendered live from <a href="/docs/fias-pabx.md">fias-pabx.md</a></div>
+<div class="filebar">
+  <span class="fname" id="fname">Grand_Plaza_PABX_Interface_Specification_FIAS_v1.0.pdf</span>
+  <span class="meta" id="fmeta">uploaded by Hotel IT</span>
+  <a class="dl" id="dl" href="/docs/fias-pabx.md" download title="Download the source document">&#8681; Download</a>
+</div>
+<div class="toolbar">
+  <button id="zin" type="button" title="Zoom in">A+</button>
+  <button id="zout" type="button" title="Zoom out">A&minus;</button>
+  <span id="zlabel">100%</span>
+  <span class="pages" id="pagecount"></span>
+</div>
+<div class="workspace">
+  <nav class="rail" id="rail" aria-label="Thumbnails"></nav>
+  <main class="papers" id="papers"></main>
+</div>
+<script>
+(function () {
+  "use strict";
+  var RUNNING = "Grand Plaza \u2014 PABX Interface Specification (FIAS)";
+
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function inline(s) {
+    var codes = [];
+    s = esc(s).replace(/`([^`]+)`/g, function (_, c) { codes.push(c); return "\u0000" + (codes.length - 1) + "\u0000"; });
+    s = s
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*\w])\*([^*][^*]*)\*/g, "$1<em>$2</em>");
+    return s.replace(/\u0000(\d+)\u0000/g, function (_, i) { return "<code>" + codes[+i] + "</code>"; });
+  }
+
+  // Split the markdown source into blocks: headings, tables, fences, lists,
+  // quotes, rules and paragraphs. Tables are first-class (ruled tables in
+  // print typography); every other portal renders prose only.
+  function parseBlocks(src) {
+    var lines = src.replace(/\r\n/g, "\n").split("\n");
+    var blocks = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      var fence = line.match(/^```(\w*)/);
+      if (fence) {
+        var body = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i])) body.push(lines[i++]);
+        i++;
+        blocks.push({ kind: "code", lang: fence[1] || "text", text: body.join("\n") });
+        continue;
+      }
+      var h = line.match(/^(#{1,4})\s+(.*)$/);
+      if (h) {
+        blocks.push({ kind: "heading", level: h[1].length, text: h[2] });
+        i++;
+        continue;
+      }
+      if (/^---+\s*$/.test(line)) { blocks.push({ kind: "rule" }); i++; continue; }
+      if (/^\s*\|/.test(line)) {
+        var rows = [];
+        while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]);
+        blocks.push({ kind: "table", rows: rows });
+        continue;
+      }
+      if (/^>\s?/.test(line)) {
+        var quote = [];
+        while (i < lines.length && /^>\s?/.test(lines[i])) quote.push(lines[i++].replace(/^>\s?/, ""));
+        blocks.push({ kind: "quote", text: quote.join("\n") });
+        continue;
+      }
+      if (/^\s*[-*]\s+/.test(line)) {
+        var items = [];
+        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*[-*]\s+/, ""));
+        blocks.push({ kind: "list", items: items });
+        continue;
+      }
+      if (!line.trim()) { i++; continue; }
+      var para = [];
+      while (i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|---+\s*$|\s*\||>\s?|\s*[-*]\s+)/.test(lines[i])) para.push(lines[i++]);
+      blocks.push({ kind: "para", text: para.join(" ") });
+    }
+    return blocks;
+  }
+
+  function splitCells(row) {
+    var t = row.trim().replace(/^\||\|$/g, "");
+    return t.split("|").map(function (c) { return c.trim(); });
+  }
+  function isSepRow(row) {
+    return /^\s*\|?[\s:|-]+\|?[\s:|.-]*$/.test(row) && /-/.test(row);
+  }
+  function renderTable(rows) {
+    var cells = rows.filter(function (r) { return !isSepRow(r); }).map(splitCells);
+    if (!cells.length) return "";
+    var html = "<table><thead><tr>" + cells[0].map(function (c) { return "<th>" + inline(c) + "</th>"; }).join("") + "</tr></thead><tbody>";
+    for (var k = 1; k < cells.length; k++) {
+      html += "<tr>" + cells[k].map(function (c) { return "<td>" + inline(c) + "</td>"; }).join("") + "</tr>";
+    }
+    return html + "</tbody></table>";
+  }
+
+  function renderBlock(b) {
+    if (b.kind === "heading") return "<h" + b.level + ">" + inline(b.text) + "</h" + b.level + ">";
+    if (b.kind === "rule") return "<hr>";
+    if (b.kind === "code") return '<pre class="code"><code>' + esc(b.text) + "</code></pre>";
+    if (b.kind === "table") return renderTable(b.rows);
+    if (b.kind === "quote") return "<blockquote>" + inline(b.text) + "</blockquote>";
+    if (b.kind === "list") return "<ul>" + b.items.map(function (t) { return "<li>" + inline(t) + "</li>"; }).join("") + "</ul>";
+    return "<p>" + inline(b.text) + "</p>";
+  }
+
+  // --- Command list (§2.1 records + §3/§4 record sections) ----------------
+  // One table per direction: record type, name, fields carried, answer
+  // expected. Directions come from the document structure itself:
+  // §3 sections originate at the PABX, §4 sections at the host (§4.5 `KA`
+  // is the stated exception: a PABX answer), §2.1 link records go to the
+  // side(s) their "Sent by" cell names. Fields come from each record's
+  // own detail table (first-column ids). DS/DE exist only in §3.4 prose,
+  // so they are listed with the fields that paragraph names.
+  var EXTRA_COMMANDS = [
+    { record: "DS", name: "Database Swap start (§3.4)", dir: "host", fields: ["DA", "TI"] },
+    { record: "DE", name: "Database Swap end (§3.4)", dir: "host", fields: ["DA", "TI"] }
+  ];
+
+  var ANSWERS = {
+    PS: "PA \u2014 posting answer for every PS (\u00a73.1; resent until PA)",
+    RE: "ACK \u2014 link-layer accept (\u00a71 ACK mode)",
+    WA: "ACK \u2014 link-layer accept (\u00a71 ACK mode)",
+    DR: "DS, GI per room, DE \u2014 database swap (\u00a73.4)",
+    GI: "ACK (\u00a74; opens the extension)", GC: "ACK (\u00a74)",
+    GO: "ACK (\u00a74; bars the extension)",
+    XL: "ACK (\u00a74)", XD: "ACK (\u00a74)",
+    WR: "WA \u2014 wake-up answer OK/UR (\u00a74.3); ACK accepts a future WR",
+    WC: "ACK (\u00a74)",
+    KR: "KA \u2014 key answer, always, even with ACK off (\u00a74.4)",
+    KD: "KA \u2014 key answer, always, even with ACK off (\u00a74.4)",
+    KZ: "KZ \u2014 card data RN/G#/GA/GD (\u00a74.4)",
+    PA: "ACK \u2014 link-layer accept (\u00a71 ACK mode)",
+    KA: "ACK \u2014 link-layer accept (\u00a71 ACK mode)",
+    DS: "GI per occupied room, then DE (\u00a73.4)",
+    DE: "ACK \u2014 link-layer accept (\u00a71 ACK mode)",
+    LS: "ACK, then link handshake (\u00a72.2)", LD: "ACK (\u00a72.2)",
+    LR: "ACK (\u00a72.2)", LA: "ACK \u2014 keep-alive (\u00a72.3)",
+    LE: "ACK, then close (\u00a72.3)"
+  };
+
+  function commandIndex(blocks) {
+    // Every commanded record: {record, name, dir} in document order.
+    // §2.1 link rows keep their "Sent by" side(s) (either side -> both);
+    // §3 ### records originate at the PABX, §4 ### records at the host
+    // (§4.5 KA is the stated exception: a PABX answer).
+    var index = [];
+    var seen = {};
+    function add(record, name, dir) {
+      if (!record || seen[record]) return;
+      seen[record] = 1;
+      index.push({ record: record, name: name, dir: dir });
+    }
+    function fieldIds(cell) {
+      // First-column cells hold one id ("RN") or several ("DA, TI").
+      return cell.replace(/`/g, "").match(/[A-Z#]{2}/g) || [];
+    }
+    var section = 0;
+    var current = [];
+    var perRecordCols = null; // header of a multi-record detail table
+    blocks.forEach(function (b) {
+      if (b.kind === "heading") {
+        current = [];
+        perRecordCols = null;
+        if (b.level === 2) {
+          var m = b.text.match(/^(\d+)\./);
+          section = m ? +m[1] : 0;
+        } else if (b.level === 3) {
+          var st = {};
+          (b.text.match(/`([A-Z#]{2})`/g) || []).forEach(function (tok) {
+            var t = tok.slice(1, -1);
+            if (!st[t]) { st[t] = 1; current.push(t); }
+          });
+          current.forEach(function (t) {
+            var dir = section === 3 ? "pabx" : "host";
+            if (t === "KA") dir = "pabx";
+            add(t, b.text.replace(/`/g, ""), dir);
+          });
+        }
+      } else if (b.kind === "table" && current.length) {
+        var rows = b.rows.filter(function (r) { return !isSepRow(r); }).map(splitCells);
+        if (rows.length < 2) return;
+        var head = rows[0].map(function (c) { return c.replace(/`/g, ""); });
+        var multi = head.length > 2 && head.slice(2).every(function (c) { return /^[A-Z#]{2}$/.test(c); });
+        rows.slice(1).forEach(function (cells) {
+          var ids = fieldIds(cells[0] || "");
+          if (multi) {
+            // A non-empty column cell means the record carries the field:
+            // "✓", or conditional text like "when moving" (§4.1 RO).
+            current.forEach(function (t) {
+              if (head.indexOf(t) < 0 || !(cells[head.indexOf(t)] || "")) return;
+              index.fields = index.fields || {};
+              var f = index.fields[t] = index.fields[t] || [];
+              ids.forEach(function (id) { if (f.indexOf(id) < 0) f.push(id); });
+            });
+          } else {
+            current.forEach(function (t) {
+              index.fields = index.fields || {};
+              var f = index.fields[t] = index.fields[t] || [];
+              ids.forEach(function (id) { if (f.indexOf(id) < 0) f.push(id); });
+            });
+          }
+        });
+      }
+    });
+    // §2.1 link records first (document order): name + side(s).
+    var links = [];
+    blocks.forEach(function (b) {
+      if (b.kind !== "table") return;
+      var rows = b.rows.filter(function (r) { return !isSepRow(r); }).map(splitCells);
+      if (rows.length && rows[0].join("|").replace(/`/g, "") === "Record|Name|Fields|Sent by") {
+        rows.slice(1).forEach(function (cells) {
+          links.push({ record: cells[0].replace(/`/g, ""), name: cells[1], fieldsCell: cells[2], sentBy: cells[3] });
+        });
+      }
+    });
+    var ordered = [];
+    var linked = {};
+    links.forEach(function (r) {
+      linked[r.record] = 1;
+      // The Fields cell names the ids the record carries ("`DA` date, `TI` time"
+      // — parenthesised values like (`PB` = PABX) are enum values, not fields).
+      var bare = (r.fieldsCell || "").replace(/\([^)]*\)/g, "");
+      var ids = (bare.match(/`([A-Z#]{2})`/g) || []).map(function (tok) { return tok.slice(1, -1); });
+      var s = (r.sentBy || "").toLowerCase();
+      var dirs = [];
+      if (/pabx/.test(s) || /either side/.test(s)) dirs.push("pabx");
+      if (/host/.test(s) || /either side/.test(s)) dirs.push("host");
+      dirs.forEach(function (d) { ordered.push({ record: r.record, name: r.name, dir: d, fields: ids }); });
+    });
+    index.forEach(function (r) { if (!linked[r.record]) ordered.push(r); });
+    // DS/DE exist only in §3.4 prose: list with the fields it names.
+    EXTRA_COMMANDS.forEach(function (r) { ordered.push(r); });
+    return { rows: ordered, fields: index.fields || {} };
+  }
+
+  function renderCommandList(cmd, direction) {
+    var rows = cmd.rows.filter(function (r) { return r.dir === direction; });
+    var html = '<div class="cmd-dir">' + (direction === "pabx"
+      ? "Command list \u2014 PABX \u2192 host (postings, status, answers)"
+      : "Command list \u2014 host \u2192 PABX (guest, wake-up, keys, posting answers)") + "</div>";
+    html += "<table><thead><tr><th>Record</th><th>Name</th><th>Fields carried</th><th>Answer expected</th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      var f = (cmd.fields[r.record] || r.fields || []);
+      html += "<tr><td><code>" + esc(r.record) + "</code></td><td>" + inline(r.name) + "</td><td>" +
+        (f.length ? f.map(function (x) { return "<code>" + esc(x) + "</code>"; }).join(" ") : "<em>as announced</em>") +
+        "</td><td>" + esc(r.answer || ANSWERS[r.record] || "ACK") + "</td></tr>";
+    });
+    return html + "</tbody></table>";
+  }
+
+  // --- Page assembly ------------------------------------------------------
+  function paper(id, inner, n, total) {
+    return '<section class="paper" id="' + id + '"><div class="running">' + esc(RUNNING) + "</div>" +
+      inner + '<div class="pageno">Page ' + n + " of " + total + "</div></section>";
+  }
+
+  function render(src) {
+    var blocks = parseBlocks(src);
+    var title = "Grand Plaza \u2014 PABX Interface Specification (FIAS)";
+    var h1 = blocks.filter(function (b) { return b.kind === "heading" && b.level === 1; })[0];
+    if (h1) title = h1.text;
+    var cmd = commandIndex(blocks);
+
+    // Title page + contents + one paper per ## section + command list.
+    var h2Idx = [];
+    blocks.forEach(function (b, k) { if (b.kind === "heading" && b.level === 2) h2Idx.push(k); });
+    var pages = [];
+    pages.push({ id: "title", label: "Title", html:
+      '<div class="titleblock"><h1>' + inline(title) + "</h1>" +
+      "<p>Grand Plaza &middot; property prop-001 &middot; interface version 1.0</p>" +
+      "<p>October 2026</p>" +
+      '<div class="conf">CONFIDENTIAL \u2014 FOR INTEGRATION PARTNERS</div></div>' +
+      "<p>This viewer renders the interface specification handed to integration partners by the hotel&rsquo;s IT team. " +
+      "The records below are presented as a <a href=\"#command-list\">command list</a>: one table per direction.</p>" });
+    var contents = "<h2>Contents</h2><ul>";
+    h2Idx.forEach(function (_, j) {
+      var b = blocks[h2Idx[j]];
+      contents += '<li><a href="#page-' + (j + 3) + '">' + inline(b.text) + "</a></li>";
+    });
+    contents += '<li><a href="#command-list">Command list \u2014 records by direction</a></li></ul>';
+    pages.push({ id: "contents", label: "Contents", html: contents });
+    h2Idx.forEach(function (k, j) {
+      var end = j + 1 < h2Idx.length ? h2Idx[j + 1] : blocks.length;
+      var html = blocks.slice(k, end).map(renderBlock).join("\n");
+      pages.push({ id: "page-" + (j + 3), label: blocks[k].text.replace(/<[^>]+>/g, "").slice(0, 26), html: html });
+    });
+    pages.push({ id: "command-list", label: "Command list", html:
+      "<h2>Command list \u2014 records by direction</h2>" +
+      "<p>Every record type the link carries, the fields it carries (from its own table in \u00a73\u2013\u00a74), and the answer the other side expects.</p>" +
+      renderCommandList(cmd, "pabx") +
+      renderCommandList(cmd, "host") });
+
+    var total = pages.length;
+    document.getElementById("papers").innerHTML =
+      pages.map(function (p, k) { return paper(p.id, p.html, k + 1, total); }).join("");
+    var rail = document.getElementById("rail");
+    rail.innerHTML = pages.map(function (p, k) {
+      return '<a href="#' + p.id + '" data-p="' + (k + 1) + '"><div class="thumb"></div>' + (k + 1) + ". " + esc(p.label) + "</a>";
+    }).join("");
+    document.getElementById("pagecount").textContent = total + " pages";
+    document.getElementById("fmeta").textContent =
+      "uploaded by Hotel IT \u00b7 Oct 2026 \u00b7 " + (new Blob([src]).size / 1024).toFixed(1) + " KB \u00b7 " + total + " pages";
+    function mark() {
+      var h = location.hash || "#title";
+      rail.querySelectorAll("a").forEach(function (a) {
+        a.classList.toggle("active", a.getAttribute("href") === h);
+      });
+    }
+    window.addEventListener("hashchange", mark);
+    mark();
+  }
+
+  // Zoom controls (viewer chrome only; the document is unchanged).
+  var z = 1;
+  function setZoom(nz) {
+    z = Math.min(1.6, Math.max(0.6, nz));
+    document.documentElement.style.setProperty("--zoom", z);
+    document.getElementById("zlabel").textContent = Math.round(z * 100) + "%";
+  }
+  document.getElementById("zin").addEventListener("click", function () { setZoom(z + 0.1); });
+  document.getElementById("zout").addEventListener("click", function () { setZoom(z - 0.1); });
+
+  fetch("/developers/source", { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+    .then(render)
+    .catch(function (e) {
+      document.getElementById("papers").innerHTML =
+        '<section class="paper"><p class="load-error">Could not load the page: ' + esc(e.message) + "</p></section>";
+    });
+})();
+</script>
+</body>
+</html>

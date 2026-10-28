@@ -1006,20 +1006,23 @@
             "title": "Seed"
           },
           "target": {
-            "description": "Simulator target id: sim-atlas, sim-harbor, sim-legacystay, sim-meridian, atlas, harbor, legacystay, meridian, atlaspms, harborpms, meridianpms",
+            "description": "Simulator target id: sim-atlas, sim-harbor, sim-legacystay, sim-meridian, sim-fias-pabx, atlas, harbor, legacystay, meridian, fias, atlaspms, harborpms, meridianpms, fiaspms",
             "enum": [
               "sim-atlas",
               "sim-harbor",
               "sim-legacystay",
               "sim-meridian",
+              "sim-fias-pabx",
               "atlas",
               "harbor",
               "legacystay",
               "legacy",
               "meridian",
+              "fias",
               "atlaspms",
               "harborpms",
               "meridianpms",
+              "fiaspms",
               "atlas-pms",
               "harbor-pms",
               "meridian-pms"

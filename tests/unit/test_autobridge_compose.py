@@ -28,6 +28,7 @@ EXPECTED_SERVICES = {
     "sim-legacystay",
     "sim-meridian",
     "sim-edgepos",
+    "sim-fias-pabx",
     "edge-worker",
     "mcp-hotel",
     "ui",
@@ -47,6 +48,7 @@ EXPECTED_ATTACHMENT = {
     "sim-legacystay": {"vendor-net", "admin-net"},
     "sim-meridian": {"vendor-net", "admin-net"},
     "sim-edgepos": {"edge-net"},
+    "sim-fias-pabx": {"edge-net"},
     "edge-worker": {"edge-net"},
     "mcp-hotel": {"engine-net"},
     "ui": {"engine-net"},
@@ -88,6 +90,7 @@ EXPECTED_PORTS = {
     "sim-legacystay": 8111,
     "sim-meridian": 8116,
     "sim-edgepos": 8113,
+    "sim-fias-pabx": 8118,
     "edge-worker": 8114,
     "mcp-hotel": 8115,
     "ui": 8107,
@@ -144,13 +147,17 @@ def test_worker_is_engine_net_only(compose: dict) -> None:
 
 
 def test_edge_network_isolated(compose: dict) -> None:
-    """P2.S2: sim-edgepos lives only on edge-net; no other service joins it."""
+    """P2.S2 + REQ-022: sim-edgepos / sim-fias-pabx live only on edge-net."""
     assert set(compose["services"]["sim-edgepos"]["networks"]) == {"edge-net"}
+    assert set(compose["services"]["sim-fias-pabx"]["networks"]) == {"edge-net"}
     assert set(compose["services"]["edge-worker"]["networks"]) == {"edge-net"}
     for svc in ("control", "worker", "runtime-sandbox", "verifier", "ui", "bench", "mcp-hotel"):
         assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
     for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian"):
         assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
+    for svc in ("sim-edgepos", "sim-fias-pabx"):
+        assert "vendor-net" not in set(compose["services"][svc]["networks"]), svc
+        assert "admin-net" not in set(compose["services"][svc]["networks"]), svc
 
 
 def test_host_ports_unique(compose: dict) -> None:
@@ -203,6 +210,7 @@ def test_trust_boundary_ports_ignore_bind_override(compose: dict) -> None:
         ("sim-harbor", "8110"),
         ("sim-legacystay", "8112"),
         ("sim-meridian", "8117"),
+        ("sim-fias-pabx", "8119"),
     }
     for svc, port in sorted(pinned):
         mappings = [str(m) for m in compose["services"][svc].get("ports", [])]
@@ -237,7 +245,7 @@ def test_verifier_build_context_excludes_engine(compose: dict) -> None:
 
 
 def test_sim_build_context_is_simulators_only(compose: dict) -> None:
-    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian", "sim-edgepos"):
+    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian", "sim-edgepos", "sim-fias-pabx"):
         build = compose["services"][svc]["build"]
         assert build["context"] in ("./simulators", "simulators")
 
@@ -292,6 +300,10 @@ def test_mcp_hotel_app_health() -> None:
 
 def test_sim_edgepos_app_health() -> None:
     _check_health("simulators.edgepos.app")
+
+
+def test_sim_fias_pabx_app_health() -> None:
+    _check_health("simulators.fias_pabx.app")
 
 
 def test_verifier_app_health() -> None:

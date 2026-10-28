@@ -165,13 +165,15 @@ def test_full_reset_clears_state_and_archives_ledger(tmp_path: pathlib.Path) -> 
 
         r, calls = _post_reset(client)
 
-        # Four simulators reset (REQ-021 item 1: Atlas, Harbor, LegacyStay, Meridian).
-        assert len(calls) == 4
+        # Five simulators reset (REQ-021 item 1 + REQ-022 FIAS PABX), plus the
+        # FIAS link-engine reset.
+        assert len(calls) == 6
         body = r.json()
         assert body["labelled"] is True and body["demo"] is True
         assert body["session_id"].startswith("demo-")
         targets = [e["target"] for e in body["resets"]]
-        assert targets == ["sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian"]
+        assert targets == ["sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian",
+                           "sim-fias-pabx", "sim-fias-pabx:fias"]
         assert all(e["status"] == 200 for e in body["resets"])
 
         # L0 emptied.

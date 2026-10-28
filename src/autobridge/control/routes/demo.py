@@ -39,14 +39,17 @@ TARGET_MAP = {
     "sim-harbor": "sim-harbor",
     "sim-legacystay": "sim-legacystay",
     "sim-meridian": "sim-meridian",
+    "sim-fias-pabx": "sim-fias-pabx",
     "atlas": "sim-atlas",
     "harbor": "sim-harbor",
     "legacystay": "sim-legacystay",
     "legacy": "sim-legacystay",
     "meridian": "sim-meridian",
+    "fias": "sim-fias-pabx",
     "atlaspms": "sim-atlas",
     "harborpms": "sim-harbor",
     "meridianpms": "sim-meridian",
+    "fiaspms": "sim-fias-pabx",
     "atlas-pms": "sim-atlas",
     "harbor-pms": "sim-harbor",
     "meridian-pms": "sim-meridian",
@@ -57,7 +60,7 @@ def _resolve_target(target: str) -> str:
     key = target.strip().lower()
     resolved = TARGET_MAP.get(key)
     if not resolved:
-        raise HTTPException(status_code=422, detail=f"unknown demo target {target!r}; use sim-atlas, sim-harbor, sim-legacystay or sim-meridian")
+        raise HTTPException(status_code=422, detail=f"unknown demo target {target!r}; use sim-atlas, sim-harbor, sim-legacystay, sim-meridian or sim-fias-pabx")
     return resolved
 
 
@@ -83,7 +86,7 @@ def _admin_url_for_target(resolved: str) -> str:
         # In container: use service DNS
         return f"http://{resolved}:8001"
     # Host mode: map to host ports
-    port_map = {"sim-atlas": 8109, "sim-harbor": 8110, "sim-legacystay": 8112, "sim-meridian": 8117}
+    port_map = {"sim-atlas": 8109, "sim-harbor": 8110, "sim-legacystay": 8112, "sim-meridian": 8117, "sim-fias-pabx": 8119}
     port = port_map.get(resolved, 8109)
     return f"http://localhost:{port}"
 
@@ -176,7 +179,7 @@ def demo_reset(
     ensure_migrated(db.get_bind())
 
     resets: list[dict[str, Any]] = []
-    for target in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian"):
+    for target in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian", "sim-fias-pabx"):
         base = _admin_url_for_target(target)
         # Same env overrides as inject-fault (tests point these at scratch sims).
         env_key = f"{target.upper().replace('-', '_')}_ADMIN_URL"
@@ -192,6 +195,17 @@ def demo_reset(
                 resets.append({"target": target, "status": r.status_code})
         except Exception as exc:
             resets.append({"target": target, "error": str(exc)})
+        if target == "sim-fias-pabx":
+            # The FIAS link engine keeps its own fault state (faults, P#
+            # counter, reseeded rooms) outside the shared scenario slot, so
+            # the generic reset above is not enough — clear it too.
+            fias_url = f"{base.rstrip('/')}/admin/fias/reset"
+            try:
+                with httpx.Client(timeout=5) as client:
+                    r = client.post(fias_url, json={}, headers=_admin_headers())
+                    resets.append({"target": "sim-fias-pabx:fias", "status": r.status_code})
+            except Exception as exc:
+                resets.append({"target": "sim-fias-pabx:fias", "error": str(exc)})
 
     # L0: drop learned fixes (in-process singleton; no persisted form exists —
     # RepairRun rows holding the same patches are wiped below).

@@ -5,7 +5,7 @@
 #
 # Starts every service the demo needs on the SAME host ports compose
 # publishes (control 8101, worker 8102, runtime-sandbox 8103, verifier 8104,
-# sims 8105/8106/8111/8113 + admin 8109/8110/8112, edge-worker 8114,
+# sims 8105/8106/8111/8113/8118 + admin 8109/8110/8112/8119, edge-worker 8114,
 # mcp-hotel 8115, bench 8108, ui 8107), with SQLite in ./.local/,
 # logs in ./.local/logs/ and PIDs in ./.local/pids/.
 #
@@ -88,6 +88,13 @@ APP_MODULE=simulators.meridianpms.app:app SIM_PUBLIC_PORT=8116 SIM_ADMIN_PORT=81
   start_svc sim-meridian 8116 uv run python -m simulators.run
 APP_MODULE=simulators.edgepos.app:app SIM_PUBLIC_PORT=8113 SIM_ADMIN_PORT=8117 \
   start_svc sim-edgepos 8113 uv run python -m simulators.run
+# REQ-022 FIAS PABX (edge-net in Compose; loopback here): dials FIAS_HOST,
+# which has no listener until the edge agent lands (sub-step B), so the
+# link stays down and readyz reports it while staying green.
+APP_MODULE=simulators.fias_pabx.app:app SIM_PUBLIC_PORT=8118 SIM_ADMIN_PORT=8119 \
+ADMIN_EXTRA_ROUTER=simulators.fias_pabx.admin:router SIM_STATE_FILE=/tmp/sim_fias_state.json \
+FIAS_HOST=127.0.0.1 FIAS_PORT=5010 \
+  start_svc sim-fias-pabx 8118 uv run python -m simulators.run
 start_svc edge-worker 8114 uv run uvicorn autobridge.edge.app:app --host 127.0.0.1 --port 8114
 start_svc mcp-hotel 8115 uv run uvicorn mcp_stretch.app:app --host 127.0.0.1 --port 8115
 start_svc bench 8108 uv run uvicorn autobridge.bench.app:app --host 127.0.0.1 --port 8108

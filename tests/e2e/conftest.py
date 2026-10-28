@@ -68,6 +68,7 @@ SERVICE_PORTS: Final[dict[str, int]] = {
     "sim-legacystay": 8111,
     "sim-meridian": 8116,
     "sim-edgepos": 8113,
+    "sim-fias-pabx": 8118,
     "edge-worker": 8114,
     "mcp-hotel": 8115,
     "ui": 8107,
@@ -75,16 +76,18 @@ SERVICE_PORTS: Final[dict[str, int]] = {
 }
 
 # Simulator admin ports (separate listener on admin-net, W2.2).
-# Public on 8105/8106/8111/8116 (8000), admin on 8109/8110/8112/8117 (8001).
+# Public on 8105/8106/8111/8116 (8000), admin on 8109/8110/8112/8117 (8001);
+# sim-fias-pabx on 8118 (8000), admin on 8119 (8001, REQ-022).
 SIM_ADMIN_PORTS: Final[dict[str, int]] = {
     "sim-atlas": 8109,
     "sim-harbor": 8110,
     "sim-legacystay": 8112,
     "sim-meridian": 8117,
+    "sim-fias-pabx": 8119,
 }
 
-# Simulators reset by the per-test fixture (plan §2.8: Atlas + Harbor; P2.S1.1: + LegacyStay; REQ-020: + Meridian).
-SIM_SERVICES: Final[tuple[str, str, str, str]] = ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian")
+# Simulators reset by the per-test fixture (plan §2.8: Atlas + Harbor; P2.S1.1: + LegacyStay; REQ-020: + Meridian; REQ-022: + FIAS PABX).
+SIM_SERVICES: Final[tuple[str, str, str, str, str]] = ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian", "sim-fias-pabx")
 
 # Suite runtime budget, wall-clock on a warm stack excluding image build
 # (plan §4 W9 passing criteria; also documented in docs/architecture.md §7).

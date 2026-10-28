@@ -1231,10 +1231,10 @@ export interface components {
             seed?: number | null;
             /**
              * Target
-             * @description Simulator target id: sim-atlas, sim-harbor, sim-legacystay, sim-meridian, atlas, harbor, legacystay, meridian, atlaspms, harborpms, meridianpms
+             * @description Simulator target id: sim-atlas, sim-harbor, sim-legacystay, sim-meridian, sim-fias-pabx, atlas, harbor, legacystay, meridian, fias, atlaspms, harborpms, meridianpms, fiaspms
              * @enum {string}
              */
-            target: "sim-atlas" | "sim-harbor" | "sim-legacystay" | "sim-meridian" | "atlas" | "harbor" | "legacystay" | "legacy" | "meridian" | "atlaspms" | "harborpms" | "meridianpms" | "atlas-pms" | "harbor-pms" | "meridian-pms";
+            target: "sim-atlas" | "sim-harbor" | "sim-legacystay" | "sim-meridian" | "sim-fias-pabx" | "atlas" | "harbor" | "legacystay" | "legacy" | "meridian" | "fias" | "atlaspms" | "harborpms" | "meridianpms" | "fiaspms" | "atlas-pms" | "harbor-pms" | "meridian-pms";
         } & {
             [key: string]: unknown;
         };

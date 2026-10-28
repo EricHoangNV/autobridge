@@ -7,13 +7,16 @@
 #   verifier-net control <-> verifier ONLY
 #   admin-net    control <-> simulator admin API (8001, W2.2) ONLY
 #   edge-net     edge-worker <-> sim-edgepos public API (8000) ONLY (P2.S2)
+#                + edge-worker <-> sim-fias-pabx (REQ-022; FIAS TCP dial-out
+#                to the host, admin on 8001 loopback-only)
 #
 # Negative checks enforced by attachment (asserted in `make smoke`):
 #   runtime-sandbox has no route to verifier-net / admin-net
 #   (sandbox -/-> verifier fixtures, sandbox -/-> simulator admin)
 #   ui is on engine-net only (ui -/-> simulators, ui -/-> verifier)
 #   worker is on engine-net only (no verifier / simulator-admin route)
-#   control has no route to edge-net (control -/-> sim-edgepos, P2.S2)
+#   control has no route to edge-net (control -/-> sim-edgepos, P2.S2;
+#   control -/-> sim-fias-pabx, REQ-022)
 #   edge-worker has no route to vendor-net / verifier-net / admin-net
 #   (edge -/-> cloud sims, edge -/-> verifier, edge -/-> simulator admin)
 
@@ -215,6 +218,31 @@ services:
       # AR-1-4 residual: simulator admin APIs never follow
       # AUTOBRIDGE_BIND_HOST — loopback-only even on a LAN-exposed stack.
       - "127.0.0.1:8117:8001"
+    healthcheck: *healthcheck-py
+
+  # REQ-022 FIAS PABX: the on-premise exchange. Edge-net ONLY (reachable by
+  # the edge agent, never by control, worker, sandbox or UI). The PABX
+  # dials OUT to the integration host (FIAS_HOST:FIAS_PORT); nothing dials
+  # in. Public HTTP (docs page) is loopback-published like the other sims;
+  # the admin API stays literal loopback (AR-1-4 residual).
+  sim-fias-pabx:
+    build:
+      context: ./simulators
+      dockerfile: Dockerfile
+    environment:
+      APP_MODULE: simulators.fias_pabx.app:app
+      ADMIN_EXTRA_ROUTER: simulators.fias_pabx.admin:router
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+      SIM_STATE_FILE: /tmp/sim_fias_state.json
+      FIAS_HOST: edge-worker
+      FIAS_PORT: 5010
+    networks:
+      - edge-net
+    ports:
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8118:8000"
+      # AR-1-4 residual: simulator admin APIs never follow
+      # AUTOBRIDGE_BIND_HOST — loopback-only even on a LAN-exposed stack.
+      - "127.0.0.1:8119:8001"
     healthcheck: *healthcheck-py
 
   # P2.S4.1 MCP Guardian: mock HotelTools V1/V2 + compatibility gateway
