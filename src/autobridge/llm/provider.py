@@ -184,8 +184,25 @@ _COST_PER_1K: dict[str, Decimal] = {
 }
 
 
-def estimate_cost(tier: str, usage: Usage) -> Decimal:
-    """Rough cost estimate; real billing comes from the provider dashboard."""
+def estimate_cost(tier: str, usage: Usage, model: str = "") -> Decimal:
+    """Cost estimate as Decimal (never float, DIRECTIVES Quick Reference 5).
+
+    When *model* matches a published price in
+    :data:`autobridge.config.MODEL_PRICES_PER_MILLION`, input/output tokens
+    are priced separately from it; otherwise the legacy flat per-tier rate
+    applies. Real billing still comes from the provider dashboard.
+    """
+    if model:
+        from autobridge.config import model_price_per_million  # noqa: PLC0415 (avoid cycle)
+
+        priced = model_price_per_million(model)
+        if priced is not None:
+            in_rate, out_rate = (Decimal(priced[0]), Decimal(priced[1]))
+            total = (
+                Decimal(usage.input_tokens) / Decimal(1_000_000) * in_rate
+                + Decimal(usage.output_tokens) / Decimal(1_000_000) * out_rate
+            )
+            return total.quantize(Decimal("0.000001"))
     rate = _COST_PER_1K.get(tier, Decimal("0"))
     return (Decimal(usage.total_tokens) / Decimal(1000) * rate).quantize(Decimal("0.000001"))
 
@@ -215,7 +232,7 @@ def record_model_call(
     from autobridge.control.models import ModelCall  # noqa: PLC0415 (avoid cycle)
 
     if cost_estimate is None:
-        cost_estimate = estimate_cost(tier, usage)
+        cost_estimate = estimate_cost(tier, usage, model=model)
     row = ModelCall(
         run_id=run_id,
         provider=provider,
@@ -437,6 +454,48 @@ def _to_openai_tool(spec: dict[str, Any]) -> dict[str, Any]:
     return {"type": "function", "function": function}
 
 
+def _parse_openai_chat_response(resp: Any) -> Completion:
+    """Parse an OpenAI Chat Completions response into a :class:`Completion`.
+
+    Shared by :class:`OpenAIProvider` and :class:`MuseProvider` (both speak
+    the same wire shape): first-choice message content, tool calls with
+    JSON-decoded arguments, ``prompt_tokens`` / ``completion_tokens`` usage.
+    """
+    choices = list(getattr(resp, "choices", []) or [])
+    message = choices[0].message if choices else None
+    raw_text = getattr(message, "content", None) if message is not None else None
+    text = raw_text if isinstance(raw_text, str) else ""
+    tool_calls: list[ToolCall] = []
+    for tc in getattr(message, "tool_calls", None) or []:
+        fn = getattr(tc, "function", None)
+        raw_args = getattr(fn, "arguments", None) if fn is not None else None
+        args: Any = {}
+        if isinstance(raw_args, dict):
+            args = raw_args
+        elif isinstance(raw_args, str) and raw_args.strip():
+            import json as _json  # noqa: PLC0415
+
+            try:
+                args = _json.loads(raw_args)
+            except Exception:
+                args = {}
+        if not isinstance(args, dict):
+            args = {}
+        tool_calls.append(
+            ToolCall(
+                id=str(getattr(tc, "id", "") or ""),
+                name=str(getattr(fn, "name", "") or "") if fn is not None else "",
+                arguments=dict(args),
+            )
+        )
+    usage_obj = getattr(resp, "usage", None)
+    usage = Usage(
+        input_tokens=int(getattr(usage_obj, "prompt_tokens", 0) or 0),
+        output_tokens=int(getattr(usage_obj, "completion_tokens", 0) or 0),
+    )
+    return Completion(text=text, tool_calls=tool_calls, usage=usage)
+
+
 class OpenAIProvider:
     """OpenAI Chat Completions adapter (P2.S5.1).
 
@@ -503,40 +562,91 @@ class OpenAIProvider:
         if tools:
             kwargs["tools"] = [_to_openai_tool(t) for t in tools]
         resp = client.chat.completions.create(**kwargs)
-        # Parse response: first choice message content + tool_calls + usage.
-        choices = list(getattr(resp, "choices", []) or [])
-        message = choices[0].message if choices else None
-        raw_text = getattr(message, "content", None) if message is not None else None
-        text = raw_text if isinstance(raw_text, str) else ""
-        tool_calls: list[ToolCall] = []
-        for tc in getattr(message, "tool_calls", None) or []:
-            fn = getattr(tc, "function", None)
-            raw_args = getattr(fn, "arguments", None) if fn is not None else None
-            args: Any = {}
-            if isinstance(raw_args, dict):
-                args = raw_args
-            elif isinstance(raw_args, str) and raw_args.strip():
-                import json as _json  # noqa: PLC0415
+        return _parse_openai_chat_response(resp)
 
-                try:
-                    args = _json.loads(raw_args)
-                except Exception:
-                    args = {}
-            if not isinstance(args, dict):
-                args = {}
-            tool_calls.append(
-                ToolCall(
-                    id=str(getattr(tc, "id", "") or ""),
-                    name=str(getattr(fn, "name", "") or "") if fn is not None else "",
-                    arguments=dict(args),
-                )
-            )
-        usage_obj = getattr(resp, "usage", None)
-        usage = Usage(
-            input_tokens=int(getattr(usage_obj, "prompt_tokens", 0) or 0),
-            output_tokens=int(getattr(usage_obj, "completion_tokens", 0) or 0),
+
+# ---------------------------------------------------------------------------
+# Meta Muse provider (REQ-021 item 5 — frontier tier, OpenAI-compatible)
+# ---------------------------------------------------------------------------
+
+
+class MuseProvider:
+    """Meta Muse Chat Completions adapter (OpenAI-compatible wire shape).
+
+    The frontier tier (and, by default, the small tier) of the ladder, behind
+    the same :class:`LLMProvider` contract: every call goes through
+    :class:`BudgetedProvider` into the :class:`ModelCall` ledger with
+    model-specific cost estimates. Model ids and the base URL come from
+    :mod:`autobridge.config` (env ``FRONTIER_MODEL`` / ``SMALL_MODEL`` /
+    ``FRONTIER_BASE_URL``), never from code; only the API key leaves the
+    process (as the SDK's auth header); tool permissions are enforced in
+    code, not in the prompt (DIRECTIVES §3).
+
+    Anthropic stays available as an alternative provider.
+    """
+
+    provider_name = "muse"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        frontier_model: str | None = None,
+        small_model: str | None = None,
+    ) -> None:
+        from autobridge.config import (  # noqa: PLC0415 (deferred import)
+            frontier_api_key,
+            frontier_base_url,
         )
-        return Completion(text=text, tool_calls=tool_calls, usage=usage)
+        from autobridge.config import (  # noqa: PLC0415 (deferred import)
+            frontier_model as default_frontier_model,
+        )
+        from autobridge.config import (  # noqa: PLC0415 (deferred import)
+            small_model as default_small_model,
+        )
+
+        self.api_key = api_key if api_key is not None else frontier_api_key()
+        self.base_url = base_url if base_url is not None else frontier_base_url()
+        self.frontier_model = frontier_model or default_frontier_model()
+        self.small_model = small_model or default_small_model()
+        self._client: Any | None = None
+
+    def model_for_tier(self, tier: str) -> str:
+        if tier == "frontier":
+            return self.frontier_model
+        if tier == "small":
+            return self.small_model
+        raise ValueError(f"unknown tier {tier!r}; expected 'frontier' or 'small'")
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            import openai  # noqa: PLC0415
+
+            self._client = openai.OpenAI(api_key=self.api_key or None, base_url=self.base_url)
+        return self._client
+
+    def complete(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int = 1024,
+        tier: str = "small",
+        purpose: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Completion:
+        _ = purpose  # ledger label is handled by BudgetedProvider
+        model = self.model_for_tier(tier)
+        client = self._get_client()
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": list(messages),
+        }
+        if tools:
+            kwargs["tools"] = [_to_openai_tool(t) for t in tools]
+        resp = client.chat.completions.create(**kwargs)
+        return _parse_openai_chat_response(resp)
 
 
 # ---------------------------------------------------------------------------

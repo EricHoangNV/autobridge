@@ -47,6 +47,13 @@ services:
       # before persisting (gate-before-persist). Control has a verifier-net
       # route, so this default works on the stock stack.
       VERIFIER_URL: ${VERIFIER_URL:-http://verifier:8000}
+      # REQ-021 item 5: frontier/small model access for the engine. Only the
+      # key names travel in config; values stay in .env / the host env and
+      # are never logged, stored or returned by the API.
+      FRONTIER_API_KEY: ${FRONTIER_API_KEY:-}
+      FRONTIER_BASE_URL: ${FRONTIER_BASE_URL:-}
+      FRONTIER_MODEL: ${FRONTIER_MODEL:-}
+      SMALL_MODEL: ${SMALL_MODEL:-}
     networks:
       - engine-net
       - verifier-net
@@ -70,6 +77,12 @@ services:
       # verifier; verification happens on the control-inline build path
       # above. A worker-executed build persists without a gate check only
       # when control's inline execution did not claim the job first.
+      # REQ-021 item 5: same frontier/small model env as control (the ladder
+      # runs here on worker-executed repairs; values never logged/stored).
+      FRONTIER_API_KEY: ${FRONTIER_API_KEY:-}
+      FRONTIER_BASE_URL: ${FRONTIER_BASE_URL:-}
+      FRONTIER_MODEL: ${FRONTIER_MODEL:-}
+      SMALL_MODEL: ${SMALL_MODEL:-}
     networks:
       - engine-net
     ports:
