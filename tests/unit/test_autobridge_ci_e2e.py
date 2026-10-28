@@ -99,3 +99,58 @@ def test_make_e2e_runs_whole_suite_in_random_order() -> None:
 def test_make_e2e_ui_target_exists() -> None:
     text = MAKEFILE.read_text()
     assert "e2e-ui:" in text, "Makefile must define an `e2e-ui` target (Playwright journey)"
+
+
+def test_make_ui_deps_target_installs_npm_ci() -> None:
+    text = MAKEFILE.read_text()
+    assert "ui-deps:" in text, "Makefile must define a `ui-deps` target (REQ-009)"
+    assert "npm ci" in text, "`ui-deps` must install with `npm ci`"
+    assert "ui/node_modules" in text, "`ui-deps` must key off ui/node_modules"
+
+
+def test_make_test_depends_on_ui_deps() -> None:
+    text = MAKEFILE.read_text()
+    assert "test: ui-deps" in text, (
+        "`make test` must depend on `ui-deps` so a fresh clone installs "
+        "ui/node_modules before pytest runs test_ui_client_compiles"
+    )
+
+
+def test_make_e2e_ui_installs_playwright_browsers() -> None:
+    text = MAKEFILE.read_text()
+    assert "e2e-ui: ui-e2e-deps" in text or "e2e-ui: ui-deps" in text, (
+        "`make e2e-ui` must depend on the UI/playwright install targets "
+        "so it works in a fresh clone without a manual browser install"
+    )
+    assert "playwright install" in text, (
+        "Makefile must install the Playwright browsers (REQ-009)"
+    )
+
+
+def test_ui_typecheck_test_skips_loudly_without_node_modules() -> None:
+    text = (ROOT / "tests" / "unit" / "test_autobridge_ui_client.py").read_text()
+    assert "pytest.skip" in text and "ui-deps" in text, (
+        "test_ui_client_compiles must skip loudly (naming `make ui-deps`) "
+        "when ui/node_modules is missing, so a bare pytest run on a fresh "
+        "clone skips instead of failing"
+    )
+
+
+def test_readme_quickstart_lists_node_and_ui_deps() -> None:
+    text = (ROOT / "README.md").read_text()
+    assert "Node" in text and "npm" in text, (
+        "README quickstart must list Node/npm as a requirement (REQ-009)"
+    )
+    assert "ui-deps" in text or "npm ci" in text, (
+        "README quickstart must include the UI install step (REQ-009)"
+    )
+
+
+def test_make_e2e_ui_sets_node_path_for_root_config() -> None:
+    text = MAKEFILE.read_text()
+    assert "NODE_PATH" in text and "ui/node_modules" in text, (
+        "`make e2e-ui` must set NODE_PATH to ui/node_modules: the root "
+        "playwright.config.ts and the tests/e2e specs import "
+        "@playwright/test, which is installed under ui/ (no root "
+        "node_modules), so config load fails without it"
+    )

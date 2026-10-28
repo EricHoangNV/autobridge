@@ -1,7 +1,7 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down test smoke e2e e2e-ui bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck
+.PHONY: up down test smoke e2e e2e-ui bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps
 
 # ---- Docker ----
 up:
@@ -11,7 +11,15 @@ down:
 	@if [ -f compose.yaml ]; then docker compose down -v; else echo "no compose.yaml — nothing to do"; fi
 
 # ---- Tests ----
-test:
+# Fresh-clone install for the UI (needs Node 22 + npm, see README quickstart).
+# No-op when ui/node_modules already exists. `test` and `e2e-ui` depend on
+# this, so a clean clone works without a manual `cd ui && npm ci`.
+ui-deps:
+	@if [ -d ui/node_modules ]; then echo "ui deps present (ui/node_modules)"; else \
+	  command -v npm >/dev/null || (echo "ui-deps: npm not found — install Node 22 + npm first (see README quickstart)" >&2; exit 1); \
+	  cd ui && npm ci; fi
+
+test: ui-deps
 	@echo ">> test: autobridge package (90% gate)"
 	uv run --extra dev pytest tests/unit/test_autobridge_*.py tests/unit/test_health_*.py --cov=autobridge --cov-report=$(COV_REPORT) --cov-fail-under=90 -q
 	@echo ">> test: verifier package (90% gate)"
@@ -38,11 +46,18 @@ smoke:
 e2e:
 	@if [ ! -f compose.yaml ]; then echo "no compose.yaml — skipping e2e (W1.2 creates it)"; else uv run --extra dev pytest tests/e2e -q --tb=short -p randomly; fi
 
+# Playwright browsers for the UI journey (needs ui-deps first). `npx
+# playwright install` is a no-op when the browsers are already installed.
+ui-e2e-deps: ui-deps
+	cd ui && npx playwright install chromium
+
 # UI journey (plan §4 W7 service confirmation): Playwright spec against the
 # Compose stack (`make up` first, UI on :8107). Green with mocks when the
-# stack is down, so it never blocks `make e2e`.
-e2e-ui:
-	cd ui && npm run test:e2e
+# stack is down, so it never blocks `make e2e`. NODE_PATH is required: the
+# root playwright.config.ts and the specs in tests/e2e import
+# `@playwright/test`, which lives in ui/node_modules (no root node_modules).
+e2e-ui: ui-e2e-deps
+	cd ui && NODE_PATH="$$PWD/node_modules" npm run test:e2e
 
 # Env: BENCH_SCENARIOS (csv) · BENCH_SEED · BENCH_TRIALS · BENCH_VISIBILITY
 # (dev|heldout|all) · BENCH_NO_SCORE=1 (harness JSONL only). Dev runs skip

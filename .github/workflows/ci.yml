@@ -47,7 +47,12 @@ jobs:
           make typecheck
 
       # ---- unit: coverage gate per package (plan §3) ----
-      - name: Unit tests (90% coverage gate per package)
+      # UI deps first (one-time `npm ci`; no-op when ui/node_modules exists).
+      # `make test` includes the Vitest UI component tests (DIRECTIVES §5).
+      - name: Install UI dependencies
+        run: make ui-deps
+
+      - name: Unit tests (90% coverage gate per package + Vitest)
         run: make test
 
       # ---- smoke: stack up + healthz/readyz + network checks ----
@@ -62,14 +67,6 @@ jobs:
         run: make e2e
 
       # ---- e2e-ui: Playwright journey (green with mocks if stack down) ----
-      - name: Install UI dependencies
-        run: npm ci
-        working-directory: ui
-
-      - name: UI component tests (Vitest, DIRECTIVES §5)
-        run: npm run test
-        working-directory: ui
-
       - name: Install Playwright chromium
         run: npx playwright install --with-deps chromium
         working-directory: ui

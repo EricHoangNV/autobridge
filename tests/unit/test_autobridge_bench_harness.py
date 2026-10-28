@@ -1027,7 +1027,6 @@ def test_harness_picks_host_urls_outside_container(monkeypatch: pytest.MonkeyPat
         DEFAULT_CONTROL_API_URL_HOST,
         DEFAULT_VERIFIER_URL_HOST,
         HarnessConfig,
-        _is_in_container,
         _resolve_default_url,
     )
 
@@ -1040,8 +1039,16 @@ def test_harness_picks_host_urls_outside_container(monkeypatch: pytest.MonkeyPat
     assert HarnessConfig().control_api_url == DEFAULT_CONTROL_API_URL
 
 
-def test_probe_unreachable_returns_nonzero(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
-    from autobridge.bench.harness import _guard_zero_tool_calls, _probe_services, BenchResult, HarnessConfig, ArmResult, HarnessInputs, TrialResult
+def test_probe_unreachable_returns_nonzero() -> None:
+    from autobridge.bench.harness import (
+        ArmResult,
+        BenchResult,
+        HarnessConfig,
+        HarnessInputs,
+        TrialResult,
+        _guard_zero_tool_calls,
+        _probe_services,
+    )
 
     cfg = HarnessConfig(control_api_url="http://127.0.0.1:1", verifier_url="http://127.0.0.1:1")
     msg = _probe_services(cfg, timeout_s=0.2)

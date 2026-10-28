@@ -8,6 +8,8 @@ import pathlib
 import subprocess
 import sys
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 UI_OPENAPI = ROOT / "ui" / "openapi.json"
 UI_SCHEMA = ROOT / "ui" / "lib" / "api" / "schema.d.ts"
@@ -90,7 +92,11 @@ def test_ui_client_uses_generated_types() -> None:
 
 
 def test_ui_client_compiles() -> None:
-    # tsc --noEmit must pass (client compiles against live schema)
+    # tsc --noEmit must pass (client compiles against live schema).
+    # `make test` installs ui/node_modules first (ui-deps); a bare pytest run
+    # on a fresh clone skips loudly instead of failing on a missing tsc.
+    if not (ROOT / "ui" / "node_modules").is_dir():
+        pytest.skip("ui/node_modules missing — run make ui-deps (cd ui && npm ci)")
     result = subprocess.run(
         ["npm", "run", "typecheck"],
         cwd=str(ROOT / "ui"),

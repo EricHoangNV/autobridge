@@ -8,10 +8,11 @@ L4 human), and verifies every repair behind a separate trust boundary before it 
 Money is `Decimal` end to end; dates are property-local business dates; every `SyncRun`
 ends `Complete | Degraded | Blocked` with the unmet criterion named.
 
-## Quickstart (clean machine: Docker + `uv` only)
+## Quickstart (clean machine: Docker + `uv` + Node 22/`npm` for the UI)
 
 ```bash
 cp .env.example .env        # fill in provider keys; secrets stay in .env (git-ignored)
+make ui-deps                # one-time UI install (`cd ui && npm ci`; also auto-run by `make test`/`make e2e-ui`)
 make up                     # build images, start the stack, wait for every /readyz
 make smoke                  # healthz/readyz + trust-boundary network probes
 make test                   # unit, ≥90% coverage per Python package
