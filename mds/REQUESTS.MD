@@ -312,6 +312,23 @@ the P# in `_unacked` (under the lock) before the frame goes out, and drop it aga
 same check for any other record that expects an answer (WR/KR → KA etc.). Add a test that forces the order (PA
 delivered before the ACK-wait returns) instead of relying on timing, and check the flakiness: 20 runs alone green.
 
+**Owner check (2026-10-29, on 9ff6445d): race fixed (`test_link_postings_flow_to_sink` 20/20 alone; full unit
+2772 passed, 0 crash reports). But sub-step D merged with e2e red, and on a keyed stack it is 8 failed / 150 passed.**
+The commit says "1 fail (documented flake)"; on the owner's keyed local stack (`make local-up`, the `.env` with the
+three tokens + bundle signature) `tests/e2e` gives:
+1. **7 of the new `tests/e2e/test_fias_faults.py` tests fail on auth**, the REQ-015 bug again: `_enqueue` (line ~162)
+   gets `401 {"detail":"Missing or invalid control token"}`, and `/v1/postings` (line ~142) returns the 401 body, so
+   `.json()["postings"]` is a `KeyError`. The file builds its own client without `control_headers()` from
+   `tests/e2e/conftest.py`. Send the token on every control/relay call (use the conftest helper; no second copy).
+   They passed in the sandbox only because its stack is unkeyed.
+2. **`test_s2_edge_target.py::test_agent_live_command_and_postings` fails at line 337** (`/edge/agents` shows no
+   `grand-plaza-pabx` with `link_up`). It runs after `test_fias_faults.py`; most likely a fault test leaves the PABX
+   link down (an armed fault, or a closed link still inside the 10 s redial) and the next file inherits it. Each fault
+   test must clear its scenario and wait until the link is back up (poll `/readyz` `link_up`) in teardown; do not call
+   this a flake or retry around it.
+Gate from now on: run `make e2e` against a **keyed** local stack (set the three tokens and `make edge-sign` in the
+sandbox `.env`), and do not merge with any e2e failure, "flake" included, without an owner note.
+
 ### REQ-023 — Demo plan v2: main script plus a fault-scenario catalogue (2026-10-28)
 Status: OPEN
 Owner: the demo plan must include the fault scenarios from REQ-019 … REQ-022. Rule: a step enters `docs/demo.md` and
