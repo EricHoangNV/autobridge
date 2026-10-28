@@ -19,6 +19,7 @@ from typing import Any
 
 from simulators.common.faults import (
     STATUS_VOCAB_MAP,
+    failed_check_for_scenario,
     is_auth_expired,
     is_auth_revoked,
     is_endpoint_removed,
@@ -26,6 +27,7 @@ from simulators.common.faults import (
     is_transient_error,
     is_tz_shift_active,
     should_repeat_cursor,
+    transport_for_scenario,
 )
 from simulators.common.generator import BUSINESS_CUTOFF_HOUR, business_date_for_posted_at
 
@@ -454,6 +456,20 @@ def run_all_checks(
     Each check contributes 0..N FailedCheck entries (bounded names + counts).
     Duplicates are de-duplicated by name (keep highest count).
     """
+    # REQ-022 D — FIAS on-premise scenarios ride framed TCP, not REST: the
+    # HTTP check set cannot verify a link guarantee. Fail closed with the
+    # catalog's link-layer check name (the YAML expected block pins the
+    # exact name; the loader consistency test enforces the agreement). The
+    # real behavior is graded by verifier/fias_checks.py in the FIAS e2e.
+    try:
+        fias_transport = transport_for_scenario(scenario_id) == "fias_tcp"
+    except ValueError:
+        fias_transport = False
+    if fias_transport:
+        name = failed_check_for_scenario(scenario_id)
+        assert name is not None  # catalog guarantees it (consistency test)
+        return [{"name": name, "count": 1}]
+
     all_fails: list[dict[str, Any]] = []
 
     # Core canonical checks

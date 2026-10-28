@@ -1,0 +1,15 @@
+id: agent_restart_inflight
+drift_class: AGENT_RESTART
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "The agent is killed with a command and postings in flight: after restart nothing is lost or duplicated downstream — the queued command runs exactly once and unforwarded postings drain."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [agent_restart_inflight]
+  injected_via: kill agent host process mid-flight, then restart on the same store
+  commands_duplicated: 0
+  postings_lost: 0

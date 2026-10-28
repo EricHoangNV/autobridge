@@ -521,7 +521,8 @@ existence checks). `make e2e` runs the pytest suite (`test_00` … `test_05`,
 All Phase 1 workstreams are complete and documented on their own pages:
 
 - **W2** — `simulators/common` seeded generator, fault switchboard, Atlas/Harbor
-  apps with real pagination/auth, scenario catalog (15 YAMLs), verifier oracle +
+  apps with real pagination/auth, scenario catalog (27 YAMLs: HTTP family +
+  the REQ-022 D FIAS on-premise family), verifier oracle +
   regression runner + mutation/invalid-patch traps. See
   [Safety model](safety-model.md) §§2–6.
 - **W3** — runtime interpreter (HTTP + retry, auth, pagination, transforms,

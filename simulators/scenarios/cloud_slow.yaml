@@ -1,0 +1,15 @@
+id: cloud_slow
+drift_class: CLOUD_SLOW
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "Cloud callbacks take tens of seconds: the agent keeps ACKing the PABX after the durable local write (never after the cloud call), so the link stays up and the outbox drains later."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [cloud_slow]
+  injected_via: latency wrapper on the agent relay client (test seam, no engine change)
+  link_up_during: true
+  postings_lost: 0

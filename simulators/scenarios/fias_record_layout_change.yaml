@@ -1,0 +1,17 @@
+id: fias_record_layout_change
+drift_class: FIELD_RENAME
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "PABX firmware update announces a renamed PS layout (TA total-amount-minor renamed to TM, CX charge-class added, fields reordered). The connector detects the drift from the handshake LR and repairs the FolioCharge mapping with a JSON Patch through the ladder (L1 rule, 0 frontier tokens), then postings flow again."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [fias_record_layout_change]
+  injected_via: "/admin/fias/faults {ps_layout: layout_v3, drop_link: true}"
+  announced_ps_layout: P#RNTIDASOTMDUDDCX
+  renamed_wire: {TA: TM}
+  added_wire: [CX]
+  repair: {rung: 1, rule: rename_field, frontier_tokens: 0}

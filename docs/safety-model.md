@@ -108,15 +108,16 @@ scenarios via fake transports and proves the engine never imports
 For each scenario the catalog lists the *primary* failed check. Secondary
 consequences (e.g. `no_loss` caused by a 429 truncation) are filtered so
 `failed_checks` exactly matches `expected.failed_checks` from the YAML.
-`tests/e2e/test_01_simulators_and_oracle.py` asserts this for all 17 scenarios.
+`tests/e2e/test_01_simulators_and_oracle.py` asserts this for all 27 scenarios.
 
-## 4. Scenario catalog (14, plan §2.8)
+## 4. Scenario catalog (27, plan §2.8 + REQ-020 + REQ-022 D)
 
 | Scenario | Drift class | Fixable | Visibility | Expected `failed_checks` |
 |---|---|---|---|---|
 | `baseline` | none | fixable | dev | *(none)* — pass |
 | `rename_guest_id` | FIELD_RENAME | fixable | dev | `field_missing` |
 | `offset_to_cursor` | PAGINATION_CHANGE | fixable | dev | `pagination_shape` |
+| `page_to_cursor` | PAGINATION_CHANGE | fixable | dev | `pagination_shape` |
 | `cursor_repeat_token` | PAGINATION_BUG | fixable | dev | `repeated_cursor` |
 | `rate_limit_429` | RATE_LIMIT | fixable | dev | `rate_limited` |
 | `transient_503` | TRANSIENT_ERROR | fixable | dev | `transient_error` |
@@ -128,6 +129,27 @@ consequences (e.g. `no_loss` caused by a 429 truncation) are filtered so
 | `duplicate_late_records` | DUPLICATE_DELIVERY | fixable | dev | `duplicate_records` |
 | `endpoint_removed` | CAPABILITY_REMOVED | escalate | heldout | `endpoint_not_found` |
 | `invalid_patch_trap` | SEMANTIC_VALUE_DRIFT | escalate | heldout | `invalid_patch_trap` |
+| `meridian_state_renamed` | FIELD_RENAME | fixable | dev | `field_missing` |
+| `meridian_cursor_renamed` | PAGINATION_CHANGE | fixable | dev | `pagination_shape` |
+| `fias_record_layout_change` | FIELD_RENAME (†) | fixable | dev | `fias_record_layout_change` |
+| `fias_link_resync` | LINK_RESYNC (†) | fixable | dev | `fias_link_resync` |
+| `fias_ack_timeout` | ACK_TIMEOUT (†) | fixable | dev | `fias_ack_timeout` |
+| `agent_restart_inflight` | AGENT_RESTART (†) | fixable | dev | `agent_restart_inflight` |
+| `cloud_slow` | CLOUD_SLOW (†) | fixable | dev | `cloud_slow` |
+| `fias_duplicate_records` | DUPLICATE_DELIVERY (†) | fixable | dev | `fias_duplicate_records` |
+| `fias_oversize_frame` | PROTOCOL_VIOLATION (†) | fixable | dev | `fias_oversize_frame` |
+| `fias_record_flood` | PROTOCOL_VIOLATION (†) | fixable | dev | `fias_record_flood` |
+| `session_lost_with_command` | SESSION_LOST (†) | fixable | dev | `session_lost_with_command` |
+| `stale_command` | STALE_COMMAND (†) | fixable | dev | `stale_command` |
+
+(†) REQ-022 D — the FIAS on-premise family rides framed TCP
+(`transport: fias_tcp`), not REST: no HTTP status, no pagination shape.
+The HTTP oracle cannot verify a link guarantee, so it fails these closed
+with the catalog's link-layer check name (the YAML `expected` block pins
+it; `tests/unit/test_verifier_app.py` and `test_01` assert the exact
+match). The real grading lives in `verifier/fias_checks.py` and
+`tests/e2e/test_fias_faults.py` (one YAML + one verifier check + one e2e
+per scenario).
 
 `dev` scenarios are visible during ladder tuning; `heldout` are escrowed
 until the final benchmark. `fixable` scenarios admit a deterministic or

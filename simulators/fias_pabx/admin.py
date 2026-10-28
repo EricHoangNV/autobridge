@@ -11,10 +11,15 @@ Endpoints:
 * ``GET /admin/fias/state`` — link snapshot (rooms, un-PA'd postings,
   current ``PS`` layout, counters). No secrets, no key material.
 * ``POST /admin/fias/faults`` — set fault hooks (layout change, zeros
-  resync, ACK-timeout silence, drop, DB-swap on reconnect, bursts).
+  resync, ACK-timeout silence, drop, DB-swap on reconnect, bursts,
+  replays, oversize, flood).
 * ``POST /admin/fias/reset`` — baseline faults, fresh P# counter and
   reseeded rooms (the generic ``/admin/reset`` only clears the shared
   scenario slot, which the FIAS engine does not consume in step A).
+* ``POST /admin/scenario`` — named-scenario injection shadowing the
+  shared slot route on this sim only (REQ-022 D): sets the shared slot
+  and arms the scenario's link faults, so ``/demo/inject-fault`` labels
+  FIAS faults the same way as HTTP ones.
 
 This module must never import autobridge or verifier (trust boundary).
 """
@@ -61,6 +66,28 @@ class FaultsRequest(BaseModel):
     silent_types: list[str] | None = None
     resync_on_reconnect: bool | None = None
     burst_postings: int | None = None
+    replay_postings: int | None = None
+    send_oversize: bool | None = None
+    flood_records: int | None = None
+
+
+#: Named-scenario → link-fault arming (REQ-022 D). ``POST /demo/inject-fault``
+#: targets this sim with a scenario id; this table is what the id *means* on
+#: the wire. Scenarios with no PABX-side fault (agent killed by the test,
+#: cloud slowed by the test seam, expired commands) map to ``{}``: the
+#: shared slot records the label, the link is untouched.
+SCENARIO_LINK_FAULTS: dict[str, dict[str, Any]] = {
+    "fias_record_layout_change": {"ps_layout": "layout_v3", "drop_link": True},
+    "fias_link_resync": {"send_zeros_then_drop": True},
+    "fias_ack_timeout": {"silent_types": ("WR",)},
+    "agent_restart_inflight": {},
+    "cloud_slow": {},
+    "fias_duplicate_records": {"replay_postings": 3},
+    "fias_oversize_frame": {"send_oversize": True},
+    "fias_record_flood": {"flood_records": 150},
+    "session_lost_with_command": {"drop_link": True},
+    "stale_command": {},
+}
 
 
 @router.get("/admin/fias/state")
@@ -73,14 +100,18 @@ def get_fias_state(request: Request) -> dict[str, Any]:
 def post_fias_faults(body: FaultsRequest, request: Request) -> dict[str, Any]:
     _require_admin_network(request)
     link = get_link()
-    if body.ps_layout is not None and body.ps_layout not in ("baseline", "layout_v2"):
-        raise HTTPException(status_code=400, detail="ps_layout must be baseline|layout_v2")
+    if body.ps_layout is not None and body.ps_layout not in ("baseline", "layout_v2", "layout_v3"):
+        raise HTTPException(status_code=400, detail="ps_layout must be baseline|layout_v2|layout_v3")
     if body.silent_types is not None:
         for rtype in body.silent_types:
             if len(rtype) != 2:
                 raise HTTPException(status_code=400, detail=f"bad record type {rtype!r}")
     if body.burst_postings is not None and not 0 <= body.burst_postings <= 200:
         raise HTTPException(status_code=400, detail="burst_postings must be 0..200")
+    if body.replay_postings is not None and not 0 <= body.replay_postings <= 50:
+        raise HTTPException(status_code=400, detail="replay_postings must be 0..50")
+    if body.flood_records is not None and not 0 <= body.flood_records <= 300:
+        raise HTTPException(status_code=400, detail="flood_records must be 0..300")
     with link.lock:
         if body.ps_layout is not None:
             link.faults.ps_layout = body.ps_layout
@@ -94,6 +125,12 @@ def post_fias_faults(body: FaultsRequest, request: Request) -> dict[str, Any]:
             link.faults.resync_on_reconnect = body.resync_on_reconnect
         if body.burst_postings is not None:
             link.faults.burst_postings = body.burst_postings
+        if body.replay_postings is not None:
+            link.faults.replay_postings = body.replay_postings
+        if body.send_oversize is not None:
+            link.faults.send_oversize = body.send_oversize
+        if body.flood_records is not None:
+            link.faults.flood_records = body.flood_records
     return get_link().snapshot()  # type: ignore[no-any-return]
 
 
@@ -105,3 +142,59 @@ def post_fias_reset(request: Request) -> dict[str, Any]:
     with link.lock:
         link.faults.drop_link = True  # fresh handshake picks up baseline
     return get_link().snapshot()  # type: ignore[no-any-return]
+
+
+class ScenarioRequest(BaseModel):
+    id: str
+    seed: int = 0
+
+
+@router.post("/admin/scenario")
+def post_fias_scenario(body: ScenarioRequest, request: Request) -> dict[str, Any]:
+    """Named-scenario injection for the FIAS exchange (REQ-022 D).
+
+    This router mounts before the shared admin router, so this shadows the
+    generic ``POST /admin/scenario`` on the FIAS sim only: the shared slot
+    is set exactly like elsewhere (``/demo/inject-fault`` labels the same
+    way), and a scenario with PABX-side meaning additionally arms the link
+    faults from :data:`SCENARIO_LINK_FAULTS`. Scenarios without link
+    meaning (agent killed or cloud slowed by the test itself) record the
+    label and touch nothing.
+    """
+    _require_admin_network(request)
+    from simulators.common.faults import validate_scenario_id  # noqa: PLC0415 - simulators-internal
+    from simulators.common.state import set_scenario  # noqa: PLC0415 - simulators-internal
+
+    try:
+        validate_scenario_id(body.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    if not isinstance(body.seed, int) or body.seed < 0:
+        raise HTTPException(status_code=400, detail="seed must be non-negative int")
+    if body.seed > 1_000_000_000:
+        raise HTTPException(status_code=400, detail="seed too large")
+    state = set_scenario(body.id, body.seed)
+    armed: dict[str, Any] = dict(SCENARIO_LINK_FAULTS.get(body.id, {}))
+    if armed:
+        link = get_link()
+        with link.lock:
+            if "ps_layout" in armed:
+                link.faults.ps_layout = str(armed["ps_layout"])
+            if armed.get("send_zeros_then_drop"):
+                link.faults.send_zeros_then_drop = True
+            if armed.get("drop_link"):
+                link.faults.drop_link = True
+            if "silent_types" in armed:
+                link.faults.silent_types = tuple(armed["silent_types"])
+            if armed.get("replay_postings"):
+                link.faults.replay_postings = int(armed["replay_postings"])
+            if armed.get("send_oversize"):
+                link.faults.send_oversize = True
+            if armed.get("flood_records"):
+                link.faults.flood_records = int(armed["flood_records"])
+    return {
+        "scenario_id": state["scenario_id"],
+        "seed": state["seed"],
+        "request_count": state["request_count"],
+        "armed_link_faults": armed,
+    }

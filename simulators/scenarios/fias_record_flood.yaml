@@ -1,0 +1,15 @@
+id: fias_record_flood
+drift_class: PROTOCOL_VIOLATION
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "The PABX floods a long run of identical records: the agent closes the session at its identical-record limit without crashing and the PABX redials cleanly."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [fias_record_flood]
+  injected_via: "/admin/fias/faults {flood_records: N}"
+  link_outcome: session_closed_then_redial
+  agent_crash: false

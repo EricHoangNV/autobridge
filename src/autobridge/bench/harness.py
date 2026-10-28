@@ -240,6 +240,9 @@ def list_scenarios(visibility: str | None = "dev") -> list[str]:
     """List scenario ids from ``simulators/scenarios/*.yaml`` filtered by visibility.
 
     ``visibility`` may be ``"dev"``, ``"heldout"`` or ``None`` (all).
+    The FIAS on-premise family (``transport: fias_tcp``, REQ-022 D) is
+    skipped: the bench arms run HTTP vendor APIs, while link guarantees
+    are graded by the FIAS e2e via ``verifier/fias_checks.py``.
     Returns an empty list when the scenario directory is unavailable
     (the engine package never imports simulators; DIRECTIVES §2).
     """
@@ -252,6 +255,8 @@ def list_scenarios(visibility: str | None = "dev") -> list[str]:
 
                 data = yaml.safe_load(p.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):
+                    continue
+                if str(data.get("transport", "http")) != "http":
                     continue
                 sid = str(data.get("id", p.stem))
                 vis = str(data.get("visibility", "dev"))

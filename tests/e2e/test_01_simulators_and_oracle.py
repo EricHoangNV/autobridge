@@ -140,6 +140,7 @@ def _load_catalog() -> list[dict[str, Any]]:
                 "fixable": s.fixable,
                 "visibility": s.visibility,
                 "vendor": s.vendor,
+                "transport": s.raw.get("transport", "http"),
                 "seed": s.seed,
                 "expected": s.expected,
             }
@@ -404,6 +405,19 @@ def test_verifier_hidden_never_returns_fixture_rows(e2e_stack: str) -> None:
                 "unknown_enum",
                 "date_order",
                 "loss_detected",
+                # REQ-022 D — FIAS on-premise link-layer guarantees.
+                "fias_record_layout_change",
+                "fias_link_resync",
+                "fias_ack_timeout",
+                "agent_restart_inflight",
+                "cloud_slow",
+                "fias_duplicate_records",
+                "fias_oversize_frame",
+                "fias_record_flood",
+                "session_lost_with_command",
+                "stale_command",
+                "layout_drift",
+                "command_outcome_mismatch",
             }
             assert isinstance(fc["count"], int) and fc["count"] > 0
         # No fixture leak even on fail
@@ -428,9 +442,14 @@ def test_catalog_expected_structure(e2e_stack: str) -> None:
             assert len(expected["failed_checks"]) >= 1, f"{entry['id']} fails but no failed_checks"
         else:
             assert len(expected["failed_checks"]) == 0
-        # http_status and pagination_mode are documented in YAML
+        # http_status and pagination_mode are documented in YAML (HTTP
+        # family); FIAS scenarios ride framed TCP — no HTTP status and no
+        # pagination shape (event-driven feeds), so both are null/absent.
         assert "http_status" in expected
-        assert "pagination_mode" in expected
+        if entry.get("transport", "http") == "http":
+            assert "pagination_mode" in expected
+        else:
+            assert expected.get("pagination_mode", None) is None
 
 
 def test_verifier_regression_suite_includes_all_fixable(e2e_stack: str) -> None:

@@ -60,8 +60,8 @@ def _reset_state():
 
 
 def test_known_scenarios_count() -> None:
-    assert len(SCENARIO_CATALOG) == 17
-    assert len(KNOWN_SCENARIO_IDS) == 17
+    assert len(SCENARIO_CATALOG) == 27
+    assert len(KNOWN_SCENARIO_IDS) == 27
     assert "baseline" in KNOWN_SCENARIO_IDS
     assert "rename_guest_id" in KNOWN_SCENARIO_IDS
     assert "endpoint_removed" in KNOWN_SCENARIO_IDS
@@ -479,7 +479,7 @@ def test_admin_get_scenario() -> None:
     data = resp.json()
     assert data["scenario_id"] == "baseline"
     assert "known_scenarios" in data
-    assert len(data["known_scenarios"]) == 17
+    assert len(data["known_scenarios"]) == 27
 
 
 def test_admin_get_scenario_requires_header() -> None:

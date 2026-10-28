@@ -1,0 +1,15 @@
+id: fias_oversize_frame
+drift_class: PROTOCOL_VIOLATION
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "The PABX emits a frame over the 64 KB site limit: the agent closes the session without crashing and the PABX redials cleanly on the next link."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [fias_oversize_frame]
+  injected_via: "/admin/fias/faults {send_oversize: true}"
+  link_outcome: session_closed_then_redial
+  agent_crash: false

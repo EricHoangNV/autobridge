@@ -38,7 +38,7 @@ def test_baseline_mutated_differ_for_non_baseline() -> None:
         else:
             mutated = generate_mutated(scen.id)
             # At least one of reservations/folios differs or pagination flag differs
-            assert mutated != baseline or scen.id in (
+            assert             mutated != baseline or scen.id in (
                 "rate_limit_429",
                 "transient_503",
                 "token_expired",
@@ -50,6 +50,18 @@ def test_baseline_mutated_differ_for_non_baseline() -> None:
                 "tz_boundary_shift",
                 "meridian_state_renamed",
                 "meridian_cursor_renamed",
+                # REQ-022 D — FIAS on-premise family: framed TCP, no HTTP
+                # dataset mutation by design (graded by fias_checks).
+                "fias_record_layout_change",
+                "fias_link_resync",
+                "fias_ack_timeout",
+                "agent_restart_inflight",
+                "cloud_slow",
+                "fias_duplicate_records",
+                "fias_oversize_frame",
+                "fias_record_flood",
+                "session_lost_with_command",
+                "stale_command",
             )
 
 

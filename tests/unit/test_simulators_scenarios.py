@@ -49,8 +49,8 @@ SCENARIOS_DIR = pathlib.Path("simulators/scenarios")
 
 def test_yaml_count_matches_catalog() -> None:
     yaml_files = list(SCENARIOS_DIR.glob("*.yaml"))
-    assert len(yaml_files) == 17, f"expected 17 YAML files, found {len(yaml_files)}: {yaml_files}"
-    assert len(KNOWN_SCENARIO_IDS) == 17
+    assert len(yaml_files) == 27, f"expected 27 YAML files, found {len(yaml_files)}: {yaml_files}"
+    assert len(KNOWN_SCENARIO_IDS) == 27
 
 
 def test_yaml_ids_match_fault_ids() -> None:
@@ -64,7 +64,7 @@ def test_yaml_required_keys_and_enums() -> None:
         assert scen.drift_class
         assert scen.fixable in ("fixable", "escalate")
         assert scen.visibility in ("dev", "heldout")
-        assert scen.vendor in ("both", "atlas", "harbor", "meridian")
+        assert scen.vendor in ("both", "atlas", "harbor", "meridian", "fias")
         assert isinstance(scen.seed, int)
         assert scen.description
         assert isinstance(scen.expected, dict)
@@ -252,6 +252,20 @@ _EXPECTED_SIGNALS: dict[str, list[str]] = {
     # The cursor leaf rename changes the fetch shape (pagination_change).
     "meridian_state_renamed": [],
     "meridian_cursor_renamed": ["pagination_change"],
+    # REQ-022 D — FIAS on-premise family: no HTTP-dataset signal exists by
+    # design (framed TCP, not REST). Detection lives on the link (LR
+    # announcements, agent store/relay outcomes) and is graded by
+    # verifier/fias_checks.py + the FIAS e2e, never by these detectors.
+    "fias_record_layout_change": [],
+    "fias_link_resync": [],
+    "fias_ack_timeout": [],
+    "agent_restart_inflight": [],
+    "cloud_slow": [],
+    "fias_duplicate_records": [],
+    "fias_oversize_frame": [],
+    "fias_record_flood": [],
+    "session_lost_with_command": [],
+    "stale_command": [],
 }
 
 _ALL_SIGNAL_NAMES = [
@@ -365,6 +379,17 @@ def test_http_status_consistent() -> None:
         "invalid_patch_trap": 200,
         "meridian_state_renamed": 200,
         "meridian_cursor_renamed": 200,
+        # REQ-022 D — FIAS scenarios ride framed TCP: no HTTP status.
+        "fias_record_layout_change": None,
+        "fias_link_resync": None,
+        "fias_ack_timeout": None,
+        "agent_restart_inflight": None,
+        "cloud_slow": None,
+        "fias_duplicate_records": None,
+        "fias_oversize_frame": None,
+        "fias_record_flood": None,
+        "session_lost_with_command": None,
+        "stale_command": None,
     }
     for scen in load_all_scenarios():
         assert scen.expected["http_status"] == expected_status[scen.id], (
@@ -435,6 +460,9 @@ def test_loader_rejects_invalid_enums() -> None:
         _validate_scenario_dict(bad, "x.yaml")
     bad = dict(base, vendor="nowhere")
     with pytest.raises(ValueError, match="vendor must be"):
+        _validate_scenario_dict(bad, "x.yaml")
+    bad = dict(base, transport="smoke_signals")
+    with pytest.raises(ValueError, match="transport must be"):
         _validate_scenario_dict(bad, "x.yaml")
 
 

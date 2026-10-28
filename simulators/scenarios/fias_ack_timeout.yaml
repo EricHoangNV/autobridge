@@ -1,0 +1,15 @@
+id: fias_ack_timeout
+drift_class: ACK_TIMEOUT
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "The PABX stops answering a host command (WR silence): the agent waits one bounded in-flight slot, then reports the timeout to the cloud. The link survives; nothing is retried blindly."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [fias_ack_timeout]
+  injected_via: "/admin/fias/faults {silent_types: [WR]}"
+  command_outcome: ack_timeout
+  link_up_after: true

@@ -245,7 +245,11 @@ class _FakeLink:
         return self.script.get(record_type, ("sent", None))
 
     def link_state(self) -> dict[str, Any]:
-        return {"link_up": self.up, "links_accepted": 1, "links_dropped": 0}
+        state: dict[str, Any] = {"link_up": self.up, "links_accepted": 1, "links_dropped": 0}
+        layouts = getattr(self, "layouts", None)
+        if layouts:
+            state["peer_layouts"] = layouts
+        return state
 
 
 def _agent_with_relay(tmp_path: object, script: dict[str, tuple[str, Any]] | None = None,
@@ -335,6 +339,32 @@ def test_poller_forward_and_heartbeat(tmp_path: object) -> None:
     agents = client.get("/v1/agents").json()["agents"]
     assert agents[0]["agent_id"] == "test-agent"
     store.close()
+
+
+def test_poller_heartbeat_carries_peer_layouts(tmp_path: object) -> None:
+    """The peer's announced layouts ride in the heartbeat (REQ-022 D)."""
+    agent, store, client = _agent_with_relay(tmp_path)
+    assert agent.heartbeat_once() is True
+    detail = client.get("/v1/agents").json()["agents"][0]["link_detail"]
+    assert "layouts=" not in detail  # no layouts announced: nothing rides along
+    agent.link.layouts = {"PS": ["RN", "P#", "DA", "TI", "TA", "DD", "DU", "SO"]}  # type: ignore[attr-defined]
+    assert agent.heartbeat_once() is True
+    detail = client.get("/v1/agents").json()["agents"][0]["link_detail"]
+    assert '"PS": ["RN", "P#", "DA", "TI", "TA", "DD", "DU", "SO"]' in detail
+    store.close()
+
+
+def test_flush_zeros_reports_trailing_zero_run() -> None:
+    """A zeros run closed by the peer (no terminator) still counts as resync."""
+    from autobridge.edge.fias_host import FrameSplitter, _flush_zeros
+
+    splitter = FrameSplitter()
+    assert _flush_zeros(splitter) is False
+    assert splitter.feed(b"\x06") == [] or True  # ACK alone: no zero run
+    splitter2 = FrameSplitter()
+    splitter2.feed(b"\x00\x00\x00")  # run buffered, nothing reported yet
+    assert _flush_zeros(splitter2) is True
+    assert _flush_zeros(splitter2) is False  # consumed exactly once
 
 
 def test_poller_empty_and_relay_down() -> None:

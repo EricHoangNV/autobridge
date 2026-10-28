@@ -42,7 +42,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 from zoneinfo import ZoneInfo
 
 log = logging.getLogger("autobridge.edge.fias")
@@ -98,6 +98,21 @@ class OversizeFrameError(FrameError):
 
 class LinkDropped(Exception):
     """Internal: the current session is dead; accept the next one."""
+
+
+def _flush_zeros(splitter: FrameSplitter) -> bool:
+    """Consume a trailing zero run the splitter buffered but never reported.
+
+    ``FrameSplitter`` reports ``zeros`` only once the run is terminated
+    (or flushed): a peer that sends all-zero bytes and closes immediately
+    after (§2.3 interface restart) would otherwise look like a bare close.
+    Returns True when a zero run was pending.
+    """
+    try:
+        items = splitter.flush()
+    except Exception:  # pragma: no cover - flush is total
+        return False
+    return any(item.kind == "zeros" for item in items)
 
 
 @dataclass(frozen=True)
@@ -447,6 +462,14 @@ class FiasHost:
             self.last_handshake_at = _utcnow()
         self._serve(sock, splitter)
 
+    def _on_peer_closed(self, splitter: FrameSplitter, message: str) -> NoReturn:
+        """Raise for a closed socket, honoring a trailing §2.3 zero run."""
+        if _flush_zeros(splitter):
+            with self._lock:
+                self.counters["resyncs"] += 1
+            raise LinkDropped("zeros: peer out of sync")
+        raise LinkDropped(message)
+
     def _raw(self, sock: socket.socket, data: bytes) -> None:
         try:
             sock.sendall(data)
@@ -474,7 +497,7 @@ class FiasHost:
             except TimeoutError:
                 continue
             if chunk == b"":
-                raise LinkDropped("peer closed")
+                self._on_peer_closed(splitter, "peer closed")
             try:
                 items = splitter.feed(chunk)
             except OversizeFrameError:
@@ -490,6 +513,8 @@ class FiasHost:
                 if item.kind == "bad":
                     self._raw(sock, bytes((NAK,)))
                 elif item.kind == "zeros":
+                    with self._lock:
+                        self.counters["resyncs"] += 1
                     raise LinkDropped("zeros: peer out of sync")
 
     def _send_and_wait_ack(self, sock: socket.socket, splitter: FrameSplitter, stashed: deque[Record],
@@ -507,7 +532,7 @@ class FiasHost:
             except TimeoutError:
                 chunk = None
             if chunk == b"":
-                raise LinkDropped("peer closed while awaiting ACK")
+                self._on_peer_closed(splitter, "peer closed while awaiting ACK")
             if chunk:
                 deadline = time.monotonic() + self._ack_wait
                 acked = False
@@ -661,7 +686,7 @@ class FiasHost:
             if chunk is None:
                 pass
             elif chunk == b"":
-                raise LinkDropped("peer closed the connection")
+                self._on_peer_closed(splitter, "peer closed the connection")
             else:
                 try:
                     items = splitter.feed(chunk)
@@ -720,7 +745,7 @@ class FiasHost:
             except TimeoutError:
                 continue
             if chunk == b"":
-                raise LinkDropped("peer closed awaiting command answer")
+                self._on_peer_closed(splitter, "peer closed awaiting command answer")
             try:
                 items = splitter.feed(chunk)
             except OversizeFrameError:
@@ -756,6 +781,7 @@ class FiasHost:
                 elif item.kind == "zeros":
                     with self._lock:
                         self.counters["resyncs"] += 1
+                    self._fail_inflight("link_down")
                     raise LinkDropped("zeros: peer out of sync")
 
     def _complete_slot(self, slot: CommandSlot, outcome: str, answer: Record | None) -> None:

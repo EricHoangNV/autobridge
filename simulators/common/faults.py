@@ -11,9 +11,16 @@ generation, no expressions.
 Scenario list (plan §2.8 + REQ-019 page_to_cursor):
   baseline, rename_guest_id, offset_to_cursor, page_to_cursor,
   cursor_repeat_token, rate_limit_429, transient_503, token_expired,
-  token_revoked, status_vocab_change, gross_to_net, tz_boundary_shift,
+  status_vocab_change, gross_to_net, tz_boundary_shift,
   duplicate_late_records, endpoint_removed, invalid_patch_trap,
   meridian_state_renamed, meridian_cursor_renamed
+
+FIAS on-premise family (REQ-022 D, ``transport: fias_tcp`` — link/agent
+faults, no HTTP dataset mutation):
+  fias_record_layout_change, fias_link_resync, fias_ack_timeout,
+  agent_restart_inflight, cloud_slow, fias_duplicate_records,
+  fias_oversize_frame, fias_record_flood, session_lost_with_command,
+  stale_command
 """
 
 from __future__ import annotations
@@ -45,6 +52,22 @@ SCENARIO_CATALOG: list[dict[str, str]] = [
     {"id": "invalid_patch_trap", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "escalate", "visibility": "heldout"},
   {"id": "meridian_state_renamed", "drift_class": "FIELD_RENAME", "fixable": "fixable", "visibility": "dev"},
   {"id": "meridian_cursor_renamed", "drift_class": "PAGINATION_CHANGE", "fixable": "fixable", "visibility": "dev"},
+  # REQ-022 D — FIAS on-premise family. ``transport: fias_tcp`` marks
+  # link/agent faults: they carry no HTTP dataset mutation (the wire is
+  # framed TCP, not REST) and are graded by the link-layer checks in
+  # ``verifier/fias_checks.py`` plus the FIAS e2e file — never by the HTTP
+  # oracle. ``failed_check`` names the link-layer guarantee so /verify can
+  # fail closed with the exact catalog name (it cannot verify the link).
+  {"id": "fias_record_layout_change", "drift_class": "FIELD_RENAME", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_record_layout_change"},
+  {"id": "fias_link_resync", "drift_class": "LINK_RESYNC", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_link_resync"},
+  {"id": "fias_ack_timeout", "drift_class": "ACK_TIMEOUT", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_ack_timeout"},
+  {"id": "agent_restart_inflight", "drift_class": "AGENT_RESTART", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "agent_restart_inflight"},
+  {"id": "cloud_slow", "drift_class": "CLOUD_SLOW", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "cloud_slow"},
+  {"id": "fias_duplicate_records", "drift_class": "DUPLICATE_DELIVERY", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_duplicate_records"},
+  {"id": "fias_oversize_frame", "drift_class": "PROTOCOL_VIOLATION", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_oversize_frame"},
+  {"id": "fias_record_flood", "drift_class": "PROTOCOL_VIOLATION", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_record_flood"},
+  {"id": "session_lost_with_command", "drift_class": "SESSION_LOST", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "session_lost_with_command"},
+  {"id": "stale_command", "drift_class": "STALE_COMMAND", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "stale_command"},
 ]
 
 KNOWN_SCENARIO_IDS: set[str] = {s["id"] for s in SCENARIO_CATALOG}
@@ -68,6 +91,31 @@ TZ_SHIFT_CUTOFF = 2
 
 def is_known_scenario(scenario_id: str) -> bool:
     return scenario_id in KNOWN_SCENARIO_IDS
+
+
+def transport_for_scenario(scenario_id: str) -> str:
+    """Transport carrying the scenario: ``"http"`` (default) or ``"fias_tcp"``.
+
+    The FIAS on-premise family (REQ-022 D) speaks framed TCP, not REST, so
+    HTTP dataset/behaviour flags never apply to it; unknown ids raise.
+    """
+    for entry in SCENARIO_CATALOG:
+        if entry["id"] == scenario_id:
+            return str(entry.get("transport", "http"))
+    raise ValueError(f"unknown scenario: {scenario_id}")
+
+
+def failed_check_for_scenario(scenario_id: str) -> str | None:
+    """Link-layer check name for FIAS-transport scenarios, else None.
+
+    The HTTP oracle fails closed with this name for ``fias_tcp`` scenarios
+    (it cannot verify a link guarantee); the FIAS e2e grades the real thing.
+    """
+    for entry in SCENARIO_CATALOG:
+        if entry["id"] == scenario_id:
+            failed_check = entry.get("failed_check")
+            return str(failed_check) if failed_check is not None else None
+    raise ValueError(f"unknown scenario: {scenario_id}")
 
 
 # ---------------------------------------------------------------------------

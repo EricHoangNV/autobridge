@@ -1,0 +1,14 @@
+id: fias_duplicate_records
+drift_class: DUPLICATE_DELIVERY
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "The PABX repeats already-sent postings (same P#): each charge lands once — the agent inbox and the relay dedupe by the P# + room + time idempotency key."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [fias_duplicate_records]
+  injected_via: "/admin/fias/faults {replay_postings: N}"
+  charges_landed_per_key: 1

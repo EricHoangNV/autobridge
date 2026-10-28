@@ -99,15 +99,30 @@ ALLOWED_FAILED_CHECKS: frozenset[str] = frozenset(
         "duplicate_records",
         "endpoint_not_found",
         "invalid_patch_trap",
-        "no_loss",
-        "unique_key",
-        "record_set_mismatch",
-        "status_mapping",
-        "unknown_enum",
-        "date_order",
-        "money_format",
-        "loss_detected",
-    }
+    "no_loss",
+    "unique_key",
+    "record_set_mismatch",
+    "status_mapping",
+    "unknown_enum",
+    "date_order",
+    "money_format",
+    "loss_detected",
+    # REQ-022 D — FIAS on-premise link-layer guarantees (failed closed by
+    # the HTTP oracle; graded for real by verifier/fias_checks.py).
+    "fias_record_layout_change",
+    "fias_link_resync",
+    "fias_ack_timeout",
+    "agent_restart_inflight",
+    "cloud_slow",
+    "fias_duplicate_records",
+    "fias_oversize_frame",
+    "fias_record_flood",
+    "session_lost_with_command",
+    "stale_command",
+    # fias_checks.py link-layer primitives (graded by the FIAS e2e).
+    "layout_drift",
+    "command_outcome_mismatch",
+}
 )
 
 

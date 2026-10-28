@@ -1,0 +1,15 @@
+id: stale_command
+drift_class: STALE_COMMAND
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "A wake-up request arrives after its expiry: it is never sent to the PABX and is reported expired to the cloud."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [stale_command]
+  injected_via: enqueue a command with expires_at in the past
+  command_outcome: expired
+  sent_to_pabx: false

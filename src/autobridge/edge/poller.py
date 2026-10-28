@@ -24,6 +24,7 @@ only request ids, kinds and outcome names are.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -259,6 +260,13 @@ class Agent:
         if isinstance(state, dict):
             detail = f"accepted={state.get('links_accepted', 0)} dropped={state.get('links_dropped', 0)}"
             link_up = bool(state.get("link_up", False))
+            # The peer's announced record layouts ride along in the
+            # heartbeat so the cloud can detect a firmware layout change
+            # from the handshake (REQ-022 D) without a link-side channel.
+            layouts = state.get("peer_layouts")
+            if isinstance(layouts, dict) and layouts:
+                with contextlib.suppress(TypeError, ValueError):
+                    detail += f" layouts={json.dumps(layouts, sort_keys=True)}"
         else:  # pragma: no cover - duck-typed fakes
             link_up = False
         return self.relay.heartbeat(self.agent_id, link_up, detail, depths["outbox"], depths["inbox"])

@@ -615,6 +615,99 @@ def test_oversize_host_frame_closes_session(host: Host) -> None:
         link.join(timeout=5)
 
 
+def test_layout_v3_renames_amount_wire_id(host: Host) -> None:
+    link = _start_link(host)
+    try:
+        host.handshake()
+        with link.lock:
+            link.faults.ps_layout = "layout_v3"
+            link.faults.drop_link = True
+        _drain_until_close(host)
+        host.accept(timeout=8)
+        layouts = host.handshake()
+        assert layouts["PS"] == "P#RNTIDASOTMDUDDCX", layouts
+        assert link.snapshot()["ps_field_list"] == "P#RNTIDASOTMDUDDCX"
+        ps = next(r for r in host.wait_for_records(1) if r.record_type == "PS")
+        assert ps.field("TM") != ""  # renamed amount id goes on the wire
+        assert ps.field("TA") == ""  # old id is gone
+        assert ps.field("CX") in ("VOICE", "SNACK")
+    finally:
+        link.stop()
+        link.join(timeout=5)
+
+
+def test_replay_postings_resend_same_pno(host: Host) -> None:
+    link = _start_link(host)
+    try:
+        host.handshake()
+        _wait_stay_sent(host, link)
+        # PA everything so the only new arrivals are the replays.
+        seen: set[str] = set()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            for rec in host.pump(0.2):
+                if rec.record_type == "PS" and rec.field("P#") not in seen:
+                    seen.add(rec.field("P#"))
+                    _pa(host, rec)
+            for rec in list(host.inbox):
+                if rec.record_type == "PS" and rec.field("P#") not in seen:
+                    seen.add(rec.field("P#"))
+                    _pa(host, rec)
+            if link.snapshot()["unacked"] == []:
+                break
+        assert link.snapshot()["unacked"] == []
+        sent_before = link.snapshot()["counters"]["postings_sent"]
+        with link.lock:
+            link.faults.replay_postings = 2
+        dupes = [r for r in host.wait_for_records(2, timeout=8) if r.record_type == "PS"]
+        assert len(dupes) == 2
+        assert {r.field("P#") for r in dupes} <= seen  # same P#s, nothing invented
+        assert link.snapshot()["counters"]["postings_sent"] == sent_before + 2
+    finally:
+        link.stop()
+        link.join(timeout=5)
+
+
+def test_flood_queues_identical_records(host: Host) -> None:
+    link = _start_link(host)
+    try:
+        host.handshake()
+        with link.lock:
+            link.faults.flood_records = 5
+        floods: list[Record] = []
+        deadline = time.monotonic() + 10
+        while len(floods) < 5 and time.monotonic() < deadline:
+            for rec in host.pump(0.3):
+                if rec.record_type == "PS" and rec.field("P#") == "000000":
+                    floods.append(rec)
+        assert len(floods) == 5
+        bodies = {(r.record_type, r.fields) for r in floods}
+        assert len(bodies) == 1  # byte-identical repeats
+    finally:
+        link.stop()
+        link.join(timeout=5)
+
+
+def test_oversize_probe_is_rejected_by_host_splitter(host: Host) -> None:
+    from simulators.fias_pabx.protocol import OversizeFrameError  # noqa: PLC0415
+
+    link = _start_link(host)
+    try:
+        host.handshake()
+        with link.lock:
+            link.faults.send_oversize = True
+        with pytest.raises(OversizeFrameError):
+            host.pump(3.0)  # the probe exceeds the 64 KB site limit
+        assert link.snapshot()["counters"]["oversize_closed"] >= 1
+        # The PABX drops and redials on its own; the new link handshakes.
+        host.accept(timeout=8)
+        host.handshake()
+        assert link.links_established >= 2
+    finally:
+        link.stop()
+        link.join(timeout=5)
+
+
 def test_peer_le_ends_link_cleanly_then_reconnect(host: Host) -> None:
     link = _start_link(host)
     try:
@@ -682,6 +775,104 @@ def test_fias_admin_state_and_faults_roundtrip(admin_client: TestClient) -> None
     assert r.status_code == 200
     assert r.json()["ps_layout"] == "baseline"
     assert r.json()["faults"]["silent_types"] == []
+
+
+def test_fias_admin_scenario_arms_link_faults(admin_client: TestClient) -> None:
+    r = admin_client.post(
+        "/admin/scenario", json={"id": "fias_record_layout_change", "seed": 42}, headers=_admin_headers()
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["scenario_id"] == "fias_record_layout_change"
+    assert body["armed_link_faults"] == {"ps_layout": "layout_v3", "drop_link": True}
+    # Same slot semantics as the shared route (inject-fault labels it).
+    g = admin_client.get("/admin/scenario", headers=_admin_headers())
+    assert g.status_code == 200
+    assert g.json()["scenario_id"] == "fias_record_layout_change"
+    # And the layout fault is armed on the link engine.
+    state = admin_client.get("/admin/fias/state", headers=_admin_headers()).json()
+    assert state["faults"]["ps_layout"] == "layout_v3"
+
+
+def test_fias_admin_scenario_slot_only_without_link_fault(admin_client: TestClient) -> None:
+    r = admin_client.post(
+        "/admin/scenario", json={"id": "stale_command", "seed": 0}, headers=_admin_headers()
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["armed_link_faults"] == {}
+    state = admin_client.get("/admin/fias/state", headers=_admin_headers()).json()
+    assert state["faults"]["ps_layout"] == "baseline"
+
+
+def test_fias_admin_scenario_arms_every_catalog_fault(admin_client: TestClient) -> None:
+    """Every REQ-022 D scenario arms exactly its documented link faults."""
+    import json as _json  # noqa: PLC0415
+
+    from simulators.fias_pabx.admin import SCENARIO_LINK_FAULTS  # noqa: PLC0415
+
+    for sid, want in sorted(SCENARIO_LINK_FAULTS.items()):
+        r = admin_client.post("/admin/scenario", json={"id": sid, "seed": 42},
+                              headers=_admin_headers())
+        assert r.status_code == 200, (sid, r.text)
+        body = r.json()
+        assert body["scenario_id"] == sid
+        assert body["armed_link_faults"] == _json.loads(_json.dumps(want)), sid
+    # Spot-check the engine fields landed (silent + replay + flood).
+    admin_client.post("/admin/scenario", json={"id": "fias_ack_timeout", "seed": 0},
+                      headers=_admin_headers())
+    state = admin_client.get("/admin/fias/state", headers=_admin_headers()).json()
+    assert state["faults"]["silent_types"] == ["WR"]
+    admin_client.post("/admin/scenario", json={"id": "fias_duplicate_records", "seed": 0},
+                      headers=_admin_headers())
+    state = admin_client.get("/admin/fias/state", headers=_admin_headers()).json()
+    assert state["faults"]["replay_postings"] == 3
+    admin_client.post("/admin/scenario", json={"id": "fias_record_flood", "seed": 0},
+                      headers=_admin_headers())
+    state = admin_client.get("/admin/fias/state", headers=_admin_headers()).json()
+    assert state["faults"]["flood_records"] == 150
+
+
+def test_fias_admin_faults_all_new_knobs_roundtrip(admin_client: TestClient) -> None:
+    r = admin_client.post(
+        "/admin/fias/faults",
+        json={"ps_layout": "layout_v3", "send_zeros_then_drop": True, "drop_link": False,
+              "silent_types": ["KR"], "resync_on_reconnect": True, "burst_postings": 1,
+              "replay_postings": 2, "send_oversize": False, "flood_records": 7},
+        headers=_admin_headers(),
+    )
+    assert r.status_code == 200, r.text
+    faults = r.json()["faults"]
+    assert faults["ps_layout"] == "layout_v3"
+    assert faults["send_zeros_then_drop"] is True
+    assert faults["silent_types"] == ["KR"]
+    assert faults["resync_on_reconnect"] is True
+    assert faults["burst_postings"] == 1
+    assert faults["replay_postings"] == 2
+    assert faults["send_oversize"] is False
+    assert faults["flood_records"] == 7
+
+
+def test_fias_admin_scenario_rejects_unknown_seed_and_network(admin_client: TestClient) -> None:
+    assert admin_client.post("/admin/scenario", json={"id": "nope"}).status_code == 403
+    bad_id = admin_client.post(
+        "/admin/scenario", json={"id": "nope", "seed": 0}, headers=_admin_headers()
+    )
+    assert bad_id.status_code == 400
+    bad_seed = admin_client.post(
+        "/admin/scenario", json={"id": "baseline", "seed": -1}, headers=_admin_headers()
+    )
+    assert bad_seed.status_code == 400
+
+
+def test_fias_admin_validates_new_fault_bounds(admin_client: TestClient) -> None:
+    ok = admin_client.post(
+        "/admin/fias/faults", json={"ps_layout": "layout_v3"}, headers=_admin_headers()
+    )
+    assert ok.status_code == 200
+    assert ok.json()["ps_field_list"] == "P#RNTIDASOTMDUDDCX"
+    for payload in ({"replay_postings": 999}, {"flood_records": 9999}, {"ps_layout": "v3"}):
+        r = admin_client.post("/admin/fias/faults", json=payload, headers=_admin_headers())
+        assert r.status_code == 400, payload
 
 
 def test_fias_admin_rejects_bad_faults(admin_client: TestClient) -> None:

@@ -35,11 +35,20 @@ _ALLOWED_DRIFT_CLASSES = frozenset(
         "SEMANTIC_VALUE_DRIFT",
         "DUPLICATE_DELIVERY",
         "CAPABILITY_REMOVED",
+        # REQ-022 D — FIAS on-premise link/agent faults (transport fias_tcp).
+        "LINK_RESYNC",
+        "ACK_TIMEOUT",
+        "AGENT_RESTART",
+        "CLOUD_SLOW",
+        "PROTOCOL_VIOLATION",
+        "SESSION_LOST",
+        "STALE_COMMAND",
     }
 )
 _ALLOWED_FIXABLE = frozenset({"fixable", "escalate"})
 _ALLOWED_VISIBILITY = frozenset({"dev", "heldout"})
-_ALLOWED_VENDOR = frozenset({"both", "atlas", "harbor", "meridian"})
+_ALLOWED_VENDOR = frozenset({"both", "atlas", "harbor", "meridian", "fias"})
+_ALLOWED_TRANSPORT = frozenset({"http", "fias_tcp"})
 
 
 @dataclass(frozen=True)
@@ -77,6 +86,11 @@ def _validate_scenario_dict(data: dict[str, Any], source: str) -> None:
         raise ValueError(f"{source}: description must be non-empty string")
     if not isinstance(data["expected"], dict):
         raise ValueError(f"{source}: expected must be a mapping")
+    # Optional transport marker (default "http"); the FIAS on-premise
+    # family (REQ-022 D) speaks framed TCP, not REST.
+    transport = data.get("transport", "http")
+    if transport not in _ALLOWED_TRANSPORT:
+        raise ValueError(f"{source}: transport must be one of {sorted(_ALLOWED_TRANSPORT)}")
     # id must match filename (without .yaml) and be valid scenario id
     stem = pathlib.Path(source).stem
     if data["id"] != stem:
@@ -148,3 +162,16 @@ def catalog_check_consistency() -> None:
             raise AssertionError(f"{scen.id}: fixable yaml={scen.fixable!r} catalog={entry['fixable']!r}")
         if scen.visibility != entry["visibility"]:
             raise AssertionError(f"{scen.id}: visibility yaml={scen.visibility!r} catalog={entry['visibility']!r}")
+        if scen.raw.get("transport", "http") != entry.get("transport", "http"):
+            raise AssertionError(
+                f"{scen.id}: transport yaml={scen.raw.get('transport', 'http')!r} "
+                f"catalog={entry.get('transport', 'http')!r}"
+            )
+        # FIAS-transport entries name their link-layer check in the catalog;
+        # the YAML's failed_checks must be exactly that name (the HTTP
+        # oracle fails closed with it; the FIAS e2e grades the real thing).
+        if entry.get("transport") == "fias_tcp":
+            want = [entry["failed_check"]]
+            got = scen.expected.get("failed_checks")
+            if got != want:
+                raise AssertionError(f"{scen.id}: failed_checks yaml={got!r} catalog={want!r}")

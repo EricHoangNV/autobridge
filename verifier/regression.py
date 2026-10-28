@@ -12,18 +12,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from simulators.common.faults import SCENARIO_CATALOG
+from simulators.common.faults import SCENARIO_CATALOG, transport_for_scenario
 from verifier.oracle import oracle_verdict
 
 # ---------------------------------------------------------------------------
 # Suite definition
 # ---------------------------------------------------------------------------
 
-# "Previously verified" = baseline (always verified) + every fixable scenario.
-# For a real system this would be the set of scenario_ids stored per connector
-# in the DB; for W2.7 we use the static catalog's fixable set.
+# "Previously verified" = baseline (always verified) + every fixable HTTP
+# scenario. The FIAS on-premise family (transport fias_tcp, REQ-022 D) is
+# excluded: the HTTP oracle cannot verify link guarantees (it fails them
+# closed by design), and grading them here would be vacuous passes. Their
+# regression surface is the FIAS e2e file.
 REGRESSION_SUITE: list[str] = [
-    entry["id"] for entry in SCENARIO_CATALOG if entry["fixable"] == "fixable"
+    entry["id"]
+    for entry in SCENARIO_CATALOG
+    if entry["fixable"] == "fixable" and transport_for_scenario(entry["id"]) == "http"
 ]
 # REGRESSION_SUITE includes baseline plus all fixable dev+heldout scenarios
 # (baseline is fixable in catalog as well).

@@ -1,0 +1,14 @@
+id: session_lost_with_command
+drift_class: SESSION_LOST
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "The link drops while a command waits for its answer: the command is retried on the new session (never broadcast to other links) or reported failed — exactly one terminal outcome per request id."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [session_lost_with_command]
+  injected_via: "/admin/fias/faults {drop_link: true} while a command is in flight"
+  terminal_outcomes_per_request: 1

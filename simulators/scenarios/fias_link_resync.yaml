@@ -1,0 +1,15 @@
+id: fias_link_resync
+drift_class: LINK_RESYNC
+fixable: fixable
+visibility: dev
+vendor: fias
+transport: fias_tcp
+seed: 42
+description: "All-zero bytes mid-session (interface restart): the agent re-handshakes on the new link and loses nothing — un-PA'd postings are resent with the same P# and fold on idempotency."
+expected:
+  fails: true
+  http_status: null
+  failed_checks: [fias_link_resync]
+  injected_via: "/admin/fias/faults {send_zeros_then_drop: true}"
+  link_outcome: rehandshake_clean
+  postings_lost: 0

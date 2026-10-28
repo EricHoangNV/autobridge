@@ -12,9 +12,11 @@ on the same in-house guests the PMS simulators serve (REQ-022 A).
 Fault hooks (driven by the admin API; the scenario catalog grows in
 REQ-022 D):
 
-* ``ps_layout`` — ``"baseline"`` or ``"layout_v2"`` (firmware update:
+* ``ps_layout`` — ``"baseline"``, ``"layout_v2"`` (firmware update:
   reordered ``PS`` fields plus an added ``CX`` field, announced in the
-  PABX's own ``LR`` records — §2.2 site extension).
+  PABX's own ``LR`` records — §2.2 site extension) or ``"layout_v3"``
+  (v2 order with the amount wire id renamed ``TA`` → ``TM``: the D
+  layout-change scenario).
 * ``send_zeros_then_drop`` — one-shot: emit all-zero bytes (the §2.3
   out-of-sync signal), drop the connection and reconnect; un-PA'd
   postings are resent after the new link.
@@ -24,6 +26,13 @@ REQ-022 D):
 * ``resync_on_reconnect`` — send ``DR`` after the next handshake and run
   the ``DS`` / ``GI`` … / ``DE`` database swap before postings resume.
 * ``burst_postings`` — queue N extra call postings immediately.
+* ``replay_postings`` — re-queue the last N sent ``PS`` postings as
+  duplicates (same P#): the agent and relay must fold them so each
+  charge lands once.
+* ``send_oversize`` — one-shot: emit a frame over the 64 KB site limit;
+  the host closes the session and the PABX redials, never a crash.
+* ``flood_records`` — queue N byte-identical ``PS`` records: the host
+  closes the session at its identical-record limit and the link redials.
 
 This module must never import autobridge or verifier (trust boundary).
 """
@@ -36,13 +45,14 @@ import random
 import socket
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from simulators.common.generator import generate_dataset
 
-from .protocol import ACK, NAK, FrameSplitter, OversizeFrameError, Record, encode_frame
+from .protocol import ACK, ETX, NAK, STX, FrameSplitter, OversizeFrameError, Record, encode_frame
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -75,6 +85,16 @@ BASELINE_LAYOUTS: dict[str, list[str]] = {
 #: minor-units, plus an added ``CX`` (charge class) field. The mapping
 #: repair in REQ-022 D keys off these ids.
 LAYOUT_V2_PS = ["P#", "RN", "TI", "DA", "SO", "TA", "DU", "DD", "CX"]
+
+#: Second firmware update (REQ-022 D ``fias_record_layout_change``): the
+#: v2 order, but the amount wire id renamed ``TA`` → ``TM`` (total minor).
+#: A connector built against baseline/v2 reads ``$.TA`` for the amount, so
+#: v3-shaped postings degrade until the mapping is repaired to ``$.TM``.
+LAYOUT_V3_PS = ["P#", "RN", "TI", "DA", "SO", "TM", "DU", "DD", "CX"]
+
+#: P# used for flood probes (never issued by :meth:`_next_posting`, which
+#: starts at 1): identical-repeat frames the host folds and then closes on.
+FLOOD_PNO = "000000"
 
 MINIBAR_OUTLET = "MINI"
 CALL_OUTLET = "TEL"
@@ -121,9 +141,11 @@ class PabxConfig:
 class LinkFaults:
     """Admin-driven fault hooks (REQ-022 A knobs; scenarios land in D).
 
-    One-shot flags (``send_zeros_then_drop``, ``drop_link``) fire at the
-    next serve-loop checkpoint; a link that drops first (no ACK, oversize)
-    carries the still-armed flag to the next link — it fires exactly once.
+    One-shot flags (``send_zeros_then_drop``, ``drop_link``,
+    ``send_oversize``) fire at the next serve-loop checkpoint; a link that
+    drops first (no ACK, oversize) carries the still-armed flag to the next
+    link — it fires exactly once. Counters (``replay_postings``,
+    ``flood_records``) are consumed when queued.
     """
 
     ps_layout: str = "baseline"
@@ -132,6 +154,9 @@ class LinkFaults:
     silent_types: tuple[str, ...] = ()
     resync_on_reconnect: bool = False
     burst_postings: int = 0
+    replay_postings: int = 0
+    send_oversize: bool = False
+    flood_records: int = 0
 
 
 @dataclass
@@ -176,6 +201,7 @@ class PabxLink(threading.Thread):
         self._posting_seq = 0
         self._pending: list[Record] = []  # PS records queued to send
         self._unacked: dict[str, dict[str, object]] = {}  # P# -> {record, last, seq}
+        self._sent_history: deque[Record] = deque(maxlen=50)  # recent PS sent (dupe-replay source)
         self._stay_queued = False  # stay postings are planned once per process
         self._wakeups: dict[tuple[str, str, str], None] = {}  # (RN, DA, TI) scheduled
         self._key_card = {"KC": "01", "RN": "101", "G#": "RES-CARD-001"}
@@ -242,6 +268,7 @@ class PabxLink(threading.Thread):
             self._posting_seq = 0
             self._pending.clear()
             self._unacked.clear()
+            self._sent_history.clear()
             self._stay_queued = False
             self._wakeups.clear()
             self._awaiting_dbswap = False
@@ -431,10 +458,12 @@ class PabxLink(threading.Thread):
 
     def _current_layouts(self) -> dict[str, list[str]]:
         with self.lock:
-            v2 = self.faults.ps_layout == "layout_v2"
+            variant = self.faults.ps_layout
         layouts = dict(BASELINE_LAYOUTS)
-        if v2:
+        if variant == "layout_v2":
             layouts["PS"] = list(LAYOUT_V2_PS)
+        elif variant == "layout_v3":
+            layouts["PS"] = list(LAYOUT_V3_PS)
         return layouts
 
     def _handshake(self, sock: socket.socket) -> None:
@@ -541,6 +570,9 @@ class PabxLink(threading.Thread):
             "DA": _wire_date(now),
             "TI": _wire_time(now),
             "TA": str(amount),
+            # v3 renames the amount wire id TA -> TM: carry both, the layout
+            # in force picks which one goes on the wire (_ps_in_layout).
+            "TM": str(amount),
             "DD": dd,
             "DU": du,
             "SO": outlet,
@@ -593,6 +625,13 @@ class PabxLink(threading.Thread):
         if "CX" not in vals:
             outlet = vals.get("SO", CALL_OUTLET)
             vals["CX"] = "VOICE" if outlet == CALL_OUTLET else "SNACK"
+        # TA/TM are the same amount under two firmware names: shaping an
+        # older record to a newer layout (replays, never-sent stay postings)
+        # must carry the amount across the rename, never blank it.
+        if "TM" not in vals and "TA" in vals:
+            vals["TM"] = vals["TA"]
+        if "TA" not in vals and "TM" in vals:
+            vals["TA"] = vals["TM"]
         return Record("PS", tuple((fid, vals.get(fid, "")) for fid in layout))
 
     def _pump_burst_postings(self) -> None:
@@ -610,6 +649,63 @@ class PabxLink(threading.Thread):
                 minibar = self._rng.random() < 0.3
                 self._pending.append(self._next_posting(room, minibar=minibar))
 
+    def _queue_replays(self, count: int) -> None:
+        """Re-queue the last *count* sent PS postings as duplicates.
+
+        Same P#s (a resent-until-PA storm or a firmware replay bug): the
+        agent inbox and the relay must fold them on the idempotency key so
+        each charge lands once (``fias_duplicate_records``).
+        """
+        with self.lock:
+            history = list(self._sent_history)[-count:] if count > 0 else []
+            self._pending[0:0] = history
+
+    def _queue_flood(self, count: int) -> None:
+        """Queue *count* byte-identical PS records (flood probe).
+
+        One synthetic charge (``FLOOD_PNO``, never a real P#) repeated: the
+        host folds the dupes, closes the session at its identical-record
+        limit, and the link redials. Bounded leftovers (fewer than the host
+        limit) resend once without closing again.
+        """
+        now = self._now()
+        rec = Record(
+            "PS",
+            (
+                ("P#", FLOOD_PNO),
+                ("RN", "101"),
+                ("TI", _wire_time(now)),
+                ("DA", _wire_date(now)),
+                ("SO", "TEL"),
+                ("TA", "100"),
+                ("TM", "100"),
+                ("DU", "000100"),
+                ("DD", "004930XXXXXX"),
+                ("CX", "VOICE"),
+            ),
+        )
+        with self.lock:
+            for _ in range(count):
+                self._pending.append(rec)
+
+    def _send_oversize_probe(self, sock: socket.socket) -> None:
+        """Send one frame over the 64 KB site limit, then drop the link.
+
+        The host closes the session on the oversize frame (its counter
+        proves it); the PABX side drops and redials. Never a crash. The
+        bytes are built by hand: ``encode_frame`` refuses to construct an
+        oversize frame (as it should — the probe is a protocol violation
+        the peer commits, §1).
+        """
+        probe = "X" * (70 * 1024)
+        frame = bytes((STX,)) + f"PS|P#{FLOOD_PNO}|RN101|XX{probe}|".encode("ascii") + bytes((ETX,))
+        with contextlib.suppress(OSError):
+            sock.sendall(frame)
+        with self.lock:
+            self.counters["oversize_closed"] += 1
+            self.counters["links_dropped"] += 1
+        raise _LinkDropped("sent oversize probe: session closed")
+
     # ------------------------------------------------------------------
     # Serve loop (link is up)
     # ------------------------------------------------------------------
@@ -625,6 +721,13 @@ class PabxLink(threading.Thread):
                 if zeros or drop:
                     self.faults.send_zeros_then_drop = False
                     self.faults.drop_link = False
+                oversize = self.faults.send_oversize
+                if oversize:
+                    self.faults.send_oversize = False
+                replay = max(0, min(self.faults.replay_postings, 50))
+                self.faults.replay_postings = 0
+                flood = max(0, min(self.faults.flood_records, 300))
+                self.faults.flood_records = 0
             if zeros:
                 self._raw(sock, DEFAULT_ZERO_BURST)
                 with self.lock:
@@ -634,6 +737,12 @@ class PabxLink(threading.Thread):
                 with self.lock:
                     self.counters["links_dropped"] += 1
                 raise _LinkDropped("admin drop_link")
+            if oversize:
+                self._send_oversize_probe(sock)
+            if replay:
+                self._queue_replays(replay)
+            if flood:
+                self._queue_flood(flood)
             # Due wake-ups fire WA (fire-and-wait-ACK like any business record).
             self._fire_due_wakeups(sock)
             # Business output: one record at a time, each ACKed (§4 intro).
@@ -660,6 +769,7 @@ class PabxLink(threading.Thread):
                             "seq": int(pno),
                         }
                         self.counters["postings_sent"] += 1
+                        self._sent_history.append(rec)
                 last_out = time.monotonic()
             # Resend PS records the host never answered with PA (§3.1).
             self._resend_unacked(sock)
@@ -946,6 +1056,9 @@ class PabxLink(threading.Thread):
                     "silent_types": list(self.faults.silent_types),
                     "resync_on_reconnect": self.faults.resync_on_reconnect,
                     "burst_postings": self.faults.burst_postings,
+                    "replay_postings": self.faults.replay_postings,
+                    "send_oversize": self.faults.send_oversize,
+                    "flood_records": self.faults.flood_records,
                 },
             }
 
@@ -953,4 +1066,6 @@ class PabxLink(threading.Thread):
         layouts = dict(BASELINE_LAYOUTS)
         if self.faults.ps_layout == "layout_v2":
             layouts["PS"] = list(LAYOUT_V2_PS)
+        elif self.faults.ps_layout == "layout_v3":
+            layouts["PS"] = list(LAYOUT_V3_PS)
         return layouts
