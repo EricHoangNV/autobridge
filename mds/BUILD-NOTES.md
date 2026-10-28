@@ -854,3 +854,12 @@ test_autobridge_runtime_mode.py (17), test_simulators_local_ports.py (4).
 Not run here: full make e2e suite + make e2e-ui (owner runs; journey spec is
 mode-agnostic, :8107 only). No heldout contact; field confirmed "no field"
 nowhere (N/A — this REQ adds no vendor surface).
+
+### REQ-014 — Host tools read `.env`; blank values count as unset (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+- New `scripts/load_dotenv.sh` (sourceable): parses repo `.env` as data with python3 (never `source`s it), exports only non-empty `KEY=value`, ignores blank lines / full-line `#` comments / inline ` #…` comments, strips matching quotes (`#` inside quotes is data), skips bad keys, and never overrides an already-exported non-empty var. `DOTENV_PATH` overrides the file (tests); no-op when absent; safe under `set -euo pipefail`.
+- Makefile host targets `smoke`, `e2e`, `bench`, `bench-heldout`, `demo` source it first (`. ./scripts/load_dotenv.sh && …`). `bench-heldout`'s `HELDOUT_DIR` guard moved from make-level `$(HELDOUT_DIR)` to a shell `${HELDOUT_DIR:-}` check after the loader, so a `.env`-provided value works (empty still exits 2).
+- `scripts/local-up.sh` uses the loader (`DOTENV_PATH="$REPO_ROOT/.env"`) instead of `set -a; . .env; set +a` — same effective env (services already guard with `:-` / truthiness), minus comment leakage and arbitrary execution.
+- Empty-as-unset (item 2): `default_database_url()` (blank `DATABASE_URL` → SQLite default, was breaking readyz), `e2e_timeout_seconds()` helper in `tests/e2e/conftest.py` (blank `E2E_TIMEOUT` → 120, was `float('')` crash), new `env_default()` in `bench/demo.py` (`CONTROL_URL`, `DEMO_SEED`), `EDGE_TIMEOUT_S`/`EDGE_ALLOWLIST` in `edge/app.py`. `BENCH_*`/harness URL handling verified already blank-safe (truthiness/`or None` guards) — no change.
+- Tests: new `tests/unit/test_autobridge_dotenv_loader.py` (10 tests: loader parsing incl. quoted `#`, explicit-env-wins, no-file no-op, three-token smoke-gate shape, Makefile wiring, heldout guard, and all blank-handling helpers).
+- Verified: 10/10 new, neighbours (db_models/demo/edge/ci_e2e) 86 pass, `make lint` + `make typecheck` green, full `make test` 2003+97+266 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 147 pass. `make -n` dry-runs render correctly; heldout guard exits 2 on empty, 0 on set. Live `make smoke` with tokens against a real stack not possible in this no-Docker sandbox — mechanism covered by the smoke-gate unit test instead.

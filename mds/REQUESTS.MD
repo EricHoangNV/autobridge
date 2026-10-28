@@ -6,19 +6,6 @@ Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
-### REQ-014 — Host tools ignore `.env`, so tokens break smoke, e2e and demo (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 09:36)
-With `SIM_ADMIN_TOKEN`, `AUTOBRIDGE_CONTROL_TOKEN` and `EDGE_RELEASE_SECRET` set in `.env`, compose passes them to the
-containers, but `make smoke`, `make e2e`, `make demo` and `make bench` run on the host and never read `.env`. Result:
-smoke says the token is unset, e2e has 35 errors (simulator reset rejected), demo writes get 401. It only works after
-`set -a; . ./.env; set +a`.
-Wanted:
-1. The Makefile loads `.env` for host targets when it exists (e.g. a small loader that exports only non-empty
-   `KEY=value` lines and ignores comments and inline `# …` comments), so `make demo` just works with tokens set.
-2. Empty values never override defaults: code that reads `E2E_TIMEOUT`, `BENCH_*`, `DATABASE_URL` etc. treats `""` as
-   unset (today `E2E_TIMEOUT=` crashes conftest with `float('')`; an empty `DATABASE_URL` breaks readyz).
-3. Test: with all three tokens set in a temp `.env`, `make smoke` enforces them and needs no manual export.
-
 ### REQ-015 — e2e tests do not send the control token (2026-10-28)
 Status: OPEN
 With `AUTOBRIDGE_CONTROL_TOKEN` exported, 6 tests fail with `401 Missing or invalid control token`:
@@ -393,6 +380,20 @@ Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDO
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-014 — Host tools ignore `.env`, so tokens break smoke, e2e and demo (2026-10-28)
+Status: DONE (2026-10-28) — host targets source scripts/load_dotenv.sh (non-empty KEY=value only, explicit env wins); blank E2E_TIMEOUT/DATABASE_URL/DEMO_SEED/CONTROL_URL/EDGE_* count as unset; loader + empty-handling unit-tested.
+Resolution: `make smoke/e2e/demo/bench` just work with tokens set in `.env`; verified by new loader/env unit tests (live stack run not possible in sandbox).
+With `SIM_ADMIN_TOKEN`, `AUTOBRIDGE_CONTROL_TOKEN` and `EDGE_RELEASE_SECRET` set in `.env`, compose passes them to the
+containers, but `make smoke`, `make e2e`, `make demo` and `make bench` run on the host and never read `.env`. Result:
+smoke says the token is unset, e2e has 35 errors (simulator reset rejected), demo writes get 401. It only works after
+`set -a; . ./.env; set +a`.
+Wanted:
+1. The Makefile loads `.env` for host targets when it exists (e.g. a small loader that exports only non-empty
+   `KEY=value` lines and ignores comments and inline `# …` comments), so `make demo` just works with tokens set.
+2. Empty values never override defaults: code that reads `E2E_TIMEOUT`, `BENCH_*`, `DATABASE_URL` etc. treats `""` as
+   unset (today `E2E_TIMEOUT=` crashes conftest with `float('')`; an empty `DATABASE_URL` breaks readyz).
+3. Test: with all three tokens set in a temp `.env`, `make smoke` enforces them and needs no manual export.
 
 ### REQ-018 — UI in compose cannot load anything: browser calls `http://control:8000` (2026-10-28)
 Status: DONE (2026-10-28)

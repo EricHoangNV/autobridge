@@ -2352,3 +2352,34 @@ Verified live in sandbox (no Docker): 12/12 readyz, smoke, demo 6/6, test_00/02/
 live, DOCKER_HOST=broken acceptance cycle green. Gates: 1993+97+266 unit
 (91.59/93.76/96.82%) + 147 UI; lint, mypy, openapi-check green.
 Next: REQ-014 → REQ-015 → REQ-016 (owner priority), then REQ-019 → REQ-020.
+
+## REQ-014 — Host tools read `.env`; blank values count as unset
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-014 (owner priority: REQ-014 → REQ-015 → REQ-016)
+
+**What was done:**
+- Added `scripts/load_dotenv.sh`: safe, sourceable `.env` parser (non-empty `KEY=value` only, comments/inline-comments ignored, quoted `#` preserved, explicit environment wins, no-op without a file).
+- Wired it into Makefile host targets `smoke`, `e2e`, `bench`, `bench-heldout`, `demo`; moved the `bench-heldout` `HELDOUT_DIR` guard to shell-after-loader.
+- `scripts/local-up.sh` uses the loader instead of `set -a; . .env; set +a`.
+- Blank-as-unset fixes: `default_database_url()`, new `e2e_timeout_seconds()` in e2e conftest, new `env_default()` in bench demo (`CONTROL_URL`, `DEMO_SEED`), `EDGE_TIMEOUT_S`/`EDGE_ALLOWLIST`; harness `BENCH_*` verified already blank-safe.
+- New `tests/unit/test_autobridge_dotenv_loader.py` (10 tests); moved REQ-014 to Resolved.
+
+**Key decisions:**
+- Parse `.env` as data with python3 + `eval` of generated `export` lines rather than sourcing: avoids executing stray content and leaking inline comments into values.
+- Explicit non-empty environment wins over `.env` (standard dotenv precedence; also keeps CI-injected secrets working); empty never overrides anything, in both loader and code.
+- Kept ` BENCH_*` harness code untouched after verifying every read is already blank-safe (falsy/try-except guards).
+
+**Files changed:**
+- `scripts/load_dotenv.sh` — new loader
+- `Makefile` — loader sourcing in 5 host targets; shell `HELDOUT_DIR` guard
+- `scripts/local-up.sh` — loader via `DOTENV_PATH`
+- `src/autobridge/control/models.py` — `default_database_url` blank-safe
+- `src/autobridge/bench/demo.py` — `env_default()` + use for `CONTROL_URL`/`DEMO_SEED`
+- `src/autobridge/edge/app.py` — blank-safe `_allowlist`/`_worker`
+- `tests/e2e/conftest.py` — `e2e_timeout_seconds()` helper
+- `tests/unit/test_autobridge_dotenv_loader.py` — new, 10 tests
+- `mds/REQUESTS.MD` — REQ-014 moved to Resolved
+
+**Notes for next iteration:**
+- Live `make smoke` with tokens set (REQ item 3 end-to-end) still needs a Docker host or `make local-up` stack; the sandbox here has neither. Next loop with a stack: drop the three tokens in `.env` and run `make smoke` with no exports.
+- Next: REQ-015 (e2e control token helper + CLI token).
