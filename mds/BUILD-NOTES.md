@@ -1050,3 +1050,30 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
   93.62%, simulators 294 pass 96.10%, ui 148 pass); `make lint` + `make typecheck`
   green; `tests/e2e/test_02_reference_sync.py` + `test_meridian_runtime_v2.py` (9) green.
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-021 sub-step A — Meta Muse frontier provider, live mode (2026-10-28)
+- **Did:** frontier tier = Meta Muse through its OpenAI-compatible chat completions API (`MuseProvider`,
+  `src/autobridge/llm/provider.py`), behind the existing `LLMProvider` + `Budget` + `ModelCall` contract.
+  Settings read only from env, never code: `FRONTIER_API_KEY` (dedicated Muse key, empty = no live calls),
+  `FRONTIER_BASE_URL` (default `https://api.meta.ai/v1`), `FRONTIER_MODEL` (default `muse-spark-1.3`),
+  `SMALL_MODEL` (default = frontier model; L2 uses the same provider and key). Anthropic stays as alternative.
+- **Pricing:** `estimate_cost(tier, usage, model)` uses published per-model prices from config when the model
+  matches (Spark $1.25 in / $4.25 out, Wonder $4 / $20 per M), else the legacy flat tier rate; `record_model_call`
+  now prices by model. Decimal end to end. Cached-input rates noted but not applied (`Usage` has no cached field).
+- **Wiring:** `FRONTIER_*` + `SMALL_MODEL` added to control + worker env in `compose.yaml` (no LLM key reached
+  either before) and to `.env.example`; local mode inherits them via `load_dotenv.sh` (no script change).
+  `FRONTIER_API_KEY` redaction rides the existing SSE secret sweep (`*_API_KEY` rule) — pinned by test.
+- **Refactor:** OpenAI response parsing extracted to `_parse_openai_chat_response`, shared by OpenAIProvider
+  (behavior unchanged, existing tests green) and MuseProvider.
+- **Files:** `src/autobridge/config.py` (frontier_*/small_model/model_price), `src/autobridge/llm/provider.py`
+  (`MuseProvider`, shared parser, model-aware `estimate_cost`), `src/autobridge/llm/__init__.py` (export),
+  `.env.example`, `compose.yaml`, `tests/unit/test_autobridge_llm_muse.py` (16 tests: env defaults/overrides,
+  tier routing + unknown-tier ValueError before network, base_url/key capture, tool-call parsing, budget+ledger
+  flow with Spark price assertion, Spark/Wonder/fallback pricing, ledger pricing, SSE redaction).
+- **Gotchas:** ruff F401 on an unused `import os` in `MuseProvider.__init__` cascaded into a bogus I001
+  (fixed by dropping the import); test-file TYPE_CHECKING imports (`Iterator`, `Session`) flagged unused.
+- **Tests:** `make test` all green (autobridge 2123 pass / 91.32%, verifier 99 / 93.62%, simulators 294+ /
+  96.10%, ui 148 pass); `make lint` + `make typecheck` green. Live Muse call not exercised (no key in sandbox;
+  replay mode + matrix test come in later REQ-021 sub-steps).
+  Remaining REQ-021: B reset, C vocabulary pin, D rung ledger, E matrix e2e, F capabilities/knowledge, G replay.
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).

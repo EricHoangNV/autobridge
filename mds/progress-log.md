@@ -2510,3 +2510,16 @@ After: discovered v2 spec passes gate, syncs Complete live, UTC->property-local 
 
 **Tests:**
 - `make test` all green: autobridge 2107 pass / 91.29%, verifier 99 / 93.62%, simulators 294 / 96.10%, ui 148 pass; `make lint` + `make typecheck` green; e2e test_02 + meridian-runtime-v2 (9) green.
+
+## 2026-10-28 — REQ-021 sub-step A merged (sbx1)
+**Claim:** REQ-021 (repeatable demo) claimed 13:00 UTC after the REQ-020 signature fix merged; owner order is
+REQ-021 next, before REQ-020 step 7 and REQ-022/024/025.
+**Sub-step A (live Muse frontier provider):** `MuseProvider` behind `LLMProvider`+`Budget`+`ModelCall`;
+`FRONTIER_API_KEY/BASE_URL/MODEL` + `SMALL_MODEL` env-only settings with owner-specified defaults
+(base `https://api.meta.ai/v1`, model `muse-spark-1.3`); per-model Decimal pricing (Spark 1.25/4.25,
+Wonder 4/20 per M) with tier-rate fallback; compose control/worker env + `.env.example`; SSE redaction pinned.
+OpenAIProvider refactored onto a shared response parser, behavior unchanged.
+**Gates:** `make test` green (autobridge 2123 / 91.32%, verifier 99 / 93.62%, simulators 96.10%, ui 148);
+lint + typecheck green. No live Muse call (no key in sandbox).
+**Next:** REQ-021 sub-steps B (full reset + demo-reset), C (pinned vocabulary), D (rung ledger), E (matrix e2e),
+F (capabilities/knowledge), G (replay). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
