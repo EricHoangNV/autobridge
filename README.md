@@ -88,19 +88,18 @@ autobridge/
 
 ```
 cp .env.example .env                       # SLACK_WEBHOOK, provider keys, model ids
-sh ralph-afk.sh sbx1 10                    # auto ladder: baseten → modal → meta → claude
+sh ralph-afk.sh sbx1 10                    # default: OpenCode on Meta (RALPH_AGENT / RALPH_PROVIDER)
 sh ralph-afk.sh --agent claude sbx1 10     # Claude Code only
 sh ralph-afk.sh --agent opencode --provider meta --model muse-wonder-1.0 sbx-mini 5
 sh ralph-afk.sh --validate sbx-mini 1      # daily directives audit
 ```
 
-Ralph (planning, iterations, checkpoints, validation) drives one coding-agent runtime per
-iteration: Claude Code in its own sandbox, or OpenCode in its own sandbox with a
-provider/model chosen by tier (Baseten Spark Open = worker, Modal Spark Open = backup,
-Meta Spark 1.3 / Wonder = escalation). Failures are classified per iteration (auth,
-provider, empty, unfinished task) and move the ladder; the verification gates
+Ralph (planning, iterations, checkpoints, validation) drives one coding-agent runtime for
+the whole run: Claude Code in its own sandbox, or OpenCode in its own sandbox on one
+provider (Baseten Spark Open, Modal Spark Open, or Meta Spark 1.3 / Contributor / Wonder).
+There is no fallback: an auth, credit, provider or empty-run failure stops the loop. The verification gates
 (`make lint / typecheck / test`, the workstream's e2e file, the mds/ bookkeeping) are the
-same whichever runtime ran. Setup and the tier table: `mds/DEPLOY.md`.
+same whichever runtime ran. Setup and the provider table: `mds/DEPLOY.md`.
 
 Prerequisites before the first run: `git init` + a GitHub `origin` with a `main` branch
 (the loop works in `.worktrees/<sbx>` off `origin/main` and pushes there),

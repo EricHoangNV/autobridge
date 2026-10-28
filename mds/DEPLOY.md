@@ -25,7 +25,7 @@ Six steps of plan §6, driven by `make demo`; record the UI with the labelled In
 ## Sandboxes for the ralph loop
 
 Two loop keys (`sbx1`, `sbx-mini`), each with one sandbox per agent runtime. The loop picks the sandbox
-from the tier it runs (see `ralph-afk.sh` header), and stops the previous one when it switches.
+from the agent it runs (see `ralph-afk.sh` header); a run never switches agent or provider.
 One sandbox per runtime, not one shared sandbox: Docker Sandboxes builds a sandbox around one built-in
 agent (its CLI, credential proxy and sign-in state), and a hung run in one runtime can never take the
 other down. `claude-autobridge` and `opencode-autobridge` exist (created 2026-10-27); the `-mini` pair is
@@ -122,17 +122,20 @@ id changed and `.env` plus `opencode.json` need the new one.
 The Claude tier needs nothing in `.env`: sign in once with `sbx run --name claude-autobridge`, `/login`,
 then `/model` to pick the model (saved in the sandbox; the loop reads it for the commit trailer), exit.
 
-### The model ladder (`--agent auto`, the default)
+### One provider per run (no fallback)
 
-| Tier | Agent | Provider / model (`.env`) | Role |
-|---|---|---|---|
-| worker | OpenCode | `baseten` / `BASETEN_MODEL` (Spark Open, `meta-models/muse-spark-open-1026`) | every normal iteration |
-| backup | OpenCode | `modal` / `MODAL_MODEL` (Spark Open) | after a provider failure on worker |
-| escalation | OpenCode | `meta` / `META_MODEL` (Spark 1.3 or Wonder) | after a failure on backup, or a task unfinished `ESCALATE_AFTER` iterations in a row; the daily audit starts here |
-| final | Claude Code | the model saved by `/model` inside `claude-autobridge` (no `.env` setting) | after a failure on escalation (`RALPH_FINAL_TIER=claude`; `none` ends the ladder at meta) |
+| Tier label | Agent | Provider / model (`.env`) |
+|---|---|---|
+| worker | OpenCode | `baseten` / `BASETEN_MODEL` (Spark Open, `meta-models/muse-spark-open-1026`) |
+| backup | OpenCode | `modal` / `MODAL_MODEL` (Spark Open; `MODAL_BASE_URL` = your shared endpoint) |
+| escalation | OpenCode | `meta` / `META_MODEL` (Spark 1.3, Contributor or Wonder) |
+| final | Claude Code | the model saved by `/model` inside `claude-autobridge` (no `.env` setting) |
 
-A clean, merged iteration drops the loop back to the worker tier. `--agent claude` or
-`--agent opencode --provider <p> [--model <id>]` pins one tier for the whole run. Each iteration's
+`--agent claude` or `--agent opencode --provider <p> [--model <id>]` picks one for the whole run;
+without them the loop uses `RALPH_AGENT` / `RALPH_PROVIDER` from `.env` (default opencode / meta).
+The loop never switches: an auth, out-of-credit, provider or empty-run failure stops it.
+Note: Modal's shared endpoint billed every prompt token at the full rate in testing (no cache hits,
+even with `Modal-Routing-Affinity-Key`), about $5 per iteration against about $0.03 on Meta Contributor. Each iteration's
 transcript is `ralph-logs/<time>-<key>-<tier>-iter<n>.jsonl`, and the agent records
 `Agent: <runtime provider/model (tier)>` in its build note, so runtimes can be compared per task.
 

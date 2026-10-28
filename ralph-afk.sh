@@ -6,24 +6,24 @@
 #
 # Two agent runtimes, each in its own sandbox:
 #   claude    Claude Code (sbx agent "claude"), signed in inside the sandbox
-#   opencode  OpenCode (sbx agent "opencode") with a provider/model picked per iteration:
+#   opencode  OpenCode (sbx agent "opencode") on one provider:
 #               baseten  → $BASETEN_MODEL   (Spark Open)        tier "worker"
 #               modal    → $MODAL_MODEL     (Spark Open)        tier "backup"
 #               meta     → $META_MODEL      (Spark 1.3 / Contributor / Wonder) tier "escalation"
-#   auto      starts on the worker tier and moves up the ladder on failures (see choose_tier)
+# One provider per run, never a fallback: if it fails or runs out of credit, the loop stops.
 #
-#   sh ralph-afk.sh [--validate] [--agent claude|opencode|auto] [--provider baseten|modal|meta] [--model <id>] <sbx1|sbx-mini> <iterations>
+#   sh ralph-afk.sh [--validate] [--agent claude|opencode] [--provider baseten|modal|meta] [--model <id>] <sbx1|sbx-mini> <iterations>
 #
-#   sh ralph-afk.sh sbx1 10                                   auto ladder (default)
+#   sh ralph-afk.sh sbx1 10                                   default: $RALPH_AGENT / $RALPH_PROVIDER (opencode / meta)
 #   sh ralph-afk.sh --agent claude sbx1 10                    Claude Code only
 #   sh ralph-afk.sh --agent opencode --provider meta sbx-mini 5          OpenCode on Meta, model from .env
 #   sh ralph-afk.sh --agent opencode --provider meta --model muse-wonder-1.0 sbx1 3
-#   sh ralph-afk.sh --validate sbx-mini 1                     daily directives audit (auto: escalation tier)
+#   sh ralph-afk.sh --validate sbx-mini 1                     daily directives audit (same provider rules)
 
 # Exit on unset variables, but not on every non-zero command
 set -u
 
-# Load environment variables (see .env.example: SLACK_WEBHOOK, provider keys, model ids, ladder settings)
+# Load environment variables (see .env.example: SLACK_WEBHOOK, provider keys, model ids)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/.env"
 
@@ -36,10 +36,6 @@ MODAL_BASE_URL="${MODAL_BASE_URL:-https://inference.us-west.modal.direct/v1}"
 META_MODEL="${META_MODEL:-muse-spark-1.3}"
 # The Claude tier uses the model saved inside the Claude sandbox (/model in an interactive session), never
 # a value from .env; the loop reads it back from ~/.claude/settings.json for the commit trailer.
-# Auto ladder: how many consecutive iterations the same task may stay unfinished before escalating, and
-# whether Claude Code is the rung above Meta (RALPH_FINAL_TIER=claude) or the ladder ends at Meta (none).
-ESCALATE_AFTER="${ESCALATE_AFTER:-2}"
-RALPH_FINAL_TIER="${RALPH_FINAL_TIER:-claude}"
 
 # Sandboxes (MAX 2 loops, one per key). Each agent runtime has its own sandbox per key, so a Claude
 # sandbox and an OpenCode sandbox never share state. Create them once (see mds/DEPLOY.md):
@@ -58,26 +54,9 @@ sandbox_for() {  # <key> <agent>
 }
 valid_key() { case "$1" in sbx1|sbx-mini) return 0 ;; *) return 1 ;; esac; }
 
-# Tiers of the auto ladder, in order. A tier is "<agent>:<provider>" (provider empty for claude).
+# A tier is "<agent>:<provider>" (provider empty for claude); the name labels logs and notifications.
 tier_agent() { case "$1" in worker|backup|escalation) echo opencode ;; final) echo claude ;; esac; }
 tier_provider() { case "$1" in worker) echo baseten ;; backup) echo modal ;; escalation) echo meta ;; final) echo "" ;; esac; }
-next_tier() {
-  case "$1" in
-    worker) echo backup ;;
-    backup) echo escalation ;;
-    escalation) [ "$RALPH_FINAL_TIER" = claude ] && echo final || echo "" ;;
-    final) echo "" ;;
-  esac
-}
-# Tiers whose provider ran out of credit (or hit its usage limit) during this run. The ladder skips them
-# until the loop is restarted; there is no point retrying a provider that has no balance.
-EXHAUSTED_TIERS=" "
-tier_exhausted() { case "$EXHAUSTED_TIERS" in *" $1 "*) return 0 ;; esac; return 1; }
-usable_tier() {  # <tier> → that tier, or the first tier above it that is not exhausted ("" if none)
-  local t="$1"
-  while [ -n "$t" ] && tier_exhausted "$t"; do t=$(next_tier "$t"); done
-  echo "$t"
-}
 model_for() {  # <provider> → model id
   case "$1" in
     baseten) echo "$BASETEN_MODEL" ;;
@@ -176,7 +155,7 @@ get_final_summary() {
 }
 
 MODE="work"
-AGENT_OPT="${RALPH_AGENT:-auto}"
+AGENT_OPT="${RALPH_AGENT:-opencode}"
 PROVIDER_OPT=""
 MODEL_OPT=""
 while [ $# -gt 0 ]; do
@@ -192,7 +171,7 @@ while [ $# -gt 0 ]; do
 done
 
 usage() {
-  echo "Usage: $0 [--validate] [--agent claude|opencode|auto] [--provider baseten|modal|meta] [--model <id>] <sbx1|sbx-mini> <iterations>"
+  echo "Usage: $0 [--validate] [--agent claude|opencode] [--provider baseten|modal|meta] [--model <id>] <sbx1|sbx-mini> <iterations>"
   echo "  e.g. sh ralph-afk.sh sbx1 10   and, in a second terminal,   sh ralph-afk.sh sbx-mini 10"
   echo "       sh ralph-afk.sh --agent opencode --provider meta --model muse-wonder-1.0 sbx1 3"
 }
@@ -206,17 +185,14 @@ case "$AGENT_OPT" in
     [ -n "$PROVIDER_OPT$MODEL_OPT" ] && { echo "--provider/--model apply to --agent opencode only; the Claude model is chosen with /model inside the sandbox"; exit 1; }
     FIXED_TIER="final" ;;
   opencode)
-    PROVIDER_OPT="${PROVIDER_OPT:-baseten}"
+    PROVIDER_OPT="${PROVIDER_OPT:-${RALPH_PROVIDER:-meta}}"
     case "$PROVIDER_OPT" in baseten) FIXED_TIER=worker ;; modal) FIXED_TIER=backup ;; meta) FIXED_TIER=escalation ;; *) echo "Unknown provider $PROVIDER_OPT"; exit 1 ;; esac ;;
-  auto)
-    [ -n "$PROVIDER_OPT$MODEL_OPT" ] && { echo "--provider/--model fix the tier: use --agent opencode with them"; exit 1; }
-    FIXED_TIER="" ;;
+  auto) echo "--agent auto (the fallback ladder) was removed: one provider per run. Use --agent opencode --provider <p> or --agent claude (set RALPH_AGENT in .env)"; exit 1 ;;
   *) echo "Unknown agent $AGENT_OPT"; usage; exit 1 ;;
 esac
-# Auto mode starts on the worker tier; the audit starts on the escalation tier (strongest OpenCode model)
-if [ -n "$FIXED_TIER" ]; then TIER="$FIXED_TIER"; elif [ "$MODE" = validate ]; then TIER="escalation"; else TIER="worker"; fi
+TIER="$FIXED_TIER"
 
-# Checks every sandbox this run may use, so a missing one fails before the first iteration
+# Checks the run's sandbox and provider key, so a missing one fails before the first iteration
 check_sandboxes() {
   local t="$TIER" name
   while [ -n "$t" ]; do
@@ -229,8 +205,7 @@ check_sandboxes() {
       local var; var=$(provider_env "$(tier_provider "$t")")
       [ -z "${!var:-}" ] && echo "⚠️ $var is empty in .env: the $t tier ($(tier_provider "$t")) cannot sign in to its provider"
     fi
-    [ -n "$FIXED_TIER" ] && break
-    t=$(next_tier "$t")
+    break
   done
   return 0
 }
@@ -329,7 +304,6 @@ export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 GIT_ID_ENV=(-e GIT_AUTHOR_NAME -e GIT_AUTHOR_EMAIL -e GIT_COMMITTER_NAME -e GIT_COMMITTER_EMAIL)
 
 select_tier "$TIER"
-UNFINISHED_STREAK=0
 lnotify "🚀 Starting AFK mode ($MODE, agent ${AGENT_OPT}, start tier $TIER) with $iterations iterations in $WT_DIR..."
 
 for ((i=1; i<=iterations; i++)); do
@@ -482,7 +456,7 @@ Stack (plan §2): Python 3.12 + uv workspace (src/autobridge, verifier/, simulat
 Hackathon window Oct 26 – Nov 4, 2026: Phase 2 stop-rule checkpoint end of Nov 1, feature freeze Nov 2, heldout benchmark Nov 3, submission Nov 4 (plan §5)."
 
   AGENT_NOTE="## Your runtime
-You are ${AGENT_LABEL}, chosen by the loop's ladder (worker → backup → escalation → final). Record it in your build note and progress-log entry as \"Agent: ${AGENT_LABEL}\" so the owner can compare runtimes. If you hit a provider error you cannot work around (rate limit, model unavailable), say so plainly in your final summary and stop; the loop will switch tier.
+You are ${AGENT_LABEL}, the one runtime for this whole run. Record it in your build note and progress-log entry as \"Agent: ${AGENT_LABEL}\" so the owner can compare runtimes. If you hit a provider error you cannot work around (rate limit, model unavailable), say so plainly in your final summary and stop; the owner decides what runs next.
 Every commit you make (claim commits included) ends with this trailer, verbatim, on its own last line: ${COMMIT_TRAILER}"
   # OpenCode only: its edit tool needs a full read of the file first, and the agents were reading the whole
   # bookkeeping files (~18% of cached tokens) just to append to them. Claude Code's prompt is unchanged.
@@ -736,11 +710,11 @@ $final_summary"
     exit 1
   fi
 
-  if [ "$run_class" = credit ] && [ -n "$FIXED_TIER" ]; then
+  if [ "$run_class" = credit ]; then
     if [ "$AGENT" = claude ]; then
-      lnotify "❌ Claude hit its usage limit. Stopping: a fixed --agent claude does not switch. Rerun later, or without --agent to use the ladder"
+      lnotify "❌ Claude hit its usage limit. Stopping: a fixed --agent claude does not switch. Rerun later, or with --agent opencode --provider <p>"
     else
-      lnotify "❌ $PROVIDER is out of credit. Stopping: a fixed --provider does not switch. Top up $PROVIDER, or rerun with another --provider or without --agent to use the ladder"
+      lnotify "❌ $PROVIDER is out of credit. Stopping: a fixed --provider does not switch. Top up $PROVIDER, or rerun with another --provider"
     fi
     exit 1
   fi
@@ -769,36 +743,13 @@ $left"
 
   lnotify "✅ Iteration $i completed ($run_class)"
 
-  # Auto ladder (choose_tier): out of credit marks the tier exhausted for this run and moves up past it;
-  # a provider failure or an empty run moves one tier up; the same task left
-  # unfinished ESCALATE_AFTER times in a row moves to the escalation tier; a clean, merged iteration drops
-  # back to the lowest tier that still has credit. A fixed --agent/--provider never switches.
-  if [ -z "$FIXED_TIER" ]; then
-    if [ -n "$left" ]; then UNFINISHED_STREAK=$((UNFINISHED_STREAK + 1)); else UNFINISHED_STREAK=0; fi
-    new_tier="$TIER"
-    case "$run_class" in
-      credit)
-        EXHAUSTED_TIERS="$EXHAUSTED_TIERS$TIER "
-        new_tier=$(usable_tier "$(next_tier "$TIER")")
-        if [ -z "$new_tier" ]; then lnotify "❌ Tier $TIER (${PROVIDER:-claude}) is out of credit and no tier above it has any left. Stopping."; exit 1; fi
-        lnotify "💳 Tier $TIER (${PROVIDER:-claude}) is out of credit: skipping it for the rest of this run; next iteration runs on tier $new_tier" ;;
-      provider|empty)
-        new_tier=$(usable_tier "$(next_tier "$TIER")")
-        if [ -z "$new_tier" ]; then lnotify "❌ Tier $TIER failed ($run_class) and there is no tier above it. Stopping."; exit 1; fi
-        lnotify "⬆️ Tier $TIER failed ($run_class): next iteration runs on tier $new_tier" ;;
-      ok)
-        if [ "$UNFINISHED_STREAK" -ge "$ESCALATE_AFTER" ] && [ "$TIER" != escalation ] && [ "$TIER" != final ]; then
-          new_tier=$(usable_tier escalation); [ -n "$new_tier" ] || new_tier="$TIER"
-          [ "$new_tier" != "$TIER" ] && lnotify "⬆️ Task unfinished for $UNFINISHED_STREAK iterations: next iteration runs on tier $new_tier"
-        elif [ -z "$left" ] && [ "$MODE" = work ] && [ "$(usable_tier worker)" != "$TIER" ]; then
-          new_tier=$(usable_tier worker); lnotify "⬇️ Clean iteration: back to tier $new_tier"
-        fi ;;
-    esac
-    if [ "$new_tier" != "$TIER" ]; then TIER="$new_tier"; select_tier "$TIER"; fi
+  # One provider per run: a provider failure or an empty run stops the loop instead of switching.
+  if [ "$run_class" = provider ] || [ "$run_class" = empty ]; then
+    lnotify "❌ ${PROVIDER:-claude} failed ($run_class). Stopping: one provider per run, no fallback. See $iter_log"
+    exit 1
   fi
 
   # Stop this loop's sandbox between iterations to free resources (the other loop has its own).
-  # select_tier already stopped it when the tier switched sandboxes.
   sbx stop "$SANDBOX_NAME" >/dev/null 2>&1
 done
 
