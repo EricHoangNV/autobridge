@@ -265,3 +265,11 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Detection had to come from the handshake (announced layout vs mapped wire ids), not from the outcome — the e2e asserts the silent `None` first, then the detector + ladder repair, then `Complete` with an exact `Decimal`.
 - Two resolution traps on the way: every key/date/time id is digit-shaped too, so money-shape alone cannot pick TM out of P#/RN/DA/TI — exclude ids the spec already consumes elsewhere first; and `$['P#']` (bracket form for `#`) must normalize to the same wire id as `$.TA` or P# looks unconsumed and poisons the candidate set.
 - **Rule:** For rename-class drift on event feeds, compare the announced layout against mapped wire ids (never the sync outcome), resolve candidates by transform-shape among spec-unconsumed ids only, and normalize all JSONPath spellings to wire ids before set arithmetic.
+
+## 28. A param-less GET route is executed by every contract-fuzz case — it must be side-effect-safe and DNS-free by construction
+
+**Context:** REQ-022 sub-step E (sbx1 2026-10-28) — adding `GET /demo/simulators` broke `make test` in the schemathesis contract run: 15 `localhost` DNS trips at teardown.
+
+- Schemathesis POST cases usually die at 422 validation before touching the network, but a GET with no parameters always executes — including its server-side probes. The new endpoint probed five simulator admins built from `http://localhost:<port>`, and `localhost` is a real DNS lookup (the hermetic guard trips on it, macOS fork-safety).
+- Fix: the shared host-mode admin base now uses literal `http://127.0.0.1:<port>` (same loopback, no resolution) — one line, and every demo route inherits it, not just the new one. Display-only URLs shown to browsers stay `localhost` (human-facing, consistent with README).
+- **Rule:** Any GET route the contract fuzzer can call with zero parameters must be safe to execute offline in tests: no hostname resolution (literal IPs), no unmocked network, fail-closed to "down", never an exception. Assume the fuzzer *will* execute it.
