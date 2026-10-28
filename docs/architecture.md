@@ -280,8 +280,9 @@ the control API, ladder + oracle local, frontier 0, patched spec syncs
 `test_05_safety_and_semantic.py` (semantic drift ends `Degraded` via
 escalation; the trapped patch is rejected by the stack verifier).
 `POST /demo/inject-fault` and `POST /demo/reset` send the
-`X-Admin-Network: admin-net` header the simulator admin API requires —
-without it the fault never lands (403).
+`X-Admin-Network: admin-net` routing hint plus `X-Admin-Token` from
+`SIM_ADMIN_TOKEN` (AR-1-1) — without authorization the fault never
+lands (403).
 
 ## 8. Verification ladder (plan §8)
 

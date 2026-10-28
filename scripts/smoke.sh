@@ -43,6 +43,20 @@ probe() {
   fi
 }
 
+# POST probe: attempt an admin write from inside a service container.
+# $1=service $2=url $3=python dict literal of headers $4=want ("up"/"down")
+probe_post() {
+  local svc="$1" url="$2" headers="$3" want="$4"
+  local runner="python -c \"import urllib.request; req=urllib.request.Request('$url', data=b'{}', headers=$headers, method='POST'); print(urllib.request.urlopen(req, timeout=5).status)\""
+  if docker compose exec -T "$svc" sh -c "$runner" >/dev/null 2>&1; then
+    [ "$want" = "up" ] || fail "$svc can POST $url (must be rejected)"
+    echo "  ok $svc -> POST $url accepted (expected)"
+  else
+    [ "$want" = "down" ] || fail "$svc cannot POST $url (must be accepted)"
+    echo "  ok $svc -/-> POST $url rejected (expected)"
+  fi
+}
+
 echo ">> smoke: positive reachability (guards against blanket outages)"
 probe runtime-sandbox http://sim-atlas:8000/healthz up
 probe runtime-sandbox http://sim-harbor:8000/healthz up
@@ -68,5 +82,16 @@ probe edge-worker http://verifier:8000/healthz down
 probe edge-worker http://sim-atlas:8000/healthz down
 probe edge-worker http://sim-edgepos:8001/healthz down
 probe edge-worker http://mcp-hotel:8000/healthz down
+
+echo ">> smoke: simulator admin writes need authorization, not just the published header (AR-1-1)"
+# A vendor-net peer with no headers must always be rejected on admin writes.
+probe_post runtime-sandbox http://sim-atlas:8001/admin/reset "{}" down
+if [ -n "${SIM_ADMIN_TOKEN:-}" ]; then
+  # With the token configured, the published X-Admin-Network header alone
+  # must NOT authorize a write — only the token does.
+  probe_post runtime-sandbox http://sim-atlas:8001/admin/reset "{'X-Admin-Network': 'admin-net'}" down
+else
+  echo "  WARN SIM_ADMIN_TOKEN unset — admin runs header-only dev mode (set a random value in .env)"
+fi
 
 echo "smoke OK"

@@ -37,6 +37,7 @@ services:
       APP_MODULE: autobridge.control.app:app
       AUTOBRIDGE_OPERATOR: ${AUTOBRIDGE_OPERATOR:-operator}
       AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
     networks:
       - engine-net
       - verifier-net
@@ -116,6 +117,7 @@ services:
       dockerfile: Dockerfile
     environment:
       APP_MODULE: simulators.atlaspms.app:app
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
     networks:
       - vendor-net
       - admin-net
@@ -130,6 +132,7 @@ services:
       dockerfile: Dockerfile
     environment:
       APP_MODULE: simulators.harborpms.app:app
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
     networks:
       - vendor-net
       - admin-net
@@ -144,6 +147,7 @@ services:
       dockerfile: Dockerfile
     environment:
       APP_MODULE: simulators.legacystay.app:app
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
     networks:
       - vendor-net
       - admin-net

@@ -472,6 +472,92 @@ def test_demo_reset_sends_admin_net_header(tmp_path: pathlib.Path, monkeypatch) 
     monkeypatch.delenv("SIMULATOR_ADMIN_URL", raising=False)
 
 
+def test_demo_inject_sends_admin_token_when_set(tmp_path: pathlib.Path, monkeypatch) -> None:
+    """AR-1-1: the control proxy forwards SIM_ADMIN_TOKEN when configured."""
+    from unittest.mock import Mock, patch
+
+    from autobridge.control.models import Base
+
+    monkeypatch.setenv("SIMULATOR_ADMIN_URL", "http://mocked:9999")
+    monkeypatch.setenv("SIM_ADMIN_TOKEN", "proxy-token-ar-1-1")
+    engine = create_engine(f"sqlite:///{tmp_path}/demo_tok.db")
+    Base.metadata.create_all(engine)
+    factory = session_factory(engine)
+
+    def override_db():  # type: ignore[no-untyped-def]
+        s = factory()
+        try:
+            yield s
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app)
+
+    mock_resp = Mock()
+    mock_resp.status_code = 200
+    mock_resp.content = b'{"scenario_id": "baseline", "seed": 0, "request_count": 0}'
+    mock_resp.json.return_value = {"scenario_id": "baseline", "seed": 0, "request_count": 0}
+    mock_resp.text = '{"scenario_id": "baseline"}'
+    with patch("httpx.Client") as mock_c:
+        mock_c.return_value.__enter__.return_value.post.return_value = mock_resp
+        r = client.post("/demo/inject-fault", json={"target": "sim-atlas", "scenario_id": "baseline"})
+        assert r.status_code == 200
+        _, kwargs = mock_c.return_value.__enter__.return_value.post.call_args
+        assert kwargs["headers"]["X-Admin-Network"] == "admin-net"
+        assert kwargs["headers"]["X-Admin-Token"] == "proxy-token-ar-1-1"
+
+    app.dependency_overrides.clear()
+    monkeypatch.delenv("SIMULATOR_ADMIN_URL", raising=False)
+    monkeypatch.delenv("SIM_ADMIN_TOKEN", raising=False)
+
+
+def test_demo_inject_omits_admin_token_when_unset(tmp_path: pathlib.Path, monkeypatch) -> None:
+    """AR-1-1: header-only dev mode sends no token header at all."""
+    from unittest.mock import Mock, patch
+
+    from autobridge.control.models import Base
+
+    monkeypatch.setenv("SIMULATOR_ADMIN_URL", "http://mocked:9999")
+    monkeypatch.delenv("SIM_ADMIN_TOKEN", raising=False)
+    engine = create_engine(f"sqlite:///{tmp_path}/demo_notok.db")
+    Base.metadata.create_all(engine)
+    factory = session_factory(engine)
+
+    def override_db():  # type: ignore[no-untyped-def]
+        s = factory()
+        try:
+            yield s
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app)
+
+    mock_resp = Mock()
+    mock_resp.status_code = 200
+    mock_resp.content = b'{"scenario_id": "baseline", "seed": 0, "request_count": 0}'
+    mock_resp.json.return_value = {"scenario_id": "baseline", "seed": 0, "request_count": 0}
+    mock_resp.text = '{"scenario_id": "baseline"}'
+    with patch("httpx.Client") as mock_c:
+        mock_c.return_value.__enter__.return_value.post.return_value = mock_resp
+        r = client.post("/demo/inject-fault", json={"target": "sim-atlas", "scenario_id": "baseline"})
+        assert r.status_code == 200
+        _, kwargs = mock_c.return_value.__enter__.return_value.post.call_args
+        assert "X-Admin-Token" not in kwargs["headers"]
+
+    app.dependency_overrides.clear()
+    monkeypatch.delenv("SIMULATOR_ADMIN_URL", raising=False)
+
+
 def test_evidence_redaction_in_sse(tmp_path: pathlib.Path, monkeypatch) -> None:
     secret = "supersecret999"
     monkeypatch.setenv("REDACT_TEST_KEY", secret)

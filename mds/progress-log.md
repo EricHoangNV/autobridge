@@ -2013,3 +2013,37 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Notes for next iteration:**
 - Remaining Cycle 2 FAIL items still open: AR-1-1, AR-1-2, AR-1-3, AR-1-4 (REQ-012 done, loopback-override part open), AR-1-5, AR-2-2…AR-2-6; AR-2-2 (build-route SSRF/file-read) is the other Medium and a natural next pick
 - E2E `tests/e2e/` for the runtime workstream not run (no Compose stack in sandbox); change covered by unit fakes
+
+## AR-1-1 — Simulator admin secret replaces published header (Code Review Cycle 1+2, sbx1 2026-10-28)
+**Date:** 2026-10-28
+**Ref:** Code Review Cycle 2 (AR-1-1 re-verified open; Cycle 1 report for full remediation text)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- `simulators/common/admin.py`: admin writes (and healthz/readyz, which previously duplicated the header check) now go through one `_require_admin_network` that keeps the `X-Admin-Network: admin-net` routing-hint check and, when `SIM_ADMIN_TOKEN` is set, additionally requires `X-Admin-Token` with `hmac.compare_digest` (403 otherwise, value never echoed). Token unset = header-only dev mode (unchanged).
+- `src/autobridge/control/routes/demo.py`: new `_admin_headers()` helper sends both headers, token only when configured; used by inject-fault and reset.
+- `compose.yaml`: `SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}` on sim-atlas/sim-harbor/sim-legacystay + control (not on runtime-sandbox/worker/verifier/ui/edge).
+- `.env.example`: `SIM_ADMIN_TOKEN=` with comment (empty per §6; set random value before exposing beyond localhost).
+- `scripts/smoke.sh`: new `probe_post` helper; header-less POST /admin/reset from runtime-sandbox must always fail; when the token is set on the host, header-only POST must also fail (the AR-1-1 property). Warns when running header-only dev mode.
+- `tests/e2e/conftest.py`: new `admin_headers()` helper (hint + token when set); `_http_post_json(admin=True)` uses it; test_01/test_02/test_04/test_05/test_s1 call sites delegate to it.
+- `tests/unit/test_simulators_admin.py` (new, 7 tests): legacy mode matrix + token-set matrix (header-only 403 on reset/scenario-create/scenario-get/healthz; missing/wrong token 403; correct token round-trips; 403 bodies never contain the token).
+- `tests/unit/test_autobridge_control_api_extended.py` (+2 tests): proxy forwards token when set, omits the header entirely when unset.
+- Docs: `docs/architecture.md` + `docs/safety-model.md` admin passages now describe token auth.
+
+**Key decisions:**
+- Followed the accepted REQ-012 optional-token pattern (open-when-unset, enforced-when-set) instead of fail-closed, so fresh-clone `make test`/`make e2e` stay green and the next reviewer re-verifies against the same semantics they already accepted for the control plane. Documented the trade-off: dual-homed containers remain, but authorization no longer depends on network placement.
+- Did not split the admin listener into its own container (the reviewer's preferred fix): file-backed/in-memory state is per-process and the dual-uvicorn launcher shares it in-process; a split would need a shared-state refactor unverifiable without Docker in this sandbox. Token auth closes the bypass through the same path with unit-testable code.
+- Healthz/readyz now share the write gate (they already 403'd without the header, so no behavior change in dev; with a token set they need it too — consistent).
+
+**Files changed:**
+- `simulators/common/admin.py` — token enforcement + shared gate
+- `src/autobridge/control/routes/demo.py` — `_admin_headers()` on both routes
+- `compose.yaml`, `.env.example` — token wiring (empty default)
+- `scripts/smoke.sh` — `probe_post` + token-conditional negative check
+- `tests/e2e/conftest.py`, `tests/e2e/test_01_simulators_and_oracle.py`, `tests/e2e/test_02_reference_sync.py`, `tests/e2e/test_04_bootstrap_unfamiliar_api.py`, `tests/e2e/test_05_safety_and_semantic.py`, `tests/e2e/test_s1_legacystay.py` — token-aware admin headers
+- `tests/unit/test_simulators_admin.py` (new), `tests/unit/test_autobridge_control_api_extended.py` (+2)
+- `docs/architecture.md`, `docs/safety-model.md` — admin auth wording
+
+**Notes for next iteration:**
+- Live verification needs the stack: `SIM_ADMIN_TOKEN` set in `.env`, then `make up && make smoke` (expect the new POST probes green) + `make e2e` file `test_01_simulators_and_oracle.py`. Not run here (no Docker in sandbox).
+- Remaining Cycle 2 FAIL items: AR-1-2 (High, unverified release path), AR-1-3, AR-1-4 (partly), AR-1-5, AR-2-2 … AR-2-6. AR-2-2 (build `docs_url`/`docs_path` SSRF) is the next smallest well-scoped fix.

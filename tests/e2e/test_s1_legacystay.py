@@ -514,12 +514,12 @@ def test_no_legacystay_specific_rule_or_engine_code() -> None:
 
 
 def _set_livestay_scenario(scenario_id: str, seed: int = 0) -> None:
-    from tests.e2e.conftest import admin_url
+    from tests.e2e.conftest import admin_headers, admin_url
 
     url = admin_url("sim-legacystay", "/admin/scenario")
     data = json.dumps({"id": scenario_id, "seed": seed}).encode()
     req = __import__("urllib.request").request.Request(
-        url, data=data, headers={"Content-Type": "application/json", "X-Admin-Network": "admin-net"}, method="POST"
+        url, data=data, headers={"Content-Type": "application/json", **admin_headers()}, method="POST"
     )
     with __import__("urllib.request").request.urlopen(req, timeout=5):
         pass

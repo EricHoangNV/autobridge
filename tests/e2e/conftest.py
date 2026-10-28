@@ -157,12 +157,26 @@ def _http_post_json(url: str, payload: dict, timeout: float = 5.0, admin: bool =
         if token and not admin:
             headers["Authorization"] = f"Bearer {token}"
         if admin:
-            headers["X-Admin-Network"] = "admin-net"
+            headers.update(admin_headers())
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
     except Exception:
         return False
+
+
+def admin_headers() -> dict[str, str]:
+    """Headers authorizing simulator admin calls (AR-1-1).
+
+    ``X-Admin-Network`` is only a routing hint; the real credential is
+    ``SIM_ADMIN_TOKEN`` (server-side env only, never logged). Sent only
+    when configured so header-only dev stacks keep working.
+    """
+    headers = {"X-Admin-Network": "admin-net"}
+    token = os.environ.get("SIM_ADMIN_TOKEN", "")
+    if token:
+        headers["X-Admin-Token"] = token
+    return headers
 
 
 def admin_url(service: str, path: str = "/admin/scenario") -> str:

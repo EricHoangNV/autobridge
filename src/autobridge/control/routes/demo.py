@@ -35,6 +35,20 @@ def _resolve_target(target: str) -> str:
     return resolved
 
 
+def _admin_headers() -> dict[str, str]:
+    """Headers proving admin authorization to the simulator admin API.
+
+    ``X-Admin-Network`` is only a routing hint (AR-1-1); the real credential
+    is ``SIM_ADMIN_TOKEN`` (server-side env only, never logged or echoed).
+    Sent only when configured so header-only dev stacks keep working.
+    """
+    headers = {"X-Admin-Network": "admin-net"}
+    token = os.environ.get("SIM_ADMIN_TOKEN", "")
+    if token:
+        headers["X-Admin-Token"] = token
+    return headers
+
+
 def _admin_url_for_target(resolved: str) -> str:
     # Inside Docker Compose, admin API is at http://sim-atlas:8001 and http://sim-harbor:8001
     # From host (when not in Docker), we use localhost ports 8109/8110
@@ -75,10 +89,10 @@ def inject_fault(body: InjectFaultRequest, _: None = Security(require_control_to
 
     try:
         with httpx.Client(timeout=5) as client:
-            # The simulator admin API requires proof of admin-net membership
-            # (simulators/common/admin.py); without this header every write
-            # gets 403 and the labelled fault never lands (REQ-010).
-            r = client.post(url, json=payload, headers={"X-Admin-Network": "admin-net"})
+            # The simulator admin API requires proof of admin authorization
+            # (simulators/common/admin.py): header-only writes get 403 when
+            # SIM_ADMIN_TOKEN is set, and the labelled fault never lands.
+            r = client.post(url, json=payload, headers=_admin_headers())
             try:
                 admin_response = r.json() if r.content else {"status_code": r.status_code}
             except Exception:
@@ -117,8 +131,8 @@ def demo_reset(_: None = Security(require_control_token)) -> dict[str, Any]:
         url = f"{base.rstrip('/')}/admin/reset"
         try:
             with httpx.Client(timeout=5) as client:
-                # Admin writes require the admin-net header (see inject-fault).
-                r = client.post(url, json={}, headers={"X-Admin-Network": "admin-net"})
+                # Admin writes require admin authorization (see inject-fault).
+                r = client.post(url, json={}, headers=_admin_headers())
                 results["resets"].append({"target": target, "status": r.status_code})
         except Exception as exc:
             results["resets"].append({"target": target, "error": str(exc)})

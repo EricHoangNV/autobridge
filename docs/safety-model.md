@@ -149,9 +149,13 @@ intentionally wrong `net→total_amount` mapping that the verifier must reject).
 * `LegacyStay` (Phase 2) adds rate limits, misleading examples and nullable
   chaos for unseen-generalization.
 
-Admin isolation is enforced by an `X-Admin-Network: admin-net` header.
-`runtime-sandbox` (vendor-net only) cannot reach `8001`; smoke asserts it is
-`403/down`. The host and `control` (admin-net) proxy include the header.
+Admin writes are authorized by `SIM_ADMIN_TOKEN` (`X-Admin-Token`,
+constant-time compare); `X-Admin-Network: admin-net` is only a routing hint
+(AR-1-1 — the header value is published in this repo, so it cannot be the
+credential). `runtime-sandbox` (vendor-net only) has no token and gets
+`403/down` even when it replays the header; smoke asserts exactly that when
+the token is configured. The host and `control` (admin-net) proxy send both
+headers when the token is set.
 
 ## 6. Response schema and leakage guard
 

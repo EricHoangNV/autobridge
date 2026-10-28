@@ -82,3 +82,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed two ways: documented the `401` response on every guarded route (shared `AUTH_401` so the 401 shape validates), and set the token in the contract test's fixture so enforcement is active while fuzzing; the 2xx paths stay covered by the functional API tests.
 
 **Rule:** When auth is conditional at runtime but declared in OpenAPI, run contract fuzzing with enforcement switched on and document the 401, otherwise the fuzzer will flag the open-when-unset path as an auth failure.
+
+## 9. A published header is a routing hint, never a credential — new shared secrets follow the REQ-012 pattern
+
+**Context:** AR-1-1 (2026-10-28) — simulator admin writes were guarded only by `X-Admin-Network: admin-net`, a value printed in source, docs and every caller, so any vendor-net peer could replay it; the smoke probe (`GET /healthz`, no header, expecting failure) passed even when the write path was wide open.
+
+- Fixed with `SIM_ADMIN_TOKEN`: env-only secret, `X-Admin-Token` header, `hmac.compare_digest`, enforced-when-set / open-when-unset — the exact semantics the reviewer already accepted for `AUTOBRIDGE_CONTROL_TOKEN` (REQ-012), so re-verification has a precedent to check against instead of a new auth model to evaluate.
+- The smoke fix that makes the check meaningful is a *write* probe with the old credential (header-only POST must 403 when the token is configured), not a read probe without it; the vacuous probe failed to detect access because it never attempted what the attacker would attempt.
+- Consolidating healthz/readyz onto the same gate as writes removed three copies of the check that could drift apart again.
+
+**Rule:** When a finding says "static value is not authorization", introduce the secret with the repo's existing optional-token semantics (env-only, empty default, constant-time compare, 401/403 naming the missing header never the value), forward it in every caller (proxy + harness + e2e helpers), and upgrade the negative probe to replay the *old* credential against the *write* path.

@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from tests.e2e.conftest import admin_headers as _conftest_admin_headers
 from tests.e2e.conftest import admin_url, service_url
 
 # ---------------------------------------------------------------------------
@@ -89,7 +90,8 @@ def _http_get_json(
 
 
 def _admin_headers() -> dict[str, str]:
-    return {"X-Admin-Network": "admin-net"}
+    # AR-1-1: delegate to the shared helper so the token rides along when set.
+    return _conftest_admin_headers()
 
 
 def _verifier_post(

@@ -9,6 +9,8 @@ Trust boundary: this module never imports ``autobridge`` or ``verifier``.
 
 from __future__ import annotations
 
+import hmac
+import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -16,6 +18,14 @@ from pydantic import BaseModel
 
 from simulators.common.faults import KNOWN_SCENARIO_IDS, validate_scenario_id
 from simulators.common.state import get_state, reset_state, set_scenario
+
+#: Env key naming the shared secret that authorizes simulator admin writes
+#: (AR-1-1). The value is read at request time and never logged or echoed.
+#: When unset/empty the admin API falls back to the header-only dev mode.
+ADMIN_TOKEN_ENV_VAR = "SIM_ADMIN_TOKEN"
+
+#: Header carrying the admin token (sent alongside the routing hint below).
+ADMIN_TOKEN_HEADER = "x-admin-token"
 
 
 class ScenarioRequest(BaseModel):
@@ -30,33 +40,27 @@ class ScenarioResponse(BaseModel):
 
 
 def _require_admin_network(request: Request) -> None:
-    """Enforce admin-net isolation at application level.
+    """Enforce simulator-admin authorization (AR-1-1).
 
-    The admin API is dual-homed but must be unreachable from
-    ``runtime-sandbox`` (vendor-net only). True network isolation would
-    require binding the admin listener to the admin-net interface only,
-    which is fragile with Docker bridge's dynamic IPs. Instead we enforce
-    that a caller proves it is on admin-net by sending the
-    ``X-Admin-Network: admin-net`` header. The smoke probe
-    (runtime → sim:8001) sends no such header and therefore gets 403,
-    which the probe treats as "down" — preserving the negative check.
-    Host-based e2e and the control proxy both send the header.
+    The ``X-Admin-Network: admin-net`` header is only a routing hint: its
+    value is published in this source tree, so any vendor-net peer can send
+    it. Real authorization is the shared secret in ``SIM_ADMIN_TOKEN``,
+    presented as ``X-Admin-Token`` and compared in constant time. When the
+    env var is unset/empty (local dev), the header-only check applies; when
+    it is set, a missing or wrong token is 403 even with a correct header.
+    The smoke probe (runtime → sim:8001) sends no token and therefore gets
+    403, which the probe treats as "down" — preserving the negative check.
+    Host-based e2e and the control proxy send both headers.
     """
-    # Allow healthz/readyz without header when called from host's
-    # wait_readyz (not used for admin, but be permissive for direct curl).
-    # For admin endpoints, require the header; for the smoke probe we
-    # want 403, so check header presence.
     hdr = request.headers.get("x-admin-network")
-    # The smoke probe is unauthenticated and header-less → 403.
-    # Real callers (control proxy, e2e harness) send the header.
-    # To keep manual curl working, also allow if client is localhost-ish
-    # — but in-container probe's client.host is not localhost.
-    # Simplest: require header for all admin writes, allow reads without
-    # but still block the smoke's healthz probe by returning 403 when the
-    # User-Agent is not from control/host. For determinism, we require
-    # the header for every admin request; callers that omit it get 403.
     if hdr != "admin-net":
         raise HTTPException(status_code=403, detail="admin network required")
+    expected = os.environ.get(ADMIN_TOKEN_ENV_VAR, "")
+    if not expected:
+        return
+    presented = request.headers.get(ADMIN_TOKEN_HEADER, "")
+    if not presented or not hmac.compare_digest(presented, expected):
+        raise HTTPException(status_code=403, detail="admin token required")
 
 
 def create_admin_app() -> FastAPI:
@@ -64,16 +68,14 @@ def create_admin_app() -> FastAPI:
 
     @app.get("/healthz")
     def get_healthz(request: Request) -> dict[str, str]:
-        # Smoke probes /healthz without header — return 403 to preserve
-        # the negative check, but allow host with header to pass.
-        if request.headers.get("x-admin-network") != "admin-net":
-            raise HTTPException(status_code=403, detail="admin network required")
+        # Smoke probes /healthz without headers — 403 preserves the
+        # negative check, but hosts with both headers pass.
+        _require_admin_network(request)
         return {"status": "ok"}
 
     @app.get("/readyz")
     def get_readyz(request: Request) -> dict[str, object]:
-        if request.headers.get("x-admin-network") != "admin-net":
-            raise HTTPException(status_code=403, detail="admin network required")
+        _require_admin_network(request)
         return {"status": "ok", "checks": {"default": "ok"}}
 
     @app.get("/admin/scenario")

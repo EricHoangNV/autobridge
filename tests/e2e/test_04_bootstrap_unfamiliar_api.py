@@ -722,12 +722,12 @@ def test_bootstrap_spec_syncs_live_when_stack_up(e2e_stack: str) -> None:
     assert e2e_stack
     # Reset Harbor simulator to baseline via admin API (conftest autouse already does)
     try:
-        from tests.e2e.conftest import admin_url
+        from tests.e2e.conftest import admin_headers, admin_url
 
         url = admin_url("sim-harbor", "/admin/scenario")
         data = json.dumps({"id": "baseline", "seed": 0}).encode()
         req = __import__("urllib.request").request.Request(
-            url, data=data, headers={"Content-Type": "application/json", "X-Admin-Network": "admin-net"}, method="POST"
+            url, data=data, headers={"Content-Type": "application/json", **admin_headers()}, method="POST"
         )
         with __import__("urllib.request").request.urlopen(req, timeout=5):
             pass

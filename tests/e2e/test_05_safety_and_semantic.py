@@ -1310,7 +1310,10 @@ def test_safety_scenarios_live_via_admin_api_when_stack_up(e2e_stack: str) -> No
         return f"http://localhost:{port}{path}"
 
     def admin_headers() -> dict[str, str]:
-        return {"X-Admin-Network": "admin-net"}
+        # AR-1-1: delegate to the shared helper so the token rides along when set.
+        from tests.e2e.conftest import admin_headers as _ah  # noqa: PLC0415
+
+        return _ah()
 
     # Check verifier reachable
     v_status, v_body = _http_post_json(

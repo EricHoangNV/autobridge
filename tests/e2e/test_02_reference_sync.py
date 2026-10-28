@@ -339,11 +339,11 @@ def test_atlas_reference_sync_complete_live(e2e_stack: str) -> None:
     assert e2e_stack
     # Reset simulators to baseline via admin API (conftest autouse already does, but be explicit)
     try:
-        from tests.e2e.conftest import admin_url
+        from tests.e2e.conftest import admin_headers, admin_url
 
         url = admin_url("sim-atlas", "/admin/scenario")
         data = json.dumps({"id": "baseline", "seed": 0}).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-Admin-Network": "admin-net"}, method="POST")
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **admin_headers()}, method="POST")
         with urllib.request.urlopen(req, timeout=5):
             pass
     except Exception:
@@ -371,11 +371,11 @@ def test_atlas_reference_sync_complete_live(e2e_stack: str) -> None:
 def test_harbor_reference_sync_complete_live(e2e_stack: str) -> None:
     assert e2e_stack
     try:
-        from tests.e2e.conftest import admin_url
+        from tests.e2e.conftest import admin_headers, admin_url
 
         url = admin_url("sim-harbor", "/admin/scenario")
         data = json.dumps({"id": "baseline", "seed": 0}).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-Admin-Network": "admin-net"}, method="POST")
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **admin_headers()}, method="POST")
         with urllib.request.urlopen(req, timeout=5):
             pass
     except Exception:
