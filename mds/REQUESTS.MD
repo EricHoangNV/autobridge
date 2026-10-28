@@ -7,7 +7,7 @@ remaining review FAIL item. Constraint for all of them: someone who downloads th
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
 ### REQ-016 — `make demo` reports [ok] when its writes fail (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 09:55)
 With the token missing, `make demo` printed `control POST /connectors -> 401` and `POST /demo/inject-fault -> 401`,
 yet every step said `[ok]` and the run exited 0. A demo check that cannot fail protects nothing.
 Wanted:
