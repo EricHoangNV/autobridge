@@ -146,6 +146,22 @@ Wanted:
    calls; `rate_limit_429`, `transient_503` → no patch, 0 calls; `gross_to_net` semantic drift → must not be fixed
    below L3, escalates; the refusal → 0 calls). It fails if a scenario calls the frontier when it should not, or skips a
    rung it should have tried. Runs against the live stack (REQ-010 style) and in-process.
+**Owner check after sub-step D (2026-10-28 21:10), fix before the next REQ-021 sub-step:**
+- *Missing migration.* Local mode keeps `.local/autobridge.db` across runs. After sub-step D, `GET /repairs` answers 500
+  (`sqlite3.OperationalError: no such column: repair_runs.ladder_trace`) and demo step 3 fails; a fresh database works.
+  Add an Alembic migration for every schema change since the last one (the repo has `alembic/`), run migrations on
+  control startup (Docker and local mode) and in `make demo-reset`, and add a test that upgrades a database created by
+  the previous schema and then serves `/repairs`. Never require users to delete their database.
+- *gross_to_net never climbs.* Demo step 4 shows `rung_attempts: [{rung 4, escalate}]`, 0 model calls: it jumps from
+  the start to L4. The demo must show the frontier model used exactly when needed, so this scenario must record the
+  real climb: L0 miss (no known fix) → L1 no rule matches (reason) → L2 small model ranks the gross/net hypotheses and
+  is not confident enough (confidence and threshold) → L3 Muse frontier model is called (tokens and cost in the
+  ledger) and proposes a patch → the verifier rejects it (`invalid_patch_trap`, or if the proposal is correct, it is
+  checked and the run still needs operator confirmation per the scenario's rules) → L4 one operator question. With
+  `FRONTIER_API_KEY` unset the run uses replay (item 5) or says plainly that L3 was skipped for lack of a provider, never
+  silently. Update REQ-021 item 4's matrix test to require an L3 attempt for `gross_to_net`, and assert that every
+  other main-script step makes 0 frontier calls.
+
 5. **Reliable frontier calls in the demo.** Two modes, chosen by env: `live` (a real frontier provider; model ids in
    config, never in code) and `replay` (responses recorded from a live run, stored redacted under `tests/fixtures/` or
    `demo/recordings/`, replayed deterministically by prompt hash; a missing recording fails loudly). The UI and
