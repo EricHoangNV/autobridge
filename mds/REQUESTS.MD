@@ -345,6 +345,27 @@ green; grep proves no EdgePOS remnants and no private names. Split into claimabl
    (fixture teardown), make the agent's and tests' HTTP clients not consult system proxy settings where they do not need
    to, and make the suite fail on unhandled thread exceptions (`filterwarnings = error::pytest.PytestUnhandledThreadExceptionWarning`)
    so a leaked thread is caught on Linux too. Owner re-runs the full suite on macOS after the fix.
+   **Owner re-check (2026-10-29, on f64c6956): item 2 is NOT fixed, and my diagnosis above was wrong; correcting it.**
+   The full unit suite on macOS still gives 13–14 `returncode=-11` failures (dotenv_loader 4, edge_sign 7,
+   ui_client 2, edge_agent 1) and new "Python quit unexpectedly" crash reports (`CoreFoundation: *** multi-threaded
+   process forked ***`, `crashed on child side of fork pre-exec`). The leaked-thread/`trust_env` work in 014bc5f9 is
+   fine to keep, but it is not the cause: **the crash already happens on e2932600, before REQ-022 began** (6 failures
+   there). Bisected minimal repro, 3 tests, fails every time on macOS:
+   `uv run pytest -p no:randomly tests/unit/test_autobridge_bench_w85.py::test_main_full_pipeline_writes_scorecard
+   tests/unit/test_autobridge_build_docs_guard.py::test_validate_docs_url_unit tests/unit/test_autobridge_dotenv_loader.py`
+   → 4 dotenv tests die with -11. Drop either of the first two and all pass. `test_validate_docs_url_unit` calls
+   `validate_docs_url("https://example.com/docs.md")`, which runs a **real DNS lookup** in a worker thread
+   (`src/autobridge/control/routes/builds.py:68`, `_docs_url_resolves_internal`: ThreadPoolExecutor +
+   `socket.getaddrinfo`); on macOS that initializes the system resolver/CoreFoundation machinery off the main thread,
+   and once `test_main_full_pipeline_writes_scorecard` has also run, every later `fork()`ed child crashes before exec.
+   Fix: unit tests must not do real DNS (they are also not hermetic: offline they fail open silently). Patch the
+   resolver in the docs-guard tests (e.g. monkeypatch `_docs_url_resolves_internal` or `socket.getaddrinfo`) and add a
+   unit-wide autouse guard that fails any test calling real `socket.getaddrinfo` for a non-literal host; find what
+   `test_main_full_pipeline_writes_scorecard` initializes (check for real network/proxy lookups or a thread pool) and
+   make it hermetic the same way. Acceptance: the 3-test repro above and the full `uv run pytest tests/unit` pass on
+   macOS with zero new crash reports (owner verifies; the sandbox is Linux and cannot show it).
+   This item is independent of sub-step D; do it next.
+
 
 ### REQ-023 — Demo plan v2: main script plus a fault-scenario catalogue (2026-10-28)
 Status: OPEN
