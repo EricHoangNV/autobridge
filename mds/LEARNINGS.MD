@@ -92,3 +92,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Consolidating healthz/readyz onto the same gate as writes removed three copies of the check that could drift apart again.
 
 **Rule:** When a finding says "static value is not authorization", introduce the secret with the repo's existing optional-token semantics (env-only, empty default, constant-time compare, 401/403 naming the missing header never the value), forward it in every caller (proxy + harness + e2e helpers), and upgrade the negative probe to replay the *old* credential against the *write* path.
+
+## 10. Close an unverified-persistence hole by quarantining, not by schema migration
+
+**Context:** AR-1-2 (2026-10-28) — build candidates that never passed the verifier were persisted and then approvable/activatable/syncable. The review offered two remediations: gate persistence on a passing verdict, or quarantine unverified candidates. A `verified` column plus approve/sync enforcement would have broken ~30 existing tests that approve gate-less releases and required an Alembic migration.
+
+- Passing `verifier_url`/`scenario_id` through to `create_release` reuses the existing gate (fail-closed on unreachable via `GateBlockedError`); catching it at the call site and persisting *nothing* quarantines the candidate with zero schema change, and all no-verifier tests keep passing because the gate still skips when unconfigured.
+- The verifier URL belongs only on services with a verifier-net route: setting it on `worker` (engine-net only) would fail closed on every worker-executed build, which is worse than the narrow race it would close — so verification placement follows the network topology, and the residual is documented instead of papered over.
+- Keep `success: True` on a gate-blocked build: the build (docs → draft) worked; it is the *release* that was withheld. Conflating the two would misreport the lifecycle.
+
+**Rule:** When a persistence gate is missing, thread the existing check into the creation call and quarantine by not persisting (blocked error → no row, reason on the parent run) rather than adding enforcement columns; configure the check only where the trust-boundary topology lets it succeed, and document the path that inherently cannot be checked.

@@ -2,7 +2,7 @@
 
 ## Current State
 
-AR-1-1 done (sbx1 2026-10-28): simulator admin writes now require `SIM_ADMIN_TOKEN` (`X-Admin-Token`, constant-time compare) when set; `X-Admin-Network` demoted to routing hint. Control demo proxy + e2e helpers forward the token; smoke asserts header-only POST is rejected when token configured. 9 new unit tests. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+AR-1-2 done (sbx1 2026-10-28): gate-before-persist on builds (blocked verifier = no release, draft kept with `gate_blocked`); sync 422 without active release; `VERIFIER_URL` on control only. 7 new unit tests. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - W1 Foundations: scaffold, compose, ConnectorSpec, schemas, DB models, jobs, evidence, LLMProvider, fakes, e2e harness base
@@ -19,13 +19,14 @@ AR-1-1 done (sbx1 2026-10-28): simulator admin writes now require `SIM_ADMIN_TOK
   - P2.S1.1 LegacyStay third vendor (bootstrap + rename repair, frontier 0); P2.S2.1 Simulated Edge target (signed-only edge worker, isolated edge-net, live negative + signed execution green); P2.S3.1 DiscoveryResult static import (reserved schema, explicit-endpoint lifecycle, 2 live e2e green); P2.S4.1 MCP Guardian (pinned gateway replay Complete vs rediscovery Blocked, unsafe mappings rejected, 2 live e2e green); P2.S5.1 OpenAI provider (identical ladder outcome on both providers, e2e test_s5 4 pass + 1 owner-opt-in skip); P2.S6.1 Richer UI (per-run chart + evidence graph, test_s6 3 pass, test_06 6/6 green, no new API surface); P2.S7.1 CLI (same journey as UI via `ab`, unit 26 + e2e test_s7 4/4 green, no new API surface)
   - AR-2-1 (Code Review Cycle 2): capped vendor Retry-After + per-job delay budget, 5 new unit tests
   - AR-1-1 (Code Review Cycle 1+2): SIM_ADMIN_TOKEN secret replaces published header as admin credential, 9 new unit tests
-- Tests: 2253 pass / 0 fail (autobridge 91%, verifier 94%, simulators 97%) + ui 143 pass; make lint + typecheck green; no stack in sandbox (unit tests cover AR-1-1 via TestClient; live e2e + smoke not run)
+  - AR-1-2 (Code Review Cycle 1+2): gate-before-persist on build path + no sync fallback to unapproved releases, 7 new unit tests
+- Tests: 2260 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 143 pass; make lint + typecheck + openapi-check green; no stack in sandbox (unit tests cover AR-1-2 via mocks/TestClient; live e2e + smoke not run)
 - Stack: compose up with loopback-bound ports; all readyz green 2026-10-28
 
 ## Next tasks
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS (codeable REQ-007 flow done 2026-10-27)
-3. Code Review Cycle 2 FAIL items still open: AR-1-2, AR-1-3, AR-1-4 (partly: REQ-012 done), AR-1-5, AR-2-2, AR-2-3, AR-2-4, AR-2-5, AR-2-6 (AR-2-1, AR-1-1 fixed, pending reviewer re-verification)
+3. Code Review Cycle 2 FAIL items still open: AR-1-3, AR-1-4 (partly: REQ-012 done), AR-1-5, AR-2-2, AR-2-3, AR-2-4, AR-2-5, AR-2-6 (AR-1-2, AR-2-1, AR-1-1 fixed, pending reviewer re-verification)
 4. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 … P2.S7.1 DONE — Phase 2 complete
 
 ## Open Requests

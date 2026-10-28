@@ -2047,3 +2047,27 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Notes for next iteration:**
 - Live verification needs the stack: `SIM_ADMIN_TOKEN` set in `.env`, then `make up && make smoke` (expect the new POST probes green) + `make e2e` file `test_01_simulators_and_oracle.py`. Not run here (no Docker in sandbox).
 - Remaining Cycle 2 FAIL items: AR-1-2 (High, unverified release path), AR-1-3, AR-1-4 (partly), AR-1-5, AR-2-2 … AR-2-6. AR-2-2 (build `docs_url`/`docs_path` SSRF) is the next smallest well-scoped fix.
+
+## 2026-10-28 — AR-1-2: gate-before-persist on build path (sbx1)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- `src/autobridge/engine/build_run.py`: `run_build_handler` now passes `verifier_url`/`scenario_id` into `create_release` (gate-before-persist). `GateBlockedError` → no release persisted, `result = {success: True, verified: False, gate_blocked: reason, release_id: None}`; gate pass → `verified: True` + `verifier/gate=before_persist` trace entry. Module docstring updated.
+- `src/autobridge/control/routes/builds.py`: `trigger_sync` fallback to latest release removed; no active release → 422 naming the requirement.
+- `compose.yaml`: `VERIFIER_URL=${VERIFIER_URL:-http://verifier:8000}` on `control` only; `worker` explicitly without (no verifier-net route — comment in file).
+- `docs/safety-model.md` §7: build-path quarantine paragraph.
+- Tests (+7): `test_autobridge_engine_build_run.py` — gate fail / unreachable / pass (pass asserts gate received the build's scenario_id + URL); `test_autobridge_control_api.py` — failing-verifier build persists zero releases + sync 422, releases-without-active sync 422; `test_autobridge_compose.py` — control default + worker absence.
+
+**Key decisions:**
+- Quarantine-by-non-persistence instead of a `verified` column + approve/sync enforcement: no schema migration, zero breakage to the ~30 existing tests that approve unverified releases, and the deployed default (VERIFIER_URL on control) is fail-closed where it matters. Existing approve-422 "no candidate release" path covers the rest.
+- Did not set VERIFIER_URL on `worker`: it has no verifier-net route, so every worker-executed build would fail closed — worse than the current small race window, and it would contradict the DIRECTIVES §2 topology. Documented as residual.
+- `result["success"]` stays True on gate-block: the build (docs → draft) worked; it is the *release* that was withheld. Matches the existing lifecycle comment (verification failure in `verified`, not job state).
+
+**Files changed:**
+- `src/autobridge/engine/build_run.py`, `src/autobridge/control/routes/builds.py`
+- `compose.yaml`, `docs/safety-model.md`
+- `tests/unit/test_autobridge_engine_build_run.py`, `tests/unit/test_autobridge_control_api.py`, `tests/unit/test_autobridge_compose.py`
+
+**Notes for next iteration:**
+- Needs a live stack to fully close: `make up && make smoke` + build-while-verifier-down manual check (expect no release row), plus the `test_05` e2e extension the finding suggests. Not run here (no Docker in sandbox).
+- Remaining Cycle 2 FAIL items: AR-1-3, AR-1-4 (partly: REQ-012 done), AR-1-5, AR-2-2, AR-2-3, AR-2-4, AR-2-5, AR-2-6 (AR-1-2, AR-2-1, AR-1-1 fixed, pending reviewer re-verification). Suggested next: AR-2-2 (build `docs_url`/`docs_path` SSRF + local-file read) or AR-1-3 (client-chosen `to_release_id`), both well-scoped.
