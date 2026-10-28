@@ -2486,3 +2486,27 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Declarative joins 
 ## 2026-10-28 — REQ-020 sub-step 6 done (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). Meridian after-proof + two ladder-repaired faults merged on branch (this entry covers the code commit 99d9812b; bookkeeping merge to main follows).
 After: discovered v2 spec passes gate, syncs Complete live, UTC->property-local business dates. Faults: State->Status via rename_field, Cursor->NextCursor via new generic cursor_next_path_shift; both L1, 0 frontier, verified releases, L0 repeat hit. Catalog 17 scenarios. Full gates green: pytest 2103/99/294 (91/94/96), ui 148, lint+typecheck+tsc, 39 e2e live. Remaining: REQ-020 item 7 demo step.
+
+## REQ-020 owner-check fix: v1 spec_signature regression (sbx1 2026-10-28)
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-020 owner check after sub-step 6 (fix FIRST before REQ-021)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Reproduced the break: `spec_signature()` post-v2 mismatches both committed reference `build-report.json` hex values; `test_reference_specs_exist_and_validate` failed as the owner reported.
+- Added `signature_canonical_data()` (`src/autobridge/spec/models.py`): drops v2-only fields at defaults (`operations.*.body`, `pagination.cursor/count paths+value`, `auth.body_fields`, empty `entities.*.joins`); wired into all four signature paths (registry, control DB signing, edge `release_signature`, drift fingerprint).
+- Added 4 unit regression tests (committed references verify, golden hex pin, v2-field moves signature, defaults ignored); one-paragraph docs note in `docs/connector-spec.md`.
+- Diagnosed the gate gap (only test_02 e2e pinned committed signatures; workstream runs skipped it) and closed it by pinning in unit tests.
+
+**Key decisions:**
+- Strip-at-defaults over sign-by-version: restores exact pre-v2 bytes (verified hex-identical), no re-signing of committed releases.
+- Single helper, function-local imports in control/runtime/drift to keep modules import-light.
+
+**Files changed:**
+- `src/autobridge/spec/models.py`, `src/autobridge/spec/__init__.py`, `src/autobridge/spec/registry.py`, `src/autobridge/control/models.py`, `src/autobridge/runtime/targets.py`, `src/autobridge/drift/fingerprint.py` — canonicalisation fix.
+- `tests/unit/test_autobridge_spec.py` — 4 regression tests (92 pass in file).
+- `docs/connector-spec.md` — v1 stability paragraph.
+- `mds/LEARNINGS.MD` — learning 19 (pin shared canonical bytes in unit tests).
+
+**Tests:**
+- `make test` all green: autobridge 2107 pass / 91.29%, verifier 99 / 93.62%, simulators 294 / 96.10%, ui 148 pass; `make lint` + `make typecheck` green; e2e test_02 + meridian-runtime-v2 (9) green.

@@ -876,3 +876,124 @@ def test_patch_can_touch_v2_fields() -> None:
     )
     assert patched["operations"]["list_reservations"]["pagination"]["count_value"] == 50
     assert load_spec_from_dict(patched).spec_version == 2
+
+
+# --- REQ-020 owner-check regression (2026-10-28): v1 signatures stable across v2 ---
+
+
+def _reference_report(connector_id: str) -> dict[str, Any]:
+    report_path = ROOT / "generated" / "connectors" / connector_id / "reference" / "build-report.json"
+    assert report_path.is_file(), f"committed reference report missing: {report_path}"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert isinstance(report, dict)
+    return report
+
+
+def test_committed_reference_releases_verify() -> None:
+    """Committed reference releases load without signature mismatch.
+
+    Regression for the REQ-020.5a break: ``spec_signature()`` changed for
+    v1 specs, so ``load_release`` raised ``ReleaseCorruptError`` on the
+    committed ``generated/connectors/*/reference`` releases. This lives in
+    unit tests (not only the e2e file) so ``make test`` catches it even
+    when only one e2e file is selected.
+    """
+    for cid in ("atlaspms", "harborpms"):
+        report = _reference_report(cid)
+        loaded, reloaded_report = load_release(ROOT / "generated" / "connectors", cid, "reference")
+        assert loaded.connector.id == cid
+        assert reloaded_report["signature"] == report["signature"]
+        assert reloaded_report["signature"] == spec_signature(loaded)
+
+
+def test_v1_reference_signatures_golden() -> None:
+    """Golden pin: ``spec_signature()`` of each committed v1 reference spec.
+
+    The hex values below are the signatures stored before spec v2 shipped;
+    they must never change without a deliberate, reviewed re-signing. Do
+    not re-sign or rewrite the committed reference releases to make this
+    pass — fix the canonicalisation instead.
+    """
+    golden = {
+        "atlaspms": "7a3c60cecda5d8df3d3c0dbbf98a62d742fd7dcd80a72f818ad962e35977115a",
+        "harborpms": "8a463c2451e6eead4a3ecf06d557f70e7c35ffd533870cb767cf3cf02664f21d",
+    }
+    from autobridge.control.models import spec_signature as control_signature
+
+    for cid, expected in golden.items():
+        report = _reference_report(cid)
+        assert report["signature"] == expected, f"{cid} reference was re-signed; see test docstring"
+        spec_path = ROOT / "generated" / "connectors" / cid / "reference" / "spec.yaml"
+        data = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+        assert isinstance(data, dict)
+        assert load_spec_from_dict(data).spec_version == 1
+        assert spec_signature(load_spec_from_dict(data)) == expected
+        # The DB signing path agrees with the registry path when unkeyed.
+        assert control_signature(spec_to_json_data(load_spec_from_dict(data))) == expected
+
+
+def _v2_spec_with_all_features() -> dict[str, Any]:
+    """Harbor-shaped v2 spec exercising every v2-only field."""
+    data = harbor_data(spec_version=2)
+    auth = data["source"]["auth"]
+    op = data["operations"]["list_reservations"]
+    pag = op["pagination"]
+    op["method"] = "POST"
+    op["body"] = {"EnterpriseIds": ["e1"], "Limitation": {"Count": 100}}
+    auth.update({"type": "body_fields", "body_fields": {"ClientToken": "VENDOR_CLIENT_TOKEN"}})
+    auth.pop("credential_ref", None)
+    pag.update({"strategy": "body_cursor", "cursor_path": "Limitation.Cursor",
+                "count_path": "Limitation.Count", "count_value": 100})
+    pag.pop("cursor_param", None)
+    data["entities"]["Reservation"]["joins"] = [{
+        "from_operation": "list_reservations",
+        "local_key": "$.id",
+        "foreign_key": "$.id",
+        "cardinality": "many",
+        "as": "charges",
+        "fields": {"total": {"path": "$.folio.amount", "aggregate": "sum",
+                             "transform": [{"name": "money"}]}},
+    }]
+    return data
+
+
+def test_v2_field_change_moves_signature() -> None:
+    """A v2 spec's signature changes when any v2 field changes."""
+    base = _v2_spec_with_all_features()
+    base_sig = spec_signature(load_spec_from_dict(base))
+    # Sanity: a v2 spec with real v2 content differs from its v1 cousin.
+    assert base_sig != spec_signature(harbor_spec())
+
+    def mutated(path: str, value: Any) -> str:
+        from autobridge.spec.patch import apply_patch
+
+        patched = apply_patch(copy.deepcopy(base), [{"op": "replace", "path": path, "value": value}])
+        return spec_signature(load_spec_from_dict(patched))
+
+    assert mutated("/operations/list_reservations/body/Limitation/Count", 50) != base_sig
+    assert mutated("/operations/list_reservations/pagination/count_value", 50) != base_sig
+    assert mutated("/operations/list_reservations/pagination/cursor_path",
+                   "Limitation.Resume") != base_sig
+    assert mutated("/source/auth/body_fields/ClientToken", "OTHER_TOKEN") != base_sig
+    assert mutated("/entities/Reservation/joins/0/fields/total/aggregate", "count") != base_sig
+
+
+def test_v1_signature_ignores_defaulted_v2_keys() -> None:
+    """Defaulted v2-only keys are not part of a v1 signature.
+
+    Pins the canonicalisation directly: a v1 dump with explicit
+    ``body: None`` / ``body_fields: None`` / ``cursor_path: None`` /
+    ``joins: []`` hashes exactly like the same dump without those keys.
+    """
+    from autobridge.spec.models import signature_canonical_data
+
+    dumped = spec_to_json_data(harbor_spec())
+    padded = copy.deepcopy(dumped)
+    padded["operations"]["list_reservations"]["body"] = None
+    padded["operations"]["list_reservations"]["pagination"].update(
+        {"cursor_path": None, "count_path": None, "count_value": None})
+    padded["source"]["auth"]["body_fields"] = None
+    padded["entities"]["Reservation"]["joins"] = []
+    assert spec_signature(padded) == spec_signature(dumped)
+    assert signature_canonical_data(padded) == signature_canonical_data(dumped)
+    assert "body" not in signature_canonical_data(padded)["operations"]["list_reservations"]

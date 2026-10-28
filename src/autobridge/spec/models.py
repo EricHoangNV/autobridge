@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 #: Closed transform set (plan §2.4). Adding one is a plan change, not a
 #: task-level decision; the runtime registry must accept exactly these.
@@ -815,6 +818,47 @@ def load_spec_from_yaml(path: str | Path) -> ConnectorSpec:
 def spec_to_json_data(spec: ConnectorSpec) -> dict[str, Any]:
     """Dump a spec to JSON-compatible data ( aliases kept: ``from`` )."""
     return spec.model_dump(mode="json", by_alias=True)
+
+
+def signature_canonical_data(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Strip spec-v2-only fields at their defaults for signature hashing.
+
+    REQ-020 sub-steps 5a/5c added ``operations.*.body``, ``body_fields``
+    auth, ``body_cursor`` pagination paths (``cursor_path``/``count_path``/
+    ``count_value``) and ``entities.*.joins``. A v1 spec always carries
+    them at their defaults — the v1 vocabulary gate (``_v1_vocabulary``)
+    rejects anything else — but ``model_dump`` emits them, so hashing the
+    raw dump changed every v1 signature (REQ-020 owner check 2026-10-28:
+    committed reference releases stopped verifying). Dropping defaulted
+    v2-only keys restores the exact pre-v2 canonical bytes; a v2 spec that
+    actually sets one of them still changes the signature.
+    """
+    import copy
+
+    snap = copy.deepcopy(dict(data))
+    operations = snap.get("operations")
+    if isinstance(operations, dict):
+        for op in operations.values():
+            if not isinstance(op, dict):
+                continue
+            if op.get("body") is None and "body" in op:
+                del op["body"]
+            pagination = op.get("pagination")
+            if isinstance(pagination, dict):
+                for key in ("cursor_path", "count_path", "count_value"):
+                    if pagination.get(key) is None and key in pagination:
+                        del pagination[key]
+    source = snap.get("source")
+    if isinstance(source, dict):
+        auth = source.get("auth")
+        if isinstance(auth, dict) and auth.get("body_fields") is None and "body_fields" in auth:
+            del auth["body_fields"]
+    entities = snap.get("entities")
+    if isinstance(entities, dict):
+        for entity in entities.values():
+            if isinstance(entity, dict) and not entity.get("joins") and "joins" in entity:
+                del entity["joins"]
+    return snap
 
 
 def format_validation_errors(error: Any) -> list[str]:

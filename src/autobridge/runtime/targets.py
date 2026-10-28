@@ -665,9 +665,14 @@ def release_signature(spec: dict[str, Any], *, secret: str | None = None) -> str
     When ``EDGE_RELEASE_SECRET`` (or *secret*) is set the digest is keyed,
     so only the secret holder can mint an accepted signature (AR-2-4).
     Without a key this is the legacy unkeyed sha256: an integrity checksum
-    only, not an authorization decision.
+    only, not an authorization decision. V1 specs hash byte-identically to
+    before spec v2 existed (v2-only fields at defaults are omitted).
     """
-    payload = json.dumps(spec, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    from autobridge.spec.models import signature_canonical_data  # noqa: PLC0415 - keep runtime import-light
+
+    payload = json.dumps(
+        signature_canonical_data(spec), sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     key = _signing_key(secret)
     if key is None:
         return hashlib.sha256(payload).hexdigest()

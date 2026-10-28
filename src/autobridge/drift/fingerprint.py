@@ -192,8 +192,10 @@ class FingerprintDelta:
 
 
 def _spec_signature(spec: dict[str, Any]) -> str:
+    from autobridge.spec.models import signature_canonical_data  # noqa: PLC0415 - keep drift import-light
+
     return hashlib.sha256(
-        json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(signature_canonical_data(spec), sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
 

@@ -31,6 +31,7 @@ from autobridge.spec.models import (
     format_validation_errors,
     load_spec_from_dict,
     load_spec_from_yaml,
+    signature_canonical_data,
     spec_to_json_data,
     validate_against_schema_file,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "reverse_patch",
     "schema_dir",
     "schema_path",
+    "signature_canonical_data",
     "spec_signature",
     "spec_to_json_data",
     "store_release",

@@ -17,7 +17,12 @@ from typing import Any
 
 import yaml
 
-from autobridge.spec.models import ConnectorSpec, load_spec_from_dict, spec_to_json_data
+from autobridge.spec.models import (
+    ConnectorSpec,
+    load_spec_from_dict,
+    signature_canonical_data,
+    spec_to_json_data,
+)
 
 CONNECTOR_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -52,9 +57,16 @@ def _checked_id(value: str, pattern: re.Pattern[str], what: str) -> str:
 
 
 def spec_signature(spec: dict[str, Any] | ConnectorSpec) -> str:
-    """sha256 over the canonical JSON form (sorted keys, compact separators)."""
+    """sha256 over the canonical JSON form (sorted keys, compact separators).
+
+    V1 specs hash byte-identically to before spec v2 existed: v2-only
+    fields at their defaults are omitted via
+    :func:`signature_canonical_data` (REQ-020 owner check 2026-10-28).
+    """
     data = spec_to_json_data(spec) if isinstance(spec, ConnectorSpec) else spec
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    canonical = json.dumps(
+        signature_canonical_data(data), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

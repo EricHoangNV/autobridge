@@ -35,7 +35,11 @@ never calls an LLM for a baseline sync.
 
 Build report (`build-report.json`) records `connector_id`, `release_id`,
 sha256 `signature` of the canonical JSON form, `built_by`, and any caller
-metadata. Signature mismatches raise `ReleaseCorruptError`.
+metadata. Signature mismatches raise `ReleaseCorruptError`. The canonical
+form omits spec-v2-only fields when they sit at their defaults, so a v1
+spec hashes byte-identically to before v2 existed — committed v1 releases
+keep verifying unchanged, while any v2 field actually set moves the
+signature.
 
 ## 2. Top-level structure
 

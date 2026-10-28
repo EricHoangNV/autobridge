@@ -185,3 +185,12 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Export with `--no-emit-project` and install the project `--no-deps` from local source: otherwise pip would try to fetch the workspace project itself from PyPI (version 0.1.0, which does not exist there). Locked deps + local code keeps images slim, pip-only, and free of cross-package installs (trust boundary §2: no engine code in verifier/simulator images).
 - Marker-gated entries (win32-only `colorama`, emscripten-only `httpx2-jsfetch`) are correctly absent from a linux `pip freeze` — a freeze-vs-lock comparison must normalize names (`_`/`-`) and expect marker-skipped packages, or it reports phantom mismatches.
 - **Rule:** When sibling images share one lockfile source, export one hash-pinned requirements file per image, test that shared pins agree across them, and validate reproducibility by building twice and diffing `pip freeze` — never by eyeballing version ranges.
+---
+
+## 19. A committed artifact pinned only by another workstream's e2e file is unpinned in practice
+
+**Context:** REQ-020 owner check (2026-10-28) — spec v2 changed `spec_signature()` for v1 specs and broke the committed reference releases, but the sandbox gates stayed green through two merges.
+
+- Workstream-scoped e2e selection ("run only your file") means a cross-cutting invariant checked in exactly one e2e file is unchecked by every workstream except that file's own: 5a/5c ran the meridian e2e file, which never touches `generated/connectors/*/reference`, while unit tests store+load in tmp dirs so both sides of the round-trip used the new code and agreed.
+- The fix pattern: pin committed bytes in unit tests that `make test` always runs — (1) the committed files load clean, (2) golden hex of each committed signature with a "do not re-sign, fix the code" note, (3) the new feature still moves the value when actually used. An invariant that must survive every future change belongs in the cheapest always-run gate, not in the most relevant-looking file.
+- **Rule:** When a change touches shared canonical bytes (signatures, hashes, golden files), add the regression pin to the unit suite even if an e2e file already covers it — e2e files are selected per-workstream and may not run.

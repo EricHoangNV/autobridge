@@ -1011,3 +1011,42 @@ What landed (no Meridian-specific branch in engine — trust test green with a s
 - Verified: `make test` green (autobridge 2103 / 91.27%, verifier 99 / 93.62%, simulators 294 / 96.10%) + ui 148 pass; `make lint`, `make typecheck`, `tsc` green; 39 e2e green live (meridian after/faults/joins/runtime/before + test_01/03/04). `make bench` NOT run (needs live drivers; bench note below).
 - Gotchas fixed while working: (1) Edit/Read/Write tools resolve to the main checkout, not the sbx1 worktree — reverted stray main-repo edits, did all file work via bash+python in the worktree. (2) `test_engine_never_references_meridian` (5b) banned even the REQ-required inject-fault aliases — narrowed to a file+line allowlist for demo target/port maps + schema Literal (routing data, no logic branch); rule docstring example de-meridianed. (3) ASGITransport is async-only in this httpx — fault fakes use MockTransport instead. (4) Fault fakes must use the sim `_dumps_exact` (Decimal money). (5) Canonical fingerprint sees a renamed wire leaf as nulled field (TYPE/REMOVED-shaped), so the rename rides on explicit class + manual delta + extra (test_03 pattern); the cursor drift auto-classifies PAGINATION_CHANGE and the e2e asserts it.
 - Bench note (REQ item 6): `list_scenarios(dev)` now yields 17 incl. the 2 meridian rows with identical matched inputs (only the per-scenario `docs_ref` differs, same as existing scenarios; `simulators/docs` has no per-scenario dirs today — pre-existing harness concern). REQ-008 zero-calls guard sums per arm over all trials, so new rows cannot trip it. Real `make bench` numbers stay an owner/CI live-stack step.
+
+### REQ-020 owner-check fix: v1 spec_signature regression (sbx1 2026-10-28)
+Fix FIRST item from the owner check after sub-step 6 (REQUESTS.MD): sub-step 5a
+(`c4bef3b2`, ConnectorSpec v2) changed `spec_signature()` for v1 specs, so the
+committed reference releases `generated/connectors/{atlaspms,harborpms}/reference/`
+failed `load_release` with `ReleaseCorruptError: signature mismatch` and
+`tests/e2e/test_02_reference_sync.py::test_reference_specs_exist_and_validate` failed.
+- **Files:** `src/autobridge/spec/models.py` (new `signature_canonical_data()`:
+  deep-copies the dumped spec and drops v2-only keys at their defaults —
+  `operations.*.body`, `pagination.{cursor_path,count_path,count_value}`,
+  `source.auth.body_fields`, `entities.*.joins` when empty; exported via
+  `src/autobridge/spec/__init__.py`), `src/autobridge/spec/registry.py`
+  (`spec_signature` hashes the canonicalised form), `src/autobridge/control/models.py`
+  (`_canonical_spec_bytes` canonicalises; DB `ConnectorRelease.signature` path fixed),
+  `src/autobridge/runtime/targets.py` (`release_signature` canonicalises; edge path fixed),
+  `src/autobridge/drift/fingerprint.py` (`_spec_signature` canonicalises; fingerprint
+  stable), `tests/unit/test_autobridge_spec.py` (4 regression tests),
+  `docs/connector-spec.md` (one paragraph on v1 stability).
+- **Decisions:** strip-at-defaults (not sign-by-version) so the canonical bytes are
+  exactly the pre-v2 bytes — verified by reproducing the stored hex before/after.
+  One helper in `spec/models.py`, consumed function-locally by control/runtime/drift
+  to keep those modules import-light (existing style). No re-signing of committed
+  releases (owner: forbidden). V1 gate guarantees v2 fields stay defaulted under v1,
+  so stripping loses nothing; any v2 field actually set still moves the signature.
+- **Why gates missed it:** the only check pinning committed signatures lived in the
+  test_02 e2e file, but 5a/5c ran only their workstream's meridian e2e file (per the
+  run-only-your-file efficiency rule); unit tests store+load in tmp dirs so both
+  sides used the new code and agreed. Closed by moving the pins into unit tests
+  (`make test` always runs them): (1) both committed references `load_release` clean,
+  (2) golden hex pin of each v1 reference signature, (3) v2 signature moves on any
+  v2-field change + defaulted v2 keys ignored under v1.
+- **Gotchas:** ruff UP035 then TC003 on the `Mapping` import — `TYPE_CHECKING` block
+  (annotations are strings via `from __future__ import annotations`); `ruff check
+  --fix` also re-sorted the registry import. `control.models` unkeyed signature now
+  agrees with the registry's for the reference specs (asserted in the golden test).
+- **Tests:** `make test` all green (autobridge 2107 pass 91.29%, verifier 99 pass
+  93.62%, simulators 294 pass 96.10%, ui 148 pass); `make lint` + `make typecheck`
+  green; `tests/e2e/test_02_reference_sync.py` + `test_meridian_runtime_v2.py` (9) green.
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).

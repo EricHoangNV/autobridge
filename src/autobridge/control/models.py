@@ -130,7 +130,11 @@ EDGE_RELEASE_SECRET_ENV = "EDGE_RELEASE_SECRET"
 
 
 def _canonical_spec_bytes(spec: Mapping[str, Any]) -> bytes:
-    return json.dumps(spec, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    from autobridge.spec.models import signature_canonical_data  # noqa: PLC0415 - avoid import cost at module load
+
+    return json.dumps(
+        signature_canonical_data(spec), sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _signing_key(secret: str | None = None) -> bytes | None:
@@ -145,6 +149,8 @@ def spec_signature(spec: Mapping[str, Any], *, secret: str | None = None) -> str
     """HMAC-SHA256 over the canonical JSON of a ConnectorSpec document.
 
     ``ConnectorRelease.signature`` stores this; any spec drift changes it.
+    V1 specs hash byte-identically to before spec v2 existed (v2-only
+    fields at their defaults are omitted from the canonical form).
     When ``EDGE_RELEASE_SECRET`` (or *secret*) is set, the digest is keyed:
     only the holder of the secret can mint a signature the edge worker
     accepts, so a self-computed hash over a foreign spec is rejected
