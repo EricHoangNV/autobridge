@@ -40,7 +40,8 @@ from autobridge.spec.registry import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_FILE = ROOT / "schemas" / "connector-spec.v1.json"
+SCHEMA_FILE = ROOT / "schemas" / "connector-spec.v2.json"
+SCHEMA_FILE_V1 = ROOT / "schemas" / "connector-spec.v1.json"
 
 HARBOR_YAML = """
 spec_version: 1
@@ -340,9 +341,88 @@ def test_missing_required_field_reports_path() -> None:
     assert ("entities", "Reservation", "key") in [e["loc"] for e in exc.value.errors()]
 
 
-def test_spec_version_must_be_1() -> None:
+def test_spec_version_accepts_1_and_2_only() -> None:
+    assert load_spec_from_dict(harbor_data()).spec_version == 1
+    assert load_spec_from_dict(harbor_data(spec_version=2)).spec_version == 2
     with pytest.raises(ValidationError):
-        load_spec_from_dict(harbor_data(spec_version=2))
+        load_spec_from_dict(harbor_data(spec_version=3))
+
+
+def test_v1_rejects_v2_features() -> None:
+    # POST operations, body templates, body_fields auth and body_cursor
+    # pagination are not expressible in ConnectorSpec v1 (REQ-020.5a).
+    data = harbor_data(spec_version=2)
+    auth = data["source"]["auth"]
+    op = data["operations"]["list_reservations"]
+    pag = op["pagination"]
+    # Sanity: the v2 variants below are accepted with spec_version 2.
+    op["method"] = "POST"
+    op["body"] = {"EnterpriseIds": ["e1"], "Limitation": {"Count": 100}}
+    auth.update({"type": "body_fields", "body_fields": {"ClientToken": "VENDOR_CLIENT_TOKEN"}})
+    auth.pop("credential_ref", None)
+    pag.update({"strategy": "body_cursor", "cursor_path": "Limitation.Cursor",
+                "count_path": "Limitation.Count", "count_value": 100})
+    pag.pop("cursor_param", None)
+    spec = load_spec_from_dict(data)
+    assert spec.spec_version == 2
+    validate_against_schema_file(spec_to_json_data(spec))
+    # Each v2 feature alone is rejected with spec_version 1.
+    for mutate in (
+        lambda d: d["operations"]["list_reservations"].update({"method": "POST"}),
+        lambda d: d["operations"]["list_reservations"].update({"method": "POST", "body": {"A": 1}}),
+        lambda d: d["source"]["auth"].update(
+            {"type": "body_fields", "body_fields": {"ClientToken": "VENDOR_CLIENT_TOKEN"}}),
+        lambda d: d["operations"]["list_reservations"]["pagination"].update(
+            {"strategy": "body_cursor", "cursor_path": "Limitation.Cursor"}),
+    ):
+        bad = harbor_data()
+        mutate(bad)
+        if bad["source"]["auth"].get("type") == "body_fields":
+            bad["source"]["auth"].pop("credential_ref", None)
+        with pytest.raises(ValidationError, match="spec_version 2"):
+            load_spec_from_dict(bad)
+
+
+def test_v1_spec_file_stays_valid_under_v2_schema() -> None:
+    assert SCHEMA_FILE_V1.is_file()
+    validate_against_schema_file(spec_to_json_data(harbor_spec()))
+
+
+def test_body_fields_auth_shape() -> None:
+    data = harbor_data(spec_version=2)
+    auth = data["source"]["auth"]
+    auth.update({"type": "body_fields"})
+    auth.pop("credential_ref", None)
+    with pytest.raises(ValidationError, match="body_fields mapping"):
+        load_spec_from_dict(data)
+    auth["body_fields"] = {"ClientToken": "bad-ref"}
+    with pytest.raises(ValidationError, match="env key name"):
+        load_spec_from_dict(data)
+    auth["body_fields"] = {"ClientToken": "VENDOR_CLIENT_TOKEN", "AccessToken": "VENDOR_ACCESS_TOKEN"}
+    assert load_spec_from_dict(data).source.auth.type == "body_fields"
+    # body_fields refs must not leak into the dumped spec as values.
+    dumped = spec_to_json_data(load_spec_from_dict(data))
+    assert dumped["source"]["auth"]["body_fields"] == {
+        "ClientToken": "VENDOR_CLIENT_TOKEN", "AccessToken": "VENDOR_ACCESS_TOKEN"}
+
+
+def test_body_cursor_pagination_shape() -> None:
+    data = harbor_data(spec_version=2)
+    pag = data["operations"]["list_reservations"]["pagination"]
+    pag.update({"strategy": "body_cursor", "cursor_path": "Limitation.Cursor"})
+    pag.pop("cursor_param", None)
+    spec = load_spec_from_dict(data)
+    assert spec.operations["list_reservations"].pagination is not None
+    pag.pop("cursor_path")
+    with pytest.raises(ValidationError, match="cursor_path and next_path"):
+        load_spec_from_dict(data)
+
+
+def test_get_with_body_rejected() -> None:
+    data = harbor_data(spec_version=2)
+    data["operations"]["list_reservations"]["body"] = {"A": 1}
+    with pytest.raises(ValidationError, match="GET operations must not set body"):
+        load_spec_from_dict(data)
 
 
 def test_inline_secret_rejected_by_extra_forbid() -> None:
@@ -768,7 +848,31 @@ def test_spec_v1_cannot_express_post_with_body_auth() -> None:
     a spec-v1-only engine must stop with Blocked instead of persisting a
     half-working connector.
     """
-    from autobridge.spec.models import OperationSpec
+    data = harbor_data()
+    op = data["operations"]["list_reservations"]
+    op["method"] = "POST"
+    op["body"] = {"EnterpriseIds": ["e1"], "Limitation": {"Count": 100}}
+    with pytest.raises(ValidationError, match="spec_version 2"):
+        load_spec_from_dict(data)
 
-    with pytest.raises(ValidationError):
-        OperationSpec(method="POST", path="/reservations/getAll")  # type: ignore[arg-type]
+
+def test_patch_can_touch_v2_fields() -> None:
+    """REQ-020.5a: JSON Patches reach the new v2 fields (repair plumbing)."""
+    from autobridge.spec.patch import apply_patch
+
+    data = harbor_data(spec_version=2)
+    op = data["operations"]["list_reservations"]
+    op["method"] = "POST"
+    op["body"] = {"Limitation": {"Count": 100}}
+    pag = op["pagination"]
+    pag.update({"strategy": "body_cursor", "cursor_path": "Limitation.Cursor",
+                "count_path": "Limitation.Count", "count_value": 100})
+    pag.pop("cursor_param", None)
+    patched = apply_patch(
+        data,
+        [{"op": "replace",
+          "path": "/operations/list_reservations/pagination/count_value",
+          "value": 50}],
+    )
+    assert patched["operations"]["list_reservations"]["pagination"]["count_value"] == 50
+    assert load_spec_from_dict(patched).spec_version == 2

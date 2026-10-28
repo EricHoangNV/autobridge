@@ -274,7 +274,7 @@ class ConnectorRelease(Base):
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     #: The full ConnectorSpec document (JSON); validated against
-    #: ``schemas/connector-spec.v1.json`` before it is stored.
+    #: ``schemas/connector-spec.v2.json`` before it is stored.
     spec: Mapped[dict[str, Any]] = mapped_column(GenericJSON, nullable=False)
     parent_release_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("connector_releases.id"), nullable=True

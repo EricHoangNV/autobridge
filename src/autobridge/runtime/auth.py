@@ -1,11 +1,12 @@
 """Auth strategies for ConnectorSpec (P1.W3.2, plan §2.4).
 
-- Four types: bearer, api_key_header, basic, oauth2_client_credentials.
-- Credentials are read by ``credential_ref`` from the environment only — the
-  value is never stored in a spec, release, log, prompt or API response
-  (DIRECTIVES §6).
+- Five types: bearer, api_key_header, basic, oauth2_client_credentials,
+  body_fields (spec v2: secrets placed into named JSON body fields).
+- Credentials are read by ``credential_ref`` (or each ``body_fields`` ref)
+  from the environment only — the value is never stored in a spec, release,
+  log, prompt or API response (DIRECTIVES §6).
 - No function in this module logs a secret value; error messages name only
-  ``credential_ref`` (the env key), never the value.
+  refs (env keys), never values.
 
 Trust boundary: no import of :mod:`verifier` or :mod:`simulators`.
 """
@@ -65,12 +66,14 @@ def _get_secret(credential_ref: str) -> str:
 
 
 def build_auth_headers(auth: AuthSpec) -> dict[str, str]:
-    """Build auth header(s) for non-OAuth2 types from *auth*.
+    """Build auth header(s) for non-OAuth2 header types from *auth*.
 
     Reads the secret via ``credential_ref`` from the environment. For
     ``oauth2_client_credentials`` this returns an empty dict — callers
     must obtain a bearer token via :class:`OAuth2TokenManager` and add
-    ``Authorization: Bearer <token>`` themselves.
+    ``Authorization: Bearer <token>`` themselves. For ``body_fields``
+    (spec v2) this returns an empty dict — secrets go into the JSON body
+    via :func:`build_auth_body`, never into headers.
 
     Raises :class:`AuthError` when the env var is missing or the type is
     unsupported. No secret value is logged or included in the message.
@@ -78,9 +81,18 @@ def build_auth_headers(auth: AuthSpec) -> dict[str, str]:
     if auth.type == "oauth2_client_credentials":
         # Validate that credential exists without exposing it; actual token
         # fetch is handled by OAuth2TokenManager.
+        if auth.credential_ref is None:
+            raise AuthError("oauth2_client_credentials auth requires credential_ref")
         _get_secret(auth.credential_ref)
         return {}
 
+    if auth.type == "body_fields":
+        # Body-placed credentials never become headers; validate refs exist.
+        build_auth_body(auth)
+        return {}
+
+    if auth.credential_ref is None:
+        raise AuthError(f"{auth.type} auth requires credential_ref")
     secret = _get_secret(auth.credential_ref)
 
     if auth.type == "bearer":
@@ -99,6 +111,50 @@ def build_auth_headers(auth: AuthSpec) -> dict[str, str]:
         return {"Authorization": f"Basic {token}"}
 
     raise AuthError(f"Unsupported auth type {auth.type!r}")
+
+
+def _set_dotted(target: dict[str, Any], path: str, value: Any) -> None:
+    """Set *value* at dotted *path* inside *target* (creating intermediates)."""
+    parts = path.split(".")
+    node = target
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[parts[-1]] = value
+
+
+def build_auth_body(auth: AuthSpec) -> dict[str, Any]:
+    """Build JSON-body auth fields for ``body_fields`` auth (spec v2).
+
+    Returns ``{body field path: secret value}`` as a nested dict, reading
+    each secret via its ``credential_ref`` from the environment. Error
+    messages name only refs (env keys), never values. Callers must not log
+    the returned values; they are redacted like any other secret.
+    """
+    if auth.type != "body_fields":
+        raise AuthError(f"build_auth_body requires body_fields auth, got {auth.type!r}")
+    if not auth.body_fields:
+        raise AuthError("body_fields auth requires body_fields mapping")
+    out: dict[str, Any] = {}
+    for field_path, ref in auth.body_fields.items():
+        _set_dotted(out, field_path, _get_secret(ref))
+    return out
+
+
+def auth_body_refs(auth: AuthSpec | None) -> list[str]:
+    """Return every credential ref *auth* needs (for redaction checks).
+
+    Header types need ``[credential_ref]``; ``body_fields`` needs every
+    value of its mapping; ``None`` needs nothing.
+    """
+    if auth is None:
+        return []
+    if auth.type == "body_fields":
+        return list((auth.body_fields or {}).values())
+    return [auth.credential_ref] if auth.credential_ref is not None else []
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +216,8 @@ class OAuth2TokenManager:
 
     def fetch_token(self) -> str:
         """Force-fetch a new token from the token endpoint."""
+        if self.auth.credential_ref is None:
+            raise AuthError("oauth2_client_credentials auth requires credential_ref")
         secret = _get_secret(self.auth.credential_ref)
         assert self.auth.token_url is not None
         assert self.auth.username is not None
@@ -229,8 +287,7 @@ def get_auth_headers(
 
     - ``None`` → ``{}``
     - non-OAuth types → :func:`build_auth_headers`
-    - ``oauth2_client_credentials`` → requires *oauth_manager* (or creates a
-      short-lived one with default settings). Prefer passing a cached manager
+    - ``oauth2_client_credentials`` → requires *oauth_manager* (or creates a      short-lived one with default settings). Prefer passing a cached manager
       for token reuse.
 
     This helper never logs secret values.

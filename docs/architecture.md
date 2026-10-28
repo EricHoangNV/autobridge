@@ -124,7 +124,7 @@ autobridge/
 ├── compose.yaml  Dockerfile.engine  .env.example  Makefile  pyproject.toml (uv workspace)
 ├── docs/            architecture.md  connector-spec.md  safety-model.md  benchmark.md  demo.md
 ├── schemas/         reservation.schema.json  folio-charge.schema.json
-│                    connector-spec.v1.json  runtime-target.json  discovery-result.v0.json (reserved)
+│                    connector-spec.v2.json  runtime-target.json  discovery-result.v0.json (reserved)
 ├── src/autobridge/
 │   ├── spec/        models.py  patch.py  registry.py  entities.py
 │   ├── runtime/     interpreter.py  http.py  auth.py  pagination.py  transforms/  checks.py  checkpoint.py  targets.py
@@ -192,17 +192,19 @@ Migrations live in `alembic/versions/` (`0001_core_data_model`,
 `0002_job_queue`). `DATABASE_URL` in `.env` selects SQLite (default) or
 Postgres.
 
-## 5. ConnectorSpec v1 (plan §2.4)
+## 5. ConnectorSpec v1/v2 (plan §2.4)
 
 A connector is a strict YAML document validated by `src/autobridge/spec/models.py`
-and `schemas/connector-spec.v1.json` (the two are pinned equal by test):
+and `schemas/connector-spec.v2.json` (v1 file kept for reference; the two are
+pinned equal by test — v1 documents still validate):
 
 - `source.base_url` + `auth { type: bearer|api_key_header|basic|oauth2_client_credentials,
-  credential_ref }` + `rate_limit { max_rps, retry { on: [429,503], backoff: exponential } }`
+  credential_ref }` (v2 adds `body_fields {<body path>: <CREDENTIAL_REF>}`) + `rate_limit { max_rps, retry { on: [429,503], backoff: exponential } }`
   + `timezone_source`.
 - `operations` — keyed by name, each `GET` with `path`, `params`,
   `pagination { strategy: offset|cursor|page, ..., stop_when: [null_cursor, repeated_cursor] }`,
-  `checkpoint`.
+  `checkpoint` (v2 adds `POST` with a JSON `body` template and
+  `body_cursor` pagination with `cursor_path`/`count_path` in, `next_path` out).
 - `entities` — `Reservation` / `FolioCharge` from an operation, `key`,
   `fields { <canonical>: { path: <JSONPath>, transform: [...] } }`, `checks
   [unique_key, no_loss, date_order]`.

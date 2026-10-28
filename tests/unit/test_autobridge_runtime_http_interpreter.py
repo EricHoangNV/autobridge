@@ -1308,3 +1308,76 @@ def test_interpreter_retry_integration(monkeypatch: pytest.MonkeyPatch) -> None:
     result = interp.execute_operation("list_reservations")
     assert len(result.records) == 1
     assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# POST + body_fields (spec v2, REQ-020.5a)
+# ---------------------------------------------------------------------------
+
+
+def test_post_success_and_decimal() -> None:
+    from decimal import Decimal
+
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        assert request.method == "POST"
+        return httpx.Response(200, json={"data": [{"total_amount": 42.5}]})
+
+    client, _ = _make_client_with_transport(handler)
+    data = client.post("/reservations", json_body={"EnterpriseIds": ["e1"]})
+    amount = data["data"][0]["total_amount"]
+    assert isinstance(amount, Decimal)
+    assert amount == Decimal("42.5")
+
+
+def test_post_non_json() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        return httpx.Response(200, content=b"not json")
+
+    client, _ = _make_client_with_transport(handler)
+    with pytest.raises(HttpError, match="not JSON"):
+        client.post("/reservations", json_body={})
+
+
+def test_post_sends_auth_body_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VENDOR_CLIENT_TOKEN", "ct-secret")
+    monkeypatch.setenv("VENDOR_ACCESS_TOKEN", "at-secret")
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        import json as _json
+
+        seen.append(_json.loads(request.content.decode() or "{}"))
+        # Body-placed credentials never appear as headers.
+        assert "ClientToken" not in request.headers
+        return httpx.Response(200, json={"Reservations": [{"Id": "r-1"}], "Cursor": None})
+
+    client, _ = _make_client_with_transport(handler)
+    from autobridge.spec.models import load_spec_from_dict
+
+    spec_dict = _spec_dict("https://example.com")
+    spec_dict["spec_version"] = 2
+    spec_dict["source"]["auth"] = {
+        "type": "body_fields",
+        "body_fields": {"ClientToken": "VENDOR_CLIENT_TOKEN", "AccessToken": "VENDOR_ACCESS_TOKEN"},
+    }
+    spec_dict["operations"]["list_reservations"].update(
+        {
+            "method": "POST",
+            "body": {"EnterpriseIds": ["e1"], "Limitation": {"Count": 2}},
+            "pagination": {
+                "strategy": "body_cursor",
+                "cursor_path": "Limitation.Cursor",
+                "count_path": "Limitation.Count",
+                "count_value": 2,
+                "next_path": "$.Cursor",
+                "items_path": "$.Reservations",
+                "stop_when": ["null_cursor"],
+            },
+        }
+    )
+    spec = load_spec_from_dict(spec_dict)
+    interp = Interpreter(spec, http_client=client)
+    result = interp.execute_operation("list_reservations")
+    assert [r["Id"] for r in result.records] == ["r-1"]
+    assert seen[0]["ClientToken"] == "ct-secret"
+    assert seen[0]["EnterpriseIds"] == ["e1"]

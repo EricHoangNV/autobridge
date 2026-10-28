@@ -14,6 +14,11 @@ isolation:
   interpreter keeps fetching while fewer records than the advertised
   total have arrived (tokenless page pagination); without ``total_path``
   a missing next token stops after the first page.
+* ``body_cursor`` (spec v2) — like ``cursor``, but the cursor and page
+  size travel inside the POST JSON body at ``cursor_path`` / ``count_path``
+  instead of query params. The first request sends no cursor (or null);
+  the loop stops on null cursor or a short page (fewer items than the
+  requested count).
 
 ``stop_when`` guards (all are names, never expressions):
 
@@ -61,8 +66,8 @@ class PaginationState:
 
 
 def initial_state(strategy: str) -> PaginationState:
-    """Initial state for *strategy* (offset | cursor | page)."""
-    if strategy not in ("offset", "cursor", "page"):
+    """Initial state for *strategy* (offset | cursor | page | body_cursor)."""
+    if strategy not in ("offset", "cursor", "page", "body_cursor"):
         raise ValueError(f"unknown pagination strategy {strategy!r}")
     return PaginationState(strategy=strategy)
 
@@ -86,6 +91,11 @@ def build_request_params(
             page_params[pagination.cursor_param] = state.cursor
         if pagination.limit_param:
             page_params[pagination.limit_param] = str(limit_value)
+    elif strategy == "body_cursor":
+        # The cursor travels in the POST body, not query params. Query
+        # params pass through unchanged; see build_request_body.
+        if pagination.limit_param:
+            page_params[pagination.limit_param] = str(limit_value)
     elif strategy == "page":
         if pagination.page_param:
             page_params[pagination.page_param] = str(state.page)
@@ -105,9 +115,9 @@ def is_repeated_cursor(
 ) -> bool:
     """True when *next_token* repeats the current or previous cursor.
 
-    Only meaningful for cursor strategy.
+    Applies to cursor and body_cursor strategies.
     """
-    if state.strategy != "cursor":
+    if state.strategy not in ("cursor", "body_cursor"):
         return False
     if next_token is None:
         return False
@@ -145,7 +155,7 @@ def evaluate_stop(
     if "no_next" in stop_when and next_token is None:
         return True, "no_next", False
 
-    # repeated_cursor guard (cursor only)
+    # repeated_cursor guard (cursor and body_cursor only)
     if "repeated_cursor" in stop_when and is_repeated_cursor(state, next_token):
         return True, "repeated_cursor", True
 
@@ -185,9 +195,70 @@ def advance_state(
             # Fallback mirrors interpreter: offset + len(items) or limit
             nxt.offset = state.offset + (len(items) if items else limit_value)
         nxt.previous_cursor = str(nxt.offset)
-    elif strategy == "cursor":
+    elif strategy == "cursor" or strategy == "body_cursor":
         nxt.previous_cursor = str(state.cursor) if state.cursor is not None else None
         nxt.cursor = str(next_token)
     elif strategy == "page":
         nxt.page = state.page + 1
     return nxt
+
+
+# ---------------------------------------------------------------------------
+# POST JSON-body helpers (body_cursor, spec v2)
+# ---------------------------------------------------------------------------
+
+
+def set_body_path(body: dict[str, Any], path: str, value: Any) -> None:
+    """Set *value* at dotted *path* inside *body* (creating intermediates)."""
+    parts = path.split(".")
+    node = body
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[parts[-1]] = value
+
+
+def get_body_path(body: dict[str, Any], path: str) -> Any:
+    """Read dotted *path* from *body*; ``None`` when any segment is missing."""
+    node: Any = body
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
+def effective_count(pagination: Any, limit_value: int) -> int:
+    """Page size the body_cursor loop requests and short-page checks use."""
+    count = getattr(pagination, "count_value", None)
+    if isinstance(count, int) and not isinstance(count, bool) and count >= 1:
+        return count
+    return limit_value
+
+
+def build_request_body(
+    state: PaginationState,
+    pagination: Any,
+    base_body: dict[str, Any],
+    limit_value: int,
+) -> dict[str, Any]:
+    """Merge *base_body* with body_cursor pagination fields for the current page.
+
+    - Sets the page size at ``count_path`` (when configured).
+    - Sets the cursor at ``cursor_path`` only after the first page (the
+      first request carries no cursor, matching the null-cursor contract).
+    - Deep-copies *base_body* so per-page mutation never leaks.
+    """
+    import copy
+
+    body = copy.deepcopy(base_body)
+    count_path = getattr(pagination, "count_path", None)
+    cursor_path = getattr(pagination, "cursor_path", None)
+    if count_path:
+        set_body_path(body, count_path, effective_count(pagination, limit_value))
+    if cursor_path and state.cursor is not None:
+        set_body_path(body, cursor_path, state.cursor)
+    return body

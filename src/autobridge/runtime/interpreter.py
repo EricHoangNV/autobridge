@@ -20,10 +20,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from autobridge.runtime.auth import build_auth_body
 from autobridge.runtime.http import HttpClient  # noqa: TC001
 from autobridge.runtime.pagination import (
     advance_state,
+    build_request_body,
     build_request_params,
+    effective_count,
     evaluate_stop,
     initial_state,
 )
@@ -76,34 +79,42 @@ def resolve_checkpoint_templates(params: dict[str, str], checkpoint: dict[str, A
 
     - When a value is exactly ``{{checkpoint.X}}`` it is replaced by
       ``checkpoint[X]`` (or ``""`` when missing / no checkpoint).
-    - When a value contains a template as substring, string substitution is
+      When a value contains a template as substring, string substitution is
       performed.
     - Plain values pass through.
     """
     if not params:
         return {}
-    cp = checkpoint or {}
-    out: dict[str, Any] = {}
-    for k, v in params.items():
-        if not isinstance(v, str):
-            out[k] = v
-            continue
-        # Exact match -> typed value from checkpoint (could be int, str, etc.)
-        m = _CHECKPOINT_RE.fullmatch(v.strip())
-        if m:
-            key = m.group(1)
-            out[k] = str(cp.get(key, ""))
-            continue
-        # Substring substitution: replace all occurrences.
-        def _repl(match: re.Match[str]) -> str:
-            key = match.group(1)
-            return str(cp.get(key, ""))
+    return _resolve_templates_in(params, checkpoint)
 
-        if _CHECKPOINT_RE.search(v):
-            out[k] = _CHECKPOINT_RE.sub(_repl, v)
-        else:
-            out[k] = v
-    return out
+
+def _resolve_templates_in(value: Any, checkpoint: dict[str, Any] | None) -> Any:
+    """Recursively resolve checkpoint templates in nested body data."""
+    cp = checkpoint or {}
+    if isinstance(value, str):
+        m = _CHECKPOINT_RE.fullmatch(value.strip())
+        if m:
+            return str(cp.get(m.group(1), ""))
+        if _CHECKPOINT_RE.search(value):
+            def _repl(match: re.Match[str]) -> str:
+                return str(cp.get(match.group(1), ""))
+
+            return _CHECKPOINT_RE.sub(_repl, value)
+        return value
+    if isinstance(value, dict):
+        return {k: _resolve_templates_in(v, checkpoint) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve_templates_in(v, checkpoint) for v in value]
+    return value
+
+
+def resolve_body_templates(body: dict[str, Any] | None, checkpoint: dict[str, Any] | None) -> dict[str, Any]:
+    """Resolve checkpoint templates in a POST body template (nested)."""
+    if not body:
+        return {}
+    resolved = _resolve_templates_in(body, checkpoint)
+    assert isinstance(resolved, dict)
+    return resolved
 
 
 def _extract_items(response_json: dict[str, Any], items_path: str) -> list[dict[str, Any]]:
@@ -120,6 +131,18 @@ def _extract_items(response_json: dict[str, Any], items_path: str) -> list[dict[
         return raw
     # If the path points to a single object that is supposed to be list, wrap.
     return [raw] if isinstance(raw, dict) else []
+
+
+def _single_items(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract records from a single (unpaginated) response."""
+    if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], list):
+        return raw["data"]
+    if isinstance(raw, list):
+        return raw
+    items = _extract_items(raw, "$")
+    if not items and isinstance(raw, dict) and raw:
+        items = [raw]
+    return items
 
 
 def _extract_next_token(response_json: dict[str, Any], next_path: str | None) -> Any:
@@ -149,6 +172,19 @@ def _extract_total(response_json: dict[str, Any], total_path: str | None) -> int
     except (TypeError, ValueError):
         return None
     return as_int if as_int >= 0 else None
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Merge *override* into a copy of *base* (nested dicts merge, override wins)."""
+    import copy
+
+    out = copy.deepcopy(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
 
 
 @dataclass(slots=True)
@@ -198,18 +234,36 @@ class Interpreter:
 
         params_template = op.params or {}
         resolved_params = resolve_checkpoint_templates(params_template, checkpoint)
+        resolved_body = resolve_body_templates(op.body, checkpoint)
+
+        # body_fields auth (spec v2): secrets ride in the JSON body, never headers.
+        if self.spec.source.auth.type == "body_fields":
+            resolved_body = _deep_merge(resolved_body, build_auth_body(self.spec.source.auth))
+
+        if op.method == "POST":
+            if op.pagination is None:
+                raw = self.http.post(op.path, params=resolved_params, json_body=resolved_body)
+                items = _single_items(raw)
+                return OperationResult(
+                    operation=operation_name,
+                    records=items,
+                    pages_fetched=1,
+                    raw_pages=[raw],
+                    stop_reason="no_pagination",
+                )
+            if op.pagination.strategy != "body_cursor":
+                raise ValueError(
+                    f"POST operation {operation_name!r} requires body_cursor pagination, "
+                    f"got {op.pagination.strategy!r}"
+                )
+            return self._paginated_fetch_post(
+                op, operation_name, resolved_params, resolved_body, max_pages, limit_override
+            )
 
         if op.pagination is None:
             # Single request, no pagination.
             raw = self.http.get(op.path, params=resolved_params)
-            if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], list):
-                items = raw["data"]
-            elif isinstance(raw, list):
-                items = raw
-            else:
-                items = _extract_items(raw, "$")
-                if not items and isinstance(raw, dict) and raw:
-                    items = [raw]
+            items = _single_items(raw)
             return OperationResult(
                 operation=operation_name,
                 records=items,
@@ -315,6 +369,97 @@ class Interpreter:
             stop_reason=stop_reason,
             checkpoint_value=checkpoint_value,
         )
+
+    def _paginated_fetch_post(
+        self,
+        op: OperationSpec,
+        operation_name: str,
+        base_params: dict[str, Any],
+        base_body: dict[str, Any],
+        max_pages: int,
+        limit_override: int | None,
+    ) -> OperationResult:
+        """Fetch all pages of a POST operation with ``body_cursor`` pagination.
+
+        The cursor and page size travel in the JSON body; the next cursor
+        comes back via ``next_path``. Stops on null cursor, repeated cursor,
+        empty page, page limit — or a short page (fewer items than the
+        requested count), which is the body-cursor end-of-data signal.
+        """
+        pagination: Pagination = op.pagination  # type: ignore[assignment]
+        items_path = pagination.items_path
+        next_path = pagination.next_path
+        stop_when = set(pagination.stop_when or [])
+        limit_value = limit_override or effective_count(pagination, 50)
+
+        state = initial_state("body_cursor")
+        all_records: list[dict[str, Any]] = []
+        raw_pages: list[dict[str, Any]] = []
+        repeated_cursor = False
+        stop_reason: str | None = None
+        pages_fetched = 0
+
+        for _ in range(max_pages):
+            page_body = build_request_body(state, pagination, base_body, limit_value)
+            raw = self.http.post(op.path, params=base_params, json_body=page_body)
+            raw_pages.append(raw)
+            pages_fetched += 1
+            state.pages_fetched = pages_fetched
+
+            items = _extract_items(raw, items_path)
+            all_records.extend(items)
+
+            next_token = _extract_next_token(raw, next_path)
+
+            should_stop, reason, is_repeated = evaluate_stop(
+                state=state,
+                items=items,
+                next_token=next_token,
+                stop_when=stop_when,  # type: ignore[arg-type]
+                max_pages=max_pages,
+            )
+            if should_stop:
+                stop_reason = reason
+                if is_repeated:
+                    repeated_cursor = True
+                break
+
+            # Short page: fewer items than requested means no more data.
+            if len(items) < limit_value:
+                stop_reason = "short_page"
+                break
+
+            state = advance_state(state, next_token, items, limit_value)
+
+        checkpoint_value = self._checkpoint_value(op, all_records)
+
+        return OperationResult(
+            operation=operation_name,
+            records=all_records,
+            pages_fetched=pages_fetched,
+            raw_pages=raw_pages,
+            repeated_cursor=repeated_cursor,
+            stop_reason=stop_reason,
+            checkpoint_value=checkpoint_value,
+        )
+
+    @staticmethod
+    def _checkpoint_value(op: OperationSpec, all_records: list[dict[str, Any]]) -> Any:
+        """Compute max/min over the checkpoint field for fetched records."""
+        if not op.checkpoint or not all_records:
+            return None
+        values = []
+        for rec in all_records:
+            v = _jsonpath_find(rec, op.checkpoint.field)
+            if v is not None:
+                values.append(v)
+        if not values:
+            return None
+        try:
+            return max(values) if op.checkpoint.mode == "max" else min(values)
+        except TypeError:
+            str_vals = [str(x) for x in values]
+            return max(str_vals) if op.checkpoint.mode == "max" else min(str_vals)
 
     def execute_all(
         self,

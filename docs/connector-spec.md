@@ -1,12 +1,15 @@
-# AutoBridge — ConnectorSpec v1
+# AutoBridge — ConnectorSpec v1/v2
 
 > Reference for the declarative connector document the runtime interprets.
-> Every spec validates against `schemas/connector-spec.v1.json` before it is
+> Every spec validates against `schemas/connector-spec.v2.json` before it is
 > stored, executed or patched. Invalid specs are rejected with path-level errors
 > (e.g. `entities.Reservation.fields.status.transform[0].args.map: missing`).
+> Version 1 documents still validate and behave exactly as before; v2 adds
+> POST operations, `body_fields` auth and `body_cursor` pagination (§10).
 
 Related: [Architecture](architecture.md) §5, `src/autobridge/spec/models.py`,
-`schemas/connector-spec.v1.json`, plan §2.4.
+`schemas/connector-spec.v2.json` (`schemas/connector-spec.v1.json` kept for
+reference), plan §2.4.
 
 ## 1. File layout — `generated/connectors/`
 
@@ -120,6 +123,15 @@ health:
   auth: { type: oauth2_client_credentials, credential_ref: OAUTH_SECRET, username: client_id, token_url: https://…/token, scopes: [read] }
   ```
 
+  Spec v2 adds `body_fields` auth (tokens in the JSON body, never headers —
+  see §10):
+
+  ```yaml
+  auth:
+    type: body_fields
+    body_fields: { ClientToken: VENDOR_CLIENT_TOKEN, AccessToken: VENDOR_ACCESS_TOKEN }
+  ```
+
   Secret values are read from the environment at call time, never logged, never
   stored in the spec, release, evidence or API response.
 
@@ -142,11 +154,14 @@ health:
 
 ### 2.3 `operations`
 
-Keyed by name (`[a-z][a-z0-9_]*`). Each operation is a `GET` with:
+Keyed by name (`[a-z][a-z0-9_]*`). Each operation is a `GET` (v1 and v2) or a
+`POST` (v2 only, with a JSON body template — see §10) with:
 
 * `path` — relative (must start with `/`, no `$` or spaces).
 * `params` — query strings. Values may contain `{{checkpoint.<op>}}` templates
   resolved from the caller's checkpoint dict (e.g. incremental sync).
+* `body` — v2 POST only: static JSON template for the request body (v2
+  `GET` with `body` is rejected). Templates resolve like `params`, nested.
 * `pagination` — see §3.
 * `checkpoint` — `field` (JSONPath into the raw record) + `mode: max | min`.
   The interpreter computes the value over all fetched records for incremental
@@ -211,6 +226,7 @@ The interpreter supports three strategies; each page is fetched via
 | `offset` | `offset_param`, `limit_param` | `next_path` e.g. `$.next_offset` → int | `offset = int(next_token)` fallback `offset + len(items)` |
 | `cursor` | `cursor_param` (omitted on first page), `limit_param` | `$.next_cursor` → opaque base64 index | `cursor = next_token`, `previous_cursor` retained for cycle detection |
 | `page` | `page_param`, `limit_param` | optional `next_path`; optional `total_path` (e.g. `$.total`) | `page += 1` |
+| `body_cursor` (v2, §10) | page size at `count_path`, cursor at `cursor_path` in the POST body | `next_path` (cursor out) | `cursor = next_token` (first request sends no cursor) |
 
 Tokenless page pagination: when `next_path` is absent (or yields no token)
 and `strategy == page`, the interpreter compares fetched records against the
@@ -365,3 +381,48 @@ the ambiguous `date` note. Bootstrap from docs alone yields a valid spec
 `frontier_tokens == 0` and a verified release. Proven in
 `tests/e2e/test_s1_legacystay.py`, which also asserts no file under
 `src/autobridge` mentions the vendor.
+
+## 10. Spec v2 — POST, `body_fields` auth, `body_cursor` (REQ-020.5a)
+
+Version 2 extends the vocabulary once, generally: no vendor branch anywhere in
+the engine (`grep` finds no vendor name in `src/autobridge` outside tests and
+fixtures). `spec_version: 1` documents validate unchanged; v2 features with
+`spec_version: 1` are rejected with a `requires spec_version 2` error, which
+is what the REQ-020 item-4 "before" refusal pins.
+
+* `operations.<name>.method: POST` with an optional `body` template (static
+  JSON; checkpoint templates resolve nested). `GET` with `body` is rejected.
+* `auth.type: body_fields` with `body_fields: {<dotted body path>: <CREDENTIAL_REF>}`.
+  Secrets are read from the environment into the request body per call, never
+  headers, never logged, never stored.
+* `pagination.strategy: body_cursor` with `cursor_path` (cursor in), optional
+  `count_path` + `count_value` 1..1000 (page size in), `next_path` (cursor
+  out), `items_path`, `stop_when`. The first request sends no cursor; the
+  loop stops on null cursor, repeated cursor, empty page — or a short page
+  (fewer items than requested), the body-cursor end-of-data signal.
+  `cursor_param`/`offset_param`/`page_param`/`limit_param` query params stay
+  untouched.
+
+Example (shape, not a real vendor):
+
+```yaml
+spec_version: 2
+source:
+  base_url: ${VENDOR_BASE_URL}
+  auth:
+    type: body_fields
+    body_fields: { ClientToken: VENDOR_CLIENT_TOKEN, AccessToken: VENDOR_ACCESS_TOKEN }
+operations:
+  list_reservations:
+    method: POST
+    path: /api/connector/v1/reservations/getAll/2023-06-06
+    body: { EnterpriseIds: [e1], Limitation: { Count: 100 } }
+    pagination:
+      strategy: body_cursor
+      cursor_path: Limitation.Cursor
+      count_path: Limitation.Count
+      count_value: 100
+      next_path: $.Cursor
+      items_path: $.Reservations
+      stop_when: [null_cursor, repeated_cursor, empty_page]
+```

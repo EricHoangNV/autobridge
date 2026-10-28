@@ -659,3 +659,65 @@ def test_oauth2_token_dataclass() -> None:
     assert t.expires_at == 123.0
     t2 = OAuth2Token(access_token="xyz")
     assert t2.expires_at is None
+
+
+# ---------------------------------------------------------------------------
+# body_fields (spec v2, REQ-020.5a)
+# ---------------------------------------------------------------------------
+
+
+def _body_fields_auth() -> AuthSpec:
+    return AuthSpec(
+        type="body_fields",
+        body_fields={"ClientToken": "VENDOR_CLIENT_TOKEN", "AccessToken": "VENDOR_ACCESS_TOKEN"},
+    )
+
+
+def test_body_fields_builds_nested_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    from autobridge.runtime.auth import build_auth_body
+
+    monkeypatch.setenv("VENDOR_CLIENT_TOKEN", "ct-secret")
+    monkeypatch.setenv("VENDOR_ACCESS_TOKEN", "at-secret")
+    body = build_auth_body(_body_fields_auth())
+    assert body == {"ClientToken": "ct-secret", "AccessToken": "at-secret"}
+
+
+def test_body_fields_supports_dotted_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    from autobridge.runtime.auth import build_auth_body
+
+    monkeypatch.setenv("VENDOR_CLIENT_TOKEN", "ct-secret")
+    auth = AuthSpec(type="body_fields", body_fields={"Auth.ClientToken": "VENDOR_CLIENT_TOKEN"})
+    assert build_auth_body(auth) == {"Auth": {"ClientToken": "ct-secret"}}
+
+
+def test_body_fields_missing_secret_names_ref_not_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    from autobridge.runtime.auth import build_auth_body
+
+    monkeypatch.delenv("VENDOR_CLIENT_TOKEN", raising=False)
+    monkeypatch.setenv("VENDOR_ACCESS_TOKEN", "at-secret")
+    with pytest.raises(AuthError) as exc:
+        build_auth_body(_body_fields_auth())
+    assert "VENDOR_CLIENT_TOKEN" in str(exc.value)
+    assert "ct-secret" not in str(exc.value)
+
+
+def test_body_fields_headers_stay_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VENDOR_CLIENT_TOKEN", "ct-secret")
+    monkeypatch.setenv("VENDOR_ACCESS_TOKEN", "at-secret")
+    assert build_auth_headers(_body_fields_auth()) == {}
+
+
+def test_body_fields_wrong_type_rejected() -> None:
+    from autobridge.runtime.auth import build_auth_body
+
+    auth = AuthSpec(type="bearer", credential_ref="SOME_KEY")
+    with pytest.raises(AuthError, match="body_fields"):
+        build_auth_body(auth)
+
+
+def test_auth_body_refs_lists_all_refs() -> None:
+    from autobridge.runtime.auth import auth_body_refs
+
+    assert sorted(auth_body_refs(_body_fields_auth())) == ["VENDOR_ACCESS_TOKEN", "VENDOR_CLIENT_TOKEN"]
+    assert auth_body_refs(None) == []
+    assert auth_body_refs(AuthSpec(type="bearer", credential_ref="SOME_KEY")) == ["SOME_KEY"]

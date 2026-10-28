@@ -437,3 +437,212 @@ def test_interpreter_repeated_cursor_stops(monkeypatch) -> None:  # type: ignore
     result = interp.execute_operation("list_reservations")
     assert result.repeated_cursor is True
     assert result.stop_reason == "repeated_cursor"
+
+
+# ---------------------------------------------------------------------------
+# body_cursor (spec v2, REQ-020.5a)
+# ---------------------------------------------------------------------------
+
+
+def _body_cursor_pagination(**overrides: Any) -> dict:
+    base: dict[str, Any] = {
+        "strategy": "body_cursor",
+        "cursor_path": "Limitation.Cursor",
+        "count_path": "Limitation.Count",
+        "count_value": 2,
+        "next_path": "$.Cursor",
+        "items_path": "$.Reservations",
+        "stop_when": ["null_cursor", "repeated_cursor", "empty_page"],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_initial_state_body_cursor_ok() -> None:
+    s = initial_state("body_cursor")
+    assert s.strategy == "body_cursor"
+    assert s.cursor is None
+
+
+def test_build_request_body_first_page_has_no_cursor() -> None:
+    from autobridge.runtime.pagination import build_request_body
+
+    pag = Pagination(strategy="body_cursor", cursor_path="Limitation.Cursor",  # type: ignore[arg-type]
+                     count_path="Limitation.Count", count_value=2,
+                     next_path="$.Cursor", items_path="$.Reservations",
+                     stop_when=["null_cursor"])
+    state = initial_state("body_cursor")
+    base = {"EnterpriseIds": ["e1"], "Limitation": {}}
+    body = build_request_body(state, pag, base, 50)
+    assert body == {"EnterpriseIds": ["e1"], "Limitation": {"Count": 2}}
+    # Deep copy: mutating the built body must not touch the template.
+    body["Limitation"]["Count"] = 999
+    assert base == {"EnterpriseIds": ["e1"], "Limitation": {}}
+
+
+def test_build_request_body_later_page_sends_cursor() -> None:
+    from autobridge.runtime.pagination import build_request_body
+
+    pag = Pagination(strategy="body_cursor", cursor_path="Limitation.Cursor",  # type: ignore[arg-type]
+                     count_path="Limitation.Count", count_value=2,
+                     next_path="$.Cursor", items_path="$.Reservations",
+                     stop_when=["null_cursor"])
+    state = initial_state("body_cursor")
+    state.cursor = "r-42"
+    body = build_request_body(state, pag, {"EnterpriseIds": ["e1"], "Limitation": {}}, 50)
+    assert body["Limitation"] == {"Count": 2, "Cursor": "r-42"}
+
+
+def test_effective_count_prefers_count_value() -> None:
+    from autobridge.runtime.pagination import effective_count
+
+    pag = Pagination(strategy="body_cursor", cursor_path="Limitation.Cursor",  # type: ignore[arg-type]
+                     count_path="Limitation.Count", count_value=7,
+                     next_path="$.Cursor", items_path="$.Reservations",
+                     stop_when=["null_cursor"])
+    assert effective_count(pag, 50) == 7
+    pag2 = Pagination(strategy="body_cursor", cursor_path="Limitation.Cursor",  # type: ignore[arg-type]
+                      next_path="$.Cursor", items_path="$.Reservations",
+                      stop_when=["null_cursor"])
+    assert effective_count(pag2, 50) == 50
+
+
+def test_advance_body_cursor() -> None:
+    from autobridge.runtime.pagination import advance_state
+
+    s0 = PaginationState(strategy="body_cursor", cursor=None)
+    nxt = advance_state(s0, "r-1", [{"id": 1}], 2)
+    assert nxt.cursor == "r-1"
+    assert nxt.previous_cursor is None
+
+
+def _fake_post_http(pages: list[dict], seen: list[dict]) -> Any:
+    """Mock POST transport returning *pages* in order, recording JSON bodies."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        seen.append(_json.loads(request.content.decode() or "{}"))
+        idx = len(seen) - 1
+        body = pages[idx] if idx < len(pages) else {"Reservations": [], "Cursor": None}
+        return httpx.Response(200, json=body)
+
+    transport = httpx.MockTransport(handler)
+
+    def factory(**kwargs):
+        return httpx.Client(transport=transport, timeout=kwargs.get("timeout", 5))
+
+    from autobridge.runtime.http import HttpClient
+    from autobridge.spec.models import RetryPolicy
+
+    return HttpClient(
+        "https://example.com",
+        retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=3),
+        client_factory=factory,
+        sleep_fn=lambda _: None,
+    )
+
+
+def _post_spec_dict() -> dict:
+    d = _spec_dict(_body_cursor_pagination())
+    d["spec_version"] = 2
+    d["operations"]["list_reservations"].update({
+        "method": "POST",
+        "body": {"EnterpriseIds": ["e1"], "Limitation": {"Count": 2}},
+    })
+    return d
+
+
+def test_interpreter_post_body_cursor_paginates(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.spec.models import load_spec_from_dict
+
+    spec = load_spec_from_dict(_post_spec_dict())
+    pages = [
+        {"Reservations": [{"Id": "r-1"}, {"Id": "r-2"}], "Cursor": "r-2"},
+        {"Reservations": [{"Id": "r-3"}], "Cursor": "r-3"},
+    ]
+    seen: list[dict] = []
+    interp = Interpreter(spec, http_client=_fake_post_http(pages, seen))
+    result = interp.execute_operation("list_reservations")
+    assert [r["Id"] for r in result.records] == ["r-1", "r-2", "r-3"]
+    # Second page ends on a short page (1 < 2): no third request.
+    assert result.stop_reason == "short_page"
+    assert len(seen) == 2
+    # First request carries no cursor; second carries the returned cursor.
+    assert "Cursor" not in seen[0]["Limitation"]
+    assert seen[1]["Limitation"]["Cursor"] == "r-2"
+    assert seen[0]["Limitation"]["Count"] == 2
+
+
+def test_interpreter_post_body_cursor_null_cursor_stops(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.spec.models import load_spec_from_dict
+
+    spec = load_spec_from_dict(_post_spec_dict())
+    pages = [
+        {"Reservations": [{"Id": "r-1"}, {"Id": "r-2"}], "Cursor": "r-2"},
+        {"Reservations": [], "Cursor": None},
+    ]
+    seen: list[dict] = []
+    interp = Interpreter(spec, http_client=_fake_post_http(pages, seen))
+    result = interp.execute_operation("list_reservations")
+    assert [r["Id"] for r in result.records] == ["r-1", "r-2"]
+    assert result.stop_reason in ("null_cursor", "empty_page")
+
+
+def test_interpreter_post_places_body_auth_in_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("VENDOR_CLIENT_TOKEN", "ct-secret")
+    monkeypatch.setenv("VENDOR_ACCESS_TOKEN", "at-secret")
+    from autobridge.spec.models import load_spec_from_dict
+
+    d = _post_spec_dict()
+    d["operations"]["list_reservations"]["pagination"] = None
+    d["source"]["auth"] = {
+        "type": "body_fields",
+        "body_fields": {"ClientToken": "VENDOR_CLIENT_TOKEN", "AccessToken": "VENDOR_ACCESS_TOKEN"},
+    }
+    spec = load_spec_from_dict(d)
+    pages = [{"Reservations": [{"Id": "r-1"}]}]
+    seen: list[dict] = []
+    interp = Interpreter(spec, http_client=_fake_post_http(pages, seen))
+    result = interp.execute_operation("list_reservations")
+    assert len(result.records) == 1
+    assert seen[0]["ClientToken"] == "ct-secret"
+    assert seen[0]["AccessToken"] == "at-secret"
+    # Secrets ride in the body with the static template preserved.
+    assert seen[0]["EnterpriseIds"] == ["e1"]
+
+
+def test_interpreter_post_rejects_query_pagination(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.spec.models import load_spec_from_dict
+
+    d = _post_spec_dict()
+    d["operations"]["list_reservations"]["pagination"] = {
+        "strategy": "cursor",
+        "cursor_param": "cursor",
+        "next_path": "$.Cursor",
+        "items_path": "$.Reservations",
+        "stop_when": ["null_cursor"],
+    }
+    spec = load_spec_from_dict(d)
+    interp = Interpreter(spec, http_client=_fake_post_http([], []))
+    with pytest.raises(ValueError, match="body_cursor"):
+        interp.execute_operation("list_reservations")
+
+
+def test_interpreter_post_single_without_pagination(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.spec.models import load_spec_from_dict
+
+    d = _post_spec_dict()
+    d["operations"]["list_reservations"]["pagination"] = None
+    spec = load_spec_from_dict(d)
+    pages = [{"Reservations": [{"Id": "r-9"}]}]
+    seen: list[dict] = []
+    interp = Interpreter(spec, http_client=_fake_post_http(pages, seen))
+    result = interp.execute_operation("list_reservations")
+    assert result.stop_reason == "no_pagination"
+    # Unpaginated responses are returned as the single raw record (same as GET).
+    assert result.records == pages

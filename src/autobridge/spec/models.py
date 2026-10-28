@@ -1,9 +1,13 @@
-"""ConnectorSpec v1 pydantic models (P1.W1.3, plan §2.4).
+"""ConnectorSpec v1/v2 pydantic models (P1.W1.3, P1.W3.1, REQ-020.5a).
 
 A connector is a declarative document the runtime interprets — never code.
-Every spec validates against ``schemas/connector-spec.v1.json`` before it is
+Every spec validates against ``schemas/connector-spec.v2.json`` before it is
 stored, executed or patched; invalid specs are rejected with path-level
 errors. Repairs are JSON Patches on the spec (see :mod:`autobridge.spec.patch`).
+
+Version 2 adds POST operations with a JSON body template, ``body_fields``
+auth and ``body_cursor`` pagination. Version 1 documents still validate
+and behave exactly as before.
 
 Secrets policy: auth carries ``credential_ref`` (an env key name) only —
 inline secret values are rejected, as are credentials embedded in URLs.
@@ -77,7 +81,13 @@ EMBEDDED_CREDS_RE = re.compile(r"://[^/\s]*@")
 TIMEZONE_RE = re.compile(r"^(?:UTC|UTC[+-]\d{1,2}(?::\d{2})?|[A-Za-z_]+(?:/[A-Za-z0-9_+-]+)+)$")
 INTERVAL_RE = re.compile(r"^\d+[smh]$")
 
-SCHEMA_FILENAME = "connector-spec.v1.json"
+#: Dotted request-body path (e.g. ``Limitation.Cursor``): one or more
+#: ``[A-Za-z_][A-Za-z0-9_]*`` segments joined by dots. Unlike JSONPath
+#: (which addresses responses with ``$.``), body paths address fields
+#: inside the outgoing JSON body template.
+BODY_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+SCHEMA_FILENAME = "connector-spec.v2.json"
 
 
 def check_jsonpath(value: str, what: str = "path") -> str:
@@ -86,6 +96,17 @@ def check_jsonpath(value: str, what: str = "path") -> str:
         raise ValueError(
             f"{what} must use the JSONPath subset "
             f"(e.g. $.data, $.meta.next_cursor) with no filters or expressions; "
+            f"got {value!r}"
+        )
+    return value
+
+
+def check_body_path(value: str, what: str = "body path") -> str:
+    """Validate a dotted request-body path; raise ``ValueError`` naming the field."""
+    if not BODY_PATH_RE.match(value):
+        raise ValueError(
+            f"{what} must be dotted field names "
+            f"(e.g. Limitation.Cursor) with no expressions; "
             f"got {value!r}"
         )
     return value
@@ -297,20 +318,46 @@ class RateLimit(_Strict):
 
 
 class AuthSpec(_Strict):
-    """Credentials by reference only — never inline values (DIRECTIVES §6)."""
+    """Credentials by reference only — never inline values (DIRECTIVES §6).
 
-    type: Literal["bearer", "api_key_header", "basic", "oauth2_client_credentials"]
-    credential_ref: str = Field(description="Env key name holding the secret, never the value")
+    ``body_fields`` (spec v2): ``{body field path: credential_ref}``. Each
+    value is an env key name holding the secret; at runtime the secret is
+    read from the environment and placed into the named JSON body field.
+    """
+
+    type: Literal["bearer", "api_key_header", "basic", "oauth2_client_credentials", "body_fields"]
+    credential_ref: str | None = Field(
+        default=None, description="Env key name holding the secret, never the value"
+    )
     header_name: str | None = None
     username: str | None = None
     token_url: str | None = None
     scopes: list[str] = Field(default_factory=list)
+    body_fields: dict[str, str] | None = Field(
+        default=None,
+        description="Body field path -> credential_ref env key (body_fields auth only)",
+    )
 
     @field_validator("credential_ref")
     @classmethod
-    def _ref_shape(cls, v: str) -> str:
+    def _ref_shape(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         if not CREDENTIAL_REF_RE.match(v):
             raise ValueError(f"credential_ref {v!r} must be an env key name like HARBOR_API_KEY")
+        return v
+
+    @field_validator("body_fields")
+    @classmethod
+    def _body_fields_shape(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is None:
+            return None
+        for field_path, ref in v.items():
+            check_body_path(field_path, "auth body field")
+            if not CREDENTIAL_REF_RE.match(ref):
+                raise ValueError(f"auth body field {field_path!r} ref {ref!r} must be an env key name")
+        if not v:
+            raise ValueError("body_fields auth requires at least one body field")
         return v
 
     @model_validator(mode="after")
@@ -321,6 +368,16 @@ class AuthSpec(_Strict):
             raise ValueError("basic auth requires username (the password stays in credential_ref)")
         if self.type == "oauth2_client_credentials" and not self.token_url:
             raise ValueError("oauth2_client_credentials auth requires token_url")
+        if self.type == "body_fields":
+            if not self.body_fields:
+                raise ValueError("body_fields auth requires body_fields mapping")
+            if self.credential_ref is not None:
+                raise ValueError("body_fields auth uses body_fields refs, not credential_ref")
+        else:
+            if self.body_fields is not None:
+                raise ValueError(f"{self.type} auth must not set body_fields (body_fields auth only)")
+            if self.credential_ref is None:
+                raise ValueError(f"{self.type} auth requires credential_ref")
         return self
 
 
@@ -367,7 +424,7 @@ class SourceSpec(_Strict):
 
 
 class Pagination(_Strict):
-    strategy: Literal["offset", "cursor", "page"]
+    strategy: Literal["offset", "cursor", "page", "body_cursor"]
     cursor_param: str | None = None
     offset_param: str | None = None
     page_param: str | None = None
@@ -376,6 +433,18 @@ class Pagination(_Strict):
     items_path: JsonPath
     total_path: JsonPath | None = None
     stop_when: list[StopCondition] = Field(min_length=1)
+    # body_cursor (spec v2): cursor and page size live in named JSON body
+    # paths going in, and the cursor comes back via next_path. Stop on null
+    # cursor or a short page (fewer items than the requested count).
+    cursor_path: str | None = Field(
+        default=None, description="Dotted body path holding the request cursor (body_cursor only)"
+    )
+    count_path: str | None = Field(
+        default=None, description="Dotted body path holding the page size (body_cursor only)"
+    )
+    count_value: int | None = Field(
+        default=None, description="Page size sent at count_path (body_cursor only)"
+    )
 
     @field_validator("next_path")
     @classmethod
@@ -392,6 +461,18 @@ class Pagination(_Strict):
     def _items_subset(cls, v: str) -> str:
         return check_jsonpath(v, "items_path")
 
+    @field_validator("cursor_path", "count_path")
+    @classmethod
+    def _body_path_subset(cls, v: str | None) -> str | None:
+        return check_body_path(v, "pagination body path") if v is not None else v
+
+    @field_validator("count_value")
+    @classmethod
+    def _count_range(cls, v: int | None) -> int | None:
+        if v is not None and not 1 <= v <= 1000:
+            raise ValueError(f"count_value {v!r} must be in 1..1000")
+        return v
+
     @model_validator(mode="after")
     def _per_strategy(self) -> Pagination:
         if self.strategy == "cursor" and (not self.cursor_param or self.next_path is None):
@@ -400,6 +481,11 @@ class Pagination(_Strict):
             raise ValueError("offset pagination requires offset_param")
         if self.strategy == "page" and not self.page_param:
             raise ValueError("page pagination requires page_param")
+        if self.strategy == "body_cursor":
+            if not self.cursor_path or self.next_path is None:
+                raise ValueError("body_cursor pagination requires cursor_path and next_path")
+        elif self.cursor_path is not None or self.count_path is not None or self.count_value is not None:
+            raise ValueError(f"{self.strategy} pagination must not set cursor_path/count_path/count_value")
         return self
 
 
@@ -414,9 +500,14 @@ class Checkpoint(_Strict):
 
 
 class OperationSpec(_Strict):
-    method: Literal["GET"] = "GET"
+    method: Literal["GET", "POST"] = "GET"
     path: str
     params: dict[str, str] = Field(default_factory=dict)
+    # POST body template (spec v2): static JSON data sent as the request
+    # body. Pagination (body_cursor) and body_fields auth inject their
+    # fields into a copy per request; checkpoint ``{{checkpoint.X}}``
+    # templates resolve the same way as query params.
+    body: dict[str, Any] | None = None
     pagination: Pagination | None = None
     checkpoint: Checkpoint | None = None
 
@@ -426,6 +517,12 @@ class OperationSpec(_Strict):
         if not v.startswith("/") or " " in v or "$" in v:
             raise ValueError(f"operation path {v!r} must be a relative path like /v2/bookings")
         return v
+
+    @model_validator(mode="after")
+    def _method_body(self) -> OperationSpec:
+        if self.method == "GET" and self.body is not None:
+            raise ValueError("GET operations must not set body (POST only)")
+        return self
 
 
 class ConnectorMeta(_Strict):
@@ -471,9 +568,14 @@ class HealthSpec(_Strict):
 
 
 class ConnectorSpec(_Strict):
-    """The declarative connector document (spec_version 1)."""
+    """The declarative connector document (spec_version 1 | 2).
 
-    spec_version: Literal[1]
+    Version 2 adds POST operations with a JSON body template, ``body_fields``
+    auth, and ``body_cursor`` pagination. Every version 1 document still
+    validates and behaves exactly as before.
+    """
+
+    spec_version: Literal[1, 2]
     connector: ConnectorMeta
     source: SourceSpec
     operations: dict[str, OperationSpec] = Field(min_length=1)
@@ -496,6 +598,25 @@ class ConnectorSpec(_Strict):
             if not ENTITY_NAME_RE.match(name):
                 raise ValueError(f"entity name {name!r} must be PascalCase")
         return v
+
+    @model_validator(mode="after")
+    def _v1_vocabulary(self) -> ConnectorSpec:
+        """Version 1 cannot express POST, body templates, body_fields auth or body_cursor."""
+        if self.spec_version == 1:
+            if self.source.auth.type == "body_fields":
+                raise ValueError("body_fields auth requires spec_version 2")
+            for op_name, op in self.operations.items():
+                if op.method != "GET":
+                    raise ValueError(
+                        f"operations.{op_name}: method {op.method!r} requires spec_version 2"
+                    )
+                if op.body is not None:
+                    raise ValueError(f"operations.{op_name}: body requires spec_version 2")
+                if op.pagination is not None and op.pagination.strategy == "body_cursor":
+                    raise ValueError(
+                        f"operations.{op_name}: body_cursor pagination requires spec_version 2"
+                    )
+        return self
 
     @model_validator(mode="after")
     def _cross_refs(self) -> ConnectorSpec:
@@ -577,7 +698,7 @@ def format_validation_errors(error: Any) -> list[str]:
 
 
 def default_schema_path() -> Path:
-    """Repo ``schemas/connector-spec.v1.json`` resolved from this file."""
+    """Repo ``schemas/connector-spec.v2.json`` resolved from this file."""
     return Path(__file__).resolve().parents[3] / "schemas" / SCHEMA_FILENAME
 
 

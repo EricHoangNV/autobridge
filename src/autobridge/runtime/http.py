@@ -361,3 +361,26 @@ class HttpClient:
         if not isinstance(data, dict):
             raise HttpError(f"expected JSON object, got {type(data).__name__}", status_code=resp.status_code)
         return data
+
+    def post(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """POST *path* with a JSON body, retry-aware, returning the JSON body as dict.
+
+        Raises :class:`HttpError` for non-JSON or error status.
+        """
+        resp = self.request("POST", path, params=params, headers=headers, json_body=json_body)
+        try:
+            # Same Decimal policy as GET: fractional JSON numbers parse as
+            # Decimal so money fields never arrive as binary floats.
+            data = resp.json(parse_float=Decimal)
+        except Exception as exc:
+            raise HttpError(f"response is not JSON: {exc}", status_code=resp.status_code) from exc
+        if not isinstance(data, dict):
+            raise HttpError(f"expected JSON object, got {type(data).__name__}", status_code=resp.status_code)
+        return data
