@@ -673,7 +673,7 @@ ${LATEST_VERDICTS}
     [ "$PROVIDER" = modal ] && { export MODAL_BASE_URL; PROVIDER_EXTRA_ENV=(-e MODAL_BASE_URL); }
     # COV_REPORT: the Makefile's coverage report style. Fully covered files are left out for OpenCode;
     # the Makefile default (used by Claude Code and by hand) is unchanged.
-    sbx exec -e GH_TOKEN "${GIT_ID_ENV[@]}" -e COV_REPORT=term-missing:skip-covered -e "$PROVIDER_KEY_VAR" "${PROVIDER_EXTRA_ENV[@]}" -e 'OPENCODE_PERMISSION={"edit":"allow","bash":"allow","webfetch":"allow","doom_loop":"allow","external_directory":"allow"}' \
+    sbx exec -e GH_TOKEN "${GIT_ID_ENV[@]}" -e COV_REPORT=term-missing:skip-covered -e "$PROVIDER_KEY_VAR" ${PROVIDER_EXTRA_ENV[@]+"${PROVIDER_EXTRA_ENV[@]}"} -e 'OPENCODE_PERMISSION={"edit":"allow","bash":"allow","webfetch":"allow","doom_loop":"allow","external_directory":"allow"}' \
       -w "$WT_DIR" "$SANDBOX_NAME" \
       bash -c 'echo $$ > /tmp/ralph-agent.pid; export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"; exec opencode run --format json --auto --model "$2" "$1"' _ "$PROMPT" "$PROVIDER/$MODEL" \
       < /dev/null 2>&1 | tee "$iter_log" | \
