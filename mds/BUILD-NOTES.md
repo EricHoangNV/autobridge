@@ -1221,3 +1221,14 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
   climb test green; `make demo` runs the climb in-process (replay, L4 escalated, per-run table shows
   the only frontier call on the hard-semantic step).
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-021 owner check (2026-10-28 21:47) — full climb for both semantic rows (sbx1)
+- **Did:** per the follow-up owner check, the `gross_to_net` and `invalid_patch_trap` matrix rows no
+  longer pin `[0, 4]` (that was the code's skip, now asserted wrong). Both drive `run_frontier_climb`
+  (replay) and require the full `[0, 1, 2, 3, 4]`: L0 miss → L1 no rule → L2 below 0.70 → L3 frontier
+  proposal recorded with replay-labelled ledger rows → verifier oracle rejection of the applied decoy
+  (`money_mismatch` for gross_to_net, `invalid_patch_trap` for the trap; `oracle_verdict` in-process,
+  the same rule the live `/verify` enforces per test_05) → L4 one question. No other file changed.
+- **Tests:** matrix 19 in-process green (16 deterministic rows + refusal + 2 climbs); full `make test`
+  green (autobridge 2172 / 91.52%, verifier 99, simulators 294, ui 153); lint green.
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).

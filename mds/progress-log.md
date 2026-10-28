@@ -2567,3 +2567,8 @@ via replay (or live key), `resolve_frontier_provider`, replay-labelled ledger, m
 **Gates:** `make test` green (2172/99/294 + ui 153); lint + typecheck green.
 **Next:** REQ-021 sub-step F (capabilities/knowledge). Replay capture script + live repair L2/L3
 wiring remain follow-ups. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-021 owner-check follow-up merged (sbx1)
+**Full climb for both semantic rows** (matrix asserts [0..4] + oracle rejection; no [0,4] pin remains).
+Gates green. **Next:** REQ-021 sub-step F (capabilities/knowledge).
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).
