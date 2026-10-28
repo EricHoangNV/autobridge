@@ -244,20 +244,18 @@ keep the negative smoke probes). FIAS over TCP:
   `XL` / `XD`, key write / delete / read `KR` `KD` `KZ` answered by `KA` (or `KZ`), Posting Answer `PA`.
 - Seeded and deterministic from the shared generator (rooms and guests consistent with the PMS simulators, so postings
   land on real in-house guests), with an admin API (token, loopback-only port) for the fault switchboard.
-- **Docs are a document, not a website** (owner, 2026-10-28). A hotel PABX vendor hands over a file, so the PABX's
-  docs are a PDF (and a Word .docx) generated from `simulators/docs/fias-pabx.md`, the single source: title page
-  "Grand Plaza — PABX Interface Specification (FIAS)", version and date, contents, then the spec, with the records as
-  a command list (one table: record type, name, direction, fields, answer expected). Generated deterministically by a
-  script and checked in as `simulators/docs/fias-pabx.pdf` and `.docx`, with a test that they are up to date with the
-  `.md`. The PABX's `/developers` page is a plain document viewer: the PDF in a page frame, a "Download PDF / DOCX"
-  pair, and nothing else (no site navigation, no web styling).
-- **Loading a document into AutoBridge.** "Build a connector" in the UI, the CLI (`autobridge build --docs-file …`)
-  and the control API accept an uploaded `.pdf`, `.docx`, `.md` or `.txt` file (size limit, type checked by content,
-  not by extension). The engine extracts the text (tables kept as rows) with a pure-Python library pinned in the
-  lockfile, then the docs reader runs as for Markdown. The upload is stored as build evidence with its hash. Never
-  executes or follows anything inside the file (no macros, no embedded links fetched). Demo: download the PABX PDF from
-  its page, drop it into "Build a connector", and the FIAS connector bootstraps from it (after part C's vocabulary).
-  Unit tests for extraction of each format and for rejected files; an e2e test for the upload path.
+- **Docs page = an uploaded document, viewed** (owner, 2026-10-28; replaces any website look). Assume the hotel's
+  spec file was already uploaded to a document store; the PABX's `/developers` page is what a user sees when opening
+  it: a document viewer, not a docs site. Look and feel: a file header bar (file name `Grand_Plaza_PABX_Interface_
+  Specification_FIAS_v1.0.pdf`, size, "uploaded by Hotel IT · <date>", page count, a download icon that does nothing
+  or downloads the `.md`), a grey canvas with white paper pages (A4 proportions, page shadows, page numbers in the
+  footer, a running header "Grand Plaza — PABX Interface Specification (FIAS)"), a thumbnail rail on the left, zoom
+  controls, and print-document typography (serif body, numbered headings, ruled tables). Content, rendered at load time
+  from `simulators/docs/fias-pabx.md` (the single source, as with the other portals): a title page (title, property,
+  version, date, "Confidential — for integration partners"), contents, then the spec, with the records presented as
+  a **command list**: one table per direction listing each record type, its name, the fields it carries and the
+  answer expected. No upload feature, no PDF/DOCX generation and no new engine intake: this is presentation only, via
+  `mount_devportal` like the other three portals. A unit test that the page loads and renders the command list.
 
 **B. Edge agent** (the edge worker becomes a proper on-premise agent; generic pattern, done right):
 - Outbound only: no inbound port from the cloud. It polls a cloud command queue (a simple queue endpoint on the
