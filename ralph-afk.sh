@@ -31,6 +31,8 @@ source "$SCRIPT_DIR/.env"
 # catalog (models.dev) uses for each provider; Baseten's Spark Open id is declared in opencode.json.
 BASETEN_MODEL="${BASETEN_MODEL:-meta-models/muse-spark-open-1026}"
 MODAL_MODEL="${MODAL_MODEL:-meta-models/Muse-Spark-Open-816B-A42B}"
+# Modal serves each workspace from its own endpoint (modal endpoint create --shared); opencode.json reads this.
+MODAL_BASE_URL="${MODAL_BASE_URL:-https://inference.us-west.modal.direct/v1}"
 META_MODEL="${META_MODEL:-muse-spark-1.3}"
 # The Claude tier uses the model saved inside the Claude sandbox (/model in an interactive session), never
 # a value from .env; the loop reads it back from ~/.claude/settings.json for the commit trailer.
@@ -693,9 +695,11 @@ ${LATEST_VERDICTS}
     # OPENCODE_PERMISSION keeps edits/bash/webfetch allowed even if opencode.json is missing in the worktree.
     PROVIDER_KEY_VAR=$(provider_env "$PROVIDER")
     export "$PROVIDER_KEY_VAR"
+    PROVIDER_EXTRA_ENV=()
+    [ "$PROVIDER" = modal ] && { export MODAL_BASE_URL; PROVIDER_EXTRA_ENV=(-e MODAL_BASE_URL); }
     # COV_REPORT: the Makefile's coverage report style. Fully covered files are left out for OpenCode;
     # the Makefile default (used by Claude Code and by hand) is unchanged.
-    sbx exec -e GH_TOKEN "${GIT_ID_ENV[@]}" -e COV_REPORT=term-missing:skip-covered -e "$PROVIDER_KEY_VAR" -e 'OPENCODE_PERMISSION={"edit":"allow","bash":"allow","webfetch":"allow","doom_loop":"allow","external_directory":"allow"}' \
+    sbx exec -e GH_TOKEN "${GIT_ID_ENV[@]}" -e COV_REPORT=term-missing:skip-covered -e "$PROVIDER_KEY_VAR" "${PROVIDER_EXTRA_ENV[@]}" -e 'OPENCODE_PERMISSION={"edit":"allow","bash":"allow","webfetch":"allow","doom_loop":"allow","external_directory":"allow"}' \
       -w "$WT_DIR" "$SANDBOX_NAME" \
       bash -c 'echo $$ > /tmp/ralph-agent.pid; export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"; exec opencode run --format json --auto --model "$2" "$1"' _ "$PROMPT" "$PROVIDER/$MODEL" \
       < /dev/null 2>&1 | tee "$iter_log" | \

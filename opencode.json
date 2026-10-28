@@ -25,6 +25,9 @@
       }
     },
     "modal": {
+      "options": {
+        "baseURL": "{env:MODAL_BASE_URL}"
+      },
       "models": {
         "meta-models/Muse-Spark-Open-816B-A42B": {
           "name": "Muse Spark Open (Modal)",
