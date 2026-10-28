@@ -29,4 +29,4 @@ REQ-019 done (sbx1 2026-10-28): Atlas serves the method-style hotel PMS surface 
 4. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 … P2.S7.1 DONE — Phase 2 complete
 
 ## Open Requests
-REQ-020, REQ-021, REQ-022, REQ-023 OPEN (owner priority: REQ-020, then REQ-022, REQ-021/023 applied as each lands).
+REQ-020, REQ-021, REQ-022, REQ-023, REQ-024, REQ-025 OPEN (owner priority: REQ-020, then REQ-022, REQ-024 → REQ-025 before Nov 3, REQ-021/023 applied as each lands).
