@@ -2756,3 +2756,27 @@ flap). Next: REQ-022 D (fault scenarios) then E (demo + docs + index).
 
 **Verification:** `make lint` (incl. import-linter) + `make typecheck` + `make ui-typecheck` + `make openapi-check` green; `make test` green (2715 pytest + 156 UI, autobridge cov 91%); `tests/e2e/test_model_usage_matrix.py` in-process 18 pass.
 **Left open (same REQ):** 21:10 matrix rows `[0,4]`→`[0,1,2,3,4]` for gross_to_net/invalid_patch_trap + ladder must satisfy them; owner `make record-frontier SCENARIO=gross_to_net` capture.
+
+## REQ-021 matrix full-climb [0,1,2,3,4]
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-021, owner check after sub-step D (2026-10-28 21:10)
+
+**What was done:**
+- Changed the `gross_to_net` matrix row from `[0, 4]` to `[0, 1, 2, 3, 4]` (spec atlaspms→harborpms) and added an `invalid_patch_trap` row with the same climb
+- Extended `RepairController.handle` with an optional provider-wired semantic-climb path (`_handle_semantic_climb`): L0 miss → L1 no-rule → L2 small-model rank below the 0.70 gate → recorded L3 frontier call → L4 escalate with one operator question, never releasing the L3 proposal
+- Wired the two rows through ReplayProvider + gross/net hypotheses; runner asserts frontier_tokens > 0, 2 ModelCall rows, L3 proposal on rung 3, oracle `fail` (money_mismatch / invalid_patch_trap), bundle question, one-line reasons; all other rows keep 0-call assertions
+
+**Key decisions:**
+- Climb lives behind the provider-wired controller path (not in `run_ladder`), so the deterministic zero-call path and all other rows are untouched; engine still never imports the verifier (oracle check stays in the test)
+- L0-hit falls back to the deterministic path so a future learned fix replays as an L0 propose instead of climbing
+- Matrix decision stays `escalate` (controller never auto-patches semantic drift); demo step 4 keeps its own Degraded assertion
+
+**Files changed:**
+- `src/autobridge/repair/controller.py` — climb params, `_handle_semantic_climb`, `_signal_evidence_ids`
+- `tests/e2e/test_model_usage_matrix.py` — rows, `_spec_for` harborpms, `_run_semantic_climb_row`
+
+**Notes for next iteration:**
+- Remaining in REQ-021 (owner steps): owner runs `make record-frontier SCENARIO=gross_to_net` and commits the capture; live step-4 check on the owner's host
+- Known red untouched: `test_matrix_live_reset_repeatability` (reset 6 vs 4 incl. fias) belongs to the REQ-022 D/E loop
+
+**Verification:** matrix file 19 pass; `make lint` + `make typecheck` green; full `make test` green (autobridge 2291 @90.33%, verifier 99 @93.62%, simulators 325 @90.36%, ui 156 pass).
