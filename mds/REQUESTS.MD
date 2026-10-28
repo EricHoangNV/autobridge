@@ -130,8 +130,20 @@ Wanted:
 2. Compose service `sim-meridian` on vendor-net + admin-net, public `127.0.0.1:8116`, admin `127.0.0.1:8117`
    (loopback-only like the other admin ports); readiness in `make up`, smoke positive and negative probes, local mode
    (REQ-017) included.
-3. Docs: `simulators/docs/meridian-openapi.yaml` in the Mews swagger style, and a `/developers` page with its own look
-   (a modern docs portal, clearly different from Atlas), registered via `mount_devportal`.
+3. Docs: `simulators/docs/meridian-openapi.yaml` in the Mews swagger style (the single source), and a `/developers`
+   page registered via `mount_devportal` that renders it at load time. Owner (2026-10-28): Meridian is a **modern
+   PMS developer portal**, and it must not look like Atlas. Atlas is a single-page API reference (left nav, operation
+   per section, dark code panel on the right). Meridian is a guides-first docs site in the style of today's hosted
+   docs platforms: a top bar with product switcher (Connector API · Webhooks · Changelog), a search box with a ⌘K
+   hint, and light/dark toggle; a left sidebar grouped into **Guides** (Getting started, Authentication, Requests,
+   Responses, Pagination, Serialization: written from the YAML's descriptions and the "What the research confirmed"
+   notes above, in Meridian's own words) and **Operations** (one page per operation, grouped by resource:
+   Reservations, Customers, Order items, Configuration); each operation page shows `POST` + the versioned path, a
+   request-body table and a response table with nested objects expandable, a tabbed code sample (cURL / JavaScript /
+   Python) with the tokens in the body, an example response, and callouts ("Uses pagination", "Max interval 3 months",
+   deprecation note for older versions); a right-hand "On this page" rail; a "Was this page helpful?" footer and a
+   last-updated date. Hash routing between pages (one HTML page, no build step, no external fonts or CDNs, works
+   offline like the other portals). Include it in the simulators index (REQ-022).
 4. **Before** (owner decision 2026-10-28: the demo shows both halves). With the simulator and docs in place and the
    engine still unchanged, run a build from Meridian's docs and record the result in the build note. It must stop
    cleanly: `BuildRun` ends `Blocked` with a named reason (e.g. "operations need POST with a JSON body and body-field
