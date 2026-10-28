@@ -2523,3 +2523,12 @@ OpenAIProvider refactored onto a shared response parser, behavior unchanged.
 lint + typecheck green. No live Muse call (no key in sandbox).
 **Next:** REQ-021 sub-steps B (full reset + demo-reset), C (pinned vocabulary), D (rung ledger), E (matrix e2e),
 F (capabilities/knowledge), G (replay). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-021 sub-step B merged (sbx1)
+**Full reset:** `/demo/reset` wipes sims (4) + L0 + live ledger (archived per session into
+`model_call_archive`, migration 0005) + domain rows FK-safe; `make demo-reset` driver; repeatability test
+asserts identical counts across reset cycles. Trust-boundary guards extended with the documented routing-data
+exemption (demo.py/schemas.py only). **Gates:** `make test` green (autobridge 2130 / 91.33%, verifier 99,
+simulators 294, ui 148); lint + typecheck green.
+**Next:** REQ-021 sub-steps C (pinned vocabulary), D (rung ledger), E (matrix e2e), F (capabilities/knowledge),
+G (replay). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
