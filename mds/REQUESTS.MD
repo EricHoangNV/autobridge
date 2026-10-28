@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2), then REQ-022, with REQ-023 (demo plan) applied as each of those lands. Do these before any
+Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2), then REQ-022, then REQ-024 (before the Nov 3 run), with REQ-023 (demo plan) applied as each of those lands. Do these before any
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
@@ -340,6 +340,58 @@ Wanted: `docs/demo.md` rewritten to this structure as steps land (main script on
 scenario | vendor | expected outcome | rung | model calls | REQ), `make demo` running the main script and
 `make demo SCENARIO=…` any catalogue entry, `docs/demo.md` and `make demo` kept in sync by a test that every catalogue
 entry has a scenario file, an e2e test and a row in REQ-021's model-usage matrix.
+
+### REQ-024 — Make the held-out claim checkable, and prove the engine beats an untrained frontier model (2026-10-28)
+Status: OPEN
+Owner: "Ralph never saw the held-out data" and "AutoBridge beats a frontier model on its own because the engine knows
+more" must be things a judge can check, not things we say. Never read, print, move or regenerate the private seeds;
+never touch `verifier/hidden_cases/heldout/SHA256SUMS`. Everything below that needs the seed files is a script the
+**owner** runs; scripts print counts and hashes only, never seed or nonce values.
+**A. Held-out integrity, checkable**
+1. *Leak audit* `scripts/heldout_leak_audit.py` (owner runs it with `HELDOUT_DIR`): reads each private file's nonce and
+   seed in memory and its sha256, then scans every `ralph-logs/*.jsonl` transcript, every blob in the full git history
+   (`git rev-list --all` + `git cat-file`), every file under `.worktrees/`, and the sandbox-visible project folder for
+   any occurrence of a nonce, a seed file's sha256, or a seed file's raw bytes. Output: one line per source with
+   counts ("0 hits in 109 transcripts, 0 in 2 140 blobs …") and exit 1 on any hit. Unit-tested with a fake heldout dir.
+   The audit result is written into the scorecard.
+2. *Isolation evidence*: a doc section (docs/benchmark.md "Held-out protocol") showing the sandboxes mount only the
+   project folder (`sbx ls` workspace column), `HELDOUT_DIR` is outside it, the bench reads it only for heldout runs,
+   and the freeze commit (`ff372083`) with its GitHub push time. Add a CI-free check script that prints these facts.
+3. *Public timestamp*: document the owner step to create a signed tag `heldout-freeze` on `ff372083` and a GitHub
+   release for it (GitHub records the time; optional OpenTimestamps proof of `SHA256SUMS` committed beside it).
+4. *Reveal after the run*: after the single Nov 3 run, the owner publishes the seed files under
+   `verifier/hidden_cases/heldout/revealed/` (an owner commit). Add `make verify-heldout-reveal` that checks them
+   against the frozen `SHA256SUMS` and reruns `make bench-heldout` from them, so anyone can reproduce the scorecard.
+   Until the owner does this, the folder must not exist (guard test).
+5. *Honest scope* in docs/benchmark.md: what is sealed is the instance data (seeds); the four scenario definitions are
+   public and the builder saw them. Unseen-vendor generalization is measured separately on LegacyStay (REQ-019 item 5).
+**B. Engine vs. untrained frontier model, same model on every arm**
+1. Every arm that calls a frontier model uses the same `FRONTIER_MODEL` through the same provider (REQ-021), so the
+   only difference between arms is the engine. Add a coding-agent driver that runs OpenCode headless with that model
+   (`BASELINE_DRIVER=opencode`), and make it the default instead of `claude`; keep `claude` / `codex` available.
+2. Ablation arms, all under the same matched budget (tokens, wall clock, docs, sandbox, credentials, visible tests; the
+   existing `assert_inputs_equal` self-test extended to every arm):
+   a. `frontier_oneshot`: the model alone, one prompt with the docs.
+   b. `frontier_agent`: the model as a coding agent with tools (the untrained-frontier baseline).
+   c. `engine_no_knowledge`: AutoBridge with L0 and L1 disabled (ladder, verifier gate and budgets kept, so only the
+      model repairs).
+   d. `autobridge_cold`: full AutoBridge, empty learned knowledge.
+   e. `autobridge_warm`: full AutoBridge after learning on the dev split only (never on held-out).
+   c vs d isolates what the engine's built-in knowledge (rules + known fixes) adds; d vs e isolates learning; b vs d is
+   the headline.
+3. Metrics per arm, scenario and overall, with mean and 95 % interval over ≥ 5 trials (different seeds derived from the
+   private seed for held-out, from the dev seeds otherwise): verified completion rate (judged only by the verifier),
+   wrong patches that reached a release (must be 0 for AutoBridge), correct escalations (escalated exactly when the
+   scenario says it must), frontier tokens, estimated cost (REQ-021 prices), wall time.
+4. *Learning curve* (dev split): the same drift injected 5 times in a row; plot frontier tokens per repair for b, d and
+   e. Expected: b pays every time, d pays once then 0, e is 0 from the start. Saved as `experiments/learning_curve.md`
+   with the raw rows.
+5. *Pre-registration*: before the Nov 3 run, commit `experiments/preregistration.md` (arms, metrics, trials, budgets,
+   primary hypothesis, e.g. "on held-out, `autobridge_cold` reaches a verified-completion rate at least that of
+   `frontier_agent` with at least 10× fewer frontier tokens", and that results are published whatever they are). The
+   scorecard links the pre-registration commit and the leak-audit result.
+6. Dev-split rehearsal: `make bench` runs all arms on the dev split now (real numbers, REQ-008), so the protocol is
+   debugged before the one held-out run.
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
