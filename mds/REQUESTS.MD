@@ -6,18 +6,6 @@ Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
-### REQ-015 — e2e tests do not send the control token (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 09:46)
-With `AUTOBRIDGE_CONTROL_TOKEN` exported, 6 tests fail with `401 Missing or invalid control token`:
-`test_s2_edge_target.py::test_edge_execute_signed_release_live`, `test_s3_discovery_import.py` (import_and_list fake +
-live, lifecycle live + fake), `test_s7_cli.py::test_s7_cli_repairs_approve_and_reject_fake`. Ralph's gates miss this
-because the sandbox runs with no token.
-Wanted:
-1. One shared helper in `tests/e2e/conftest.py` for control-API headers (token when set); every live call uses it.
-2. In-process (fake) tests set or clear the token themselves with monkeypatch, so they pass whatever the shell has.
-3. The CLI sends the token when `AUTOBRIDGE_CONTROL_TOKEN` is set (check `src/autobridge/cli.py`).
-4. `make e2e` passes both with no tokens and with all tokens set; add a test matrix note to docs/architecture.md.
-
 ### REQ-016 — `make demo` reports [ok] when its writes fail (2026-10-28)
 Status: OPEN
 With the token missing, `make demo` printed `control POST /connectors -> 401` and `POST /demo/inject-fault -> 401`,
@@ -380,6 +368,20 @@ Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDO
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-015 — e2e tests do not send the control token (2026-10-28)
+Status: DONE (2026-10-28)
+With `AUTOBRIDGE_CONTROL_TOKEN` exported, 6 tests fail with `401 Missing or invalid control token`:
+`test_s2_edge_target.py::test_edge_execute_signed_release_live`, `test_s3_discovery_import.py` (import_and_list fake +
+live, lifecycle live + fake), `test_s7_cli.py::test_s7_cli_repairs_approve_and_reject_fake`. Ralph's gates miss this
+because the sandbox runs with no token.
+Wanted:
+1. One shared helper in `tests/e2e/conftest.py` for control-API headers (token when set); every live call uses it.
+2. In-process (fake) tests set or clear the token themselves with monkeypatch, so they pass whatever the shell has.
+3. The CLI sends the token when `AUTOBRIDGE_CONTROL_TOKEN` is set (check `src/autobridge/cli.py`).
+4. `make e2e` passes both with no tokens and with all tokens set; add a test matrix note to docs/architecture.md.
+
+Resolution: shared control_headers() in conftest used by every live call; fakes pin token via monkeypatch; CLI token path pinned by unit test; matrix note in docs/architecture.md; e2e fakes green with and without tokens.
 
 ### REQ-014 — Host tools ignore `.env`, so tokens break smoke, e2e and demo (2026-10-28)
 Status: DONE (2026-10-28) — host targets source scripts/load_dotenv.sh (non-empty KEY=value only, explicit env wins); blank E2E_TIMEOUT/DATABASE_URL/DEMO_SEED/CONTROL_URL/EDGE_* count as unset; loader + empty-handling unit-tested.

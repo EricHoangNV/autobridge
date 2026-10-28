@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-014 done (sbx1 2026-10-28): host tools read `.env` — new `scripts/load_dotenv.sh` (non-empty KEY=value only, comments stripped, explicit env wins) sourced by `make smoke/e2e/bench/bench-heldout/demo`; blank `E2E_TIMEOUT`/`DATABASE_URL`/`DEMO_SEED`/`CONTROL_URL`/`EDGE_*` count as unset; `local-up.sh` uses the loader. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+REQ-015 done (sbx1 2026-10-28): shared `control_headers()` in tests/e2e/conftest.py forwards AUTOBRIDGE_CONTROL_TOKEN; every live control-API call uses it (s2, s3, test_03, test_05); fakes pin token via monkeypatch delenv; CLI token path pinned by unit test; matrix note in docs/architecture.md. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - W1 Foundations: scaffold, compose, ConnectorSpec, schemas, DB models, jobs, evidence, LLMProvider, fakes, e2e harness base
@@ -15,18 +15,18 @@ REQ-014 done (sbx1 2026-10-28): host tools read `.env` — new `scripts/load_dot
   - W8 Benchmark: harness, baselines, one-shot, scoring, make bench + heldout gate (test_07)
   - W9 E2E: full harness, make e2e, CI unit→smoke→e2e→demo chain; live/inprocess markers (35 live / 73 inprocess)
   - W10 Packaging: README/docs complete, make demo 6/6 live; P1.W10.3 codeable done (owner step below)
-  - REQ-001…REQ-014 + REQ-017 + REQ-018 all DONE (REQ-014: .env loading for host targets, verified by unit tests)
+  - REQ-001…REQ-015 + REQ-017 + REQ-018 all DONE (REQ-015: e2e control token via shared helper)
   - P2.S1.1 … P2.S7.1 DONE (LegacyStay, Edge target, DiscoveryResult import, MCP Guardian, OpenAI provider, Richer UI, CLI)
   - AR-2-1 … AR-2-6 + AR-1-1 … AR-1-5 (residual) all code-fixed (Cycle 2 re-verification pending owner)
-- Tests: 2366 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 147 pass; lint + typecheck green
+- Tests: 2366+ pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 147 pass; lint + typecheck green
 - Stack: local mode verified (sbx1 no-Docker sandbox, 2026-10-28): local-up 12/12 readyz, smoke OK (local), demo 6/6, test_00/02/s2 live; readyz green
 
 ## Next tasks
-0. **REQ-015 → REQ-016** — [ ] OPEN (owner priority 2026-10-28: e2e control token, demo fail-loud)
+0. **REQ-016** — [ ] OPEN (owner priority 2026-10-28: demo fail-loud)
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS (codeable REQ-007 flow done 2026-10-27)
 3. Code Review Cycle 2 re-verification (all FAIL items code-fixed)
 4. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 … P2.S7.1 DONE — Phase 2 complete
 
 ## Open Requests
-REQ-015, REQ-016, REQ-019, REQ-020, REQ-021, REQ-022, REQ-023 OPEN (owner priority: REQ-015 → REQ-016, then REQ-019 → REQ-020, then REQ-022, REQ-021/023 applied as each lands).
+REQ-016, REQ-019, REQ-020, REQ-021, REQ-022, REQ-023 OPEN (owner priority: REQ-016, then REQ-019 → REQ-020, then REQ-022, REQ-021/023 applied as each lands).

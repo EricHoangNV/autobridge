@@ -863,3 +863,12 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 - Empty-as-unset (item 2): `default_database_url()` (blank `DATABASE_URL` → SQLite default, was breaking readyz), `e2e_timeout_seconds()` helper in `tests/e2e/conftest.py` (blank `E2E_TIMEOUT` → 120, was `float('')` crash), new `env_default()` in `bench/demo.py` (`CONTROL_URL`, `DEMO_SEED`), `EDGE_TIMEOUT_S`/`EDGE_ALLOWLIST` in `edge/app.py`. `BENCH_*`/harness URL handling verified already blank-safe (truthiness/`or None` guards) — no change.
 - Tests: new `tests/unit/test_autobridge_dotenv_loader.py` (10 tests: loader parsing incl. quoted `#`, explicit-env-wins, no-file no-op, three-token smoke-gate shape, Makefile wiring, heldout guard, and all blank-handling helpers).
 - Verified: 10/10 new, neighbours (db_models/demo/edge/ci_e2e) 86 pass, `make lint` + `make typecheck` green, full `make test` 2003+97+266 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 147 pass. `make -n` dry-runs render correctly; heldout guard exits 2 on empty, 0 on set. Live `make smoke` with tokens against a real stack not possible in this no-Docker sandbox — mechanism covered by the smoke-gate unit test instead.
+
+### REQ-015 — e2e control token via shared helper (2026-10-28, sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD REQ-015.
+- `tests/e2e/conftest.py`: new `control_headers()` (Bearer when `AUTOBRIDGE_CONTROL_TOKEN` non-empty); `_http_post_json` uses it.
+- Live: `test_s2_edge_target.py` connector create + `test_s3_discovery_import.py` (import/list/lifecycle) send `control_headers()`; `test_03`/`test_05` local helpers delegate to it.
+- Fake: `test_s3` both tests + `test_s7_cli._fake_cli_client` do `monkeypatch.delenv("AUTOBRIDGE_CONTROL_TOKEN")`.
+- CLI: `src/autobridge/cli.py` already sent the token (`auth_headers` → `_make_client`); added `test_cli_forwards_control_token_when_set`.
+- Docs: `docs/architecture.md` §7 token-matrix note.
+- Gates: targeted e2e+unit green with and without all tokens set; `make lint`, `make typecheck`, `make test` green (autobridge/verifier/simulators ≥90%, ui 147 pass).

@@ -2383,3 +2383,31 @@ Next: REQ-014 → REQ-015 → REQ-016 (owner priority), then REQ-019 → REQ-020
 **Notes for next iteration:**
 - Live `make smoke` with tokens set (REQ item 3 end-to-end) still needs a Docker host or `make local-up` stack; the sandbox here has neither. Next loop with a stack: drop the three tokens in `.env` and run `make smoke` with no exports.
 - Next: REQ-015 (e2e control token helper + CLI token).
+
+## REQ-015 — e2e control token via shared helper
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-015 (owner priority 2026-10-28)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Added `control_headers()` in tests/e2e/conftest.py; `_http_post_json` delegates to it for non-admin calls
+- Live calls now use it: s2 edge connector create, s3 import/lifecycle (4 calls), test_03 `_control_post/_get`, test_05 `_control_live`
+- Fakes pin token via monkeypatch delenv: s3 both fake tests, s7 `_fake_cli_client`
+- CLI verified: `auth_headers()`/`_make_client` already forwarded the token; added `test_cli_forwards_control_token_when_set`
+- Docs: token test-matrix note in docs/architecture.md §7
+- Verified: e2e fakes + CLI unit green with no tokens and with AUTOBRIDGE_CONTROL_TOKEN/SIM_ADMIN_TOKEN/EDGE_RELEASE_SECRET set; `make lint`, `make typecheck`, `make test` green
+
+**Key decisions:**
+- Kept local `_control_headers` names in test_03/test_05 as thin delegates to the shared helper (minimal diff, same import surface)
+- Fakes clear the token rather than set it: matches existing unit coverage of the token path and keeps e2e deterministic
+
+**Files changed:**
+- `tests/e2e/conftest.py` — new helper + refactor
+- `tests/e2e/test_s2_edge_target.py`, `tests/e2e/test_s3_discovery_import.py`, `tests/e2e/test_s7_cli.py` — live headers + fake pinning
+- `tests/e2e/test_03_known_repairs_zero_frontier.py`, `tests/e2e/test_05_safety_and_semantic.py` — use shared helper
+- `tests/unit/test_autobridge_cli.py` — CLI token regression test
+- `docs/architecture.md` — matrix note
+- `mds/REQUESTS.MD` — REQ-015 moved to Resolved
+
+**Notes for next iteration:**
+- REQ-016 next (demo fail-loud); live stack run not possible in sandbox — owner CI covers live e2e
