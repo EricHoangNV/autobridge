@@ -2780,3 +2780,28 @@ flap). Next: REQ-022 D (fault scenarios) then E (demo + docs + index).
 - Known red untouched: `test_matrix_live_reset_repeatability` (reset 6 vs 4 incl. fias) belongs to the REQ-022 D/E loop
 
 **Verification:** matrix file 19 pass; `make lint` + `make typecheck` green; full `make test` green (autobridge 2291 @90.33%, verifier 99 @93.62%, simulators 325 @90.36%, ui 156 pass).
+
+## REQ-022 owner check (2026-10-29) — reset targets from one registry
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-022 owner check 2026-10-29 (on 2df1bd33); Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Added `RESET_TARGETS` + `EXTRA_RESETS` + `expected_reset_targets()` to `src/autobridge/control/routes/demo.py`; the reset loop iterates the registry (response shape unchanged).
+- `tests/e2e/test_model_usage_matrix.py::test_matrix_live_reset_repeatability` now asserts against `expected_reset_targets()` instead of a hand-kept 4-entry list.
+- `tests/unit/test_autobridge_demo_reset.py` and `tests/unit/test_autobridge_control_api_extended.py` derive the expected 6 entries from the same registry.
+
+**Key decisions:**
+- Registry lives in the endpoint module (engine side) so tests import from one place; `EXTRA_RESETS` keeps the FIAS link-engine extra reset generic (suffix + path) rather than a second special case.
+- Did not fix the two other e2e reds found while running the mandated full `make e2e`: the legacystay guard needs an owner scoping decision, the edge-agent failure is timing flake in untouched code.
+
+**Files changed:**
+- `src/autobridge/control/routes/demo.py` — registry + helper, loop rewrite
+- `tests/e2e/test_model_usage_matrix.py` — derive expected entries
+- `tests/unit/test_autobridge_demo_reset.py` — derive expected entries
+- `tests/unit/test_autobridge_control_api_extended.py` — derive expected entries
+
+**Notes for next iteration:**
+- Next: macOS DNS-hermetic fix (owner: do next, independent of sub-step D), then REQ-022 sub-step D scenarios.
+- Pre-existing e2e red to surface to owner: `test_no_legacystay_specific_rule_or_engine_code` fails on main (guard from P2.S1.1 vs `legacystay` in `control/schemas.py` demo target enum since REQ-021 sub-step B).
+- Flaky under full-suite random order: `test_s2_edge_target.py::test_agent_live_command_and_postings` (passes in isolation); likely link re-handshake timing after FIAS resets.
+- Always run pytest as `uv run --extra dev pytest` (bare `uv run` misses pytest-timeout and warns on timeout config).

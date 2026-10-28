@@ -1611,3 +1611,24 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Owner 21:10 check:
 - `src/autobridge/repair/controller.py` — `handle()` accepts `hypotheses / enumerator_yield_count / provider / budget / scenario / validate_against / run_id`; with a provider it delegates to `run_frontier_climb` (`_handle_semantic_climb`), normalizes rung-keyed attempts to level-keyed trace, attaches the actual L3 proposal to its rung entry, appends L4 escalate with one operator question. Never proposes: `candidate_patch` is always None on this path (SEMANTIC_VALUE_DRIFT without independent evidence escalates, §1); verifier/trap verdict stays with the caller (engine never imports verifier). L0-hit falls back to the deterministic path (cached patch replays as L0 propose). `BudgetedProvider` writes the 2 ModelCall rows (small + frontier) with the caller's `run_id`.
 - `tests/e2e/test_model_usage_matrix.py` — gross_to_net row `atlaspms→harborpms`, levels `[0,1,2,3,4]`; new invalid_patch_trap row (same climb, `expected_check: invalid_patch_trap` vs `money_mismatch`); `_spec_for` gains harborpms; `_run_semantic_climb_row` wires ReplayProvider + gross/net hypotheses (priors 0.41/0.39 < 0.70 gate) + harbor validate_against, asserts rung 4 / escalate / no patch / frontier_tokens>0 + small_tokens>0 / 2 ModelCall rows (1 small + 1 frontier, replay-fixture purposes) / exact levels / ledger totals / L3 proposal recorded on rung 3 / oracle `fail` with the expected check / bundle question ends `?` / one-line reasons. All other rows keep the 0-call assertions (every other main-script step makes 0 frontier calls).
 - Verification: matrix file 19 pass (16 in-process rows + 2 dedicated climbs + refusal); ladder/knowledge/ledger unit files 105 pass; `make lint` (import-linter kept) + `make typecheck` green; full `make test` green (autobridge 2291 @90.33%, verifier 99 @93.62%, simulators 325 @90.36%, ui 156). Live `test_matrix_live_reset_repeatability` untouched (known red: reset returns 6 incl. fias vs expected 4 — REQ-022 D owns it).
+
+### REQ-022 owner check (2026-10-29) — reset targets from one registry (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD REQ-022 owner check 2026-10-29 (on 2df1bd33).
+
+What: `POST /demo/reset` iterated a hand-kept 5-sim tuple (+ a special-cased FIAS extra reset) while
+`test_matrix_live_reset_repeatability` pinned a 4-entry list — stale since sub-step A, green in-sandbox
+(live test needs a stack) and red on any live host. Fix: `RESET_TARGETS` + `EXTRA_RESETS` registry in
+`src/autobridge/control/routes/demo.py` with `expected_reset_targets()`; the endpoint loop and all three
+asserting tests (e2e matrix + `test_autobridge_demo_reset.py` + `test_autobridge_control_api_extended.py`)
+derive from it. No hand-kept `sim-fias-pabx:fias` literal remains anywhere. Response shape byte-identical
+(same order, same entries), no OpenAPI change (`make openapi-check` clean).
+Gates: ruff + import-linter + mypy clean; targeted unit 25 pass; matrix file 20 pass live (local stack);
+full `make e2e` (local mode) 143–144 pass / 2 skip with 1 pre-existing unrelated failure
+(`test_no_legacystay_specific_rule_or_engine_code` — fails on main with this change stashed; `legacystay`
+entered `control/schemas.py` demo target enum in REQ-021 sub-step B, needs an owner scoping decision) and
+one flaky edge-agent timing failure (`test_agent_live_command_and_postings` fails under full-suite random
+order, passes in isolation with link_up true — pre-existing timing, untouched code path). `make test` green:
+2291/99/325 pytest + 156 UI, gates 90/94/~90%.
+Gotcha for next loops: bare `uv run pytest` misses dev extras (no pytest-timeout); always use
+`uv run --extra dev` as the Makefile does. Next: DNS-hermetic fix (owner: do next, independent of D),
+then REQ-022 sub-step D scenarios.
