@@ -157,15 +157,30 @@ Wanted:
    (REQ-017) included.
 3. Docs: `simulators/docs/meridian-openapi.yaml` in the Mews swagger style, and a `/developers` page with its own look
    (a modern docs portal, clearly different from Atlas), registered via `mount_devportal`.
-4. Engine support for this kind of API, as JSON-Patchable spec data, never code: `ConnectorSpec` operations gain
-   `method: POST` with a JSON body template, `auth` type `body_fields`, pagination strategy for a body cursor
-   (`Limitation.Cursor` in, `Cursor` out), and the joins needed (reservation → customer name, reservation → order item
-   totals) expressed in the spec. Bump the spec schema version and keep v1 specs valid. Verifier oracle and canonical
-   mapping for Meridian, including UTC → property-local business date.
-5. A demo path: bootstrap a Meridian connector from its docs (the "unfamiliar API" story) and at least two fault
-   scenarios on it (e.g. `Limitation` cursor change, a renamed field). Bench includes Meridian only if the plan's
-   matched-budget rules allow; otherwise note it.
-6. Gates as REQ-019, README vendor table updated.
+4. **Before** (owner decision 2026-10-28: the demo shows both halves). With the simulator and docs in place and the
+   engine still unchanged, run a build from Meridian's docs and record the result in the build note. It must stop
+   cleanly: `BuildRun` ends `Blocked` with a named reason (e.g. "operations need POST with a JSON body and body-field
+   auth; not expressible in ConnectorSpec v1"), escalated to L4, no release persisted, no half-working connector, no
+   crash. If today's bootstrap fails messily instead, fix that first (generally, for any API outside the vocabulary).
+   Add an e2e test that pins this behavior for a spec-v1-only engine configuration, so the refusal stays demonstrable.
+5. **Extend the spec vocabulary, once and generally** (owner decision: required, not optional). As JSON-Patchable spec
+   data, never code, and with no Meridian-specific branch anywhere in the engine (grep must find no "meridian" in
+   `src/autobridge` outside tests and fixtures): `ConnectorSpec` operations gain `method: POST` with a JSON body
+   template; `auth` type `body_fields` (credential refs placed into named body fields, still never in specs or
+   evidence as values); a body-cursor pagination strategy (cursor and page size in named body paths in, cursor path
+   out, stop on null cursor or short page); and declarative joins (enrich one entity from another operation by key,
+   e.g. reservation → customer name, reservation → sum of order item gross amounts). Bump the spec schema version,
+   keep every v1 spec valid and behaving the same, update `connector-spec` JSON schema, docs reader / classifiers /
+   hypotheses so discovery can propose these from docs, the runtime interpreter, and JSON Patch repair rules that touch
+   the new fields. Verifier oracle and canonical mapping for Meridian, including UTC → property-local business date.
+6. **After.** The same Meridian docs, with no other input, now bootstrap a connector that passes the verifier gate and
+   syncs `Complete`. Then at least two fault scenarios on Meridian (e.g. the `Limitation` cursor contract changes, a
+   renamed field) repaired through the ladder, with a known one at zero frontier tokens. Bench includes Meridian only
+   if the plan's matched-budget rules allow; otherwise note it.
+7. Demo: add the before/after to `docs/demo.md` and `make demo` as one step ("unfamiliar API style: engine refuses
+   safely → vocabulary extended once → same docs connect"), with the evidence each half shows.
+8. Gates as REQ-019, README vendor table updated. This is the largest REQ in the queue: split it into claimable
+   sub-steps in the build note (4, 5a schema+runtime, 5b discovery, 5c joins, 6, 7) and merge each one green.
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
