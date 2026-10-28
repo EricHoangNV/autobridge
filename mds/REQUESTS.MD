@@ -2,9 +2,32 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-28): REQ-013 first, then REQ-017, then REQ-014 → REQ-015 → REQ-016. Do these before any
+Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-017, then REQ-014 → REQ-015 → REQ-016. Do these before any
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
+
+### REQ-018 — UI in compose cannot load anything: browser calls `http://control:8000` (2026-10-28)
+Status: OPEN
+Opening http://localhost:8107/connectors after `make up` shows "Failed to load connectors: Failed to fetch".
+Cause: `ui/Dockerfile` bakes `NEXT_PUBLIC_API_URL=http://control:8000` into the browser bundle (confirmed: the string
+is in `.next/static/chunks/app/connectors/page-*.js`), and `ui/lib/api/hooks.ts` `getBaseUrl()` and
+`ui/lib/api/client.ts` `createApiClient()` use it in the browser. `control` only resolves inside the compose network,
+so every browser request fails. It also bypasses the `/api/*` rewrite, so `ui/middleware.ts` never adds the control
+token (REQ-012) and browser writes would get 401 even once reachable.
+Wanted:
+1. In the browser, every control-API call (SWR hooks, the openapi client, SSE in `ui/lib/sse.ts`, the demo drawer,
+   approve/reject, build, sync) goes to same-origin `/api/...`. Only server-side code may use `CONTROL_URL`. Drop the
+   `NEXT_PUBLIC_API_URL` build arg (or make it unused in the browser).
+2. Writes from the browser pass through the middleware and work with `AUTOBRIDGE_CONTROL_TOKEN` set; the token never
+   appears in any `.next/static` chunk (add a check: grep the built chunks for the token name and value).
+3. Works the same in local mode (REQ-017): the UI's `/api` rewrite points at `CONTROL_URL`, default
+   `http://localhost:8101`.
+4. A Playwright check that loads /connectors against `make up` with no error banner, and a test that fails if any
+   built browser chunk contains `control:8000`. `make e2e-ui` must cover the connectors list, the inject-fault drawer
+   and an approve.
+5. Small: the "healthz" text link in the top bar (`ui/components/TopBar.tsx:96-99`) looks like debug output on the
+   demo screen. Keep the route and its `data-testid` for the e2e journey, but move the link to a footer or style it as a
+   quiet status detail next to LIVE.
 
 ### REQ-013 — Build → sync is broken since AR-1-2; sync also runs unapproved releases (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 08:25)
