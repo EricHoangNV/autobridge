@@ -2,6 +2,87 @@
 
 ## Open Requests (read this section only)
 
+Owner priority (2026-10-28): REQ-013 first, then REQ-017, then REQ-014 → REQ-015 → REQ-016. Do these before any
+remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
+sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
+
+### REQ-013 — Build → sync is broken since AR-1-2; sync also runs unapproved releases (2026-10-28)
+Status: OPEN
+Found by a host regression on 207f7366 (stack up). AR-1-2 (76bbff43) removed the sync fallback to the latest release,
+but nothing activates a freshly built release: `Connector.active_release_id` is only set by `_activate` in
+`src/autobridge/engine/releases.py`, reached from repair approval. So after create → build, `POST
+/connectors/{id}/sync` answers `422 connector has no active release`. `tests/e2e/test_s7_cli.py::test_s7_cli_same_journey_as_ui_fake`
+fails on exactly this (with and without tokens); the UI's Sync button on a newly built connector will do the same.
+Second gap: `trigger_sync` in `src/autobridge/control/routes/builds.py` takes `body.release_id` and only checks that the
+release belongs to the connector, not that it passed the gate or was approved, so an unapproved candidate can still run.
+Wanted:
+1. Decide and document (docs/safety-model.md) how a first build becomes runnable. Recommended: a build whose candidate
+   passed the verifier gate is activated as the connector's first release, or the operator activates it explicitly
+   (e.g. `POST /connectors/{id}/releases/{release_id}/activate`, write-token protected, actor from AUTOBRIDGE_OPERATOR)
+   and the UI and CLI show that step. Either way, a gate-blocked build stays unrunnable.
+2. `sync` with an explicit `release_id` accepts only a release that passed the gate and is active or approved; anything
+   else is 422 with the reason. Unit tests for both.
+3. The demo journey works end to end: create → build → (activate) → sync, in the UI, in the CLI, and in `make demo`.
+   Fix `test_s7_cli_same_journey_as_ui_fake` by following the new flow, not by loosening the gate.
+
+### REQ-014 — Host tools ignore `.env`, so tokens break smoke, e2e and demo (2026-10-28)
+Status: OPEN
+With `SIM_ADMIN_TOKEN`, `AUTOBRIDGE_CONTROL_TOKEN` and `EDGE_RELEASE_SECRET` set in `.env`, compose passes them to the
+containers, but `make smoke`, `make e2e`, `make demo` and `make bench` run on the host and never read `.env`. Result:
+smoke says the token is unset, e2e has 35 errors (simulator reset rejected), demo writes get 401. It only works after
+`set -a; . ./.env; set +a`.
+Wanted:
+1. The Makefile loads `.env` for host targets when it exists (e.g. a small loader that exports only non-empty
+   `KEY=value` lines and ignores comments and inline `# …` comments), so `make demo` just works with tokens set.
+2. Empty values never override defaults: code that reads `E2E_TIMEOUT`, `BENCH_*`, `DATABASE_URL` etc. treats `""` as
+   unset (today `E2E_TIMEOUT=` crashes conftest with `float('')`; an empty `DATABASE_URL` breaks readyz).
+3. Test: with all three tokens set in a temp `.env`, `make smoke` enforces them and needs no manual export.
+
+### REQ-015 — e2e tests do not send the control token (2026-10-28)
+Status: OPEN
+With `AUTOBRIDGE_CONTROL_TOKEN` exported, 6 tests fail with `401 Missing or invalid control token`:
+`test_s2_edge_target.py::test_edge_execute_signed_release_live`, `test_s3_discovery_import.py` (import_and_list fake +
+live, lifecycle live + fake), `test_s7_cli.py::test_s7_cli_repairs_approve_and_reject_fake`. Ralph's gates miss this
+because the sandbox runs with no token.
+Wanted:
+1. One shared helper in `tests/e2e/conftest.py` for control-API headers (token when set); every live call uses it.
+2. In-process (fake) tests set or clear the token themselves with monkeypatch, so they pass whatever the shell has.
+3. The CLI sends the token when `AUTOBRIDGE_CONTROL_TOKEN` is set (check `src/autobridge/cli.py`).
+4. `make e2e` passes both with no tokens and with all tokens set; add a test matrix note to docs/architecture.md.
+
+### REQ-016 — `make demo` reports [ok] when its writes fail (2026-10-28)
+Status: OPEN
+With the token missing, `make demo` printed `control POST /connectors -> 401` and `POST /demo/inject-fault -> 401`,
+yet every step said `[ok]` and the run exited 0. A demo check that cannot fail protects nothing.
+Wanted:
+1. Any live control-API call that is part of a step must succeed (2xx) or the step is FAILED and `make demo` exits
+   non-zero with the method, path, status and detail.
+2. Say clearly in the output which steps ran against the live stack and which were computed in-process.
+3. Tests: a 401 and a 500 on a step's write make that step fail.
+
+### REQ-017 — Run the demo without Docker (2026-10-28)
+Status: OPEN
+Today the only way to run AutoBridge is `make up` (Docker Compose). Someone who downloads the repo may have no Docker
+and no sandbox. The demo must run on a plain machine with Python + `uv` and Node/npm.
+Wanted:
+1. `make local-up` / `make local-down` (or `make dev`): start every service the demo needs as local processes on the
+   same host ports as compose (control 8101, verifier 8104, simulators, edge-worker, ui 8107 …), SQLite in a temp or
+   `./.local/` dir, logs in `./.local/logs/`, PIDs tracked so `local-down` stops them. Wait for every `/readyz` like
+   `make up`. Works on macOS and Linux; note Windows (WSL) in the README.
+2. The runtime uses `LocalProcessTarget` instead of `DockerSandboxTarget` when Docker is not available (or when
+   `AUTOBRIDGE_RUNTIME=local`), and says so in `/readyz` and in the UI header (e.g. "local mode: no network
+   isolation"). Never pretend the sandbox exists.
+3. Trust boundaries still hold in code: the engine still never imports verifier/ or simulators/ (import-linter), the
+   verifier and simulator admin still run as separate processes, and admin writes still need `SIM_ADMIN_TOKEN` when
+   set. What local mode cannot enforce (Docker network separation) is listed in docs/safety-model.md and printed once
+   at startup.
+4. `make demo`, `make smoke` (with the network-isolation checks skipped and reported as "skipped: local mode") and the
+   UI journey work against local mode. `make e2e` runs the live tests against it too.
+5. README quickstart gets a "No Docker" section: prerequisites (Python 3.12, uv, Node 22), `cp .env.example .env`,
+   `make local-up`, open http://localhost:8107, `make demo`, `make local-down`.
+6. Check: in a fresh clone with Docker unavailable (`DOCKER_HOST=unix:///nonexistent.sock`), `make local-up && make
+   demo && make local-down` passes.
+
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
 Priority: do this first. `make bench-heldout` on Nov 3 has the same bug.
