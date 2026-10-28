@@ -191,6 +191,77 @@ def test_repairs_approve_reject_flow(tmp_path: pathlib.Path) -> None:
     app.dependency_overrides.clear()
 
 
+def test_approve_rejects_foreign_to_release_id(tmp_path: pathlib.Path) -> None:
+    """AR-1-3: client to_release_id is an assertion, never a selector.
+
+    Approving repair A while naming repair B's candidate (or any release
+    with no link to A) is a 422 and activates nothing. Omitting
+    to_release_id approves A's own candidate.
+    """
+    engine = create_engine(f"sqlite:///{tmp_path}/ar13.db")
+    Base.metadata.create_all(engine)
+    factory = session_factory(engine)
+
+    def override_db():  # type: ignore[no-untyped-def]
+        s = factory()
+        try:
+            yield s
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        client = TestClient(app)
+
+        c = client.post("/connectors", json={"name": "AR13", "base_url": "http://sim-harbor:8000", "credential_ref": "TEST_API_KEY", "target_entities": []}).json()
+        cid = c["id"]
+        docs = "# HarborPMS API\nBase URL: http://sim-harbor:8000\nGET /reservations\nGET /folios\n"
+        assert client.post(f"/connectors/{cid}/build", json={"docs_text": docs}).status_code == 200
+        base_id = client.get("/releases").json()[0]["id"]
+
+        with factory() as s:
+            drift = DriftEvent(connector_id=cid, drift_class="FIELD_RENAMED", severity="medium", evidence_ids=[], status="open")
+            s.add(drift)
+            s.flush()
+            rep_a = RepairRun(drift_event_ids=[drift.id], ladder_level_reached=1, candidate_patch=[{"op": "replace", "path": "/source/base_url", "value": "http://a.example.com"}], rule_id="rename_field", decision="propose", model_usage={})
+            rep_b = RepairRun(drift_event_ids=[drift.id], ladder_level_reached=1, candidate_patch=[{"op": "replace", "path": "/source/base_url", "value": "http://b.example.com"}], rule_id="rename_field", decision="propose", model_usage={})
+            s.add(rep_a)
+            s.add(rep_b)
+            s.flush()
+            from autobridge.engine.releases import create_release_from_patch
+            cand_a = create_release_from_patch(s, connector_id=cid, base_release_id=base_id, patch=rep_a.candidate_patch, provenance_repair_run_id=rep_a.id)
+            cand_b = create_release_from_patch(s, connector_id=cid, base_release_id=base_id, patch=rep_b.candidate_patch, provenance_repair_run_id=rep_b.id)
+            s.commit()
+            rep_a_id, rep_b_id, cand_a_id, cand_b_id = rep_a.id, rep_b.id, cand_a.id, cand_b.id
+
+        # Foreign candidate: 422, nothing activated.
+        r = client.post(f"/repairs/{rep_a_id}/approve", json={"to_release_id": cand_b_id, "connector_id": cid})
+        assert r.status_code == 422, r.text
+        assert client.get(f"/connectors/{cid}").json()["active_release_id"] is None
+
+        # Unlinked release (the base build candidate): 422 as well.
+        r = client.post(f"/repairs/{rep_a_id}/approve", json={"to_release_id": base_id, "connector_id": cid})
+        assert r.status_code == 422, r.text
+        assert client.get(f"/connectors/{cid}").json()["active_release_id"] is None
+
+        # Matching candidate: 200.
+        r = client.post(f"/repairs/{rep_a_id}/approve", json={"to_release_id": cand_a_id, "connector_id": cid})
+        assert r.status_code == 200, r.text
+        assert client.get(f"/connectors/{cid}").json()["active_release_id"] == cand_a_id
+
+        # Omitted to_release_id: approves the repair's own candidate.
+        r = client.post(f"/repairs/{rep_b_id}/approve", json={"connector_id": cid})
+        assert r.status_code == 200, r.text
+        assert r.json()["to_release_id"] == cand_b_id
+        assert client.get(f"/connectors/{cid}").json()["active_release_id"] == cand_b_id
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_rollback_flow(tmp_path: pathlib.Path) -> None:
     from autobridge.control.models import Base
 

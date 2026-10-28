@@ -1293,6 +1293,7 @@
                 "type": "null"
               }
             ],
+            "description": "Approve only: must equal this repair run's candidate release (consistency assertion, not a selector; mismatch is 422)",
             "title": "To Release Id"
           }
         },

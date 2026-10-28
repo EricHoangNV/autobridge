@@ -299,7 +299,11 @@ class RepairDecisionRequest(BaseModel):
     # records Approval.actor from AUTOBRIDGE_OPERATOR (REQ-001).
     actor: str | None = Field(default=None, description="Ignored; server sets the actor")
     from_release_id: str | None = None
-    to_release_id: str | None = None
+    to_release_id: str | None = Field(
+        default=None,
+        description="Approve only: must equal this repair run's candidate release "
+        "(consistency assertion, not a selector; mismatch is 422)",
+    )
     connector_id: str | None = None
 
     model_config = {"extra": "forbid"}

@@ -504,9 +504,11 @@ def test_approve_activates_and_pauses_demo_consumer(tmp_path, monkeypatch: pytes
         r1 = create_release(s, connector_id=conn.id, spec=spec)
         s.commit()
         # Manually activate r1 first without pause? Use _activate? Instead approve flow:
-        r2 = create_release(s, connector_id=conn.id, spec=spec, parent_release_id=r1.id)
-        s.commit()
         rr = _repair_run(s)
+        r2 = create_release(
+            s, connector_id=conn.id, spec=spec, parent_release_id=r1.id, provenance_repair_run_id=rr.id
+        )
+        s.commit()
         # No active yet, approve r2 -> should pause demo
         approval = approve_release(s, repair_run_id=rr.id, actor="alice", from_release_id=None, to_release_id=r2.id)
         s.commit()
@@ -541,9 +543,11 @@ def test_rollback_pauses_and_emits(tmp_path, monkeypatch: pytest.MonkeyPatch) ->
         conn.active_release_id = r1.id
         s.commit()
         # Create v2 and approve to activate (pauses)
-        r2 = create_release(s, connector_id=conn.id, spec=spec, parent_release_id=r1.id)
-        s.commit()
         rr1 = _repair_run(s)
+        r2 = create_release(
+            s, connector_id=conn.id, spec=spec, parent_release_id=r1.id, provenance_repair_run_id=rr1.id
+        )
+        s.commit()
         approve_release(s, repair_run_id=rr1.id, actor="alice", from_release_id=r1.id, to_release_id=r2.id)
         s.commit()
         s.refresh(demo)
@@ -597,9 +601,11 @@ def test_notify_policy_never_pauses(tmp_path) -> None:
         spec = _minimal_spec()
         r1 = create_release(s, connector_id=conn.id, spec=spec)
         s.commit()
-        r2 = create_release(s, connector_id=conn.id, spec=spec, parent_release_id=r1.id)
-        s.commit()
         rr = _repair_run(s)
+        r2 = create_release(
+            s, connector_id=conn.id, spec=spec, parent_release_id=r1.id, provenance_repair_run_id=rr.id
+        )
+        s.commit()
         approve_release(s, repair_run_id=rr.id, actor="alice", from_release_id=r1.id, to_release_id=r2.id)
         s.commit()
         s.refresh(reg)

@@ -275,7 +275,10 @@ def approve_release(
     *repair_run_id* must exist (the ladder run that produced the patch).
     *actor* names the human/policy approver (non-empty).
     *from_release_id* is the previously active release (may be None for first build).
-    *to_release_id* is the candidate now becoming active.
+    *to_release_id* is the candidate now becoming active: it must be the
+    candidate release produced by *repair_run_id* (``provenance_repair_run_id``
+    match). A foreign, stale, or rolled-back release cannot be activated
+    under an unrelated repair's audit cover (AR-1-3).
     *connector_id* may be omitted — it is inferred from *to_release_id*.
 
     The connector's ``active_release_id`` is set to *to_release_id*.
@@ -285,6 +288,9 @@ def approve_release(
         raise ReleaseError("actor must be a non-empty string")
     _ensure_repair_run(session, repair_run_id)
     to_rel = _ensure_release(session, to_release_id)
+    # AR-1-3: bind the approval to this repair run's candidate release.
+    if to_rel.provenance_repair_run_id != repair_run_id:
+        raise ReleaseError("to_release is not the candidate release of this repair run")
     if from_release_id is not None:
         from_rel = _ensure_release(session, from_release_id)
         # Connector consistency check

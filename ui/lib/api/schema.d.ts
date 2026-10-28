@@ -1219,7 +1219,10 @@ export interface components {
             connector_id?: string | null;
             /** From Release Id */
             from_release_id?: string | null;
-            /** To Release Id */
+            /**
+             * To Release Id
+             * @description Approve only: must equal this repair run's candidate release (consistency assertion, not a selector; mismatch is 422)
+             */
             to_release_id?: string | null;
         };
         /** RepairRunOut */

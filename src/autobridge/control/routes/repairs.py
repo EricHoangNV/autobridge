@@ -76,9 +76,16 @@ def approve_repair(repair_id: str, body: RepairDecisionRequest, db: Session = De
     from autobridge.control.models import ConnectorRelease as Rel
 
     rel = db.execute(select(Rel).where(Rel.provenance_repair_run_id == repair_id).order_by(Rel.version.desc()).limit(1)).scalars().first()
-    to_release_id = body.to_release_id or (rel.id if rel else None)
-    if not to_release_id:
-        raise HTTPException(status_code=422, detail="no candidate release for this repair (to_release_id required)")
+    # AR-1-3: approval is bound to this repair run's candidate release. A
+    # client-supplied to_release_id is a consistency assertion, never a
+    # selector: without this, any caller could activate an arbitrary
+    # (stale, rolled-back, unverified) release under an unrelated repair's
+    # audit cover.
+    if rel is None:
+        raise HTTPException(status_code=422, detail=f"no candidate release for repair {repair_id!r}")
+    if body.to_release_id is not None and body.to_release_id != rel.id:
+        raise HTTPException(status_code=422, detail=f"to_release_id {body.to_release_id!r} is not the candidate release of repair {repair_id!r}")
+    to_release_id = rel.id
 
     from_release_id = body.from_release_id
     # If from not given, try to infer from run's drift -> connector -> active

@@ -294,9 +294,16 @@ def test_approve_release_activates(tmp_path) -> None:
         # activate r1 first
         conn.active_release_id = r1.id
         s.commit()
-        r2 = create_release(s, connector_id=conn.id, spec=_minimal_spec(), parent_release_id=r1.id)
-        s.commit()
         rr = _repair_run(s)
+        # AR-1-3: approval is bound to the repair run's candidate release.
+        r2 = create_release(
+            s,
+            connector_id=conn.id,
+            spec=_minimal_spec(),
+            parent_release_id=r1.id,
+            provenance_repair_run_id=rr.id,
+        )
+        s.commit()
         approval = approve_release(s, repair_run_id=rr.id, actor="alice", from_release_id=r1.id, to_release_id=r2.id)
         s.commit()
         assert approval.decision == "approve"
@@ -312,9 +319,15 @@ def test_approve_release_inferred_connector(tmp_path) -> None:
         conn = _make_connector(s)
         r1 = create_release(s, connector_id=conn.id, spec=_minimal_spec())
         s.commit()
-        r2 = create_release(s, connector_id=conn.id, spec=_minimal_spec(), parent_release_id=r1.id)
-        s.commit()
         rr = _repair_run(s)
+        r2 = create_release(
+            s,
+            connector_id=conn.id,
+            spec=_minimal_spec(),
+            parent_release_id=r1.id,
+            provenance_repair_run_id=rr.id,
+        )
+        s.commit()
         approval = approve_release(s, repair_run_id=rr.id, actor="bob", from_release_id=None, to_release_id=r2.id)
         s.commit()
         assert approval.from_release_id is None
@@ -329,9 +342,15 @@ def test_approve_release_mismatched_connector_id(tmp_path) -> None:
         c2 = _make_connector(s, name="c2")
         r1 = create_release(s, connector_id=c1.id, spec=_minimal_spec())
         s.commit()
-        r2 = create_release(s, connector_id=c1.id, spec=_minimal_spec(), parent_release_id=r1.id)
-        s.commit()
         rr = _repair_run(s)
+        r2 = create_release(
+            s,
+            connector_id=c1.id,
+            spec=_minimal_spec(),
+            parent_release_id=r1.id,
+            provenance_repair_run_id=rr.id,
+        )
+        s.commit()
         with pytest.raises(ReleaseError, match="does not match"):
             approve_release(
                 s, repair_run_id=rr.id, actor="alice", from_release_id=r1.id, to_release_id=r2.id, connector_id=c2.id
@@ -366,11 +385,46 @@ def test_approve_release_mismatched_from_to_connector(tmp_path) -> None:
         c2 = _make_connector(s, name="c2")
         r1 = create_release(s, connector_id=c1.id, spec=_minimal_spec())
         s.commit()
-        r2 = create_release(s, connector_id=c2.id, spec=_minimal_spec(connector_id="other", vendor="Other"))
-        s.commit()
         rr = _repair_run(s)
+        r2 = create_release(
+            s,
+            connector_id=c2.id,
+            spec=_minimal_spec(connector_id="other", vendor="Other"),
+            provenance_repair_run_id=rr.id,
+        )
+        s.commit()
         with pytest.raises(ReleaseError, match="different connectors"):
             approve_release(s, repair_run_id=rr.id, actor="alice", from_release_id=r1.id, to_release_id=r2.id)
+
+
+def test_approve_release_rejects_foreign_to_release(tmp_path) -> None:
+    """AR-1-3: approval is bound to the repair run's candidate release."""
+    factory = _session(tmp_path)
+    with factory() as s:
+        conn = _make_connector(s)
+        r1 = create_release(s, connector_id=conn.id, spec=_minimal_spec())
+        s.commit()
+        rr = _repair_run(s)
+        other = _repair_run(s)
+        # Candidate of a *different* repair run: must be rejected.
+        r2 = create_release(
+            s,
+            connector_id=conn.id,
+            spec=_minimal_spec(),
+            parent_release_id=r1.id,
+            provenance_repair_run_id=other.id,
+        )
+        s.commit()
+        with pytest.raises(ReleaseError, match="not the candidate release"):
+            approve_release(s, repair_run_id=rr.id, actor="alice", from_release_id=r1.id, to_release_id=r2.id)
+        # A release with no repair provenance at all is equally rejected.
+        r3 = create_release(s, connector_id=conn.id, spec=_minimal_spec(), parent_release_id=r1.id)
+        s.commit()
+        with pytest.raises(ReleaseError, match="not the candidate release"):
+            approve_release(s, repair_run_id=rr.id, actor="alice", from_release_id=r1.id, to_release_id=r3.id)
+        # Nothing was activated by the rejected attempts.
+        s.refresh(conn)
+        assert conn.active_release_id is None
 
 
 def test_reject_release_does_not_activate(tmp_path) -> None:
@@ -428,11 +482,18 @@ def test_rollback_happy_path(tmp_path) -> None:
         s.commit()
         # v2 diverges
         patch = [{"op": "replace", "path": "/source/rate_limit/max_rps", "value": 10}]
-        r2 = create_release_from_patch(s, connector_id=conn.id, base_release_id=r1.id, patch=patch)
-        s.commit()
         # approve v2
         rr1 = _repair_run(s)
+        r2 = create_release_from_patch(
+            s, connector_id=conn.id, base_release_id=r1.id, patch=patch, provenance_repair_run_id=rr1.id
+        )
+        s.commit()
         approve_release(s, repair_run_id=rr1.id, actor="alice", from_release_id=r1.id, to_release_id=r2.id)
+        s.commit()
+        s.refresh(conn)
+        assert conn.active_release_id == r2.id
+        # rollback to v1
+        rr2 = _repair_run(s)
         s.commit()
         s.refresh(conn)
         assert conn.active_release_id == r2.id
@@ -496,9 +557,11 @@ def test_rollback_sync_output_bit_identical(tmp_path, monkeypatch: pytest.Monkey
         s.commit()
         # v2 via patch
         patch = [{"op": "replace", "path": "/source/rate_limit/max_rps", "value": 10}]
-        r2 = create_release_from_patch(s, connector_id=conn.id, base_release_id=r1.id, patch=patch)
-        s.commit()
         rr1 = _repair_run(s)
+        r2 = create_release_from_patch(
+            s, connector_id=conn.id, base_release_id=r1.id, patch=patch, provenance_repair_run_id=rr1.id
+        )
+        s.commit()
         approve_release(s, repair_run_id=rr1.id, actor="alice", from_release_id=r1.id, to_release_id=r2.id)
         s.commit()
         # rollback to v1

@@ -427,7 +427,11 @@ def build_parser() -> argparse.ArgumentParser:
         v.add_argument("repair_id")
         v.add_argument("--connector", default=None)
         v.add_argument("--from-release", default=None)
-        v.add_argument("--to-release", default=None)
+        v.add_argument(
+            "--to-release",
+            default=None,
+            help="Approve only: must equal this repair's candidate release (assertion, not a selector)",
+        )
         v.set_defaults(func=func)
 
     d = sub.add_parser("drift", help="List or inspect drift events")
