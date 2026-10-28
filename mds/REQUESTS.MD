@@ -4,7 +4,7 @@
 
 Owner priority (2026-10-28, updated 19:40): fix the REQ-020 signature regression (owner check after sub-step 6) first, then **REQ-021 next,
 before anything else** (it has been skipped twice; REQ-024 and REQ-025 depend on its Muse frontier provider, reset and
-model-usage table), then REQ-020 step 7 → REQ-022 → REQ-024 → REQ-025, with REQ-023 (demo plan) applied as each lands.
+model-usage table), then REQ-020 step 7 → REQ-022 (with REQ-026, the per-test timeout, slotted in after the REQ-022 sub-step in progress) → REQ-024 → REQ-025, with REQ-023 (demo plan) applied as each lands.
 Do these before any remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no
 Docker and no sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is
 present.
@@ -480,6 +480,33 @@ simulators/verifier side; the engine never imports, reads or reaches them.
    could not be known), and how the REQ-007 held-out split relates (kept as the frozen secondary benchmark: new data for
    known fault types).
 Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make bench-heldout` keeps working.
+
+### REQ-026 — Per-test timeout so a hanging test fails fast with a stack trace (2026-10-29)
+Status: OPEN
+Priority: small; do it right after the REQ-022 sub-step in progress, before the next sub-step (the edge agent and
+PABX tests are socket code that can hang).
+Why: in REQ-022 sub-step A a hanging FIAS socket test cost ~15 of 78 minutes. The first full run waited for the
+shell's 300 s kill with no output; reruns waited 120/100/90/60 s; `--timeout=30` failed ("unrecognized arguments")
+because `pytest-timeout` is not installed; the hang was located only by rerunning with `faulthandler`.
+Measured 2026-10-29 on main (2cda0f3e): slowest unit test ~4 s (FIAS teardown), whole unit suite 54 s; one e2e test
+spent 31 s in setup waiting for the stack. So a flat 30 s limit is safe for unit tests and wrong for e2e.
+What to do:
+1. Add `pytest-timeout` to the dev dependencies (update the lockfile the usual way, both host and sandbox).
+2. Default limit 30 s per test in `[tool.pytest.ini_options]` (`timeout = 30`), with `timeout_method = "thread"` so a
+   hung test prints every thread's stack (that is the point: it shows where the hang is) and works on macOS and Linux.
+3. `tests/e2e/`: 180 s per test, applied to the whole folder from `tests/e2e/conftest.py` (e.g. add
+   `pytest.mark.timeout(180)` to every collected e2e item), not by editing each test. Stack startup in fixtures must
+   fit inside it; if a session fixture legitimately needs longer, give that fixture its own explicit wait and say why.
+4. No test may raise its own limit above these without a one-line comment giving the measured reason.
+5. Tests: a unit test (pytester or a subprocess) proving a deliberately sleeping test fails at the limit with a
+   "Timeout" message and a stack trace; and one proving an e2e item gets 180 s.
+6. LEARNINGS: one line for agents: run single tests with `-x` and rely on the 30 s limit; never wrap pytest in
+   long shell timeouts to find a hang.
+Acceptance: `make test` and `make e2e` (stack up, local mode and Docker) green with no timeouts hit; total runtime
+unchanged within noise.
+Owner note (not for this REQ, just context): on the host, 6 unit tests once failed with returncode -11 (bash/npm
+subprocess segfault under load: dotenv loader, ui typecheck, export_openapi --check); they pass alone. If the
+timeout work shows them again, note it in BUILD-NOTES; do not raise limits to hide it.
 
 ---
 
