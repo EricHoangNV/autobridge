@@ -178,6 +178,23 @@ unit tests with proposals that do not apply, are malformed JSON, and target path
 assertion that `make demo` step 4 passes live (owner's host) and in replay. After this lands the owner runs
 `make record-frontier SCENARIO=gross_to_net` once and commits the capture.
 
+**Owner check after `6f686e22` + `d5b5ed2a` (2026-10-28 23:05), fix next:**
+- *L3 is called live but reported as skipped.* `make demo` step 4 on the owner's host (live Muse, `FRONTIER_API_KEY`
+  set): the ledger shows `mode: live`, 2 calls, 544 small + 2 115 frontier tokens, $0.0109, yet the step says
+  `rejection_reason: no frontier call available (no FRONTIER_API_KEY, no replay recording); L3 labelled skipped` and
+  `l3_proposal: []`. The frontier answered and the engine either could not parse it or dropped it, then mislabelled it.
+  The reason must say what happened (e.g. "L3 called live (muse-spark-1.3, 2 115 tokens): response contained no
+  applicable patch: <parse error / reason>"), show the raw response (redacted, truncated) on the run, and the
+  "skipped" wording is reserved for when no call was made. Then fix why the live response yields no patch (token
+  budget for Spark's reasoning, prompt, or parser). Add a test where the provider returns text with no patch and one
+  where it returns an unparsable patch, asserting the reason text.
+- *Local mode serves a stale UI.* `scripts/local-up.sh` builds the UI only when `ui/.next/BUILD_ID` is missing, so after
+  a `git pull` the owner got the old build (no `/knowledge` page, 404). Rebuild when the UI sources changed since the
+  last build (store the git tree hash of `ui/` next to the build and compare), and say so in the output.
+- *Knowledge page details:* the v2 vocabulary row lists only `POST` and the new features; say "v2 = everything in v1,
+  plus: …". Connector profiles show `vocabulary ?`: show the pinned vocabulary. L1 rule rows repeat the rule name
+  ("`rename_field` rename_field rule — …"): show the name once with its description.
+
 5. **Reliable frontier calls in the demo.** Two modes, chosen by env: `live` (a real frontier provider; model ids in
    config, never in code) and `replay` (responses recorded from a live run, stored redacted under `tests/fixtures/` or
    `demo/recordings/`, replayed deterministically by prompt hash; a missing recording fails loudly). The UI and
