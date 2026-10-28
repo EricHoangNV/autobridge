@@ -439,6 +439,14 @@ simulators/verifier side; the engine never imports, reads or reaches them.
 6. **Rehearsals on past rounds.** `make bench-beacon REHEARSE=<round>` uses an already-published round (clearly
    labelled "rehearsal"; output under `experiments/beacon/rehearsals/`) to debug the pipeline and learn the expected
    score range. Run at least five rehearsals before the freeze; record them.
+6b. **One unattended command** (owner, 2026-10-28: no time to do this by hand or on camera). `make beacon-eval
+   FAULTS=<N> [DELAY_MIN=20]`: checks no ralph loop is running and the tree is clean; runs `eval-freeze` with
+   `ROUND_AFTER` = now + DELAY_MIN; commits the protocol, tags `eval-freeze`, pushes both (asks once for "yes" before
+   the push, unless `CONFIRM=yes`); records GitHub's push time from the API; waits for the round; runs `bench-beacon`
+   unattended; writes a one-page `experiments/beacon/<round>/EVIDENCE.md` (round, time, randomness, verification URL,
+   freeze commit and push time, per-arm summary) and a terminal-style `evidence.png` screenshot of it for the deck;
+   commits and pushes the results. Resumable: if interrupted after the freeze, rerunning it continues the same round
+   (never a new one silently). Total hands-on time: one command and one "yes".
 7. **Reproduce.** `make verify-beacon ROUND=<round>`: anyone re-fetches and verifies the round, regenerates the
    instances, checks they match the published ones, and can rerun the grading from the tagged commit.
 8. **Docs.** docs/benchmark.md "Beacon evaluation": why (commit-then-reveal with public randomness), what a judge can
