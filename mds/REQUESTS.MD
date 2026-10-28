@@ -143,6 +143,31 @@ Wanted:
   (`[0, 1, 2, 3, 4]`, with an L3 frontier call recorded and the verifier's rejection of the L3 proposal), then make the
   ladder satisfy them. Do not keep `[0, 4]` because the current code does that.
 
+**Owner check after `65d009fe` (2026-10-28 22:00), fix next:**
+- *Migration still skipped for pre-Alembic databases.* The owner's existing `.local/autobridge.db` (created before
+  migrations ran) now carries `alembic_version = 0006_repair_ladder_trace` but still has no
+  `repair_runs.ladder_trace` column: startup **stamped** an unversioned database as head instead of upgrading it, so
+  `GET /repairs` still answers 500 and demo step 3 fails. For a database with tables but no `alembic_version`, detect
+  the schema it actually has (stamp the last revision whose columns all exist, or the baseline) and then run
+  `upgrade head`; never stamp head blindly. Add a test that starts from a database created by the pre-Alembic schema
+  (and one wrongly stamped at head without the column) and ends with every column present and `/repairs` 200.
+- *Demo step 4 asserts what the model must answer.* `step4_hard_semantic_failure` (`src/autobridge/bench/demo.py`)
+  asserts that the frontier proposal is the `net_amount → total_amount` decoy. With `FRONTIER_API_KEY` set (owner's
+  host, live Muse) the proposal is `[]` and the step fails; it only passes on replay, and
+  `demo/recordings/gross_to_net.json` says itself that its responses are hand-written stand-ins, not a capture. A demo
+  must not depend on the model giving a scripted answer, and stand-ins must not be shown as model output. Fix:
+  1. Assert outcomes, not the model's words: L3 was called and logged (tokens, cost); whatever it proposed went through
+     the verifier; no unverified patch reached a release; the run ends `Degraded` with one operator question (or, if
+     the proposal is correct and verified, the scenario's rule for semantic drift still applies). Show the actual
+     proposal and the verifier's verdict on it.
+  2. Find out why the live proposal is empty (token cap eaten by reasoning, response parsing, prompt) and fix it; log
+     the raw response (redacted) on parse failure. Spark spends most of a small `max_tokens` on reasoning.
+  3. Add `make record-frontier SCENARIO=<name>` that runs the climb live with the owner's key and writes a redacted
+     recording (model id, timestamp, prompt hash, raw text, tokens) to `demo/recordings/`. The owner runs it; commit the
+     capture. Delete the hand-written stand-ins; until a capture exists, replay mode says "no recording" and the demo
+     labels L3 as skipped instead of inventing an answer.
+  4. Label replayed L3 output in the UI and `make demo` as "replayed from a live Muse capture on <date>".
+
 5. **Reliable frontier calls in the demo.** Two modes, chosen by env: `live` (a real frontier provider; model ids in
    config, never in code) and `replay` (responses recorded from a live run, stored redacted under `tests/fixtures/` or
    `demo/recordings/`, replayed deterministically by prompt hash; a missing recording fails loudly). The UI and
