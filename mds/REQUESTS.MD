@@ -2,8 +2,8 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-28, updated 19:40): finish the REQ-020 sub-step in progress, then **REQ-021 next, before
-anything else** (it has been skipped twice; REQ-024 and REQ-025 depend on its Muse frontier provider, reset and
+Owner priority (2026-10-28, updated 19:40): fix the REQ-020 signature regression (owner check after sub-step 6) first, then **REQ-021 next,
+before anything else** (it has been skipped twice; REQ-024 and REQ-025 depend on its Muse frontier provider, reset and
 model-usage table), then REQ-020 step 7 → REQ-022 → REQ-024 → REQ-025, with REQ-023 (demo plan) applied as each lands.
 Do these before any remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no
 Docker and no sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is
@@ -97,6 +97,20 @@ Wanted:
    if the plan's matched-budget rules allow; otherwise note it.
 7. Demo: add the before/after to `docs/demo.md` and `make demo` as one step ("unfamiliar API style: engine refuses
    safely → vocabulary extended once → same docs connect"), with the evidence each half shows.
+**Owner check after sub-step 6 (2026-10-28 19:55) — regression, fix FIRST, before REQ-021:** sub-step 5a
+(`c4bef3b2`, ConnectorSpec v2) changed `spec_signature()` for v1 specs. Bisected on the committed reference releases
+`generated/connectors/{atlaspms,harborpms}/reference/`: signatures verify at `45b3d8ca` and mismatch at `c4bef3b2` and
+every later commit. So every release stored before the upgrade now loads as `ReleaseCorruptError: … signature
+mismatch`; `tests/e2e/test_02_reference_sync.py::test_reference_specs_exist_and_validate` fails on the owner's host
+(`make e2e`: 1 failed, 118 passed) with or without `EDGE_RELEASE_SECRET`. This breaks item 5's "keep every v1 spec valid
+and behaving the same".
+Fix: make the signature of a v1 spec byte-identical to before v2 (canonicalise without v2-only fields when they are at
+their defaults, or sign by schema version), so the committed reference `build-report.json` files verify **unchanged**.
+Do not re-sign or rewrite the committed reference releases to make the test pass. Add regression tests: (1) the
+committed reference signatures verify; (2) a golden test pinning `spec_signature()` of each committed v1 reference spec
+to its stored value; (3) a v2 spec's signature changes when a v2 field changes. Find out why the sandbox gates did not
+catch this (the e2e file was reported green) and close that gap.
+
 **Owner check of sub-step A (2026-10-28, fix first in the next sub-step):** the Meridian portal loads its guides but
 shows no Operations: `simulators/devportal/meridian.html` calls `fetch("source")`, which from `/developers` resolves
 to `/source` (404). Use the absolute `/developers/source` like the other portals, and add a unit test that the page
