@@ -120,6 +120,40 @@ def test_knowledge_cache_clear() -> None:
     assert cache.lookup("v", delta) is None
 
 
+def test_knowledge_cache_evict_vendor_delta() -> None:
+    # AR-2-3: targeted eviction drops one (vendor, delta) key only.
+    cache = KnowledgeCache()
+    delta1 = _delta_types("Reservation", "a", "b")
+    delta2 = _delta_types("Reservation", "a", "c")
+    patch = [{"op": "replace", "path": "/a", "value": "b"}]
+    cache.put("v", delta1, patch, "r")
+    cache.put("v", delta2, patch, "r")
+    assert cache.evict("v", delta1) is True
+    assert cache.lookup("v", delta1) is None
+    assert cache.lookup("v", delta2) is not None
+    assert cache.evict("v", delta1) is False
+
+
+def test_knowledge_cache_evict_patch_selective() -> None:
+    # AR-2-3: evict_patch drops every key holding the rejected patch,
+    # including the same patch cached under other delta keys, and
+    # leaves unrelated patches alone.
+    cache = KnowledgeCache()
+    delta1 = _delta_types("Reservation", "a", "b")
+    delta2 = _delta_types("Reservation", "a", "c")
+    bad = [{"op": "replace", "path": "/a", "value": "bad"}]
+    good = [{"op": "replace", "path": "/a", "value": "good"}]
+    cache.put("v", delta1, bad, "r1")
+    cache.put("v", delta2, bad, "r1")
+    cache.put("v2", delta1, good, "r2")
+    assert cache.evict_patch(bad) == 2
+    assert cache.lookup("v", delta1) is None
+    assert cache.lookup("v", delta2) is None
+    assert cache.lookup("v2", delta1) is not None
+    assert cache.evict_patch([]) == 0
+    assert cache.evict_patch(None) == 0
+
+
 def test_knowledge_cache_for_spec_helpers() -> None:
     spec = _load_spec()
     delta = _delta_pagination("list_reservations", "offset", "cursor")

@@ -2152,3 +2152,27 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 
 **Notes for next iteration:**
 - Remaining Cycle 2 Low items: AR-2-3 (L0 cache invalidation), AR-2-4 (edge signature), AR-2-5 (floating image deps), AR-2-6 (readyz 503). AR-2-6 is the natural next pick (health contract, small, testable without compose).
+## AR-2-3 — Evict L0 knowledge cache on reject/rollback
+**Date:** 2026-10-28
+**Ref:** Code Review Cycle 2 (FEEDBACKS.MD), AR-2-3 (Low)
+
+**What was done:**
+- Added `KnowledgeCache.evict(vendor, delta)` and `evict_patch(patch)` (canonical-JSON patch equality across all keys)
+- `reject_release` evicts the rejected run's `candidate_patch`; `rollback_release` evicts the superseded release's provenance repair run's `candidate_patch` (best-effort, post-flush, cannot break the decision)
+- 4 new tests: 2 cache unit + 2 engine (propose→reject→re-lookup miss; rollback eviction)
+- Docs: `docs/architecture.md` RepairRun bullet notes L0 keying + eviction
+
+**Key decisions:**
+- Evict by patch identity rather than (vendor, delta) key because reject/rollback records carry the candidate patch but not the cache key; this also clears the same rejected patch cached under other delta keys
+- Best-effort eviction (`contextlib.suppress`, function-level import) so cache bugs never fail a human decision; no module-level import changes (trust boundary untouched)
+- Left FEEDBACKS.MD verdict untouched for the next review cycle to re-verify (precedent from AR-2-2/AR-1-5 fixes)
+
+**Files changed:**
+- `src/autobridge/repair/knowledge.py` — `evict`, `evict_patch`, `_canonical_patch`
+- `src/autobridge/engine/releases.py` — eviction in `reject_release` + `rollback_release`
+- `tests/unit/test_autobridge_ladder.py` — 2 eviction unit tests
+- `tests/unit/test_autobridge_releases.py` — 2 reject/rollback eviction tests
+- `docs/architecture.md` — L0 invalidation sentence
+
+**Notes for next iteration:**
+- Remaining Cycle 2 Low items: AR-2-4 (edge signature), AR-2-5 (floating image deps), AR-2-6 (readyz 503). AR-2-6 is the natural next pick (health contract, small, testable without compose).

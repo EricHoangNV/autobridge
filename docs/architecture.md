@@ -152,7 +152,10 @@ no SQLite-only types; proven to compile on Postgres):
 - `BuildRun / SyncRun / RepairRun` — job execution records; `SyncRun`
   carries `outcome Complete|Degraded|Blocked + unmet_criteria[]`,
   `data_readiness`, `fingerprint_id`; `RepairRun` stores the ladder trace,
-  candidate patch, visible-test results and verifier report.
+  candidate patch, visible-test results and verifier report. Successful
+  patches are cached for L0 lookup keyed by (vendor, fingerprint delta);
+  reject/rollback evict the run's candidate patch so a rejected or
+  regressed patch is never re-proposed at L0 (AR-2-3).
 - `Job` (W1.6) — lease/queue table for the `JobRunner`; `state
   queued|running|succeeded|failed`, `attempts/max_attempts`, `worker_id`,
   `reclaim_orphaned` for crash recovery.

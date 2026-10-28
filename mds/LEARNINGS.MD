@@ -134,3 +134,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Skip-on-error and fail-closed differ by one keyword: `except Exception: return` in `_maybe_verify` became `raise ReleaseError(...)`. Any "convenience skip" on a security-relevant path should read as a conscious, logged decision — never a bare return in an except arm.
 
 **Rule:** Every allow-decision from a verifier/gate must assert the response echoes the request (ids, mode, and the signature of exactly what was checked); test doubles must echo too, or they certify the misbinding; and a gate that cannot run must raise, never silently permit.
+---
+
+## 14. A success cache without a failure path replays rejected work forever
+
+**Context:** AR-2-3 (2026-10-28) — the L0 `KnowledgeCache` was populated on every `propose` but no reject/rollback path evicted entries, so a human-rejected or regressed patch was re-proposed indefinitely at zero frontier cost with only the downstream verifier gate standing behind it.
+
+- Evict by the artifact that failed, not by the cache key: reject/rollback know the repair run's `candidate_patch` but not the `(vendor, delta)` key it was stored under, so `evict_patch` (canonical-JSON patch equality, all matching keys) catches the same rejected patch cached under several delta keys; `evict(vendor, delta)` covers targeted single-key drops.
+- Keep eviction best-effort and out of the decision path: `contextlib.suppress(Exception)` around the eviction with the function-level import means a cache bug can never break `reject_release`/`rollback_release` (which flush the `Approval` first, then evict).
+- Rollback needs provenance to find the patch: the superseded release's `provenance_repair_run_id` leads to its `candidate_patch`; releases created outside any repair run (no provenance) simply skip eviction.
+
+**Rule:** Every cache that stores successful outcomes needs a named invalidation call on every failure path that can disprove a cached entry — evict by the failed artifact's identity, make the eviction unable to fail the decision, and follow provenance links when the failure record does not carry the artifact itself.

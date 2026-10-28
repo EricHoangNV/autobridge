@@ -50,6 +50,11 @@ def cache_key(vendor: str, delta: FingerprintDelta | dict[str, Any] | None) -> s
     return f"{vendor_clean}::{sig}"
 
 
+def _canonical_patch(patch: list[dict[str, Any]] | None) -> str:
+    """Canonical form for patch equality (order-sensitive, RFC 6902)."""
+    return json.dumps(list(patch or []), sort_keys=True, separators=(",", ":"), default=str)
+
+
 @dataclass(frozen=True, slots=True)
 class KnowledgeEntry:
     """One cached successful repair."""
@@ -108,6 +113,30 @@ class KnowledgeCache:
 
     def contains(self, vendor: str, delta: FingerprintDelta | dict[str, Any] | None) -> bool:
         return cache_key(vendor, delta) in self._store
+
+    def evict(self, vendor: str, delta: FingerprintDelta | dict[str, Any] | None) -> bool:
+        """Drop the entry for (vendor, delta). Returns True when one existed.
+
+        AR-2-3: reject/rollback paths use this (via ``evict_patch``) so a
+        human-rejected or rolled-back patch is never re-proposed at L0.
+        """
+        return self._store.pop(cache_key(vendor, delta), None) is not None
+
+    def evict_patch(self, patch: list[dict[str, Any]] | None) -> int:
+        """Drop every entry whose patch equals *patch*. Returns evicted count.
+
+        Patch identity (not the delta key) is used because reject/rollback
+        know the repair run's candidate patch but not the (vendor, delta)
+        key it was cached under; the same rejected patch cached under
+        several delta keys must all go.
+        """
+        if not patch:
+            return 0
+        target = _canonical_patch(patch)
+        doomed = [k for k, e in self._store.items() if _canonical_patch(e.patch) == target]
+        for k in doomed:
+            del self._store[k]
+        return len(doomed)
 
     def clear(self) -> None:
         self._store.clear()

@@ -646,3 +646,79 @@ def test_approve_and_reject_with_none_ids(tmp_path) -> None:
         s.commit()
         assert a.decision == "reject"
         assert a.from_release_id is None
+
+
+def test_reject_evicts_l0_cache_entry(tmp_path) -> None:
+    """AR-2-3: propose, reject, re-run same delta -> L0 miss (no re-proposal)."""
+    from autobridge.repair.knowledge import get_default_cache, reset_default_cache
+
+    reset_default_cache()
+    try:
+        factory = _session(tmp_path)
+        with factory() as s:
+            patch = [{"op": "replace", "path": "/source/rate_limit/max_rps", "value": 10}]
+            delta = {"fingerprint_changed": True}
+            cache = get_default_cache()
+            cache.put("Test", delta, patch, "test_rule")
+            assert cache.lookup("Test", delta) is not None
+            rr = RepairRun(
+                drift_event_ids=[],
+                decision="propose",
+                model_usage={},
+                candidate_patch=patch,
+                rule_id="test_rule",
+            )
+            s.add(rr)
+            s.commit()
+            reject_release(s, repair_run_id=rr.id, actor="alice", from_release_id=None, to_release_id=None)
+            s.commit()
+            # Re-running the same delta must now miss at L0.
+            assert cache.lookup("Test", delta) is None
+    finally:
+        reset_default_cache()
+
+
+def test_rollback_evicts_superseded_patch(tmp_path) -> None:
+    """AR-2-3: rolling back a release evicts the patch that produced it."""
+    from autobridge.repair.knowledge import get_default_cache, reset_default_cache
+
+    reset_default_cache()
+    try:
+        factory = _session(tmp_path)
+        with factory() as s:
+            conn = _make_connector(s)
+            r1 = create_release(s, connector_id=conn.id, spec=_minimal_spec())
+            s.commit()
+            patch = [{"op": "replace", "path": "/source/rate_limit/max_rps", "value": 10}]
+            rr1 = RepairRun(
+                drift_event_ids=[],
+                decision="propose",
+                model_usage={},
+                candidate_patch=patch,
+                rule_id="test_rule",
+            )
+            s.add(rr1)
+            s.commit()
+            get_default_cache().put("Test", {"fingerprint_changed": True}, patch, "test_rule")
+            r2 = create_release_from_patch(
+                s,
+                connector_id=conn.id,
+                base_release_id=r1.id,
+                patch=patch,
+                provenance_repair_run_id=rr1.id,
+            )
+            s.commit()
+            approve_release(s, repair_run_id=rr1.id, actor="alice", from_release_id=r1.id, to_release_id=r2.id)
+            s.commit()
+            rr2 = _repair_run(s)
+            rollback_release(
+                s,
+                connector_id=conn.id,
+                target_release_id=r1.id,
+                actor="alice",
+                repair_run_id=rr2.id,
+            )
+            s.commit()
+            assert get_default_cache().lookup("Test", {"fingerprint_changed": True}) is None
+    finally:
+        reset_default_cache()

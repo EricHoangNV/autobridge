@@ -13,6 +13,7 @@ Secrets never appear: specs carry ``credential_ref`` only.
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
@@ -337,7 +338,7 @@ def reject_release(
     """
     if not actor or not actor.strip():
         raise ReleaseError("actor must be a non-empty string")
-    _ensure_repair_run(session, repair_run_id)
+    run = _ensure_repair_run(session, repair_run_id)
     if from_release_id is not None:
         _ensure_release(session, from_release_id)
     if to_release_id is not None:
@@ -352,6 +353,14 @@ def reject_release(
     )
     session.add(approval)
     session.flush()
+    # AR-2-3: a human-rejected patch must never be re-proposed at L0.
+    # Evict every cache entry holding this run's candidate patch. The
+    # eviction is best-effort: cache failure must not break the decision.
+    if run.candidate_patch:
+        with contextlib.suppress(Exception):
+            from autobridge.repair.knowledge import get_default_cache  # noqa: PLC0415
+
+            get_default_cache().evict_patch(list(run.candidate_patch))
     return approval
 
 
@@ -415,4 +424,14 @@ def rollback_release(
     )
     session.add(approval)
     session.flush()
+    # AR-2-3: the superseded release regressed, so the patch that produced
+    # it (its provenance repair run's candidate) must not be re-proposed
+    # at L0. Best-effort; cache failure must not break the rollback.
+    with contextlib.suppress(Exception):
+        from autobridge.repair.knowledge import get_default_cache  # noqa: PLC0415
+
+        prov_id = current.provenance_repair_run_id
+        prov_run = session.get(RepairRun, prov_id) if prov_id else None
+        if prov_run is not None and prov_run.candidate_patch:
+            get_default_cache().evict_patch(list(prov_run.candidate_patch))
     return new_release, approval
