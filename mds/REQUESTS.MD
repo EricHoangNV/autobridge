@@ -168,6 +168,16 @@ Wanted:
      labels L3 as skipped instead of inventing an answer.
   4. Label replayed L3 output in the UI and `make demo` as "replayed from a live Muse capture on <date>".
 
+**Owner check after `ff70f201` (2026-10-28 22:45), fix next:** migration now upgrades both kinds of old database
+(verified on the owner's host). Live Muse now returns a proposal in demo step 4, but the step **crashes**:
+`patch does not apply: can't replace a non-existent object 'value'`. A model proposal that does not apply, does not
+parse, or fails schema validation is a normal outcome, not an error: record it on the rung (`L3: proposal rejected:
+patch does not apply (<reason>)`, with the proposal and its tokens), never let the exception escape the ladder, and
+continue to L4 with the operator question. Same for every rung that can propose (L2, L3) and for the build path. Add
+unit tests with proposals that do not apply, are malformed JSON, and target paths outside the spec, and an e2e
+assertion that `make demo` step 4 passes live (owner's host) and in replay. After this lands the owner runs
+`make record-frontier SCENARIO=gross_to_net` once and commits the capture.
+
 5. **Reliable frontier calls in the demo.** Two modes, chosen by env: `live` (a real frontier provider; model ids in
    config, never in code) and `replay` (responses recorded from a live run, stored redacted under `tests/fixtures/` or
    `demo/recordings/`, replayed deterministically by prompt hash; a missing recording fails loudly). The UI and
