@@ -2552,3 +2552,10 @@ handles them, enabling is item 5/matrix work.
 typecheck, ui-typecheck green.
 **Next:** REQ-021 sub-steps E (matrix e2e), F (capabilities/knowledge), G (replay).
 Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-021 sub-step E merged (sbx1)
+**Matrix test:** 17 scenario rows + refusal, exact rung/levels/0-calls pinned in-process; live
+reset→inject→reset repeatability + zero ledger verified against local stack. `make test` green
+(2156 / 99 / 294 + ui 153).
+**Next:** REQ-021 sub-steps F (capabilities/knowledge), G (replay).
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).

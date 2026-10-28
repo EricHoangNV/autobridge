@@ -1169,3 +1169,25 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
 - **Tests:** `make test` all green (autobridge 2156 pass / 91.44%, verifier 99 / 93.62%, simulators 294 /
   96.10%, ui 153 pass); `make lint` + `make typecheck` + `make ui-typecheck` green.
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-021 sub-step E — Scenario x rung matrix (2026-10-28)
+- **Did:** `tests/e2e/test_model_usage_matrix.py` (18 in-process + 1 live). Per-scenario rows declare
+  spec fixtures (atlas reference, offset-mutated atlas, meridian discovered v2), canonical drift class,
+  delta, extra, expected rung/decision/rule/exact trace levels. L0/L1 repairs (offset, rename,
+  cursor-repeat incl. `repeated_cursor` guard assertion, nested, page_to_cursor, meridian x2) resolve
+  with 0 calls; rate_limit/transient back off with no patch; token/auth/capability/semantic/status/
+  duplicates escalate at L4 with no patch (gross_to_net pinned escalate — never fixed below L3); v1
+  refusal row asserts the vocabulary-guard refusal at 0 calls. Exact `expected_levels` per row fail on
+  a skipped or extra rung; `rung_ledger()` agreement + zero totals asserted; every reason non-empty,
+  one-line. Live: reset→inject→reset repeatability + zero ledger through the control API, verified
+  against `make local-up` (all readyz green; stack taken down after).
+- **Gotchas:** first live run failed on leftover `.local/autobridge.db` rows from an earlier loop run —
+  the live test now resets once to steady state before measuring (robust to dirty stacks). Canonical
+  engine classes used for rows (`TRANSIENT`, not the simulator-side `TRANSIENT_ERROR`; cursor_repeat
+  driven as `PAGINATION_CHANGE` exactly like test_03). `RepairController.handle` needs no connector row
+  (RepairRun has no connector FK). Test files under tests/e2e are a package (`__init__.py` exists),
+  but the matrix stays self-contained (no cross-test imports).
+- **Tests:** matrix 19/19 green both modes; `make test` all green (autobridge 2156 / 91.44%, verifier 99,
+  simulators 294, ui 153); lint green. Related suites re-run green (meridian_before + test_03
+  in-process). `make local-down` after the live run.
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).
