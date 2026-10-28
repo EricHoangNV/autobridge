@@ -2471,3 +2471,11 @@ scenarios), 7 (demo step). REQUESTS.MD stays IN_PROGRESS.
 ## 2026-10-28 11:35 UTC — REQ-020 sub-step 5a merged (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). ConnectorSpec v2 (POST + body template, body_fields auth, body_cursor pagination) + runtime + v2 JSON schema; 25 new unit tests + new live e2e `test_meridian_runtime_v2.py` (3/3 inc. live cursor walk, Decimal money, 403-no-leak); before-refusal e2e still green. Full `make test` green (autobridge 2046 / verifier 97 / simulators 288 + ui 148); lint + typecheck green.
 Remaining for REQ-020: 5b (discovery), 5c (joins), 6 (after-bootstrap + 2 fault scenarios + bench note), 7 (demo step + docs/demo.md).
+
+## 2026-10-28 — REQ-020 sub-step 5b: discovery proposes v2 (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Claim: REQ-020 (sbx1 since 2026-10-28 10:51, continued — no reclaim needed).
+
+Did: docs_reader requestBody/allOf + body_fields auth + body-cursor/items signals; classifiers body_fields (high/medium) + body_cursor (high, GET-probe-proof); hypotheses 4th body_cursor for POST ops; bootstrap `spec_vocabulary` v1|v2 opt-in compiling POST ops + body templates + `<BASE>_<SNAKE>` body refs + body_cursor pagination + PascalCase wire names + case-insensitive status + documented checkpoints; redaction wiring (`spec_auth_refs`/`primary_credential_ref`, Connector row stores first sorted body ref); docs §11; +27 unit tests.
+Result: same Meridian docs refuse under v1 (pinned) and compile under v2 with 0 model calls (spec_version 2, 4 POST ops, guards green, validates). Joins + v2 repair rules + bootstrap-gate deferred to 5c/6 (fallbacks validate honestly).
+Checks: targeted 342 pass; e2e test_04 (15) + meridian_before (2) in-process green; `make test` green (2071/91.55%, 97/93.78%, 290/96.08%, ui 148); lint + typecheck green; no-meridian-in-engine green.
+Next: 5c joins (customer name, order-item money sums, UTC→enterprise-tz business dates) + verifier oracle/canonical mapping.

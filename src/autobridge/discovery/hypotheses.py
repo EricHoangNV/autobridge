@@ -41,6 +41,11 @@ FAMILIES = frozenset({"date", "pagination", "amount", "status"})
 
 DATE_STRATEGIES = ("created", "arrival", "business", "utc")
 PAGINATION_STRATEGIES = ("offset", "cursor", "page")
+#: Spec v2 strategy for POST JSON-body paging (cursor + page size travel in
+#: named body paths, the next cursor comes back in the response). Proposed
+#: only for POST operations whose docs carry the body-paging signal — GET
+#: operations keep the classic three so existing behavior is unchanged.
+BODY_CURSOR_STRATEGY = "body_cursor"
 AMOUNT_STRATEGIES = ("gross", "net", "tax_inclusive")
 # status strategies are mapping variants; base names for ids
 STATUS_STRATEGY_CLEAR = "clear"
@@ -260,7 +265,32 @@ _PAGINATION_CLAIMS: dict[str, str] = {
     "offset": "pagination is offset-based (offset + limit, next_offset)",
     "cursor": "pagination is cursor-based (cursor token, next_cursor)",
     "page": "pagination is page-based (page number, page_size)",
+    BODY_CURSOR_STRATEGY: "pagination is body-cursor-based (cursor + page size in the JSON body, next cursor in the response)",
 }
+
+
+def _body_cursor_details(op: Any) -> dict[str, Any]:
+    """Body-cursor pagination fragment from documented paths (spec v2).
+
+    Falls back to the classic ``$.data``/``$.Cursor`` shapes only when the
+    docs name no explicit response fields; the cursor/count request paths
+    always come from the docs (no invented envelope names).
+    """
+    cursor_path = getattr(op, "body_cursor_path", None) or "Cursor"
+    count_path = getattr(op, "body_count_path", None) or "Count"
+    count_max = getattr(op, "body_count_max", None)
+    count_value = min(100, count_max) if isinstance(count_max, int) else 100
+    cursor_field = getattr(op, "response_cursor_field", None) or "Cursor"
+    items_field = getattr(op, "response_items_field", None) or "data"
+    return {
+        "strategy": BODY_CURSOR_STRATEGY,
+        "cursor_path": cursor_path,
+        "count_path": count_path,
+        "count_value": count_value,
+        "next_path": f"$.{cursor_field}",
+        "items_path": f"$.{items_field}",
+        "stop_when": ["null_cursor", "empty_page"],
+    }
 
 
 def _pagination_provenance_for_operation(
@@ -397,7 +427,8 @@ def enumerate_pagination_hypotheses(
             )
         return hypotheses
 
-    # Per-operation: 3 hypotheses each
+    # Per-operation: 3 classic hypotheses each, plus body_cursor for POST
+    # operations whose docs carry the body-paging signal (spec v2).
     for op_path in sorted(set(op_paths)):
         op_pool = _pagination_provenance_for_operation(iface, op_path, pagination_cls)
         deduped = _dedupe_provenance(op_pool)
@@ -419,6 +450,30 @@ def enumerate_pagination_hypotheses(
                     evidence_for=deduped,
                     field=op_path,
                     strategy=strategy,
+                )
+            )
+        op_doc = next((o for o in iface.operations if o.path == op_path), None)
+        if (
+            op_doc is not None
+            and op_doc.method.upper() == "POST"
+            and op_doc.body_cursor_path is not None
+        ):
+            details = _body_cursor_details(op_doc)
+            hypotheses.append(
+                Hypothesis(
+                    id=f"pagination:{op_path}:{BODY_CURSOR_STRATEGY}",
+                    family="pagination",
+                    claim=f"{op_path}: {_PAGINATION_CLAIMS[BODY_CURSOR_STRATEGY]}",
+                    candidate_mapping_fragment={
+                        "family": "pagination",
+                        "strategy": BODY_CURSOR_STRATEGY,
+                        "operation": op_path,
+                        "pagination": dict(details),
+                    },
+                    prior=1.0 / 4.0,
+                    evidence_for=deduped,
+                    field=op_path,
+                    strategy=BODY_CURSOR_STRATEGY,
                 )
             )
     return hypotheses

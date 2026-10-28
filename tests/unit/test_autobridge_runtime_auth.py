@@ -721,3 +721,19 @@ def test_auth_body_refs_lists_all_refs() -> None:
     assert sorted(auth_body_refs(_body_fields_auth())) == ["VENDOR_ACCESS_TOKEN", "VENDOR_CLIENT_TOKEN"]
     assert auth_body_refs(None) == []
     assert auth_body_refs(AuthSpec(type="bearer", credential_ref="SOME_KEY")) == ["SOME_KEY"]
+
+
+def test_spec_auth_refs_dict_level() -> None:
+    from autobridge.runtime.auth import primary_credential_ref, spec_auth_refs
+
+    body_auth = {"type": "body_fields", "body_fields": {"ClientToken": "VENDOR_CLIENT_TOKEN", "AccessToken": "VENDOR_ACCESS_TOKEN"}}
+    assert sorted(spec_auth_refs(body_auth)) == ["VENDOR_ACCESS_TOKEN", "VENDOR_CLIENT_TOKEN"]
+    assert spec_auth_refs({"type": "bearer", "credential_ref": "SOME_KEY"}) == ["SOME_KEY"]
+    assert spec_auth_refs(None) == []
+    assert spec_auth_refs({}) == []
+    assert spec_auth_refs({"type": "body_fields"}) == []
+    # primary ref: single header ref, or first body field in sorted order
+    assert primary_credential_ref({"type": "bearer", "credential_ref": "SOME_KEY"}) == "SOME_KEY"
+    assert primary_credential_ref(body_auth) == "VENDOR_ACCESS_TOKEN"
+    assert primary_credential_ref(None) == "CONNECTOR_API_KEY"
+    assert primary_credential_ref({}, fallback="FALLBACK") == "FALLBACK"

@@ -590,3 +590,83 @@ def test_status_low_confidence_single_value() -> None:
     iface.status_notes = [("status H1 only", Provenance(source="x.md", line=1, snippet="H1"))]
     res = classify_status_vocabulary(iface)
     assert res.confidence == "medium"
+
+
+# ---------------------------------------------------------------------------
+# Spec v2: body_fields auth + body_cursor pagination
+# ---------------------------------------------------------------------------
+
+from autobridge.discovery.docs_reader import BodyField  # noqa: E402
+
+
+def _post_op(
+    path: str = "/widgets/getAll/2023-06-06",
+    hint: str = "body_cursor",
+    cursor_path: str | None = "Limitation.Cursor",
+    count_path: str | None = "Limitation.Count",
+    cursor_field: str | None = "Cursor",
+) -> OperationDescription:
+    return OperationDescription(
+        operation_id="widgetsGetAll",
+        method="POST",
+        path=path,
+        body_fields=[
+            BodyField(name="ClientToken", required=True, schema_type="string"),
+            BodyField(name="AccessToken", required=True, schema_type="string"),
+            BodyField(name="Client", required=True, schema_type="string"),
+        ],
+        body_required=["ClientToken", "AccessToken", "Client"],
+        body_cursor_path=cursor_path,
+        body_count_path=count_path,
+        response_items_field="Widgets",
+        response_cursor_field=cursor_field,
+        pagination_hint=hint,
+        provenance=Provenance(source="p.json", line=10, snippet=path),
+    )
+
+
+def test_classify_body_fields_auth_from_docs() -> None:
+    iface = InterfaceDescription(source="p.json", doc_type="openapi")
+    iface.auth = AuthDescription(
+        kind="body_fields",
+        description="credentials travel in the JSON body (ClientToken, AccessToken)",
+        provenance=Provenance(source="p.json", line=3, snippet="auth"),
+        body_fields=("ClientToken", "AccessToken"),
+    )
+    res = classify_auth(iface)
+    assert res.kind == "body_fields"
+    assert res.body_fields == ("ClientToken", "AccessToken")
+    assert res.confidence == "high"
+    assert res.evidence
+
+
+def test_classify_body_fields_auth_inferred_without_auth_section() -> None:
+    iface = InterfaceDescription(source="p.json", doc_type="openapi")
+    iface.operations = [_post_op()]
+    res = classify_auth(iface)
+    assert res.kind == "body_fields"
+    assert set(res.body_fields) == {"ClientToken", "AccessToken"}
+    assert res.confidence == "medium"
+
+
+def test_classify_body_cursor_pagination_high_confidence() -> None:
+    iface = InterfaceDescription(source="p.json", doc_type="openapi")
+    iface.operations = [_post_op()]
+    res = classify_pagination(iface)
+    assert len(res.per_operation) == 1
+    guess = res.per_operation[0]
+    assert guess.strategy == "body_cursor"
+    assert guess.confidence == "high"
+    assert "Limitation.Cursor" in guess.reasoning
+
+
+def test_get_probe_never_overrides_body_cursor() -> None:
+    iface = InterfaceDescription(source="p.json", doc_type="openapi")
+    iface.operations = [_post_op()]
+    probe = ProbeObservation(
+        operation="/widgets/getAll/2023-06-06",
+        response={"data": [], "next_offset": 10},
+        status_code=200,
+    )
+    res = classify_pagination(iface, probe_results=[probe])
+    assert res.per_operation[0].strategy == "body_cursor"

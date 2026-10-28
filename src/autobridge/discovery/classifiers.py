@@ -24,7 +24,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from autobridge.discovery.docs_reader import InterfaceDescription, Provenance
+from autobridge.discovery.docs_reader import (
+    InterfaceDescription,
+    Provenance,
+    is_credential_body_field,
+)
 
 # ---------------------------------------------------------------------------
 # shared types
@@ -49,11 +53,14 @@ class ProbeObservation:
 
 @dataclass(frozen=True, slots=True)
 class AuthClassification:
-    kind: str  # bearer | api_key_header | basic | oauth2 | none | unknown
+    kind: str  # bearer | api_key_header | basic | oauth2 | body_fields | none | unknown
     header_name: str | None = None
     confidence: str = "low"  # high | medium | low
     evidence: tuple[Provenance, ...] = ()
     reasoning: str = ""
+    # body_fields auth (spec v2): required JSON-body field names carrying
+    # credentials. Empty for header auth.
+    body_fields: tuple[str, ...] = ()
     # probe-derived refinement flag
     probe_refined: bool = False
 
@@ -70,6 +77,7 @@ def classify_auth(
     """
     base_kind = "unknown"
     header_name: str | None = None
+    body_field_names: tuple[str, ...] = ()
     evidence: list[Provenance] = []
     reasoning_parts: list[str] = []
     confidence = "low"
@@ -82,7 +90,11 @@ def classify_auth(
             evidence.append(iface.auth.provenance)
         desc_low = (iface.auth.description or "").lower()
         # confidence from explicitness
-        if (base_kind == "bearer" and "bearer" in desc_low) or (base_kind == "api_key_header" and header_name) or base_kind == "none":
+        if base_kind == "body_fields" and iface.auth.body_fields:
+            body_field_names = tuple(iface.auth.body_fields)
+            confidence = "high"
+            reasoning_parts.append(f"docs body_fields auth {list(body_field_names)} from {iface.auth.provenance}")
+        elif (base_kind == "bearer" and "bearer" in desc_low) or (base_kind == "api_key_header" and header_name) or base_kind == "none":
             confidence = "high"
         elif base_kind == "unknown":
             confidence = "low"
@@ -90,12 +102,28 @@ def classify_auth(
             confidence = "medium"
         else:
             confidence = "medium"
-        reasoning_parts.append(f"docs auth kind={base_kind} from {iface.auth.provenance}")
+        if base_kind != "body_fields":
+            reasoning_parts.append(f"docs auth kind={base_kind} from {iface.auth.provenance}")
         if header_name:
             reasoning_parts.append(f"header={header_name}")
     else:
-        reasoning_parts.append("no auth section in docs")
-        confidence = "low"
+        # No auth section: required credential-like JSON-body fields mean
+        # body_fields auth (spec v2 POST APIs); otherwise unknown.
+        inferred: list[str] = []
+        for op in iface.operations:
+            for bname in op.body_required:
+                if is_credential_body_field(bname) and bname not in inferred:
+                    inferred.append(bname)
+                    if op.provenance is not None and op.provenance not in evidence:
+                        evidence.append(op.provenance)
+        if inferred:
+            base_kind = "body_fields"
+            body_field_names = tuple(inferred)
+            confidence = "medium"
+            reasoning_parts.append(f"required credential-like body fields {inferred} imply body_fields auth")
+        else:
+            reasoning_parts.append("no auth section in docs")
+            confidence = "low"
 
     # probe refinement
     if probe_results:
@@ -138,6 +166,7 @@ def classify_auth(
         confidence=confidence,
         evidence=tuple(evidence),
         reasoning=reasoning,
+        body_fields=body_field_names,
         probe_refined=probe_refined,
     )
 
@@ -150,7 +179,7 @@ def classify_auth(
 @dataclass(frozen=True, slots=True)
 class PaginationGuess:
     operation: str
-    strategy: str  # offset | cursor | page | none
+    strategy: str  # offset | cursor | page | body_cursor | none
     confidence: str  # high | medium | low
     evidence: tuple[Provenance, ...] = ()
     reasoning: str = ""
@@ -211,7 +240,18 @@ def classify_pagination(
         strategy = hint
 
         # baseline confidence from docs
-        if hint == "cursor":
+        if hint == "body_cursor":
+            # POST JSON-body paging contract: cursor + page size travel in
+            # named body paths, the next cursor comes back in the response.
+            if op.body_cursor_path is not None and op.response_cursor_field is not None:
+                confidence = "high"
+                reasoning_parts.append(
+                    f"body paging {op.body_cursor_path} in, response cursor {op.response_cursor_field} out for {op.path}"
+                )
+            else:
+                confidence = "medium"
+                reasoning_parts.append(f"hint body_cursor from context for {op.path}")
+        elif hint == "cursor":
             # cursor is explicit via param names
             param_names = {p.name.lower() for p in op.params}
             if "cursor" in param_names or "next_cursor" in param_names:
@@ -236,9 +276,11 @@ def classify_pagination(
             reasoning_parts.append(f"no pagination hint for {op.path}")
             confidence = "high" if not op.params else "medium"
 
-        # probe refinement: response keys authoritative
+        # probe refinement: response keys authoritative for query pagination.
+        # A body_cursor contract (cursor travels in the POST body) cannot be
+        # validated by a GET probe, so GET probes never override it.
         probe = probe_by_op.get(op.path)
-        if probe is not None:
+        if probe is not None and strategy != "body_cursor":
             detected = _strategy_from_response_keys(probe.response)
             if detected is not None and detected != strategy:
                 # Harbor case: docs example says offset but actual is cursor

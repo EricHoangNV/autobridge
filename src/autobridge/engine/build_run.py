@@ -48,6 +48,7 @@ def execute_build(
     llm_budget: Any | None = None,
     verifier_url: str | None = None,
     scenario_id: str = "baseline",
+    spec_vocabulary: str = "v1",
 ) -> dict[str, Any]:
     """Run bootstrap pipeline and optional verifier check.
 
@@ -70,6 +71,7 @@ def execute_build(
         probe_budget=probe_budget,
         provider=provider,
         llm_budget=llm_budget,
+        spec_vocabulary=spec_vocabulary,
     )
 
     out: dict[str, Any] = {
@@ -179,8 +181,21 @@ def _append_bootstrap_evidence(
         return []
 
 
-def _ensure_connector(session: Any, connector_id: str | None, spec_connector: dict[str, Any], fallback_name: str = "HarborPMS") -> Any:
-    """Return existing Connector or create one from spec."""
+def _ensure_connector(
+    session: Any,
+    connector_id: str | None,
+    spec_connector: dict[str, Any],
+    fallback_name: str = "HarborPMS",
+    spec_auth: dict[str, Any] | None = None,
+) -> Any:
+    """Return existing Connector or create one from spec.
+
+    The Connector row stores one representative credential ref: for
+    ``body_fields`` auth (spec v2) that is the first body-field ref in
+    sorted field order (see ``primary_credential_ref``); the full ref list
+    stays on the spec, and the read-time redaction sweep covers every ref
+    by env pattern.
+    """
     from autobridge.control.models import Connector  # noqa: PLC0415
 
     # If connector_id is a real row id, fetch it
@@ -202,6 +217,12 @@ def _ensure_connector(session: Any, connector_id: str | None, spec_connector: di
 
     # Create new connector from spec
     spec_vendor = spec_connector.get("vendor", fallback_name) if isinstance(spec_connector, dict) else fallback_name
+    if spec_auth is not None:
+        from autobridge.runtime.auth import primary_credential_ref  # noqa: PLC0415
+
+        conn_cred_ref = primary_credential_ref(spec_auth)
+    else:
+        conn_cred_ref = spec_connector.get("credential_ref", "CONNECTOR_API_KEY") if isinstance(spec_connector, dict) else "CONNECTOR_API_KEY"
     # Derive base_url from spec source placeholder if needed
     # But Connector.base_url is the real URL template, not placeholder? In W1.6, base_url was http://example.com
     # For Harbor, we store placeholder as base_url (same as spec)
@@ -222,7 +243,7 @@ def _ensure_connector(session: Any, connector_id: str | None, spec_connector: di
     conn = _Conn(
         name=spec_vendor,
         base_url=spec_connector.get("base_url", "http://example.com") if isinstance(spec_connector, dict) else "http://example.com",
-        credential_ref=spec_connector.get("credential_ref", "CONNECTOR_API_KEY") if isinstance(spec_connector, dict) else "CONNECTOR_API_KEY",
+        credential_ref=conn_cred_ref,
         target_entities=["Reservation", "FolioCharge"],
         runtime_target={"kind": "local_process"},
     )
@@ -288,6 +309,7 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
     base_url_override = inputs.get("base_url_override") or inputs.get("base_url")
     verifier_url = inputs.get("verifier_url") or os.environ.get("VERIFIER_URL")
     scenario_id = inputs.get("scenario_id", "baseline")
+    spec_vocabulary = inputs.get("spec_vocabulary", "v1")
 
     # Optional probe/budget wiring (for date ambiguity resolution tests)
     probe_executor = inputs.get("probe_executor")
@@ -306,6 +328,7 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
         llm_budget=inputs.get("llm_budget"),
         verifier_url=verifier_url,
         scenario_id=scenario_id,
+        spec_vocabulary=spec_vocabulary,
     )
 
     # Evidence
@@ -354,7 +377,8 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
         conn = ctx.session.get(Connector, run.connector_id)
         if conn is None:
             # Fallback: create from spec
-            conn = _ensure_connector(ctx.session, run.connector_id, spec_conn)
+            spec_auth = build_out["draft_spec"].get("source", {}).get("auth", {})
+            conn = _ensure_connector(ctx.session, run.connector_id, spec_conn, spec_auth=spec_auth)
         # Create release — gate-before-persist (AR-1-2): when a verifier URL
         # is configured, the candidate spec is verified before persisting.
         # A blocked/unreachable verifier raises GateBlockedError and NO
@@ -436,6 +460,7 @@ def bootstrap_and_create_release(
     vendor: str | None = None,
     base_url_override: str | None = None,
     scenario_id: str = "baseline",
+    spec_vocabulary: str = "v1",
 ) -> tuple[Any, Any, dict[str, Any]]:
     """Helper for tests/e2e: bootstrap docs and create a release.
 
@@ -453,6 +478,7 @@ def bootstrap_and_create_release(
         vendor=vendor,
         base_url_override=base_url_override,
         scenario_id=scenario_id,
+        spec_vocabulary=spec_vocabulary,
     )
     assert build_out["success"], f"bootstrap failed: {build_out['visible_errors']} trace {build_out['trace']}"
     assert build_out["draft_spec"] is not None

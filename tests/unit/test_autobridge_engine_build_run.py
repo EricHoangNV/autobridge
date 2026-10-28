@@ -38,6 +38,41 @@ def _connector_id(SessionLocal) -> str:  # type: ignore[no-untyped-def]
         return conn.id
 
 
+def test_ensure_connector_body_fields_primary_ref(tmp_path: Path) -> None:
+    """Body_fields specs store the first sorted body ref on the Connector row."""
+    from autobridge.engine.build_run import _ensure_connector
+
+    SessionLocal, engine = _sessions(tmp_path)
+    try:
+        with SessionLocal() as s:
+            conn = _ensure_connector(
+                s,
+                None,
+                {"vendor": "ExamplePMS"},
+                spec_auth={"type": "body_fields", "body_fields": {"ClientToken": "EXAMPLE_CLIENT_TOKEN", "AccessToken": "EXAMPLE_ACCESS_TOKEN"}},
+            )
+            s.commit()
+            assert conn.credential_ref == "EXAMPLE_ACCESS_TOKEN"
+        # legacy path without spec_auth keeps the old fallback
+        with SessionLocal() as s:
+            conn2 = _ensure_connector(s, None, {"vendor": "OtherPMS", "credential_ref": "OTHER_KEY"})
+            s.commit()
+            assert conn2.credential_ref == "OTHER_KEY"
+    finally:
+        engine.dispose()
+
+
+def test_execute_build_v2_vocabulary_opt_in() -> None:
+    meridian = (REPO_ROOT / "simulators" / "docs" / "meridian-openapi.yaml").read_text()
+    out_v1 = execute_build(meridian, source="meridian.yaml", connector_id="examplepms")
+    assert out_v1["success"] is False
+    assert out_v1["draft_spec"] is None
+    out_v2 = execute_build(meridian, source="meridian.yaml", connector_id="examplepms", spec_vocabulary="v2")
+    assert out_v2["success"] is True
+    assert out_v2["draft_spec"]["spec_version"] == 2
+    assert out_v2["model_usage"]["frontier_tokens"] == 0
+
+
 def test_execute_build_harbor_success() -> None:
     out = execute_build(HARBOR_MD, source="simulators/docs/harborpms.md")
     assert out["success"] is True

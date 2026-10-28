@@ -395,3 +395,140 @@ def test_build_post_only_docs_refuses_with_named_reason() -> None:
     assert result.model_usage.get("small_tokens", 0) == 0
     assert result.model_usage.get("calls", 0) == 0
     assert any(t.get("stage") == "vocabulary_guard" for t in result.trace)
+
+
+# ---------------------------------------------------------------------------
+# Spec v2 discovery (REQ-020 item 5b): same docs, vocabulary v2
+# ---------------------------------------------------------------------------
+
+MERIDIAN_YAML = (REPO_ROOT / "simulators" / "docs" / "meridian-openapi.yaml").read_text(encoding="utf-8")
+
+
+def _meridian_v2_result():  # type: ignore[no-untyped-def]
+    return build_draft_spec(
+        MERIDIAN_YAML,
+        source="simulators/docs/meridian-openapi.yaml",
+        connector_id="meridianpms",
+        spec_vocabulary="v2",
+    )
+
+
+def test_spec_vocabulary_rejects_unknown_value() -> None:
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="spec_vocabulary"):
+        build_draft_spec(HARBOR_MD, source=HARBOR_MD_PATH, spec_vocabulary="v3")
+
+
+def test_v2_vocabulary_builds_post_connector_from_same_docs() -> None:
+    """Same docs that v1 refuses compile under v2 with zero model calls."""
+    result = _meridian_v2_result()
+    assert result.success, f"visible_errors={result.visible_errors} trace={result.trace}"
+    assert result.draft_spec is not None
+    assert result.visible_errors == []
+    assert result.open_questions == ()
+    assert result.model_usage.get("frontier_tokens", 0) == 0
+    assert result.model_usage.get("small_tokens", 0) == 0
+    assert result.model_usage.get("calls", 0) == 0
+
+
+def test_v2_spec_shape() -> None:
+    spec = _meridian_v2_result().draft_spec
+    assert spec is not None
+    assert spec["spec_version"] == 2
+    auth = spec["source"]["auth"]
+    assert auth["type"] == "body_fields"
+    assert auth["body_fields"] == {
+        "ClientToken": "MERIDIAN_CLIENT_TOKEN",
+        "AccessToken": "MERIDIAN_ACCESS_TOKEN",
+    }
+    assert "credential_ref" not in auth
+    load_spec_from_dict(spec)
+
+
+def test_v2_operations_post_with_body_and_cursor() -> None:
+    spec = _meridian_v2_result().draft_spec
+    assert spec is not None
+    ops = spec["operations"]
+    assert set(ops) == {"list_reservations", "list_customers", "list_folios", "get_configuration"}
+    for name in ("list_reservations", "list_customers", "list_folios"):
+        op = ops[name]
+        assert op["method"] == "POST"
+        assert op["body"]["Limitation"] == {"Count": 100}
+        assert op["body"]["Client"] == "AutoBridge/1.0"
+        assert "ClientToken" not in op["body"] and "AccessToken" not in op["body"]
+        pag = op["pagination"]
+        assert pag["strategy"] == "body_cursor"
+        assert pag["cursor_path"] == "Limitation.Cursor"
+        assert pag["count_path"] == "Limitation.Count"
+        assert pag["count_value"] == 100
+        assert pag["stop_when"] == ["null_cursor", "empty_page"]
+    assert ops["list_reservations"]["pagination"]["items_path"] == "$.Reservations"
+    assert ops["list_reservations"]["pagination"]["next_path"] == "$.Cursor"
+    assert ops["list_folios"]["pagination"]["items_path"] == "$.OrderItems"
+    assert ops["list_folios"]["path"] == "/orderItems/getAll/2023-06-06"
+    config = ops["get_configuration"]
+    assert config["method"] == "POST"
+    assert "pagination" not in config
+    assert config["body"]["Client"] == "AutoBridge/1.0"
+
+
+def test_v2_wire_names_follow_documented_spelling() -> None:
+    spec = _meridian_v2_result().draft_spec
+    assert spec is not None
+    res = spec["entities"]["Reservation"]["fields"]
+    assert res["reservation_id"]["path"] == "$.Id"
+    assert res["arrival_date"]["path"] == "$.ScheduledStartUtc"
+    assert res["departure_date"]["path"] == "$.ScheduledEndUtc"
+    assert res["status"]["path"] == "$.State"
+    status_map = res["status"]["transform"][0]["args"]["map"]
+    assert status_map["Confirmed"] == "confirmed"
+    assert status_map["Canceled"] == "cancelled"
+    folio = spec["entities"]["FolioCharge"]["fields"]
+    assert folio["charge_id"]["path"] == "$.Id"
+    assert folio["amount"]["path"] == "$.UnitAmount"
+    assert folio["posted_at"]["path"] == "$.PostedUtc"
+    # Checkpoints follow the documented instant fields, not legacy names.
+    assert spec["operations"]["list_reservations"]["checkpoint"] == {"field": "$.UpdatedUtc", "mode": "max"}
+    assert spec["operations"]["list_folios"]["checkpoint"] == {"field": "$.PostedUtc", "mode": "max"}
+
+
+def test_v2_visible_tests_pin_body_cursor_guards() -> None:
+    import copy as _copy
+
+    base = _meridian_v2_result().draft_spec
+    assert base is not None
+    broken = _copy.deepcopy(base)
+    del broken["operations"]["list_reservations"]["pagination"]["cursor_path"]
+    assert any("cursor_path" in e for e in visible_tests(broken))
+    broken2 = _copy.deepcopy(base)
+    broken2["operations"]["list_reservations"]["pagination"]["stop_when"] = ["null_cursor"]
+    assert any("empty_page" in e for e in visible_tests(broken2))
+
+
+def test_v1_compile_skips_post_operations() -> None:
+    """Mixed docs under v1 keep their GET operations; POST ops are skipped."""
+    from autobridge.discovery.classifiers import classify_all
+    from autobridge.discovery.docs_reader import read_docs_text
+
+    iface = read_docs_text(MERIDIAN_YAML, source="meridian.yaml")
+    classification = classify_all(iface)
+    spec = _compile_spec(iface, classification, connector_id="meridianpms", spec_version=1)
+    assert all(op["method"] == "GET" for op in spec["operations"].values())
+
+
+def test_op_name_for_post_style_operation_ids() -> None:
+    assert _op_name_for_path("/reservations/getAll/2023-06-06", "reservationsGetAll") == "list_reservations"
+    assert _op_name_for_path("/orderItems/getAll/2023-06-06", "orderItemsGetAll") == "list_folios"
+    assert _op_name_for_path("/customers/getAll/2023-06-06", "customersGetAll") == "list_customers"
+    assert _op_name_for_path("/configuration/get/2023-06-06", "configurationGet") == "get_configuration"
+    assert _op_name_for_path("/api/v1.3/getReservation", "getReservation") == "get_reservation"
+    assert _op_name_for_path("/api/v1.3/getGuest", "getGuest") == "get_guest"
+
+
+def test_derive_body_field_ref() -> None:
+    from autobridge.discovery.bootstrap import _derive_body_field_ref
+
+    assert _derive_body_field_ref("meridianpms", "ClientToken") == "MERIDIAN_CLIENT_TOKEN"
+    assert _derive_body_field_ref("meridianpms", "AccessToken") == "MERIDIAN_ACCESS_TOKEN"
+    assert _derive_body_field_ref("my-conn", "ClientToken", credential_ref="CUSTOM_KEY") == "CUSTOM_KEY_CLIENT_TOKEN"

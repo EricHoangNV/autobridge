@@ -157,6 +157,48 @@ def auth_body_refs(auth: AuthSpec | None) -> list[str]:
     return [auth.credential_ref] if auth.credential_ref is not None else []
 
 
+def spec_auth_refs(auth: dict[str, Any] | None) -> list[str]:
+    """Return every credential ref in a plain spec-dict ``auth`` mapping.
+
+    Dict-level counterpart of :func:`auth_body_refs` for callers that hold
+    the spec as data (releases, Connector rows, evidence) rather than a
+    validated :class:`AuthSpec`: ``body_fields`` yields every value of its
+    mapping, header types yield ``credential_ref``, anything else yields
+    nothing. Never raises — unknown shapes simply need nothing.
+    """
+    if not isinstance(auth, dict):
+        return []
+    if auth.get("type") == "body_fields":
+        body_fields = auth.get("body_fields")
+        if isinstance(body_fields, dict):
+            return [ref for ref in body_fields.values() if isinstance(ref, str) and ref]
+        return []
+    ref = auth.get("credential_ref")
+    return [ref] if isinstance(ref, str) and ref else []
+
+
+def primary_credential_ref(auth: dict[str, Any] | None, fallback: str = "CONNECTOR_API_KEY") -> str:
+    """One representative credential ref for a spec-dict ``auth`` mapping.
+
+    Single-ref auth returns its ``credential_ref``; ``body_fields`` auth
+    returns the first ref in sorted field order (deterministic); anything
+    else returns *fallback*. Used where a single ref must be stored (e.g.
+    the Connector row) while the full ref list stays on the spec — the
+    read-time redaction sweep covers every ref by env pattern.
+    """
+    refs = spec_auth_refs(auth)
+    if not refs:
+        return fallback
+    if isinstance(auth, dict) and auth.get("type") == "body_fields":
+        body_fields = auth.get("body_fields")
+        if isinstance(body_fields, dict) and body_fields:
+            first_field = sorted(str(k) for k in body_fields)
+            first_ref = body_fields[first_field[0]]
+            if isinstance(first_ref, str) and first_ref:
+                return first_ref
+    return refs[0]
+
+
 # ---------------------------------------------------------------------------
 # OAuth2 client-credentials flow
 # ---------------------------------------------------------------------------

@@ -59,11 +59,14 @@ def _snippet_for_line(lines: list[str], lineno: int) -> str:
 
 @dataclass
 class AuthDescription:
-    kind: str  # bearer | api_key_header | basic | oauth2 | none | unknown
+    kind: str  # bearer | api_key_header | basic | oauth2 | body_fields | none | unknown
     scheme: str = ""
     header_name: str | None = None
     description: str = ""
     provenance: Provenance | None = None
+    # body_fields auth (spec v2): required JSON-body field names carrying
+    # credentials (e.g. ClientToken, AccessToken). Empty for header auth.
+    body_fields: tuple[str, ...] = ()
 
 
 @dataclass
@@ -84,6 +87,21 @@ class ResponseField:
 
 
 @dataclass
+class BodyField:
+    """One flattened JSON-body property of an operation (spec v2 POST APIs).
+
+    ``required`` mirrors the request schema's required list; credential-like
+    required fields (token/secret/password) drive ``body_fields`` auth.
+    """
+
+    name: str
+    required: bool = False
+    schema_type: str = ""
+    description: str = ""
+    provenance: Provenance | None = None
+
+
+@dataclass
 class OperationDescription:
     operation_id: str
     method: str
@@ -92,9 +110,21 @@ class OperationDescription:
     description: str = ""
     params: list[ParamDescription] = field(default_factory=list)
     response_fields: list[ResponseField] = field(default_factory=list)
-    pagination_hint: str = ""  # offset | cursor | page | none
+    pagination_hint: str = ""  # offset | cursor | page | body_cursor | none
     provenance: Provenance | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+    # POST JSON-body surface (spec v2): flattened requestBody properties
+    # (allOf-resolved) plus the names the request schema marks required.
+    body_fields: list[BodyField] = field(default_factory=list)
+    body_required: list[str] = field(default_factory=list)
+    # Body-cursor paging signal (spec v2): dotted request paths for the
+    # cursor and page size, the documented page-size maximum, and the
+    # response fields holding the item array and the next cursor.
+    body_cursor_path: str | None = None
+    body_count_path: str | None = None
+    body_count_max: int | None = None
+    response_items_field: str | None = None
+    response_cursor_field: str | None = None
 
 
 @dataclass
@@ -167,6 +197,130 @@ def _resolve_response_properties(schema_ref: dict[str, Any], components: dict[st
     return _collect(schema_ref)
 
 
+def _merge_schema_props(
+    sdef: dict[str, Any], components: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Flatten a schema definition to (properties, required names).
+
+    Follows ``$ref`` into ``#/components/schemas/<Name>`` and merges
+    ``allOf`` branches (base + extension pattern, e.g. shared auth fields
+    plus per-operation filters). Returns ({}, []) when nothing resolvable
+    is found. Depth-capped so self-referential schemas terminate.
+    """
+    schemas = components.get("schemas", {}) if isinstance(components.get("schemas"), dict) else {}
+
+    def _lookup(ref: str) -> dict[str, Any]:
+        if not ref.startswith("#/components/schemas/"):
+            return {}
+        node = schemas.get(ref.rsplit("/", 1)[-1], {})
+        return node if isinstance(node, dict) else {}
+
+    def _collect(node: dict[str, Any], depth: int = 0) -> tuple[dict[str, Any], list[str]]:
+        if depth > 3 or not isinstance(node, dict):
+            return {}, []
+        if "$ref" in node and isinstance(node["$ref"], str):
+            return _collect(_lookup(node["$ref"]), depth + 1)
+        merged: dict[str, Any] = {}
+        required: list[str] = []
+        for branch in node.get("allOf", []) if isinstance(node.get("allOf"), list) else []:
+            if isinstance(branch, dict):
+                b_props, b_req = _collect(branch, depth + 1)
+                merged.update(b_props)
+                for r in b_req:
+                    if r not in required:
+                        required.append(r)
+        inline = node.get("properties", {})
+        if isinstance(inline, dict):
+            merged.update(inline)
+        for r in node.get("required", []) if isinstance(node.get("required"), list) else []:
+            if isinstance(r, str) and r not in required:
+                required.append(r)
+        return merged, required
+
+    return _collect(sdef)
+
+
+# ---------------------------------------------------------------------------
+# POST JSON-body signals (spec v2: body_fields auth, body_cursor pagination)
+# ---------------------------------------------------------------------------
+
+#: Required body field names carrying credentials (generic, vendor-neutral).
+_CRED_BODY_RE = re.compile(r"token|secret|password|apikey|api_key", re.IGNORECASE)
+
+#: Leaf names (lowercased) identifying the paging cursor / page size inside
+#: a JSON-body paging envelope (e.g. Limitation: {Count, Cursor}).
+_CURSOR_LEAF_NAMES = frozenset({"cursor", "nextcursor", "next_cursor", "pagetoken", "page_token"})
+_COUNT_LEAF_NAMES = frozenset({"count", "limit", "pagesize", "page_size", "maxresults", "max_results"})
+
+#: Response property names (lowercased) holding the next-page cursor.
+_RESPONSE_CURSOR_NAMES = frozenset({"cursor", "next_cursor"})
+
+
+def is_credential_body_field(name: str) -> bool:
+    """True when a body field name generically signals a credential."""
+    return bool(_CRED_BODY_RE.search(name or ""))
+
+
+def _body_paging_envelope(
+    body_props: dict[str, Any], components: dict[str, Any]
+) -> tuple[str | None, str | None, int | None]:
+    """Find (cursor_path, count_path, count_max) for a JSON-body page envelope.
+
+    Looks for an object-typed body property (or flat cursor/count fields)
+    whose leaves name both a cursor and a page size. Returns dotted request
+    paths using the documented spellings, e.g. ``("Limitation.Cursor",
+    "Limitation.Count", 1000)``, or ``(None, None, None)`` when the request
+    body carries no paging signal.
+    """
+    # Envelope objects first (e.g. Limitation: {Count, Cursor}).
+    for pname, pdef in body_props.items():
+        sub_props, _ = _merge_schema_props(pdef if isinstance(pdef, dict) else {}, components)
+        if not sub_props:
+            continue
+        by_lower = {str(k).lower(): str(k) for k in sub_props}
+        cursor_leaf = next((by_lower[k] for k in _CURSOR_LEAF_NAMES if k in by_lower), None)
+        count_leaf = next((by_lower[k] for k in _COUNT_LEAF_NAMES if k in by_lower), None)
+        if cursor_leaf is not None and count_leaf is not None:
+            count_max: int | None = None
+            cdef = sub_props.get(count_leaf)
+            if isinstance(cdef, dict):
+                maximum = cdef.get("maximum")
+                if isinstance(maximum, int) and not isinstance(maximum, bool) and maximum >= 1:
+                    count_max = maximum
+            return f"{pname}.{cursor_leaf}", f"{pname}.{count_leaf}", count_max
+    # Flat fallback: cursor/count as direct body fields.
+    by_lower = {str(k).lower(): str(k) for k in body_props}
+    cursor_flat = next((by_lower[k] for k in _CURSOR_LEAF_NAMES if k in by_lower), None)
+    count_flat = next((by_lower[k] for k in _COUNT_LEAF_NAMES if k in by_lower), None)
+    if cursor_flat is not None and count_flat is not None:
+        return cursor_flat, count_flat, None
+    return None, None, None
+
+
+def _response_array_and_cursor(
+    response_props: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    """Find (items_field, cursor_field) in a resolved response schema.
+
+    The cursor is the property whose name matches the known cursor names;
+    the items field is the first array-typed property that is not the
+    cursor (e.g. Reservations alongside Cursor).
+    """
+    cursor_field: str | None = None
+    for name in response_props:
+        if str(name).lower() in _RESPONSE_CURSOR_NAMES:
+            cursor_field = str(name)
+            break
+    items_field: str | None = None
+    for name, fdef in response_props.items():
+        if cursor_field is not None and str(name) == cursor_field:
+            continue
+        if isinstance(fdef, dict) and fdef.get("type") == "array":
+            items_field = str(name)
+            break
+    return items_field, cursor_field
+
+
 def _is_openapi_dict(data: dict[str, Any]) -> bool:
     v = data.get("openapi", "")
     return isinstance(v, str) and bool(_OPENAPI_VERSION_RE.match(v))
@@ -198,7 +352,18 @@ def _auth_from_security_schemes(
     return None
 
 
-def _pagination_hint_for_operation(op: dict[str, Any]) -> str:
+def _pagination_hint_for_operation(
+    op: dict[str, Any],
+    *,
+    body_cursor: bool = False,
+    response_cursor: bool = False,
+) -> str:
+    # A JSON-body paging envelope plus a response cursor is the body_cursor
+    # contract (spec v2 POST APIs) — stronger than any query-param signal.
+    # The envelope only exists when a requestBody was parsed, so no method
+    # check is needed here.
+    if body_cursor and response_cursor:
+        return "body_cursor"
     param_names = {p.get("name", "").lower() for p in op.get("parameters", []) if isinstance(p, dict)}
     desc = (op.get("description", "") + " " + op.get("summary", "")).lower()
     resp_text = json.dumps(op.get("responses", {})).lower()
@@ -288,6 +453,34 @@ def parse_openapi_dict(
                 pprov = Provenance(source=source, line=pline, snippet=_snippet_for_line(raw_lines, pline))
                 params.append(ParamDescription(name=pname, location=ploc, schema_type=stype, required=req, description=desc, provenance=pprov))
 
+            # requestBody (POST JSON-body APIs, spec v2): flatten the schema
+            # (allOf-resolved) into body fields with required flags.
+            body_fields: list[BodyField] = []
+            body_required: list[str] = []
+            body_props: dict[str, Any] = {}
+            req_body = op.get("requestBody", {}) if isinstance(op.get("requestBody"), dict) else {}
+            rb_content = req_body.get("content", {}) if isinstance(req_body.get("content"), dict) else {}
+            rb_json = rb_content.get("application/json", {}) if isinstance(rb_content.get("application/json"), dict) else {}
+            rb_schema = rb_json.get("schema", {}) if isinstance(rb_json.get("schema"), dict) else {}
+            if rb_schema:
+                b_props, b_req = _merge_schema_props(rb_schema, components)
+                body_props = b_props
+                body_required = [r for r in b_req if isinstance(r, str)]
+                for bname, bdef in b_props.items():
+                    btype = str(bdef.get("type", "")) if isinstance(bdef, dict) else ""
+                    bdesc = str(bdef.get("description", "")) if isinstance(bdef, dict) else ""
+                    bline = _line_for_pattern(raw_lines, str(bname), lnum - 1)
+                    bprov = Provenance(source=source, line=bline, snippet=_snippet_for_line(raw_lines, bline))
+                    body_fields.append(
+                        BodyField(
+                            name=str(bname),
+                            required=str(bname) in body_required,
+                            schema_type=btype,
+                            description=bdesc,
+                            provenance=bprov,
+                        )
+                    )
+
             # response fields from 200 schema (resolve $ref / allOf envelopes)
             resp_fields: list[ResponseField] = []
             responses = op.get("responses", {}) if isinstance(op.get("responses"), dict) else {}
@@ -304,7 +497,14 @@ def parse_openapi_dict(
                 fdesc = str(fdef.get("description", "")) if isinstance(fdef, dict) else ""
                 resp_fields.append(ResponseField(name=fname, type=ftype, description=fdesc))
 
-            hint = _pagination_hint_for_operation(op)
+            # body-cursor paging signal + response items/cursor fields (v2)
+            cursor_path, count_path, count_max = _body_paging_envelope(body_props, components)
+            items_field, cursor_field = _response_array_and_cursor(props)
+            hint = _pagination_hint_for_operation(
+                op,
+                body_cursor=cursor_path is not None,
+                response_cursor=cursor_field is not None,
+            )
             if hint != "none":
                 note_prov = Provenance(source=source, line=lnum, snippet=_snippet_for_line(raw_lines, lnum))
                 iface.pagination_notes.append((f"{path} {method}: {hint} pagination", note_prov))
@@ -328,9 +528,41 @@ def parse_openapi_dict(
                 pagination_hint=hint,
                 provenance=prov,
                 raw=op,
+                body_fields=body_fields,
+                body_required=body_required,
+                body_cursor_path=cursor_path,
+                body_count_path=count_path,
+                body_count_max=count_max,
+                response_items_field=items_field,
+                response_cursor_field=cursor_field,
             )
             iface.operations.append(op_desc)
             iface.provenances.append(prov)
+
+        # Body-carried credentials (spec v2): when no header auth scheme is
+        # declared, required body fields with credential-like names mean the
+        # API authenticates in the JSON body, never in a header.
+        if iface.auth is None:
+            cred_by_op: list[tuple[str, Provenance | None]] = []
+            for op_desc in iface.operations:
+                for bname in op_desc.body_required:
+                    if is_credential_body_field(bname):
+                        cred_by_op.append((bname, op_desc.provenance))
+            if cred_by_op:
+                seen: list[str] = []
+                for bname, _ in cred_by_op:
+                    if bname not in seen:
+                        seen.append(bname)
+                first_prov = next((p for _, p in cred_by_op if p is not None), None)
+                if first_prov is None:
+                    first_prov = Provenance(source=source, line=1, snippet="body_fields auth from requestBody")
+                iface.auth = AuthDescription(
+                    kind="body_fields",
+                    description=f"credentials travel in the JSON body ({', '.join(seen)})",
+                    provenance=first_prov,
+                    body_fields=tuple(seen),
+                )
+                iface.provenances.append(first_prov)
 
     # schemas
     schemas = components.get("schemas", {}) if isinstance(components.get("schemas"), dict) else {}
@@ -340,8 +572,10 @@ def parse_openapi_dict(
         sline = _line_for_pattern(raw_lines, sname)
         sprov = Provenance(source=source, line=sline, snippet=_snippet_for_line(raw_lines, sline))
         sfields: list[ResponseField] = []
-        required = sdef.get("required", []) if isinstance(sdef.get("required"), list) else []
-        props = sdef.get("properties", {}) if isinstance(sdef.get("properties"), dict) else {}
+        # allOf-resolved so base+extension request schemas (e.g. shared auth
+        # fields plus per-operation filters) expose every property.
+        props, resolved_required = _merge_schema_props(sdef, components)
+        required = [str(r) for r in resolved_required]
         for fname, fdef in props.items():
             ftype = str(fdef.get("type", "")) if isinstance(fdef, dict) else ""
             fdesc = str(fdef.get("description", "")) if isinstance(fdef, dict) else ""
@@ -354,7 +588,7 @@ def parse_openapi_dict(
                 iface.date_notes.append((f"schema {sname}.{fname}: {fdesc or ftype}", sprov))
             if "status" in low or "enum" in low:
                 iface.status_notes.append((f"schema {sname}.{fname}: {fdesc or ftype}", sprov))
-        iface.schemas.append(SchemaDescription(name=sname, fields=sfields, required=[str(r) for r in required], provenance=sprov))
+        iface.schemas.append(SchemaDescription(name=sname, fields=sfields, required=required, provenance=sprov))
         iface.provenances.append(sprov)
 
     # also collect pagination/date/status notes from top-level description

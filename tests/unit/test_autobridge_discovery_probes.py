@@ -779,3 +779,35 @@ def test_selector_llm_budget_none_no_check() -> None:
     hyps = HypothesisEnumerator().enumerate_date(iface, None)
     sel = ProbeSelector(iface, llm_budget=None)
     assert sel.select_next(hyps) is not None
+
+
+def test_selector_post_only_interface_has_no_get_probes() -> None:
+    """POST-only (spec v2) interfaces offer no GET probes; selector yields None.
+
+    GET probes cannot validate a body-cursor contract, so the selector stays
+    silent instead of inventing probes. Bootstrap compiles these docs
+    deterministically without probing.
+    """
+    from autobridge.discovery.docs_reader import BodyField, OperationDescription
+
+    iface = _iface_minimal()
+    iface.operations = [
+        OperationDescription(
+            operation_id="widgetsGetAll",
+            method="POST",
+            path="/widgets/getAll/2023-06-06",
+            body_fields=[BodyField(name="ClientToken", required=True)],
+            body_required=["ClientToken"],
+            body_cursor_path="Limitation.Cursor",
+            body_count_path="Limitation.Count",
+            response_items_field="Widgets",
+            response_cursor_field="Cursor",
+            pagination_hint="body_cursor",
+            provenance=None,
+        )
+    ]
+    sel = ProbeSelector(iface)
+    assert sel.candidates() == []
+    hyps = HypothesisEnumerator().enumerate_pagination(iface, None)
+    assert hyps, "expected pagination hypotheses for the POST operation"
+    assert sel.select_next(hyps) is None

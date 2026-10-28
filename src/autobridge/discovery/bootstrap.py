@@ -116,30 +116,50 @@ def _derive_credential_ref(connector_id: str, override: str | None = None) -> st
     return ref
 
 
-def _op_name_for_path(path: str) -> str:
-    """Map API path to operation name (spec.operations key)."""
-    if path == "/reservations":
+def _op_name_for_path(path: str, operation_id: str | None = None) -> str:
+    """Map API path (plus optional operationId) to operation name.
+
+    Generic English-word synonyms (no vendor names): reservation/booking →
+    list_reservations, order-item/folio/charge/transaction → list_folios,
+    customer/guest → list_customers, configuration/enterprise → a
+    get_configuration fetch. Falls back to the sanitized path.
+    """
+    lowered = f"{operation_id or ''} {path}".lower()
+    if "/folios" in path and "{" in path:
+        # nested: /reservations/{id}/folios
+        return "list_folios_nested"
+    # Plural list endpoints first: singular fetches (getReservation,
+    # getGuest) contain the same substrings and must not claim the list name.
+    if "reservations" in lowered or "bookings" in lowered or "stays" in lowered:
         return "list_reservations"
+    if "orderitem" in lowered or "order_item" in lowered or "folio" in lowered or "charge" in lowered or "transaction" in lowered:
+        return "list_folios"
+    if "customers" in lowered or "guests" in lowered or "accounts" in lowered:
+        return "list_customers"
+    if "configuration" in lowered or "enterprise" in lowered:
+        return "get_configuration"
+    # Singular single-resource fetches (skipped downstream like get_guest).
+    if "reservation" in lowered or "booking" in lowered or "stay" in lowered:
+        return "get_reservation"
+    if "guest" in lowered or "customer" in lowered or "account" in lowered:
+        return "get_guest"
     if path == "/folios":
         return "list_folios"
     if path == "/properties":
         return "list_properties"
-    if "/folios" in path:
-        # nested: /reservations/{id}/folios
-        return "list_folios_nested"
     # Method-style vendor paths (e.g. AtlasPMS /api/v1.3/getReservations):
     # strip any version prefix, then match the method name.
     method = path.rsplit("/", 1)[-1] if "/" in path else path
-    lowered = method.lower()
-    if lowered in ("getreservations", "listreservations", "reservations"):
+    lowered_method = method.lower()
+    if lowered_method in ("getreservations", "listreservations", "reservations"):
         return "list_reservations"
-    if lowered in ("gettransactions", "listtransactions", "folios", "listfolios", "charges"):
+    if lowered_method in ("gettransactions", "listtransactions", "folios", "listfolios", "charges"):
         return "list_folios"
-    if lowered in ("gethotels", "listhotels", "properties", "listproperties"):
+    if lowered_method in ("gethotels", "listhotels", "properties", "listproperties"):
         return "list_properties"
-    if lowered in ("getreservation", "reservation"):
+    if lowered_method in ("getreservation", "reservation"):
         return "get_reservation"
-    if lowered in ("getguest", "guest"):
+    if lowered_method in ("getguest", "guest"):
         return "get_guest"
     # generic sanitize
     name = path.strip("/").replace("/", "_").replace("{", "").replace("}", "").replace("-", "_")
@@ -189,23 +209,27 @@ _IGNORE_FIELDS = {"date"}
 
 # Canonical field -> documented wire names (method-style vendors use
 # camelCase; identity fallback keeps Harbor-style snake_case working).
+# PascalCase spellings cover POST/JSON APIs whose fields are capitalized
+# (Id, AccountId, ScheduledStartUtc, ...). Order matters only within a
+# vendor: _wire_name_for tries the canonical name, then the normalized
+# name, then these aliases, so earlier vendors never change.
 _WIRE_ALIASES: dict[str, tuple[str, ...]] = {
-    "reservation_id": ("reservationID",),
-    "property_id": ("propertyID",),
-    "guest_name": ("guestName",),
-    "arrival_date": ("startDate", "arrivalDate"),
-    "departure_date": ("endDate", "departureDate"),
-    "status": ("status",),
-    "total_amount": ("balance", "total", "totalAmount"),
-    "currency": ("currency", "currencyCode"),
-    "updated_at": ("dateModified", "updatedAt", "modifiedAt"),
-    "charge_id": ("transactionID", "chargeID", "chargeId"),
-    "business_date": ("businessDate",),
-    "amount": ("amount",),
-    "description": ("description",),
-    "posted_at": ("transactionDateTime", "postedAt"),
-    "name": ("propertyName", "name"),
-    "timezone": ("propertyTimezone", "timezone"),
+    "reservation_id": ("reservationID", "ReservationId", "Id"),
+    "property_id": ("propertyID", "PropertyId"),
+    "guest_name": ("guestName", "GuestName"),
+    "arrival_date": ("startDate", "arrivalDate", "ArrivalDate", "ScheduledStartUtc"),
+    "departure_date": ("endDate", "departureDate", "DepartureDate", "ScheduledEndUtc"),
+    "status": ("status", "Status", "State"),
+    "total_amount": ("balance", "total", "totalAmount", "TotalAmount"),
+    "currency": ("currency", "currencyCode", "Currency", "CurrencyCode"),
+    "updated_at": ("dateModified", "updatedAt", "modifiedAt", "UpdatedUtc"),
+    "charge_id": ("transactionID", "chargeID", "chargeId", "ChargeId", "Id"),
+    "business_date": ("businessDate", "BusinessDate"),
+    "amount": ("amount", "Amount", "UnitAmount"),
+    "description": ("description", "Description", "Name"),
+    "posted_at": ("transactionDateTime", "postedAt", "PostedAt", "PostedUtc"),
+    "name": ("propertyName", "name", "Name"),
+    "timezone": ("propertyTimezone", "timezone", "TimeZone"),
 }
 
 # Vendor spellings normalized to canonical (clear vocabularies).
@@ -230,14 +254,22 @@ def _documented_wire_names(iface: Any) -> dict[str, str]:
 
 
 def _wire_name_for(canonical: str, iface: Any) -> str:
-    """Documented wire name for a canonical field (identity fallback)."""
+    """Documented wire name for a canonical field (identity fallback).
+
+    Order: canonical spelling first (Harbor snake_case), then the
+    normalized spelling (Atlas camelCase), then vendor aliases (POST/JSON
+    PascalCase). Earlier vendors never change: a documented canonical or
+    normalized name always wins over an alias added later.
+    """
     pool = _documented_wire_names(iface)
-    for alias in _WIRE_ALIASES.get(canonical, ()):
-        if alias.lower() in pool:
-            return pool[alias.lower()]
+    if canonical.lower() in pool:
+        return pool[canonical.lower()]
     norm = canonical.lower().replace("_", "")
     if norm in pool:
         return pool[norm]
+    for alias in _WIRE_ALIASES.get(canonical, ()):
+        if alias.lower() in pool:
+            return pool[alias.lower()]
     return canonical
 
 
@@ -264,12 +296,13 @@ def _transform_for_field(
             mapping = {"H1": "confirmed", "H2": "checked_in", "H3": "checked_out", "H4": "cancelled", "H5": "no_show"}
         elif status_vocab:
             # Clear vocabulary from docs: map each documented value to its
-            # canonical form (e.g. "canceled" -> "cancelled"); values with no
-            # canonical counterpart (e.g. "not_confirmed") are left out so
-            # they Block via on_unknown instead of being guessed.
+            # canonical form, case-insensitively ("Confirmed" and "confirmed"
+            # both mean confirmed; "Canceled" normalizes to "cancelled").
+            # Values with no canonical counterpart are left out so they
+            # Block via on_unknown instead of being guessed.
             mapping = {}
             for v in status_vocab:
-                canon = _STATUS_NORMALIZE.get(v, v)
+                canon = _STATUS_NORMALIZE.get(v.lower(), v.lower())
                 if canon in _CANONICAL_STATUSES and v not in mapping:
                     mapping[v] = canon
             if not mapping:
@@ -345,8 +378,30 @@ def _pagination_for_strategy(
     ``page``, the page/limit parameter names and the total/next paths are
     derived from the documented params and response fields (e.g.
     ``pageNumber``/``pageSize``/``$.total``); otherwise legacy template
-    defaults are used.
+    defaults are used. ``body_cursor`` (spec v2) always derives its request
+    and response paths from the documented operation.
     """
+    if strategy == "body_cursor":
+        if op is None:
+            raise ValueError("body_cursor pagination requires the documented operation")
+        cursor_path = getattr(op, "body_cursor_path", None)
+        if not cursor_path:
+            raise ValueError("body_cursor pagination requires a documented body cursor path")
+        count_path = getattr(op, "body_count_path", None)
+        cursor_field = getattr(op, "response_cursor_field", None) or "Cursor"
+        items_field = getattr(op, "response_items_field", None) or "data"
+        count_max = getattr(op, "body_count_max", None)
+        body_pagination: dict[str, Any] = {
+            "strategy": "body_cursor",
+            "cursor_path": cursor_path,
+            "next_path": f"$.{cursor_field}",
+            "items_path": f"$.{items_field}",
+            "stop_when": ["null_cursor", "empty_page"],
+        }
+        if isinstance(count_path, str) and count_path:
+            body_pagination["count_path"] = count_path
+        body_pagination["count_value"] = min(100, count_max) if isinstance(count_max, int) else 100
+        return body_pagination
     if strategy == "cursor":
         return {
             "strategy": "cursor",
@@ -423,6 +478,65 @@ def _total_count_path(op: Any) -> str | None:
         if isinstance(name, str) and name.lower() == "total":
             return f"$.{name}"
     return None
+
+
+#: Required body string fields whose description marks them as the caller's
+#: application identity (name + version) get a static template value. These
+#: are not credentials — the value names our own application.
+_APP_IDENTITY_RE = re.compile(r"application name|app name|client.{0,12}version|app.{0,12}version", re.IGNORECASE)
+
+
+def _body_template_for_op(op: Any) -> dict[str, Any]:
+    """Static JSON-body template for a POST operation (spec v2).
+
+    Includes the paging count leaf (page size) and required non-credential
+    string fields documented as the caller application identity. Credential
+    fields never appear here — ``body_fields`` auth injects them at runtime
+    from the environment. The cursor and filters are per-request, not
+    template data.
+    """
+    from autobridge.discovery.docs_reader import is_credential_body_field  # noqa: PLC0415
+
+    body: dict[str, Any] = {}
+    count_path = getattr(op, "body_count_path", None)
+    if isinstance(count_path, str) and count_path:
+        node = body
+        parts = count_path.split(".")
+        for part in parts[:-1]:
+            child = node.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                node[part] = child
+            node = child
+        count_max = getattr(op, "body_count_max", None)
+        node[parts[-1]] = min(100, count_max) if isinstance(count_max, int) else 100
+    for bf in getattr(op, "body_fields", []) or []:
+        bname = getattr(bf, "name", "")
+        if not isinstance(bname, str) or not bname or not getattr(bf, "required", False):
+            continue
+        if is_credential_body_field(bname):
+            continue
+        if _APP_IDENTITY_RE.search(getattr(bf, "description", "") or ""):
+            body[bname] = "AutoBridge/1.0"
+    return body
+
+
+def _derive_body_field_ref(connector_id: str, field_name: str, credential_ref: str | None = None) -> str:
+    """Env key name holding one body auth field's secret (spec v2).
+
+    Derived from the connector's base credential ref (minus its ``_API_KEY``
+    suffix) plus the snake-cased field name, e.g. ``EXAMPLE_CLIENT_TOKEN``.
+    An explicit *credential_ref* override replaces the base only.
+    """
+    base = _derive_credential_ref(connector_id, credential_ref)
+    if base.endswith("_API_KEY"):
+        base = base[: -len("_API_KEY")]
+    snake = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", field_name).upper()
+    snake = re.sub(r"[^A-Z0-9_]", "_", snake).strip("_") or "FIELD"
+    ref = f"{base}_{snake}"
+    if not re.match(r"^[A-Z][A-Z0-9_]{0,127}$", ref):
+        return "CONNECTOR_BODY_FIELD"
+    return ref
 
 
 def _choose_pagination_strategy(
@@ -505,6 +619,15 @@ def visible_tests(spec: dict[str, Any]) -> list[str]:
             errors.append(f"operations.{op_name} offset pagination needs empty_page or null_cursor guard")
         if strategy == "page" and "empty_page" not in stop_when:
             errors.append(f"operations.{op_name} page pagination needs empty_page guard (tokenless stop)")
+        if strategy == "body_cursor":
+            if not pag.get("cursor_path"):
+                errors.append(f"operations.{op_name} body_cursor pagination needs cursor_path (dotted body path)")
+            if not pag.get("next_path"):
+                errors.append(f"operations.{op_name} body_cursor pagination needs next_path (response cursor)")
+            if "null_cursor" not in stop_when:
+                errors.append(f"operations.{op_name} body_cursor pagination needs null_cursor guard")
+            if "empty_page" not in stop_when:
+                errors.append(f"operations.{op_name} body_cursor pagination needs empty_page guard (short-page stop)")
         next_path = pag.get("next_path", "")
         expected_next = {"cursor": "$.next_cursor", "offset": "$.next_offset", "page": "$.next_page"}.get(strategy, "")
         if expected_next and next_path != expected_next and next_path is not None:
@@ -577,10 +700,14 @@ def _compile_spec(
     vendor: str | None = None,
     credential_ref: str | None = None,
     base_url_override: str | None = None,
+    spec_version: int = 1,
 ) -> dict[str, Any]:
     """Compile InterfaceDescription + classification into validated spec dict.
 
-    Does not run probes; deterministic from docs alone.
+    Does not run probes; deterministic from docs alone. ``spec_version`` 2
+    enables POST operations with JSON body templates, ``body_fields`` auth
+    and ``body_cursor`` pagination; version 1 compiles GET/header-auth
+    operations exactly as before (POST operations are skipped).
     """
     # Connector identity
     cid = connector_id or _slugify(iface.title or iface.source or "harbor")
@@ -595,9 +722,13 @@ def _compile_spec(
     # Auth
     auth_kind = "bearer"
     auth_header: str | None = None
+    body_field_names: tuple[str, ...] = ()
     if classification is not None and classification.auth is not None:
         ak = classification.auth.kind
-        if ak in ("bearer", "api_key_header", "basic", "oauth2"):
+        if ak == "body_fields" and getattr(classification.auth, "body_fields", ()):
+            auth_kind = "body_fields"
+            body_field_names = tuple(classification.auth.body_fields)
+        elif ak in ("bearer", "api_key_header", "basic", "oauth2"):
             # Map none/unknown permissive to bearer (Harbor permissive docs still use bearer)
             auth_kind = "bearer" if ak in ("none", "unknown") else ak
             auth_header = classification.auth.header_name
@@ -610,8 +741,15 @@ def _compile_spec(
         "basic": "basic",
         "oauth2": "oauth2_client_credentials",
     }
-    spec_auth_type = auth_type_map.get(auth_kind, "bearer")
-    auth_spec: dict[str, Any] = {"type": spec_auth_type, "credential_ref": cred_ref}
+    if auth_kind == "body_fields":
+        auth_spec = {
+            "type": "body_fields",
+            "body_fields": {fname: _derive_body_field_ref(cid, fname, credential_ref) for fname in body_field_names},
+        }
+        spec_auth_type = "body_fields"
+    else:
+        spec_auth_type = auth_type_map.get(auth_kind, "bearer")
+        auth_spec = {"type": spec_auth_type, "credential_ref": cred_ref}
     if spec_auth_type == "api_key_header":
         auth_spec["header_name"] = auth_header or "X-API-Key"
     if spec_auth_type == "basic":
@@ -646,7 +784,13 @@ def _compile_spec(
             continue
         if "{" in path:
             continue
-        op_name = _op_name_for_path(path)
+        # Spec v1 cannot express POST operations: skip them (the vocabulary
+        # guard in build_draft_spec already refuses POST-only docs, so this
+        # only affects mixed docs, which keep their GET operations).
+        is_post = op.method.upper() == "POST"
+        if is_post and spec_version < 2:
+            continue
+        op_name = _op_name_for_path(path, op.operation_id)
         # Property lists are not Phase 1 canonical entities, and single-item
         # fetches (one reservation / one guest) carry no pagination — skip
         # them to match the reference spec operation set.
@@ -655,6 +799,9 @@ def _compile_spec(
         # /properties is not a Phase 1 canonical entity — skip to match reference spec
         if path in ("/properties", "/property"):
             continue
+        # Checkpoint matching is name-based, so versioned method-style paths
+        # (e.g. .../reservations/getAll/2023-06-06) resolve like /reservations.
+        low_path = f"{op.operation_id} {path}".lower()
         strategy = _choose_pagination_strategy(path, iface, classification)
         pagination = None
         if strategy != "none":
@@ -662,40 +809,46 @@ def _compile_spec(
 
         checkpoint = None
         if pagination is not None:
-            low_path = path.lower()
             if "reservation" in low_path:
                 checkpoint = {"field": _checkpoint_field_for_entity("Reservation", iface), "mode": "max"}
-            elif "folio" in low_path or "charge" in low_path or "transaction" in low_path:
+            elif "folio" in low_path or "charge" in low_path or "transaction" in low_path or "orderitem" in low_path or "order_item" in low_path:
                 checkpoint = {"field": _checkpoint_field_for_entity("FolioCharge", iface), "mode": "max"}
             else:
                 checkpoint = {"field": _checkpoint_field_for_entity("Reservation", iface), "mode": "max"}
 
-        op_spec: dict[str, Any] = {"method": "GET", "path": path}
+        method = "POST" if is_post else "GET"
+        op_spec: dict[str, Any] = {"method": method, "path": path}
+        if method == "POST":
+            body = _body_template_for_op(op)
+            if body:
+                op_spec["body"] = body
         if pagination is not None:
             op_spec["pagination"] = pagination
         if checkpoint is not None:
             op_spec["checkpoint"] = checkpoint
         operations[op_name] = op_spec
 
-    # Ensure we have at least reservations and folios ops (Harbor reference)
-    if "list_reservations" not in operations:
-        has_cursor = any("cursor" in n.lower() for n, _ in iface.pagination_notes)
-        strat = "cursor" if has_cursor else "offset"
-        operations["list_reservations"] = {
-            "method": "GET",
-            "path": "/reservations",
-            "pagination": _pagination_for_strategy(strat),
-            "checkpoint": {"field": "$.updated_at", "mode": "max"},
-        }
-    if "list_folios" not in operations:
-        has_cursor = any("cursor" in n.lower() for n, _ in iface.pagination_notes)
-        strat = "cursor" if has_cursor else "offset"
-        operations["list_folios"] = {
-            "method": "GET",
-            "path": "/folios",
-            "pagination": _pagination_for_strategy(strat),
-            "checkpoint": {"field": "$.posted_at", "mode": "max"},
-        }
+    # Ensure we have at least reservations and folios ops (Harbor reference).
+    # GET fallbacks only: a v2 POST vocabulary never invents GET operations.
+    if spec_version < 2:
+        if "list_reservations" not in operations:
+            has_cursor = any("cursor" in n.lower() for n, _ in iface.pagination_notes)
+            strat = "cursor" if has_cursor else "offset"
+            operations["list_reservations"] = {
+                "method": "GET",
+                "path": "/reservations",
+                "pagination": _pagination_for_strategy(strat),
+                "checkpoint": {"field": "$.updated_at", "mode": "max"},
+            }
+        if "list_folios" not in operations:
+            has_cursor = any("cursor" in n.lower() for n, _ in iface.pagination_notes)
+            strat = "cursor" if has_cursor else "offset"
+            operations["list_folios"] = {
+                "method": "GET",
+                "path": "/folios",
+                "pagination": _pagination_for_strategy(strat),
+                "checkpoint": {"field": "$.posted_at", "mode": "max"},
+            }
 
     # Entities — only canonical Reservation + FolioCharge for Phase 1
     status_vocab: tuple[str, ...] = ()
@@ -737,7 +890,7 @@ def _compile_spec(
     }
 
     spec: dict[str, Any] = {
-        "spec_version": 1,
+        "spec_version": spec_version,
         "connector": {"id": cid, "vendor": ven},
         "source": {
             "base_url": base_placeholder,
@@ -765,6 +918,7 @@ def build_draft_spec(
     provider: Any | None = None,
     llm_budget: Any | None = None,
     http_client_factory: Any | None = None,
+    spec_vocabulary: str = "v1",
 ) -> BootstrapResult:
     """Build draft spec from docs text (docs → draft spec → compile → visible tests).
 
@@ -785,10 +939,16 @@ def build_draft_spec(
         provider: LLMProvider for L2/L3 (optional).
         llm_budget: Budget for model calls (optional).
         http_client_factory: Unused, reserved for probe HTTP factory.
+        spec_vocabulary: ConnectorSpec vocabulary the build may use: ``"v1"``
+            (GET + header auth; the default, so the v1 refusal stays
+            demonstrable) or ``"v2"`` (additionally POST with a JSON body
+            template, ``body_fields`` auth and ``body_cursor`` pagination).
 
     Returns:
         BootstrapResult with draft_spec, validation, degradation if ambiguous.
     """
+    if spec_vocabulary not in ("v1", "v2"):
+        raise ValueError(f"spec_vocabulary must be 'v1' or 'v2', got {spec_vocabulary!r}")
     trace: list[dict[str, Any]] = []
     model_usage: dict[str, Any] = {"frontier_tokens": 0, "small_tokens": 0, "calls": 0, "frontier_calls": 0, "small_calls": 0}
     evidence_payloads: list[dict[str, Any]] = []
@@ -828,11 +988,12 @@ def build_draft_spec(
     # Stage 1b: vocabulary guard (general, vendor-neutral). ConnectorSpec v1
     # can only express GET operations with header auth. When the docs describe
     # no GET operation at all (e.g. a POST-with-JSON-body API with body-field
-    # auth), there is nothing in the vocabulary to compile:
-    # refuse cleanly instead of inventing GET operations that do not exist.
+    # auth), there is nothing in the v1 vocabulary to compile: refuse cleanly
+    # instead of inventing GET operations that do not exist.
     # REQ-020 item 4: this is the demonstrable "before" refusal (0 model calls).
+    # Pass spec_vocabulary="v2" to compile the v2 vocabulary instead.
     methods = {op.method.upper() for op in iface.operations}
-    if iface.operations and "GET" not in methods:
+    if iface.operations and "GET" not in methods and spec_vocabulary == "v1":
         only = sorted(methods)
         return BootstrapResult(
             success=False,
@@ -966,7 +1127,15 @@ def build_draft_spec(
 
     # Stage 5: compile spec
     try:
-        draft_spec = _compile_spec(iface, classification, connector_id=connector_id, vendor=vendor, credential_ref=credential_ref, base_url_override=base_url_override)
+        draft_spec = _compile_spec(
+            iface,
+            classification,
+            connector_id=connector_id,
+            vendor=vendor,
+            credential_ref=credential_ref,
+            base_url_override=base_url_override,
+            spec_version=2 if spec_vocabulary == "v2" else 1,
+        )
         trace.append({"stage": "compile", "connector_id": draft_spec["connector"]["id"], "operations": list(draft_spec["operations"].keys()), "entities": list(draft_spec["entities"].keys())})
     except Exception as exc:
         return BootstrapResult(

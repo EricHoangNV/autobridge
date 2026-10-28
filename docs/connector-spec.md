@@ -426,3 +426,46 @@ operations:
       items_path: $.Reservations
       stop_when: [null_cursor, repeated_cursor, empty_page]
 ```
+
+## 11. Discovery proposes v2 from docs (REQ-020.5b)
+
+Discovery stays deterministic and vendor-neutral; the same docs that v1
+refuses compile under v2 with zero model calls. The build opts in per call
+with `spec_vocabulary="v2"` (`"v1"` is the default, so the item-4 "before"
+refusal stays demonstrable; REQ-021 makes this a per-build setting).
+
+* Reader: parses `requestBody` (allOf-resolved, so shared auth bases plus
+  per-operation filters expose every field), records required body fields,
+  the body paging envelope (cursor + count leaves, e.g.
+  `Limitation.Cursor` / `Limitation.Count` with the documented maximum) and
+  the response item-array and cursor fields. No `securitySchemes` plus
+  required credential-like body fields (`token`/`secret`/`password` in the
+  name) means `body_fields` auth. Component schemas are allOf-resolved too.
+* Classifiers: `auth.kind == body_fields` with the field names (high
+  confidence from docs, medium when inferred without an auth section);
+  `pagination_hint == body_cursor` per POST operation with the envelope in
+  and the response cursor out (high confidence). GET probes never override a
+  `body_cursor` guess — a query probe cannot validate a body contract.
+* Hypotheses: POST operations with the body-paging signal get a fourth
+  `body_cursor` hypothesis carrying the documented request/response paths;
+  GET operations keep the classic offset/cursor/page three. Probes stay
+  GET-only: a POST-only interface yields no probe candidates and the
+  selector returns `None` gracefully instead of inventing probes.
+* Compile: operation names from generic English synonyms
+  (reservation/booking, order-item/folio/charge/transaction,
+  customer/guest, configuration/enterprise; singular fetches keep the
+  `get_*` skip names), wire names canonical-first then normalized then
+  alias (PascalCase included, so earlier vendors never change), status maps
+  case-insensitive (`Confirmed` → `confirmed`), checkpoints from the
+  documented instant fields. The body template holds the page-size leaf and
+  the caller-identity field; secrets never appear — `body_fields` auth maps
+  each field to `<BASE>_<SNAKE>` refs (also exposed as
+  `runtime.auth.spec_auth_refs`, with `primary_credential_ref` for the
+  single-ref Connector row; read-time redaction already sweeps every
+  credential-like env name).
+
+Joins (reservation → customer name, reservation → order-item money sums,
+UTC instants → enterprise time-zone business dates) are item 5c: 5b fields
+that need a join compile to honest fallbacks (`$.guest_name`,
+`$.total_amount`, `$.business_date`) and validate, but do not sync money or
+names yet.

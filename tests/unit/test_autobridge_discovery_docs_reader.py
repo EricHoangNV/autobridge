@@ -542,3 +542,160 @@ def test_markdown_heading_auth_fallback() -> None:
     text = "# Title\n## Authentication\nUse bearer token here but not in content? Actually content has it.\n"
     iface = parse_markdown(text, source="ah.md")
     assert iface.auth is not None
+
+
+# ---------------------------------------------------------------------------
+# POST JSON-body APIs (spec v2 discovery: body_fields auth, body_cursor)
+# ---------------------------------------------------------------------------
+
+POST_BODY_OPENAPI = {
+    "openapi": "3.0.1",
+    "info": {"title": "Example Connector API", "version": "2023-06-06"},
+    "servers": [{"url": "https://api.example.test/api/connector/v1"}],
+    "paths": {
+        "/widgets/getAll/2023-06-06": {
+            "post": {
+                "operationId": "widgetsGetAll",
+                "summary": "Get all widgets",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "allOf": [
+                                    {"$ref": "#/components/schemas/ApiBase"},
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "Limitation": {"$ref": "#/components/schemas/Limitation"},
+                                        },
+                                    },
+                                ]
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "One page of widgets plus the paging cursor.",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/WidgetsGetAllResponse"}
+                            }
+                        },
+                    }
+                },
+            }
+        },
+        "/configuration/get/2023-06-06": {
+            "post": {
+                "operationId": "configurationGet",
+                "summary": "Get configuration",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ApiBase"}
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Configuration rows.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "Enterprises": {"type": "array"},
+                                    },
+                                }
+                            }
+                        },
+                    }
+                },
+            }
+        },
+    },
+    "components": {
+        "schemas": {
+            "ApiBase": {
+                "type": "object",
+                "required": ["ClientToken", "AccessToken", "Client"],
+                "properties": {
+                    "ClientToken": {"type": "string", "description": "Identifies your integration."},
+                    "AccessToken": {"type": "string", "description": "Identifies the enterprise."},
+                    "Client": {"type": "string", "description": "Your application name and version."},
+                },
+            },
+            "Limitation": {
+                "type": "object",
+                "required": ["Count"],
+                "properties": {
+                    "Count": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    "Cursor": {"type": "string", "nullable": True},
+                },
+            },
+            "WidgetsGetAllResponse": {
+                "type": "object",
+                "required": ["Widgets", "Cursor"],
+                "properties": {
+                    "Widgets": {"type": "array"},
+                    "Cursor": {"type": "string", "nullable": True},
+                },
+            },
+        }
+    },
+}
+
+
+def test_post_body_operations_capture_request_body() -> None:
+    iface = parse_openapi_dict(POST_BODY_OPENAPI, source="post.json")
+    assert len(iface.operations) == 2
+    widgets = next(o for o in iface.operations if o.operation_id == "widgetsGetAll")
+    assert widgets.method == "POST"
+    assert {b.name for b in widgets.body_fields} >= {"ClientToken", "AccessToken", "Client", "Limitation"}
+    token_field = next(b for b in widgets.body_fields if b.name == "ClientToken")
+    assert token_field.required is True
+    assert widgets.body_required == ["ClientToken", "AccessToken", "Client"]
+    assert widgets.body_cursor_path == "Limitation.Cursor"
+    assert widgets.body_count_path == "Limitation.Count"
+    assert widgets.body_count_max == 1000
+    assert widgets.response_items_field == "Widgets"
+    assert widgets.response_cursor_field == "Cursor"
+    assert widgets.pagination_hint == "body_cursor"
+
+
+def test_post_body_config_operation_has_no_paging_signal() -> None:
+    iface = parse_openapi_dict(POST_BODY_OPENAPI, source="post.json")
+    config = next(o for o in iface.operations if o.operation_id == "configurationGet")
+    assert config.method == "POST"
+    assert config.body_cursor_path is None
+    assert config.response_cursor_field is None
+    assert config.response_items_field == "Enterprises"
+    assert config.pagination_hint == "none"
+
+
+def test_post_body_auth_kind_from_required_body_fields() -> None:
+    iface = parse_openapi_dict(POST_BODY_OPENAPI, source="post.json")
+    assert iface.auth is not None
+    assert iface.auth.kind == "body_fields"
+    assert tuple(iface.auth.body_fields) == ("ClientToken", "AccessToken")
+    assert iface.auth.provenance is not None
+
+
+def test_allof_request_schemas_expose_base_fields() -> None:
+    iface = parse_openapi_dict(POST_BODY_OPENAPI, source="post.json")
+    req = next(s for s in iface.schemas if s.name == "ApiBase")
+    assert {f.name for f in req.fields} == {"ClientToken", "AccessToken", "Client"}
+
+
+def test_credential_body_field_names_generic() -> None:
+    from autobridge.discovery.docs_reader import is_credential_body_field
+
+    assert is_credential_body_field("ClientToken")
+    assert is_credential_body_field("AccessToken")
+    assert is_credential_body_field("api_secret")
+    assert not is_credential_body_field("Client")
+    assert not is_credential_body_field("Limitation")
+    assert not is_credential_body_field("")

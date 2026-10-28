@@ -747,3 +747,76 @@ def test_hypothesis_ids_unique_within_run() -> None:
     hyps = enum.enumerate_all(iface, cls)
     ids = [h.id for h in hyps]
     assert len(ids) == len(set(ids)), "hypothesis ids must be unique"
+
+
+# ---------------------------------------------------------------------------
+# Spec v2: body_cursor hypothesis for POST ops with a body-paging signal
+# ---------------------------------------------------------------------------
+
+from autobridge.discovery.docs_reader import BodyField  # noqa: E402
+from autobridge.discovery.hypotheses import BODY_CURSOR_STRATEGY  # noqa: E402
+
+
+def _post_op_with_body_paging(path: str = "/widgets/getAll/2023-06-06") -> OperationDescription:
+    return OperationDescription(
+        operation_id="widgetsGetAll",
+        method="POST",
+        path=path,
+        body_fields=[BodyField(name="ClientToken", required=True)],
+        body_required=["ClientToken"],
+        body_cursor_path="Limitation.Cursor",
+        body_count_path="Limitation.Count",
+        body_count_max=1000,
+        response_items_field="Widgets",
+        response_cursor_field="Cursor",
+        pagination_hint="body_cursor",
+        provenance=_prov(),
+    )
+
+
+def test_pagination_body_cursor_only_for_post_ops_with_signal() -> None:
+    iface = _iface_minimal()
+    iface.operations = [_post_op_with_body_paging()]
+    hyps = enumerate_pagination_hypotheses(iface)
+    by_strategy = {h.strategy for h in hyps}
+    assert by_strategy == {"offset", "cursor", "page", BODY_CURSOR_STRATEGY}
+    body = next(h for h in hyps if h.strategy == BODY_CURSOR_STRATEGY)
+    assert body.id == "pagination:/widgets/getAll/2023-06-06:body_cursor"
+    assert body.candidate_mapping_fragment["pagination"]["cursor_path"] == "Limitation.Cursor"
+    assert body.candidate_mapping_fragment["pagination"]["count_path"] == "Limitation.Count"
+    assert body.candidate_mapping_fragment["pagination"]["count_value"] == 100
+    assert body.candidate_mapping_fragment["pagination"]["next_path"] == "$.Cursor"
+    assert body.candidate_mapping_fragment["pagination"]["items_path"] == "$.Widgets"
+    assert body.evidence_for
+
+
+def test_pagination_get_ops_keep_classic_three_strategies() -> None:
+    iface = _iface_minimal()
+    get_op = OperationDescription(
+        operation_id="listThings",
+        method="GET",
+        path="/things",
+        params=[ParamDescription(name="cursor", location="query")],
+        pagination_hint="cursor",
+        provenance=_prov(),
+    )
+    iface.operations = [get_op, _post_op_with_body_paging()]
+    hyps = enumerate_pagination_hypotheses(iface)
+    get_hyps = [h for h in hyps if h.field == "/things"]
+    assert {h.strategy for h in get_hyps} == {"offset", "cursor", "page"}
+    post_hyps = [h for h in hyps if h.field == "/widgets/getAll/2023-06-06"]
+    assert {h.strategy for h in post_hyps} == {"offset", "cursor", "page", BODY_CURSOR_STRATEGY}
+
+
+def test_pagination_post_without_signal_has_no_body_cursor() -> None:
+    iface = _iface_minimal()
+    plain_post = OperationDescription(
+        operation_id="doThing",
+        method="POST",
+        path="/things/do",
+        pagination_hint="none",
+        provenance=_prov(),
+    )
+    iface.operations = [plain_post]
+    hyps = enumerate_pagination_hypotheses(iface)
+    assert all(h.strategy != BODY_CURSOR_STRATEGY for h in hyps)
