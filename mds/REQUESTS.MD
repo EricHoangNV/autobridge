@@ -7,7 +7,7 @@ remaining review FAIL item. Constraint for all of them: someone who downloads th
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
 ### REQ-015 — e2e tests do not send the control token (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 09:46)
 With `AUTOBRIDGE_CONTROL_TOKEN` exported, 6 tests fail with `401 Missing or invalid control token`:
 `test_s2_edge_target.py::test_edge_execute_signed_release_live`, `test_s3_discovery_import.py` (import_and_list fake +
 live, lifecycle live + fake), `test_s7_cli.py::test_s7_cli_repairs_approve_and_reject_fake`. Ralph's gates miss this
