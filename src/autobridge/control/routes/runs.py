@@ -93,6 +93,7 @@ def _repair_to_out(r: RepairRun) -> RepairRunOut:
         verifier_report_id=r.verifier_report_id,
         decision=r.decision,
         model_usage=dict(r.model_usage or {}),
+        ladder_trace=list(r.ladder_trace or []),
         escalation_bundle=dict(r.escalation_bundle) if r.escalation_bundle else None,
         created_at=r.created_at,
     )

@@ -12,6 +12,7 @@ import { HypothesesPanel } from "@/components/HypothesesPanel";
 import { VisibleTestsPanel } from "@/components/VisibleTestsPanel";
 import { VerifierVerdict } from "@/components/VerifierVerdict";
 import { RepairActions } from "@/components/RepairActions";
+import { RungLedger } from "@/components/RungLedger";
 import { InjectFaultDrawer } from "@/components/InjectFaultDrawer";
 import { useRunEvents } from "@/lib/sse";
 import { maxLadderLevel } from "@/lib/ladder-events";
@@ -506,6 +507,13 @@ export default function RepairDetailPage({ params }: PageProps) {
             {totalTests > 0 ? `${passedCount}/${totalTests} pass` : "No visible tests recorded"}
           </p>
           <VisibleTestsPanel visibleTestResults={repair.visible_test_results as never} />
+        </div>
+        <div>
+          <h2 className="sec">Rung ledger</h2>
+          <p className="mb-2 text-xs text-ink-2 num">
+            Every rung the ladder tried, why it moved up, and the model calls it made.
+          </p>
+          <RungLedger repairId={repair.id} />
         </div>
       </section>
 

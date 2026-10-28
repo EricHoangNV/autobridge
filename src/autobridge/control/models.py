@@ -468,6 +468,12 @@ class RepairRun(Base):
     model_usage: Mapped[dict[str, Any]] = mapped_column(
         GenericJSON, nullable=False, default=dict
     )
+    #: Rung-by-rung ledger source: every ladder trace entry (level, action,
+    #: one-line reason) for this walk (REQ-021 item 3). Read with
+    #: ``rung_ledger`` together with this run's ``ModelCall`` rows.
+    ladder_trace: Mapped[list[dict[str, Any]]] = mapped_column(
+        GenericJSON, nullable=False, default=list
+    )
     #: Escalation bundle (L4): evidence + one precise question for a human.
     #: Only set when decision == "escalate"; otherwise None. Stored as JSON
     #: dict with keys ``reason``, ``question``, ``evidence_ids``,

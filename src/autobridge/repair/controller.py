@@ -100,6 +100,7 @@ class RepairController:
                 verifier_report_id=None,
                 decision=result.decision,
                 model_usage=dict(result.model_usage),
+                ladder_trace=list(result.ladder_trace),
                 escalation_bundle=bundle_dict,
             )
             session.add(run)

@@ -654,6 +654,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repairs/{repair_id}/ledger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Repair Ledger
+         * @description Rung-by-rung ledger for a repair (REQ-021 item 3).
+         *
+         *     Every rung the ladder tried with its one-line reason, each linked to
+         *     the run's ``ModelCall`` rows (tier, purpose, tokens, estimated cost).
+         *     Costs are Decimal strings end to end; prompts and responses never leave
+         *     the ledger table.
+         */
+        get: operations["get_repair_ledger_repairs__repair_id__ledger_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repairs/{repair_id}/reject": {
         parameters: {
             query?: never;
@@ -1305,6 +1330,10 @@ export interface components {
             kind: "repair";
             /** Ladder Level Reached */
             ladder_level_reached: number;
+            /** Ladder Trace */
+            ladder_trace?: {
+                [key: string]: unknown;
+            }[];
             /** Model Usage */
             model_usage: {
                 [key: string]: unknown;
@@ -1359,6 +1388,61 @@ export interface components {
             };
             /** State */
             state?: string | null;
+        };
+        /** RungAttemptOut */
+        RungAttemptOut: {
+            /** Action */
+            action: string;
+            /** Calls */
+            calls?: components["schemas"]["RungCallOut"][];
+            /** Reason */
+            reason: string;
+            /** Rung */
+            rung: number;
+        };
+        /** RungCallOut */
+        RungCallOut: {
+            /** Cost */
+            cost: string;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Purpose */
+            purpose: string;
+            /** Tier */
+            tier: string;
+        };
+        /** RungLedgerOut */
+        RungLedgerOut: {
+            /** Attempts */
+            attempts?: components["schemas"]["RungAttemptOut"][];
+            /** Decision */
+            decision: string;
+            /**
+             * Frontier Tokens
+             * @default 0
+             */
+            frontier_tokens: number;
+            /** Repair Run Id */
+            repair_run_id: string;
+            /** Resolved Rung */
+            resolved_rung: number;
+            /**
+             * Small Tokens
+             * @default 0
+             */
+            small_tokens: number;
+            /**
+             * Total Calls
+             * @default 0
+             */
+            total_calls: number;
+            /**
+             * Total Cost
+             * @default 0
+             */
+            total_cost: string;
         };
         /** ScorecardEntry */
         ScorecardEntry: {
@@ -3608,6 +3692,59 @@ export interface operations {
             };
             /** @description Missing or invalid control token */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_repair_ledger_repairs__repair_id__ledger_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                repair_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RungLedgerOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

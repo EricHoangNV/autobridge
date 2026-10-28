@@ -251,6 +251,97 @@ def _merge_model_usage(base: dict[str, Any], delta: dict[str, Any]) -> dict[str,
     return merged
 
 
+#: Ladder rung that makes small-tier (L2) vs frontier-tier (L3) model calls.
+#: The repair ladder uses small models only at L2 and frontier models only
+#: at L3, so a call's tier identifies the rung that made it (REQ-021 item 3).
+_CALL_TIER_TO_RUNG: dict[str, int] = {"small": 2, "frontier": 3}
+
+
+def _call_field(call: Any, name: str, default: Any = None) -> Any:
+    if isinstance(call, dict):
+        return call.get(name, default)
+    return getattr(call, name, default)
+
+
+def rung_ledger(
+    trace: list[dict[str, Any]] | None,
+    model_calls: list[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Derive the rung-by-rung ledger from a ladder trace (REQ-021 item 3).
+
+    One entry per trace entry that names a ladder level: the rung tried, the
+    action taken and the one-line reason recorded when it was tried. Each
+    :class:`ModelCall` attaches to the rung that made it (small → L2,
+    frontier → L3; calls of an unknown tier attach to the last attempt so
+    nothing is silently dropped). Every call is summarized as
+    tier/purpose/tokens/estimated cost — never the prompt or response.
+    """
+    attempts: list[dict[str, Any]] = []
+    for entry in trace or []:
+        if not isinstance(entry, dict):
+            continue
+        level = entry.get("level")
+        if not isinstance(level, int) or isinstance(level, bool):
+            continue
+        attempts.append(
+            {
+                "rung": level,
+                "action": str(entry.get("action", "")),
+                "reason": str(entry.get("reason", "")),
+                "calls": [],
+            }
+        )
+    for call in model_calls or []:
+        tier = str(_call_field(call, "tier", ""))
+        purpose = str(_call_field(call, "purpose", "") or "")
+        summary = {
+            "tier": tier,
+            "purpose": purpose,
+            "input_tokens": int(_call_field(call, "input_tokens", 0) or 0),
+            "output_tokens": int(_call_field(call, "output_tokens", 0) or 0),
+            "cost": str(_call_field(call, "cost_estimate", "0") or "0"),
+        }
+        rung = _CALL_TIER_TO_RUNG.get(tier)
+        placed = False
+        if rung is not None:
+            for attempt in attempts:
+                if attempt["rung"] == rung:
+                    attempt["calls"].append(summary)
+                    placed = True
+                    break
+        if not placed and attempts:
+            attempts[-1]["calls"].append(summary)
+    return attempts
+
+
+def ledger_totals(attempts: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Summarize a rung ledger: calls, small/frontier tokens, Decimal cost."""
+    from decimal import Decimal  # noqa: PLC0415
+
+    calls = 0
+    small_tokens = 0
+    frontier_tokens = 0
+    cost = Decimal("0")
+    for attempt in attempts or []:
+        for call in attempt.get("calls", []):
+            calls += 1
+            tokens = int(call.get("input_tokens", 0)) + int(call.get("output_tokens", 0))
+            if call.get("tier") == "frontier":
+                frontier_tokens += tokens
+            elif call.get("tier") == "small":
+                small_tokens += tokens
+            try:
+                cost += Decimal(str(call.get("cost", "0")))
+            except Exception:
+                continue
+    return {
+        "calls": calls,
+        "small_tokens": small_tokens,
+        "frontier_tokens": frontier_tokens,
+        "cost": str(cost),
+    }
+
+
 def _patch_from_hypothesis(
     spec: dict[str, Any],
     hypothesis: Any,

@@ -8,8 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autobridge.control.deps import get_db
-from autobridge.control.models import DriftEvent, RepairRun
-from autobridge.control.schemas import DriftEventOut, RepairRunOut
+from autobridge.control.models import DriftEvent, ModelCall, RepairRun
+from autobridge.control.schemas import (
+    DriftEventOut,
+    RepairRunOut,
+    RungLedgerOut,
+)
 
 router = APIRouter(tags=["drift"])
 
@@ -75,6 +79,7 @@ def list_repairs(connector_id: str | None = None, db: Session = Depends(get_db))
             verifier_report_id=r.verifier_report_id,
             decision=r.decision,
             model_usage=dict(r.model_usage or {}),
+            ladder_trace=list(r.ladder_trace or []),
             escalation_bundle=dict(r.escalation_bundle) if r.escalation_bundle else None,
             created_at=r.created_at,
         )
@@ -98,6 +103,36 @@ def get_repair(repair_id: str, db: Session = Depends(get_db)) -> RepairRunOut:
         verifier_report_id=r.verifier_report_id,
         decision=r.decision,
         model_usage=dict(r.model_usage or {}),
+        ladder_trace=list(r.ladder_trace or []),
         escalation_bundle=dict(r.escalation_bundle) if r.escalation_bundle else None,
         created_at=r.created_at,
+    )
+
+
+@router.get("/repairs/{repair_id}/ledger", response_model=RungLedgerOut)
+def get_repair_ledger(repair_id: str, db: Session = Depends(get_db)) -> RungLedgerOut:
+    """Rung-by-rung ledger for a repair (REQ-021 item 3).
+
+    Every rung the ladder tried with its one-line reason, each linked to
+    the run's ``ModelCall`` rows (tier, purpose, tokens, estimated cost).
+    Costs are Decimal strings end to end; prompts and responses never leave
+    the ledger table.
+    """
+    from autobridge.repair.ladder import ledger_totals, rung_ledger  # noqa: PLC0415
+
+    r = db.get(RepairRun, repair_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail=f"RepairRun {repair_id!r} not found")
+    calls = db.execute(select(ModelCall).where(ModelCall.run_id == repair_id)).scalars().all()
+    attempts = rung_ledger(list(r.ladder_trace or []), list(calls))
+    totals = ledger_totals(attempts)
+    return RungLedgerOut(
+        repair_run_id=r.id,
+        decision=r.decision,
+        resolved_rung=r.ladder_level_reached,
+        attempts=attempts,  # type: ignore[arg-type]
+        total_calls=totals["calls"],
+        small_tokens=totals["small_tokens"],
+        frontier_tokens=totals["frontier_tokens"],
+        total_cost=totals["cost"],
     )

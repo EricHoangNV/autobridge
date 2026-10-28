@@ -431,9 +431,39 @@ def _failed_call_error(calls: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def _finish_step(
-    name: str, evidence: dict[str, Any], calls: list[dict[str, Any]]
-) -> dict[str, Any]:
+def rung_table_row(step: dict[str, Any]) -> str:
+    """One per-run usage row (REQ-021 item 3).
+
+    ``scenario | rung that resolved it | model calls | small tokens |
+    frontier tokens | why it escalated`` — read from the step's own
+    evidence, so a step never reports a climb it did not perform.
+    """
+    evidence = step.get("evidence", {}) if isinstance(step.get("evidence"), dict) else {}
+    usage = evidence.get("model_usage_ledger", {}) if isinstance(evidence.get("model_usage_ledger"), dict) else {}
+    scenario = str(step.get("name", "?"))
+    resolved = str(evidence.get("resolved_rung", "—"))
+    calls = int(usage.get("calls", 0) or 0)
+    small = int(usage.get("small_tokens", 0) or 0)
+    frontier = int(usage.get("frontier_tokens", evidence.get("frontier_tokens", 0)) or 0)
+    why = str(
+        evidence.get("why_escalated")
+        or evidence.get("escalation_question")
+        or evidence.get("rejection_reason")
+        or evidence.get("degradation")
+        or "—"
+    )
+    return f"{scenario} | resolved {resolved} | {calls} calls | {small} small / {frontier} frontier | {why}"
+
+
+def render_rung_summary(report: dict[str, Any]) -> str:
+    """Per-run model-usage table across all demo steps (REQ-021 item 3)."""
+    lines = ["per-run model usage:"]
+    for step in report.get("steps", []):
+        lines.append(f"  {rung_table_row(step)}")
+    return "\n".join(lines)
+
+
+def _finish_step(name: str, evidence: dict[str, Any], calls: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a step record; any non-2xx live call fails the step (REQ-016)."""
     error = _failed_call_error(calls)
     if error is not None:
@@ -523,6 +553,8 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
             "fingerprint_id": summary.get("fingerprint_id"),
             "model_usage_ledger": model_usage,
             "credential_ref": spec["source"]["auth"]["credential_ref"],
+            "resolved_rung": "—",
+            "rung_attempts": [],
         },
         calls,
     )
@@ -562,6 +594,8 @@ def step2_unfamiliar_api(seed: int, live: bool, base_url: str) -> dict[str, Any]
         "open_questions": list(result.open_questions or []),
         "model_usage_ledger": result.model_usage,
         "degradation": result.degradation_reason,
+        "resolved_rung": "—",
+        "rung_attempts": [],
     }
     calls: list[dict[str, Any]] = []
     if live:
@@ -606,6 +640,23 @@ def step3_zero_token_recovery(seed: int, live: bool, base_url: str) -> dict[str,
         calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-atlas", "scenario_id": "page_to_cursor", "seed": seed}))
         calls.append(_control_call(base_url, "GET", "/drift"))
         calls.append(_control_call(base_url, "GET", "/repairs"))
+    attempts = [
+        {
+            "rung": 0,
+            "action": "knowledge_hit" if l0_hit else "knowledge_miss",
+            "reason": "L0 hit: cached page_to_cursor patch reused"
+            if l0_hit
+            else "L0 miss: no known fix for atlas+pagination delta",
+        }
+    ]
+    if not l0_hit:
+        attempts.append(
+            {
+                "rung": 1,
+                "action": "rule_applied",
+                "reason": "L1 page_to_cursor precondition matched; JSON Patch generated",
+            }
+        )
     return _finish_step(
         "Zero-token recovery — page_to_cursor via L1 rule",
         {
@@ -615,6 +666,8 @@ def step3_zero_token_recovery(seed: int, live: bool, base_url: str) -> dict[str,
             "patch_ops": len(patch),
             "patch": patch[:4],
             "frontier_tokens": 0,
+            "resolved_rung": "L0" if l0_hit else "L1",
+            "rung_attempts": attempts,
         },
         calls,
     )
@@ -648,6 +701,15 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             "rejection_reason": "total_amount must stay gross; net_amount is the decoy net",
             "escalation_question": bundle.question,
             "money_type": "Decimal(2dp)",
+            "resolved_rung": "L4 (escalated)",
+            "rung_attempts": [
+                {
+                    "rung": 4,
+                    "action": "escalate",
+                    "reason": "no deterministic rule maps net_amount safely; one operator question",
+                }
+            ],
+            "why_escalated": "total_amount must stay gross; net_amount is the decoy net",
         },
         calls,
     )
@@ -670,6 +732,8 @@ def step5_head_to_head(seed: int, live: bool, base_url: str) -> dict[str, Any]:
         body = rec.get("body")
         if isinstance(body, dict):
             evidence["control_scorecards_total"] = body.get("total")
+    evidence["resolved_rung"] = "—"
+    evidence["rung_attempts"] = []
     return _finish_step(
         "Head-to-head — bench scorecards",
         evidence,
@@ -690,6 +754,8 @@ def step6_reproducibility(seed: int, live: bool, base_url: str) -> dict[str, Any
             "atlas_reference_signature": _load_reference_signature("atlaspms"),
             "harbor_reference_signature": _load_reference_signature("harborpms"),
             "replay": "make demo (DEMO_SEED=… CONTROL_URL=…)",
+            "resolved_rung": "—",
+            "rung_attempts": [],
         },
         "control_calls": [],
     }
@@ -764,6 +830,8 @@ def render_text(report: dict[str, Any]) -> str:
         for call in step.get("control_calls", []):
             status = call.get("status")
             out.append(f"    control {call.get('method')} {call.get('path')} -> {status}")
+        out.append(f"    {rung_table_row(step)}")
+    out.append(render_rung_summary(report))
     out.append(f"demo {'complete' if report['failed'] == 0 else f'{report['failed']} step(s) FAILED'}: 6 steps via control API" if report["mode"] == "live-control-api" else f"demo {'complete' if report['failed'] == 0 else f'{report['failed']} step(s) FAILED'}: local evidence (control plane unreachable at {report['control_url']})")
     return "\n".join(out)
 

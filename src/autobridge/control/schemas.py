@@ -178,6 +178,7 @@ class RepairRunOut(BaseModel):
     verifier_report_id: str | None = None
     decision: str
     model_usage: dict[str, Any]
+    ladder_trace: list[dict[str, Any]] = Field(default_factory=list)
     escalation_bundle: dict[str, Any] | None = None
     created_at: UtcDatetime
     kind: Literal["repair"] = "repair"
@@ -354,6 +355,32 @@ class InjectFaultResponse(BaseModel):
     seed: int | None = None
     admin_response: dict[str, Any] | None = None
     message: str
+
+
+class RungCallOut(BaseModel):
+    tier: str
+    purpose: str
+    input_tokens: int
+    output_tokens: int
+    cost: str
+
+
+class RungAttemptOut(BaseModel):
+    rung: int
+    action: str
+    reason: str
+    calls: list[RungCallOut] = Field(default_factory=list)
+
+
+class RungLedgerOut(BaseModel):
+    repair_run_id: str
+    decision: str
+    resolved_rung: int
+    attempts: list[RungAttemptOut] = Field(default_factory=list)
+    total_calls: int = 0
+    small_tokens: int = 0
+    frontier_tokens: int = 0
+    total_cost: str = "0"
 
 
 class ModelUsageEntry(BaseModel):

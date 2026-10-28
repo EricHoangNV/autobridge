@@ -1389,6 +1389,14 @@
             "title": "Ladder Level Reached",
             "type": "integer"
           },
+          "ladder_trace": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Ladder Trace",
+            "type": "array"
+          },
           "model_usage": {
             "additionalProperties": true,
             "title": "Model Usage",
@@ -1553,6 +1561,119 @@
           "kind"
         ],
         "title": "RunOut",
+        "type": "object"
+      },
+      "RungAttemptOut": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "calls": {
+            "items": {
+              "$ref": "#/components/schemas/RungCallOut"
+            },
+            "title": "Calls",
+            "type": "array"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "rung": {
+            "title": "Rung",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rung",
+          "action",
+          "reason"
+        ],
+        "title": "RungAttemptOut",
+        "type": "object"
+      },
+      "RungCallOut": {
+        "properties": {
+          "cost": {
+            "title": "Cost",
+            "type": "string"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier",
+          "purpose",
+          "input_tokens",
+          "output_tokens",
+          "cost"
+        ],
+        "title": "RungCallOut",
+        "type": "object"
+      },
+      "RungLedgerOut": {
+        "properties": {
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/RungAttemptOut"
+            },
+            "title": "Attempts",
+            "type": "array"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "frontier_tokens": {
+            "default": 0,
+            "title": "Frontier Tokens",
+            "type": "integer"
+          },
+          "repair_run_id": {
+            "title": "Repair Run Id",
+            "type": "string"
+          },
+          "resolved_rung": {
+            "title": "Resolved Rung",
+            "type": "integer"
+          },
+          "small_tokens": {
+            "default": 0,
+            "title": "Small Tokens",
+            "type": "integer"
+          },
+          "total_calls": {
+            "default": 0,
+            "title": "Total Calls",
+            "type": "integer"
+          },
+          "total_cost": {
+            "default": "0",
+            "title": "Total Cost",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repair_run_id",
+          "decision",
+          "resolved_rung"
+        ],
+        "title": "RungLedgerOut",
         "type": "object"
       },
       "ScorecardEntry": {
@@ -5375,6 +5496,85 @@
         "summary": "Approve Repair",
         "tags": [
           "repairs"
+        ]
+      }
+    },
+    "/repairs/{repair_id}/ledger": {
+      "get": {
+        "description": "Rung-by-rung ledger for a repair (REQ-021 item 3).\n\nEvery rung the ladder tried with its one-line reason, each linked to\nthe run's ``ModelCall`` rows (tier, purpose, tokens, estimated cost).\nCosts are Decimal strings end to end; prompts and responses never leave\nthe ledger table.",
+        "operationId": "get_repair_ledger_repairs__repair_id__ledger_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repair_id",
+            "required": true,
+            "schema": {
+              "title": "Repair Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RungLedgerOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Repair Ledger",
+        "tags": [
+          "drift"
         ]
       }
     },
