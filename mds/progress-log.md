@@ -2892,3 +2892,33 @@ main-bound branch: leak-audit script, isolation-check script, `make verify-heldo
 field with auto-load, docs "Held-out protocol", 17 new unit tests. Gates: lint + typecheck + full `make test`
 (2801 pytest: 2346/109/346; ui 158) green; W8 e2e test_07 green against live compose stack (up/down for the run).
 REQ-024 stays IN_PROGRESS for sub-step B (ablation arms, opencode driver, preregistration). Next: B, then REQ-025.
+
+## REQ-024 sub-step B — ablation arms code-complete (rehearsed live)
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-024 B1–B6 (Make the held-out claim checkable, engine vs. untrained frontier model)
+
+**What was done:**
+- OpenCode headless driver is now the default baseline (`opencode run --format json`, `OPENCODE_MODEL` env); claude/codex/llm stay available; offline runs use a labelled fake driver
+- Five ablation arms under one pairwise-matched budget: frontier_oneshot, frontier_agent, engine_no_knowledge, autobridge_cold, autobridge_warm (in-process RepairController, ladder/gate/budgets kept; `enable_knowledge/enable_rules` flags; case library in `config/ablation_cases.yaml` so no vendor names live in engine source)
+- Metrics with mean + 95% CI per arm/scenario/overall (verified completion, wrong patches, correct escalations, tokens, cost, wall time); verifier-unreachable degrades to unverified, never guessed
+- Learning curve runner + `experiments/learning_curve.md` (with driver/provider provenance); `experiments/preregistration.md` frozen (hypothesis: cold ≥ agent verified rate at ≥10× fewer frontier tokens)
+- `make bench` runs scorecard + all ablation arms + curve; `make bench-ablation` rehearses without a stack
+- Verified live: full `make test` green (2394/109/346 + ui 158), lint + typecheck green, test_07 + 19 matrix in-process green, compose rehearsal 60/60 matched (cold/warm verified 0.50, correct-esc 1.00, 0 wrong patches)
+
+**Key decisions:**
+- Engine arms wire a provider only for semantic (hypothesis) cases — the controller routes any provider-wired repair through the semantic climb, so deterministic rows must stay provider-free (mirrors the matrix zero-call contract)
+- Vendor case data lives in `config/ablation_cases.yaml` (trust-boundary guard precedent from demo_targets.yaml); `make bench` keeps the scorecard contract and *adds* the ablation run rather than replacing it
+- Fake/replay rehearsal numbers are labelled as such in every artifact; live frontier numbers need the owner's key
+
+**Files changed:**
+- `src/autobridge/bench/ablation.py`, `src/autobridge/bench/ablation_curve.py` (new)
+- `src/autobridge/bench/baseline_coding_agent.py` (OpenCode driver + fakes + default)
+- `src/autobridge/repair/ladder.py`, `src/autobridge/repair/controller.py` (ablation flags)
+- `src/autobridge/bench/harness.py` (`--arms`), `src/autobridge/bench/scoring.py` (ablation arms), `src/autobridge/config.py` (`opencode_model`)
+- `config/ablation_cases.yaml` (new), `Makefile` (bench/bench-ablation), `.env.example` (OPENCODE_MODEL etc.)
+- `tests/unit/test_autobridge_bench_ablation.py` (new, 28 tests), `tests/unit/test_autobridge_bench_agents.py` (+21 tests)
+- `docs/benchmark.md` (drivers, ablation section, pipeline), `experiments/preregistration.md`, `experiments/learning_curve.md`
+
+**Notes for next iteration:**
+- REQ-024 stays IN_PROGRESS: live frontier capture needs `FRONTIER_API_KEY` (owner step) and the single Nov 3 held-out run; then REQ-025 beacon
+- Watch: `test_replay_postings_resend_same_pno` flaked twice under full-suite load (passes alone/as-file/both trees) — same load-sensitive class as the documented edge-agent flake

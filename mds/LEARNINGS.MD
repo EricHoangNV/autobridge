@@ -273,3 +273,23 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Schemathesis POST cases usually die at 422 validation before touching the network, but a GET with no parameters always executes — including its server-side probes. The new endpoint probed five simulator admins built from `http://localhost:<port>`, and `localhost` is a real DNS lookup (the hermetic guard trips on it, macOS fork-safety).
 - Fix: the shared host-mode admin base now uses literal `http://127.0.0.1:<port>` (same loopback, no resolution) — one line, and every demo route inherits it, not just the new one. Display-only URLs shown to browsers stay `localhost` (human-facing, consistent with README).
 - **Rule:** Any GET route the contract fuzzer can call with zero parameters must be safe to execute offline in tests: no hostname resolution (literal IPs), no unmocked network, fail-closed to "down", never an exception. Assume the fuzzer *will* execute it.
+
+---
+
+## 29. A provider-wired repair always climbs the semantic path — zero-call rows must wire no provider
+
+**Context:** REQ-024 sub-step B (ablation engine arms), 2026-10-28
+
+- `RepairController.handle` routes *any* repair with a provider set through `_handle_semantic_climb` (L0 → L1 → L2 → L3 → escalate, proposal never released), regardless of drift class. Wiring a provider "just in case" on a deterministic drift turns an L1 rule repair into an L4 escalation with model tokens.
+- The fix: engine arms pass a provider only when the case carries hypotheses (semantic drifts). Deterministic rows run the pure ladder — mirroring the model-usage matrix, where zero-call rows wire no provider and any model call is a test failure.
+- **Rule:** When driving the ladder outside the matrix, decide provider-vs-None from the case (hypotheses present or not), never by default. A model call on a deterministic row is a harness bug, not a repair.
+
+---
+
+## 30. Bench case data with vendor names lives in config, not engine source
+
+**Context:** REQ-024 sub-step B (trust-boundary guard `test_engine_never_references_meridian`), 2026-10-28
+
+- The ablation case library first hardcoded scenario ids, spec ids and docs paths in `src/autobridge/bench/ablation.py`; the guard failed on the vendor names — the same failure mode as the LegacyStay reset-registry incident (solved via `config/demo_targets.yaml`).
+- The fix: `config/ablation_cases.yaml` holds every vendor-specific string (spec ids, docs paths, field names, scenario ids); engine code only implements generic loaders/builders dispatched by `kind` fields, with all runtime values read from the file. `Dockerfile.engine` already ships `config/`, so nothing else changed.
+- **Rule:** Any new bench/demo mapping that names a vendor goes in `config/` data with generic engine dispatch — never as literals in `src/autobridge`, not even as dict keys or function names (the guard strips `#` comments but not docstrings).
