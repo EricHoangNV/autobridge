@@ -1873,3 +1873,29 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 
 **Notes for next iteration:**
 - None — owner runs `make bench-heldout HELDOUT_DIR=~/autobridge-heldout` on Nov 3 after placing the 4 private seed files matching the committed SHA256SUMS.
+
+## REQ-009 — Clean clone: `make test` and `make e2e-ui` work without `ui/node_modules`
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-009 (P1.W10.3 clean-clone check)
+
+**What was done:**
+- Added `ui-deps` (`npm ci` when `ui/node_modules` missing) as a `test` prereq and `ui-e2e-deps` (playwright chromium install) as an `e2e-ui` prereq; `e2e-ui` sets `NODE_PATH` so the root Playwright config resolves `@playwright/test` from `ui/`
+- `test_ui_client_compiles` now skips loudly (naming `make ui-deps`) instead of failing when `node_modules` is absent
+- 6 new static contract tests; README quickstart lists Node 22/npm + the install step; CI uses a single `make ui-deps` (duplicate npm ci / Vitest steps removed)
+- Fixed 4 pre-existing ruff errors in the REQ-008 bench-harness test file blocking `make lint`
+
+**Key decisions:**
+- Install (preferred by the request) over skip-loudly for `make` targets, but kept the loud skip inside the pytest test for bare-pytest runs
+- Fixed `NODE_PATH` in the Makefile recipe rather than the npm script, keeping the script the single definition of test flags
+- Left CI's `--with-deps` Playwright step untouched (system libs still need it); left the live-journey skip-when-down spec behavior alone (REQ-010's territory)
+
+**Files changed:**
+- `Makefile` — `ui-deps`, `ui-e2e-deps`, `test`/`e2e-ui` deps, `NODE_PATH` in recipe
+- `tests/unit/test_autobridge_ui_client.py` — loud skip guard
+- `tests/unit/test_autobridge_ci_e2e.py` — 6 contract tests
+- `README.md` — quickstart Node/npm + `make ui-deps`
+- `.github/workflows/ci.yml` — `make ui-deps` before unit tests, dedup
+- `tests/unit/test_autobridge_bench_harness.py` — drive-by lint fixes only
+
+**Notes for next iteration:**
+- None — task is self-contained. REQ-010 (live-stack e2e) is still open and explicitly out of scope here.

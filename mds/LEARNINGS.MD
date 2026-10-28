@@ -48,3 +48,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed by committing the scaffold dir itself (`ui/public/.gitkeep`) rather than editing the Dockerfile — the Dockerfile was written against the standard Next.js layout, the layout was what drifted.
 
 - **Rule:** When a Dockerfile `COPY`s a scaffold path, that path must exist in git (add `.gitkeep` for intentionally-empty dirs); after touching any `COPY` source or scaffold task, verify with a clean-context build (`docker compose build --no-cache <svc>` or a fresh worktree), not an incremental one.
+---
+
+## 6. Node resolves modules from the importing file, not the shell cwd — a config outside the package dir needs NODE_PATH
+
+**Context:** REQ-009 (2026-10-28) — `make e2e-ui` failed in a fresh clone with `Cannot find module '@playwright/test'` even with `ui/node_modules` fully installed, while the Makefile comment claimed the journey was "green with mocks when the stack is down".
+
+- The `test:e2e` npm script runs with cwd `ui/`, but the config it loads (`../playwright.config.ts`) lives at the repo root, and Node resolves `import ... from "@playwright/test"` relative to the importing file — walking up from the repo root, where no `node_modules` exists — never consulting the shell's cwd.
+- The first symptom (`playwright: command not found`) masked the second: installing the browsers fixed the binary but the config load still crashed. The docs already recorded the workaround (`NODE_PATH=ui/node_modules ...`), but it never made it into the automation.
+- Fixed in the `e2e-ui` recipe (`NODE_PATH="$$PWD/node_modules"` after `cd ui`), keeping the npm script as the single flag definition; added a Makefile-contract test so the env var cannot silently drop out.
+
+**Rule:** When a tool loads a config file outside the package dir, set the module path (NODE_PATH) at the invocation site — cwd does not affect module resolution — and cover the invocation, not just the install, with a test.

@@ -23,21 +23,6 @@ Wanted:
 4. With the stack up, run `make bench` once and record the real dev-split numbers in the build note (not zeros).
 Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
 
-### REQ-009 — Clean clone: `make test` and `make e2e-ui` fail without `ui/node_modules` (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 03:21)
-Found by a fresh GitHub clone of f516bc0, following the README (`cp .env.example .env`, then make targets).
-- `make test`: 1 failed, 1878 passed. `test_ui_client_compiles` runs `npm run typecheck` in `ui/`, and a fresh clone
-  has no `ui/node_modules`. The UI's Vitest run was skipped for the same reason.
-- `make e2e-ui`: `playwright: command not found`.
-CI installs these itself; the README and the Makefile do not. The README says a clean machine needs only Docker and uv.
-Wanted:
-1. `make test` and `make e2e-ui` work in a fresh clone. Either a `ui-deps` target (`cd ui && npm ci`, plus
-   `npx playwright install chromium` for e2e-ui) that they depend on when `ui/node_modules` is missing, or the
-   UI-dependent tests skip loudly with the command to run (as Vitest already does). Prefer installing.
-2. README quickstart lists Node and npm as a requirement and the `npm ci` step.
-3. Check: a fresh clone into a temp dir, then `make test` passes with 0 failures.
-This is what P1.W10.3 (clean-clone check) needs.
-
 ### REQ-010 — e2e: run the demo's headline claims against the live stack (2026-10-28)
 Status: OPEN
 With Docker hidden (`DOCKER_HOST=unix:///nonexistent.sock`), 72 of the 104 tests in `tests/e2e` still pass: they run
@@ -56,6 +41,23 @@ Wanted:
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-009 — Clean clone: `make test` and `make e2e-ui` fail without `ui/node_modules` (2026-10-28)
+Status: DONE (2026-10-28)
+Found by a fresh GitHub clone of f516bc0, following the README (`cp .env.example .env`, then make targets).
+- `make test`: 1 failed, 1878 passed. `test_ui_client_compiles` runs `npm run typecheck` in `ui/`, and a fresh clone
+  has no `ui/node_modules`. The UI's Vitest run was skipped for the same reason.
+- `make e2e-ui`: `playwright: command not found`.
+CI installs these itself; the README and the Makefile do not. The README says a clean machine needs only Docker and uv.
+Wanted:
+1. `make test` and `make e2e-ui` work in a fresh clone. Either a `ui-deps` target (`cd ui && npm ci`, plus
+   `npx playwright install chromium` for e2e-ui) that they depend on when `ui/node_modules` is missing, or the
+   UI-dependent tests skip loudly with the command to run (as Vitest already does). Prefer installing.
+2. README quickstart lists Node and npm as a requirement and the `npm ci` step.
+3. Check: a fresh clone into a temp dir, then `make test` passes with 0 failures.
+This is what P1.W10.3 (clean-clone check) needs.
+Resolution: `ui-deps`/`ui-e2e-deps` Makefile targets (prereqs of `test`/`e2e-ui`), `NODE_PATH` in the `e2e-ui` recipe for the root Playwright config, loud skip in `test_ui_client_compiles` without `node_modules`, 6 contract tests, README Node/npm + install step, CI single `make ui-deps`. Fresh-clone check: `make test` 2225 pass / 0 fail + Vitest 143 pass, `make e2e-ui` exit 0 (9 skips by design, no stack up). Drive-by: 4 pre-existing ruff errors in the REQ-008 bench-harness test fixed.
+
 
 ### REQ-007 — Heldout seeds that no agent has seen (2026-10-27)
 Status: DONE (2026-10-27)
