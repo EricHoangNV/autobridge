@@ -24,7 +24,7 @@ Wanted:
 Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
 
 ### REQ-011 — Publish compose ports on localhost only (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 04:05)
 Every port in `compose.yaml` is published as `"81xx:8000"` with no host IP, so Docker listens on all interfaces. While
 the stack runs, anyone on the same network (e.g. hackathon Wi-Fi) can reach the control API (unauthenticated write
 routes: approve/reject repairs, inject faults, import/connect connectors), the UI, the simulators, and the verifier on
