@@ -2572,3 +2572,8 @@ wiring remain follow-ups. Agent: opencode meta/muse-spark-1.3-contributor (escal
 **Full climb for both semantic rows** (matrix asserts [0..4] + oracle rejection; no [0,4] pin remains).
 Gates green. **Next:** REQ-021 sub-step F (capabilities/knowledge).
 Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-021 owner-check (22:00) merged (sbx1)
+**Stamp detection, unscripted demo, record-frontier, dated replay labels.** Gates green (2179/99/294 +
+ui 153). Owner live steps: run `make record-frontier SCENARIO=gross_to_net`, commit capture, re-run demo.
+**Next:** REQ-021 sub-step F (capabilities/knowledge). Agent: opencode meta/muse-spark-1.3-contributor (escalation).

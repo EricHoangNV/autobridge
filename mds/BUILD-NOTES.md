@@ -1232,3 +1232,31 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
 - **Tests:** matrix 19 in-process green (16 deterministic rows + refusal + 2 climbs); full `make test`
   green (autobridge 2172 / 91.52%, verifier 99, simulators 294, ui 153); lint green.
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-021 owner check (2026-10-28 22:00) — stamp detection, unscripted demo, record-frontier (sbx1)
+- **(1) Stamp detects actual schema.** `ensure_migrated` no longer stamps head blindly: `_detect_revision`
+  walks hand-listed per-revision effects (0001 ten tables … 0006 ladder_trace column) and stamps the
+  newest satisfied prefix, then upgrades; a head version row contradicted by the schema is ignored and
+  repaired. New tests: pre-Alembic create_all DB (minus newest effects) and a wrongly-stamped head both
+  end with every column present and GET /repairs 200. (First attempt inverted alembic/env.py precedence
+  so ini runs ignored DATABASE_URL — caught by the migration cycle tests, fixed: programmatic Config
+  keeps its URL, ini loads still prefer env.)
+- **(2) Demo asserts outcomes, not the model's words.** Step 4 runs the climb and checks: L3 attempted
+  or plainly skipped, proposal shown, verifier/predicate check recorded, no release, Degraded + one
+  question. Decoy/trap path kept for replay captures; empty/other proposals escalate with the operator
+  question instead of failing. L3 max_tokens 1024 → 4096 with a comment (reasoning eats the budget);
+  raw preview (truncated) logged on parse failure. `ReplayMissing` inside the climb becomes an explicit
+  skip naming the hash + `make record-frontier SCENARIO=...`.
+- **(3) `make record-frontier SCENARIO=`** (`bench/record_frontier.py` + Makefile target): requires
+  FRONTIER_API_KEY, runs the live climb through a tapping provider, writes
+  `demo/recordings/<scenario>.json` (prompt hash → text/tool_calls/tokens/model/captured_at + note).
+  Hand-written stand-in deleted; tests use `tests/fixtures/replay/` (synthetic, labelled test fixture
+  everywhere); demo/review without a capture labels L3 skipped. Unit tests force replay-off-live so no
+  key is ever spent by the suite.
+- **(4) Replay labels carry the date:** `Completion.captured_at`, ledger purposes
+  `(replay <date>)` / `(replay test fixture)`, demo table `replayed from a live Muse capture on <date>`.
+- **Tests:** `make test` all green (autobridge 2179 / 91.11%, verifier 99, simulators 294, ui 153);
+  lint (incl. import-linter) + typecheck + ui-typecheck green; matrix 19 in-process green; `make demo`
+  green with L3 skipped plainly. Live-owner steps remaining: run record-frontier with the Muse key,
+  commit the capture, re-run demo live.
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).
