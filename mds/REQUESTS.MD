@@ -10,7 +10,7 @@ Docker and no sandbox; the demo must still run on their machine (REQ-017), and n
 present.
 
 ### REQ-020 — Add a fifth simulator after the Mews Connector API (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 10:51)
+Status: IN_PROGRESS (sbx1 since 2026-10-28 20:40; closing: signature fix + step 7 merged, verifying gates)
 Depends on REQ-019 (do it after). A new vendor, fictional name **MeridianPMS** (`sim-meridian`), copies the **Mews
 Connector API** shape: the "modern but very different" vendor. Same rule: shape only, no Mews name, branding or doc text.
 Read first: https://docs.mews.com/connector-api/guidelines/pagination.md, `.../guidelines/authentication.md`,
