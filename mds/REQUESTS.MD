@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2), then REQ-022, then REQ-024 (before the Nov 3 run), with REQ-023 (demo plan) applied as each of those lands. Do these before any
+Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2), then REQ-022, then REQ-024 → REQ-025 (both before the Nov 3 run), with REQ-023 (demo plan) applied as each of those lands. Do these before any
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
@@ -392,6 +392,60 @@ never touch `verifier/hidden_cases/heldout/SHA256SUMS`. Everything below that ne
    scorecard links the pre-registration commit and the leak-audit result.
 6. Dev-split rehearsal: `make bench` runs all arms on the dev split now (real numbers, REQ-008), so the protocol is
    debugged before the one held-out run.
+
+### REQ-025 — Beacon evaluation: faults generated from public randomness nobody could know in advance (2026-10-28)
+Status: OPEN
+Owner: prove we could not have prepared for the test even if we wanted to. The private-seed held-out split (REQ-007)
+only seals instance data for four public fault types, and the builder has tests for those types. The headline
+evaluation becomes a **beacon run**: the test's data *and* fault details are derived from a public random value that
+did not exist when the code was frozen. Same boundaries as everywhere: the generator and answer key live on the
+simulators/verifier side; the engine never imports, reads or reaches them.
+1. **Fault generator from building blocks** (`simulators/common/faultgen.py` + verifier counterpart). Input: a 32-byte
+   seed. Output: N fault instances across the five vendors (Atlas, Meridian, Harbor, LegacyStay, FIAS PABX), each a
+   family plus seed-chosen parameters, never a fixed scenario:
+   - rename: which field, new name from a large word pool (e.g. `guest_name` → `primaryOccupant`);
+   - nesting: depth and new parent key;
+   - pagination: strategy switch, new parameter and cursor field names;
+   - code list: new status codes and the canonical value each one means;
+   - semantic: gross ↔ net, minor ↔ major units, a decoy field with a generated name;
+   - dates: cutoff hour, time-zone shift, date format;
+   - transport and auth: throttle rate, `Retry-After`, outage length, token expired vs revoked, endpoint removed;
+   - FIAS: `PS` layout change (field added, renamed, reordered), resync, ACK timeout.
+   Each instance carries its **answer key**, kept by the verifier only: the canonical truth data and the correct
+   outcome class: `repair` (verifier-accepted patch on hidden cases), `escalate` (no patch; escalated), or
+   `degraded_question` (ambiguous semantic: `Degraded` with one operator question, no guessed patch).
+   Families and parameter pools are fixed in code before the freeze; only the parameters come from the seed.
+2. **Generator tests (before any real run).** Property tests over thousands of random seeds in `make test`: every
+   instance is internally consistent (the mutated vendor really serves the mutated shape; FIAS records match the
+   announced layout), deterministic for a seed, and its answer key matches the oracle. A **reference solver** that is
+   given the instance's parameters must reach the correct outcome class on every instance; an instance the reference
+   solver cannot handle is a generator bug (no impossible questions).
+3. **Beacon client**, in the bench harness (which never sees generator internals; it passes only the seed to the
+   simulators and verifier). Fetch a drand round from
+   the League of Entropy mainnet (`https://api.drand.sh/public/<round>` plus the chain info), **verify its signature**
+   against the chain's public key with a pinned pure-Python library (fail closed if verification fails), compute the
+   round for a UTC time, and derive `seed = sha256(randomness ‖ "autobridge-eval-v1")`, then per instance
+   `sha256(seed ‖ instance index)`.
+4. **Protocol commit (freeze).** `make eval-freeze ROUND_AFTER=<UTC time> FAULTS=<N>` writes
+   `experiments/beacon/protocol.md` (round rule: first round at or after the time; N instances; arms; metrics; "one run,
+   no retries, results published whatever they are"; the engine and generator commit) and refuses to run if the target
+   round already exists. The owner commits it, tags `eval-freeze`, and pushes before the round time.
+5. **The run.** `make bench-beacon`: reads the protocol, refuses if the round is not yet published or if a result for it
+   already exists (no re-rolls), fetches and verifies the round, prints the evidence on screen (round number, time,
+   randomness, verification URL, freeze commit and its push time), generates the instances, runs every REQ-024 arm on
+   the same instances under matched budget, grades with the verifier against the answer keys, and writes
+   `experiments/beacon/<round>/` (instances with parameters, per-arm grades, tokens, cost, time, a summary with
+   intervals). Runs in Docker and in local mode (REQ-017).
+6. **Rehearsals on past rounds.** `make bench-beacon REHEARSE=<round>` uses an already-published round (clearly
+   labelled "rehearsal"; output under `experiments/beacon/rehearsals/`) to debug the pipeline and learn the expected
+   score range. Run at least five rehearsals before the freeze; record them.
+7. **Reproduce.** `make verify-beacon ROUND=<round>`: anyone re-fetches and verifies the round, regenerates the
+   instances, checks they match the published ones, and can rerun the grading from the tagged commit.
+8. **Docs.** docs/benchmark.md "Beacon evaluation": why (commit-then-reveal with public randomness), what a judge can
+   check, the honest scope (fault *families* are known by design: that is the engine's knowledge; the *instances*
+   could not be known), and how the REQ-007 held-out split relates (kept as the frozen secondary benchmark: new data for
+   known fault types).
+Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make bench-heldout` keeps working.
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
