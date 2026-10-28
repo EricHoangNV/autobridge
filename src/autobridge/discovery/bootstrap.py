@@ -215,7 +215,7 @@ _IGNORE_FIELDS = {"date"}
 # name, then these aliases, so earlier vendors never change.
 _WIRE_ALIASES: dict[str, tuple[str, ...]] = {
     "reservation_id": ("reservationID", "ReservationId", "Id"),
-    "property_id": ("propertyID", "PropertyId"),
+    "property_id": ("propertyID", "PropertyId", "ServiceId"),
     "guest_name": ("guestName", "GuestName"),
     "arrival_date": ("startDate", "arrivalDate", "ArrivalDate", "ScheduledStartUtc"),
     "departure_date": ("endDate", "departureDate", "DepartureDate", "ScheduledEndUtc"),
@@ -233,7 +233,17 @@ _WIRE_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 # Vendor spellings normalized to canonical (clear vocabularies).
-_STATUS_NORMALIZE = {"canceled": "cancelled"}
+# Lifecycle spellings with an unambiguous canonical counterpart stay mapped
+# (a started stay is checked in; a processed one checked out; the sim's
+# tentative Optional never arrives, i.e. no_show). Genuinely ambiguous
+# states (Inquired, Requested, vendor hold codes) are left OUT so they
+# Block via on_unknown instead of being guessed; the verifier judges.
+_STATUS_NORMALIZE = {
+    "canceled": "cancelled",
+    "started": "checked_in",
+    "processed": "checked_out",
+    "optional": "no_show",
+}
 _CANONICAL_STATUSES = ("confirmed", "checked_in", "checked_out", "cancelled", "no_show")
 
 
@@ -340,10 +350,18 @@ def _collect_fields_for_entity(
     entity_name: str,
     iface: InterfaceDescription,
     status_kind: str | None,
-    status_mapping: dict[str, str] | None,
+    status_mapping: dict[str, Any] | None,
     status_vocab: tuple[str, ...] = (),
+    items_fields: dict[str, str] | None = None,
+    redirects: dict[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Build fields dict for entity, with wire names resolved from docs."""
+    """Build fields dict for entity, with wire names resolved from docs.
+
+    *redirects* maps canonical fields to joined paths (``$._joined...``)
+    proposed by :func:`_propose_joins`. *items_fields* (lower -> spelling
+    of the operation's item schema) gives precise nested money paths
+    (e.g. ``$.UnitAmount.GrossValue``) for amount/currency/total_amount.
+    """
     if entity_name == "Reservation":
         field_names = list(_RESERVATION_FIELDS)
     elif entity_name == "FolioCharge":
@@ -359,13 +377,348 @@ def _collect_fields_for_entity(
     # populated from simulator (simulator always returns them). This ensures
     # Harbor bootstrap passes oracle even if docs example omitted a field.
     # We exclude ambiguous date field
+    money_leaf = _money_leaf(items_fields) if items_fields else None
     fields: dict[str, dict[str, Any]] = {}
     for fname in field_names:
         if fname in _IGNORE_FIELDS:
             continue
         transform_steps = _transform_for_field(fname, status_kind, status_mapping, status_vocab)
+        if redirects and fname in redirects:
+            fields[fname] = {"path": redirects[fname], "transform": transform_steps}
+            continue
+        if money_leaf is not None and fname in ("amount", "total_amount", "currency"):
+            gross_path, currency_path = money_leaf
+            if fname == "currency":
+                fields[fname] = {"path": f"$.{currency_path}", "transform": transform_steps}
+            else:
+                fields[fname] = {"path": f"$.{gross_path}", "transform": transform_steps}
+            continue
         fields[fname] = {"path": f"$.{_wire_name_for(fname, iface)}", "transform": transform_steps}
+    # No documented business-date field, but a documented posting instant:
+    # derive the business date from the same instant (that is what the
+    # business_date transform is for). Untouched when docs name the field
+    # or when no posting instant is documented either.
+    if "business_date" in fields and fields["business_date"]["path"] == "$.business_date":
+        posted_path = fields.get("posted_at", {}).get("path")
+        if posted_path and posted_path != "$.posted_at":
+            fields["business_date"] = {
+                "path": posted_path,
+                "transform": _transform_for_field("business_date", status_kind, status_mapping, status_vocab),
+            }
     return fields
+
+
+# ---------------------------------------------------------------------------
+# join proposal (spec v2, REQ-020 5c)
+# ---------------------------------------------------------------------------
+
+#: Description words marking a documented relationship between operations
+#: (e.g. "Join to the reservation", "Matches Reservation.AccountId").
+_JOIN_HINT_RE = re.compile(r"join|match|link|reference|owner|foreign", re.IGNORECASE)
+
+#: Money leaf names (last dotted segment, lowercased) with a currency
+#: sibling marking a line-items schema.
+_MONEY_LEAF_NAMES = frozenset(
+    {"grossvalue", "gross", "netvalue", "net", "amount", "total", "totalamount", "value"}
+)
+_CURRENCY_LEAF_NAMES = frozenset({"currency", "currencycode"})
+
+
+def _singular(name: str) -> str:
+    """Naive singular: list_customers -> customer, list_folios -> folio."""
+    base = name
+    for prefix in ("list_", "get_", "fetch_"):
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+            break
+    if len(base) > 1 and base.endswith("s") and not base.endswith("ss"):
+        base = base[:-1]
+    return base or name
+
+
+def _schema_fields_by_lower(schema: Any) -> dict[str, str]:
+    """Lowercased field name -> documented spelling, in schema order."""
+    out: dict[str, str] = {}
+    for f in getattr(schema, "fields", []) or []:
+        fname = getattr(f, "name", "")
+        if isinstance(fname, str) and fname and fname.lower() not in out:
+            out[fname.lower()] = fname
+    return out
+
+
+def _field_desc(schema: Any, documented_name: str) -> str:
+    for f in getattr(schema, "fields", []) or []:
+        if getattr(f, "name", "") == documented_name:
+            return str(getattr(f, "description", "") or "")
+    return ""
+
+
+def _items_schema_for_op(op: Any, schemas_by_lower: dict[str, Any]) -> Any | None:
+    """Item schema for a list operation via its response items field."""
+    items = getattr(op, "response_items_field", None)
+    if not items or not isinstance(items, str):
+        return None
+    low = items.lower()
+    for cand in (low, _singular(low)):
+        if cand in schemas_by_lower:
+            return schemas_by_lower[cand]
+    return None
+
+
+def _fk_candidates(field_lowers: dict[str, str]) -> list[str]:
+    """Documented spellings of id-suffixed fields that are not the Id itself."""
+    return [spell for low, spell in field_lowers.items() if low != "id" and low.endswith("id")]
+
+
+def _has_exact_id(field_lowers: dict[str, str]) -> str | None:
+    return field_lowers.get("id")
+
+
+def _documented_join_key(base_schema: Any, partner_schema: Any) -> str | None:
+    """Foreign-key field of *base_schema* documented as joining *partner_schema*.
+
+    A key qualifies when either side's description names the relationship
+    (join/match/link/...). Falls back to the first id-suffixed field only
+    when some partner carries the key but prose is silent.
+    """
+    base_fields = _schema_fields_by_lower(base_schema)
+    partner_fields = _schema_fields_by_lower(partner_schema)
+    fallback: str | None = None
+    for fk in _fk_candidates(base_fields):
+        if fk.lower() not in partner_fields and "id" not in partner_fields:
+            # Partner must carry the key (as its Id or as the same FK).
+            continue
+        if fallback is None:
+            fallback = fk
+        # Either side may document the relationship — but the prose must
+        # name THIS candidate key, so a hint about AccountId never justifies
+        # joining on ServiceId.
+        descs = [_field_desc(base_schema, fk)]
+        partner_id = partner_fields.get("id")
+        if partner_id is not None:
+            descs.append(_field_desc(partner_schema, partner_id))
+        if fk.lower() in partner_fields:
+            descs.append(_field_desc(partner_schema, partner_fields[fk.lower()]))
+        combined = "\n".join(descs)
+        if fk.lower() in combined.lower() and _JOIN_HINT_RE.search(combined):
+            return fk
+    return fallback
+
+
+def _name_source(field_lowers: dict[str, str]) -> tuple[list[str], str] | None:
+    """Name-carrying fields of an authority schema: (paths, kind).
+
+    Returns ([First, Last], 'pair') for a first/last name pair, or
+    ([Name], 'single') for one display-name field.
+    """
+    first = last = None
+    for low, spell in field_lowers.items():
+        if low == "firstname" or low.endswith("firstname"):
+            first = first or spell
+        elif low == "lastname" or low.endswith("lastname"):
+            last = last or spell
+    if first and last:
+        return ([first, last], "pair")
+    for low, spell in field_lowers.items():
+        if low in ("name", "fullname", "full_name", "displayname", "guestname", "guest_name", "title"):
+            return ([spell], "single")
+    return None
+
+
+def _money_leaf(field_lowers: dict[str, str]) -> tuple[str, str] | None:
+    """(gross path, currency path) for a line-items schema, else None.
+
+    Finds a dotted money leaf (e.g. ``UnitAmount.GrossValue``) with a
+    currency sibling (``UnitAmount.Currency``), preferring gross over net
+    over amount. Flat ``Amount``-style fields qualify when a flat currency
+    sibling exists.
+    """
+    prefixes: dict[str, dict[str, str]] = {}
+    for low, spell in field_lowers.items():
+        if "." in low:
+            prefix, _, leaf = low.partition(".")
+            prefixes.setdefault(prefix, {})[leaf] = spell
+    for _prefix, leaves in prefixes.items():
+        currency = next((s for leaf, s in leaves.items() if leaf in _CURRENCY_LEAF_NAMES), None)
+        if currency is None:
+            continue
+        for want in ("grossvalue", "gross", "netvalue", "net", "amount", "total", "totalamount", "value"):
+            if want in leaves:
+                return (leaves[want], currency)
+    # Flat money + currency siblings (e.g. Amount + Currency on one record).
+    flat_currency = field_lowers.get("currency") or field_lowers.get("currencycode")
+    if flat_currency is not None:
+        for want in ("grossvalue", "gross", "netvalue", "net", "amount", "total", "totalamount", "value"):
+            if want in field_lowers and "." not in want:
+                spell = field_lowers[want]
+                if "." not in spell:
+                    return (spell, flat_currency)
+    return None
+
+
+def _items_fields_for_op(op_desc: Any, iface: Any) -> dict[str, str] | None:
+    """Lower -> documented item-schema fields for an operation, if known."""
+    if op_desc is None:
+        return None
+    schemas_by_lower = {s.name.lower(): s for s in getattr(iface, "schemas", []) or []}
+    schema = _items_schema_for_op(op_desc, schemas_by_lower)
+    if schema is None:
+        return None
+    return _schema_fields_by_lower(schema)
+
+
+def _propose_joins(
+    iface: Any,
+    ops_by_name: dict[str, Any],
+    entity_ops: dict[str, str],
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, str]]]:
+    """Propose declarative joins from documented schemas (spec v2 only).
+
+    Generic structural rules, no vendor names: a name authority (Id +
+    person-name fields, documented as the join target) feeds a ``one``
+    join; a line-items operation (same foreign key + money leaf with a
+    currency sibling) feeds a ``many`` sum join; the folio operation gains
+    a reverse ``one`` join to the reservation operation for its parent id.
+
+    Returns (entity -> joins, entity -> {canonical field: joined path}).
+    Empty when the docs show no joinable shape.
+    """
+    joins: dict[str, list[dict[str, Any]]] = {}
+    redirects: dict[str, dict[str, str]] = {}
+    schemas_by_lower = {s.name.lower(): s for s in getattr(iface, "schemas", []) or []}
+    if not schemas_by_lower:
+        return joins, redirects
+
+    reservation_op = entity_ops.get("Reservation")
+    folio_op = entity_ops.get("FolioCharge")
+    if reservation_op is None or reservation_op not in ops_by_name:
+        return joins, redirects
+    res_schema = _items_schema_for_op(ops_by_name[reservation_op], schemas_by_lower)
+    if res_schema is None:
+        return joins, redirects
+    res_lowers = _schema_fields_by_lower(res_schema)
+
+    # Candidate list operations (paginated, with an items schema).
+    list_ops: list[tuple[str, Any, Any]] = []
+    for oname, op in ops_by_name.items():
+        if oname == reservation_op or getattr(op, "pagination_hint", "") == "none":
+            continue
+        schema = _items_schema_for_op(op, schemas_by_lower)
+        if schema is not None:
+            list_ops.append((oname, op, schema))
+    # Deterministic: operation order wins when several ops qualify.
+    list_ops.sort(key=lambda t: list(ops_by_name).index(t[0]))
+
+    name_join_op: str | None = None
+    money_join_op: str | None = None
+
+    # R2 first: the money authority (line items with the FK + money leaf).
+    money_fk: str | None = None
+    money_paths: tuple[str, str] | None = None
+    for oname, _op, schema in list_ops:
+        fk = _documented_join_key(res_schema, schema)
+        if fk is None:
+            continue
+        leaves = _money_leaf(_schema_fields_by_lower(schema))
+        if leaves is None:
+            continue
+        money_join_op, money_fk, money_paths = oname, fk, leaves
+        break
+
+    # R1: the name authority (Id + person names, carrying no FK itself).
+    name_fk: str | None = None
+    name_paths: tuple[list[str], str] | None = None
+    for oname, _op, schema in list_ops:
+        if oname == money_join_op:
+            continue
+        schema_lowers = _schema_fields_by_lower(schema)
+        if _has_exact_id(schema_lowers) is None:
+            continue
+        fk = _documented_join_key(res_schema, schema)
+        if fk is None:
+            continue
+        # The authority record IS the account: it must not carry the FK.
+        if fk.lower() in schema_lowers:
+            continue
+        src = _name_source(schema_lowers)
+        if src is None:
+            continue
+        name_join_op, name_fk, name_paths = oname, fk, src
+        break
+
+    if name_join_op is not None and name_fk is not None and name_paths is not None:
+        paths, kind = name_paths
+        name_schema = _items_schema_for_op(ops_by_name[name_join_op], schemas_by_lower)
+        id_spell = (_has_exact_id(_schema_fields_by_lower(name_schema)) or "Id") if name_schema is not None else "Id"
+        as_name = _singular(name_join_op)
+        if kind == "pair":
+            full_field: dict[str, Any] = {
+                "paths": [f"$.{p}" for p in paths],
+                "transform": [{"name": "concat", "args": {"separator": " "}}],
+            }
+        else:
+            full_field = {"path": f"$.{paths[0]}"}
+        joins.setdefault("Reservation", []).append(
+            {
+                "from_operation": name_join_op,
+                "local_key": f"$.{name_fk}",
+                "foreign_key": f"$.{id_spell}",
+                "cardinality": "one",
+                "as": as_name,
+                "fields": {"full_name": full_field},
+            }
+        )
+        redirects.setdefault("Reservation", {})["guest_name"] = f"$._joined.{as_name}.full_name"
+
+    if money_join_op is not None and money_fk is not None and money_paths is not None:
+        gross_path, currency_path = money_paths
+        as_name = _singular(money_join_op)
+        joins.setdefault("Reservation", []).append(
+            {
+                "from_operation": money_join_op,
+                "local_key": f"$.{money_fk}",
+                "foreign_key": f"$.{money_fk}",
+                "cardinality": "many",
+                "as": as_name,
+                "fields": {
+                    "total_amount": {
+                        "path": f"$.{gross_path}",
+                        "aggregate": "sum",
+                        "transform": [{"name": "money", "args": {"scale": 2}}],
+                    },
+                    "currency": {"path": f"$.{currency_path}", "aggregate": "first"},
+                },
+            }
+        )
+        redirects.setdefault("Reservation", {})["total_amount"] = f"$._joined.{as_name}.total_amount"
+        redirects.setdefault("Reservation", {})["currency"] = f"$._joined.{as_name}.currency"
+
+    # R3: folios carry the same FK; their parent id comes from reservations.
+    if folio_op is not None and folio_op in ops_by_name and folio_op != reservation_op:
+        folio_schema = _items_schema_for_op(ops_by_name[folio_op], schemas_by_lower)
+        if folio_schema is not None:
+            r_fk = _documented_join_key(folio_schema, res_schema)
+            if (
+                r_fk is not None
+                and r_fk.lower() in res_lowers
+                and _has_exact_id(res_lowers) is not None
+            ):
+                as_name = _singular(reservation_op)
+                joins.setdefault("FolioCharge", []).append(
+                    {
+                        "from_operation": reservation_op,
+                        "local_key": f"$.{r_fk}",
+                        "foreign_key": f"$.{r_fk}",
+                        "cardinality": "one",
+                        "as": as_name,
+                        "fields": {"reservation_id": {"path": "$.Id"}},
+                    }
+                )
+                redirects.setdefault("FolioCharge", {})["reservation_id"] = (
+                    f"$._joined.{as_name}.reservation_id"
+                )
+
+    return joins, redirects
 
 
 def _pagination_for_strategy(
@@ -777,6 +1130,9 @@ def _compile_spec(
         status_kind = classification.status_vocabulary.kind
         status_mapping = dict(classification.status_vocabulary.mapping_hint) if classification.status_vocabulary.mapping_hint else None
 
+    # Compiled op name -> InterfaceDescription OperationDescription, for join
+    # proposal (spec v2): the proposal reads documented response schemas.
+    compiled_descs: dict[str, Any] = {}
     for op in iface.operations:
         path = op.path
         # Skip health/readiness and single-item fetches
@@ -827,6 +1183,7 @@ def _compile_spec(
         if checkpoint is not None:
             op_spec["checkpoint"] = checkpoint
         operations[op_name] = op_spec
+        compiled_descs[op_name] = op
 
     # Ensure we have at least reservations and folios ops (Harbor reference).
     # GET fallbacks only: a v2 POST vocabulary never invents GET operations.
@@ -854,9 +1211,32 @@ def _compile_spec(
     status_vocab: tuple[str, ...] = ()
     if classification is not None and classification.status_vocabulary is not None:
         status_vocab = tuple(classification.status_vocabulary.vocabulary)
+    # Declarative joins (spec v2 only): proposed from documented schemas,
+    # then validated like any hand-written join by the spec models.
+    proposed_joins: dict[str, list[dict[str, Any]]] = {}
+    field_redirects: dict[str, dict[str, str]] = {}
+    if spec_version >= 2:
+        entity_ops = {
+            name: oname
+            for name, oname in (
+                ("Reservation", "list_reservations"),
+                ("FolioCharge", "list_folios"),
+            )
+            if oname in operations
+        }
+        proposed_joins, field_redirects = _propose_joins(iface, compiled_descs, entity_ops)
+
     entities: dict[str, Any] = {}
     if "list_reservations" in operations:
-        fields = _collect_fields_for_entity("Reservation", iface, status_kind, status_mapping, status_vocab)
+        fields = _collect_fields_for_entity(
+            "Reservation",
+            iface,
+            status_kind,
+            status_mapping,
+            status_vocab,
+            items_fields=_items_fields_for_op(compiled_descs.get("list_reservations"), iface),
+            redirects=field_redirects.get("Reservation"),
+        )
         entities["Reservation"] = {
             "from": "list_reservations",
             "key": _entity_key("Reservation", iface),
@@ -867,8 +1247,18 @@ def _compile_spec(
                 {"kind": "date_order", "before": "arrival_date", "after": "departure_date"},
             ],
         }
+        if proposed_joins.get("Reservation"):
+            entities["Reservation"]["joins"] = proposed_joins["Reservation"]
     if "list_folios" in operations:
-        fields = _collect_fields_for_entity("FolioCharge", iface, status_kind, status_mapping, status_vocab)
+        fields = _collect_fields_for_entity(
+            "FolioCharge",
+            iface,
+            status_kind,
+            status_mapping,
+            status_vocab,
+            items_fields=_items_fields_for_op(compiled_descs.get("list_folios"), iface),
+            redirects=field_redirects.get("FolioCharge"),
+        )
         entities["FolioCharge"] = {
             "from": "list_folios",
             "key": _entity_key("FolioCharge", iface),
@@ -878,6 +1268,8 @@ def _compile_spec(
                 {"kind": "no_loss", "compare_to": "$.total"},
             ],
         }
+        if proposed_joins.get("FolioCharge"):
+            entities["FolioCharge"]["joins"] = proposed_joins["FolioCharge"]
 
     # Capabilities
     capabilities = {"read": list(entities.keys()), "action": []}

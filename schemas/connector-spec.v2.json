@@ -343,6 +343,13 @@
           "title": "From",
           "type": "string"
         },
+        "joins": {
+          "items": {
+            "$ref": "#/$defs/JoinSpec"
+          },
+          "title": "Joins",
+          "type": "array"
+        },
         "key": {
           "description": "JSONPath subset, no expressions",
           "title": "Key",
@@ -416,6 +423,120 @@
         "canary"
       ],
       "title": "HealthSpec",
+      "type": "object"
+    },
+    "JoinField": {
+      "additionalProperties": false,
+      "description": "One computed value from the matched joined record(s) (spec v2).\n\n``one`` cardinality: exactly one of ``path``/``paths``; ``paths``\nextracts several values from the single matched record and feeds them\nas a list into the transform pipeline (e.g. ``concat`` over\n``[FirstName, LastName]``). ``many`` cardinality: ``path`` is read\nfrom every matched record and reduced by ``aggregate`` (required),\ne.g. ``sum`` over line-item gross amounts. ``transform`` reuses the\nclosed transform set (``money``, ``concat``, ...), never code.",
+      "properties": {
+        "aggregate": {
+          "anyOf": [
+            {
+              "enum": [
+                "first",
+                "sum",
+                "count",
+                "min",
+                "max"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Aggregate"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "description": "JSONPath subset, no expressions",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "paths": {
+          "anyOf": [
+            {
+              "items": {
+                "description": "JSONPath subset, no expressions",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paths"
+        },
+        "transform": {
+          "items": {
+            "$ref": "#/$defs/TransformStep"
+          },
+          "title": "Transform",
+          "type": "array"
+        }
+      },
+      "title": "JoinField",
+      "type": "object"
+    },
+    "JoinSpec": {
+      "additionalProperties": false,
+      "description": "Declarative enrichment of one entity from another operation (spec v2).\n\nRecords from ``from_operation`` are indexed by ``foreign_key``; each\nbase record looks up ``local_key``. ``one`` attaches computed scalars\nfrom the first match under ``_joined.<as>``; ``many`` aggregates over\nall matches. The attached namespace is reserved: vendor records never\ncarry ``_joined``, so enrichment cannot collide with wire data.",
+      "properties": {
+        "as": {
+          "description": "Namespace attached under _joined",
+          "title": "As",
+          "type": "string"
+        },
+        "cardinality": {
+          "default": "one",
+          "enum": [
+            "one",
+            "many"
+          ],
+          "title": "Cardinality",
+          "type": "string"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JoinField"
+          },
+          "minProperties": 1,
+          "title": "Fields",
+          "type": "object"
+        },
+        "foreign_key": {
+          "description": "JSONPath subset, no expressions",
+          "title": "Foreign Key",
+          "type": "string"
+        },
+        "from_operation": {
+          "title": "From Operation",
+          "type": "string"
+        },
+        "local_key": {
+          "description": "JSONPath subset, no expressions",
+          "title": "Local Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_operation",
+        "local_key",
+        "foreign_key",
+        "as",
+        "fields"
+      ],
+      "title": "JoinSpec",
       "type": "object"
     },
     "OperationSpec": {

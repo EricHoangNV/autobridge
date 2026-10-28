@@ -165,10 +165,22 @@ def run_canary(
     all_blocked_failures: list[str] = []
     invariant_failures: list[str] = []
 
+    # Declarative joins (spec v2): the canary fetches one operation, so
+    # joins over other operations attach None (honest missing, omitted by
+    # the mapper) — the canary stays a shape probe, never a full sync.
+    from autobridge.runtime.joins import resolve_joins_for_entity
+
     for ent_name, ent_spec in spec.entities.items():
         if ent_spec.from_operation != op_name:
             continue
         raw_records = op_result.records
+        if getattr(ent_spec, "joins", None):
+            raw_records = resolve_joins_for_entity(
+                ent_spec,
+                raw_records,
+                {op_name: op_result.records},
+                known_ops=set(spec.operations.keys()),
+            )
         canonical, blocked = map_records_to_entities(
             raw_records,
             ent_spec,

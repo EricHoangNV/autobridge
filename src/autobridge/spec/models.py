@@ -272,6 +272,121 @@ class EntityCheck(_Strict):
         return self
 
 
+#: Join aggregation operators (spec v2, ``many`` cardinality only).
+#: ``first`` takes the first non-null value, ``sum`` adds exact Decimals,
+#: ``count`` counts matched records, ``min``/``max`` compare values.
+JoinAggregate = Literal["first", "sum", "count", "min", "max"]
+
+
+class JoinField(_Strict):
+    """One computed value from the matched joined record(s) (spec v2).
+
+    ``one`` cardinality: exactly one of ``path``/``paths``; ``paths``
+    extracts several values from the single matched record and feeds them
+    as a list into the transform pipeline (e.g. ``concat`` over
+    ``[FirstName, LastName]``). ``many`` cardinality: ``path`` is read
+    from every matched record and reduced by ``aggregate`` (required),
+    e.g. ``sum`` over line-item gross amounts. ``transform`` reuses the
+    closed transform set (``money``, ``concat``, ...), never code.
+    """
+
+    path: JsonPath | None = None
+    paths: list[JsonPath] | None = None
+    aggregate: JoinAggregate | None = None
+    transform: list[TransformStep] = Field(default_factory=list)
+
+    @field_validator("path")
+    @classmethod
+    def _path_subset(cls, v: str | None) -> str | None:
+        return check_jsonpath(v, "join field path") if v is not None else v
+
+    @field_validator("paths")
+    @classmethod
+    def _paths_subset(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        if not v:
+            raise ValueError("join field 'paths' must list at least one path")
+        return [check_jsonpath(p, "join field path") for p in v]
+
+    @field_validator("transform", mode="before")
+    @classmethod
+    def _normalize_transform(cls, v: Any) -> Any:
+        if isinstance(v, list) and v and all(isinstance(s, TransformStep) for s in v):
+            return v
+        return normalize_transform(v)
+
+    @model_validator(mode="after")
+    def _one_of_path_or_paths(self) -> JoinField:
+        if (self.path is None) == (self.paths is None):
+            raise ValueError("join field needs exactly one of 'path' or 'paths'")
+        return self
+
+
+class JoinSpec(_Strict):
+    """Declarative enrichment of one entity from another operation (spec v2).
+
+    Records from ``from_operation`` are indexed by ``foreign_key``; each
+    base record looks up ``local_key``. ``one`` attaches computed scalars
+    from the first match under ``_joined.<as>``; ``many`` aggregates over
+    all matches. The attached namespace is reserved: vendor records never
+    carry ``_joined``, so enrichment cannot collide with wire data.
+    """
+
+    from_operation: str
+    local_key: JsonPath
+    foreign_key: JsonPath
+    cardinality: Literal["one", "many"] = "one"
+    as_: str = Field(alias="as", description="Namespace attached under _joined")
+    fields: dict[str, JoinField] = Field(min_length=1)
+
+    @field_validator("from_operation")
+    @classmethod
+    def _op_name(cls, v: str) -> str:
+        if not OPERATION_NAME_RE.match(v):
+            raise ValueError(f"join from_operation {v!r} must match [a-z][a-z0-9_]*")
+        return v
+
+    @field_validator("local_key", "foreign_key")
+    @classmethod
+    def _key_subset(cls, v: str) -> str:
+        return check_jsonpath(v, "join key")
+
+    @field_validator("as_")
+    @classmethod
+    def _as_name(cls, v: str) -> str:
+        if not FIELD_NAME_RE.match(v):
+            raise ValueError(f"join 'as' {v!r} must match [a-z][a-z0-9_]*")
+        return v
+
+    @field_validator("fields")
+    @classmethod
+    def _field_names(cls, v: dict[str, JoinField]) -> dict[str, JoinField]:
+        for name in v:
+            if not FIELD_NAME_RE.match(name):
+                raise ValueError(f"join field name {name!r} must match [a-z][a-z0-9_]*")
+        return v
+
+    @model_validator(mode="after")
+    def _cardinality_rules(self) -> JoinSpec:
+        for name, jf in self.fields.items():
+            if self.cardinality == "one":
+                if jf.aggregate is not None:
+                    raise ValueError(
+                        f"join field {name!r}: 'aggregate' needs cardinality many"
+                    )
+            else:
+                if jf.paths is not None:
+                    raise ValueError(
+                        f"join field {name!r}: 'paths' needs cardinality one"
+                    )
+                if jf.aggregate is None:
+                    raise ValueError(
+                        f"join field {name!r}: cardinality many needs 'aggregate'"
+                    )
+        return self
+
+
 class EntitySpec(_Strict):
     """Mapping from one source operation to one canonical entity."""
 
@@ -279,6 +394,9 @@ class EntitySpec(_Strict):
     key: JsonPath
     fields: dict[str, FieldMapping] = Field(min_length=1)
     checks: list[EntityCheck] = Field(default_factory=list)
+    #: Declarative joins (spec v2): enrich base records from other
+    #: operations by key before field mapping runs.
+    joins: list[JoinSpec] = Field(default_factory=list)
 
     @field_validator("key")
     @classmethod
@@ -601,7 +719,7 @@ class ConnectorSpec(_Strict):
 
     @model_validator(mode="after")
     def _v1_vocabulary(self) -> ConnectorSpec:
-        """Version 1 cannot express POST, body templates, body_fields auth or body_cursor."""
+        """Version 1 cannot express POST, body templates, body_fields auth, body_cursor or joins."""
         if self.spec_version == 1:
             if self.source.auth.type == "body_fields":
                 raise ValueError("body_fields auth requires spec_version 2")
@@ -616,6 +734,11 @@ class ConnectorSpec(_Strict):
                     raise ValueError(
                         f"operations.{op_name}: body_cursor pagination requires spec_version 2"
                     )
+            for entity_name, entity in self.entities.items():
+                if entity.joins:
+                    raise ValueError(
+                        f"entities.{entity_name}: joins require spec_version 2"
+                    )
         return self
 
     @model_validator(mode="after")
@@ -626,6 +749,12 @@ class ConnectorSpec(_Strict):
                     f"entities.{entity_name}.from: "
                     f"unknown operation {entity.from_operation!r}"
                 )
+            for join in entity.joins:
+                if join.from_operation not in self.operations:
+                    raise ValueError(
+                        f"entities.{entity_name}.joins.{join.as_}: "
+                        f"unknown operation {join.from_operation!r}"
+                    )
             for check in entity.checks:
                 if check.kind == "date_order":
                     assert check.before is not None and check.after is not None

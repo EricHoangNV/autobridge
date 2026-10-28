@@ -469,3 +469,41 @@ UTC instants → enterprise time-zone business dates) are item 5c: 5b fields
 that need a join compile to honest fallbacks (`$.guest_name`,
 `$.total_amount`, `$.business_date`) and validate, but do not sync money or
 names yet.
+
+## 12. Declarative joins (REQ-020.5c)
+
+Some vendors split an entity across operations: the reservation carries no
+name and no money — the name lives in customers, the money in order items.
+`entities.<Name>.joins` (spec v2 only; v1 rejects any join) enriches base
+records from other operations by key before field mapping runs. A join is
+data: `{from_operation, local_key, foreign_key, cardinality, as, fields}`,
+JSON-Patchable like everything else, interpreted — never code.
+
+* `one` attaches computed scalars from the first match (e.g. reservation →
+  customer by `$.AccountId` = `$.Id`); `many` aggregates over all matches
+  (e.g. reservation → order items by `$.AccountId`).
+* A join field reads one `path` (or several `paths` combined into a list
+  for `one`, e.g. `[FirstName, LastName]` through `concat`), then runs the
+  closed transform set. `many` needs an `aggregate`: `first`, exact-Decimal
+  `sum` (never float), `count`, `min`, `max`. No match — or all-null — is
+  honest `None`, omitted by the mapper, never invented.
+* Enrichment lands under the reserved `_joined.<as>` namespace, so entity
+  fields read `$._joined.customer.full_name` or
+  `$._joined.folio.total_amount` with ordinary JSONPath. Vendor records
+  never carry `_joined`, so enrichment cannot collide with wire data.
+* Discovery proposes joins from documented schemas when either side's
+  description names the relationship (join/match/link): a name authority
+  (`Id` + first/last names, carrying no foreign key itself) feeds a `one`
+  join; a line-items operation (same foreign key + money leaf with a
+  currency sibling, e.g. `UnitAmount.GrossValue` with `UnitAmount.Currency`,
+  nested one level from the reader) feeds a `many` sum join; folios gain a
+  reverse `one` join to reservations for the parent id. Field paths
+  redirect to `$._joined...`; without a partner the documentable fallbacks
+  stay. Lifecycle status spellings with an unambiguous canonical
+  counterpart normalize (`Started` → `checked_in`, `Processed` →
+  `checked_out`, `Optional` → `no_show`); genuinely ambiguous states
+  (`Inquired`, `Requested`) stay unmapped and Block via `on_unknown`.
+* Runtime: `runtime/joins.py` resolves after fetch, before mapping
+  (`sync_run` for full syncs; the canary probe resolves with partial data —
+  known-but-unfetched joins attach `None`). Money stays `Decimal` end to
+  end; a float aggregate input raises instead of laundering precision.

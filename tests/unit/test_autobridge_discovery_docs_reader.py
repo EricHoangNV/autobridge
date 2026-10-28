@@ -699,3 +699,27 @@ def test_credential_body_field_names_generic() -> None:
     assert not is_credential_body_field("Client")
     assert not is_credential_body_field("Limitation")
     assert not is_credential_body_field("")
+
+
+def test_openapi_nested_object_fields_are_dotted() -> None:
+    """REQ-020 5c: object-typed schema properties expose one dotted level.
+
+    Meridian's OrderItem.UnitAmount ($ref Money) surfaces as
+    UnitAmount.GrossValue / UnitAmount.Currency so join detection and field
+    mapping can address money leaves without new vocabulary.
+    """
+    from pathlib import Path
+
+    from autobridge.discovery.docs_reader import read_docs_text
+
+    yaml_text = (Path(__file__).resolve().parents[2] / "simulators" / "docs" / "meridian-openapi.yaml").read_text(
+        encoding="utf-8"
+    )
+    iface = read_docs_text(yaml_text, source="meridian-openapi.yaml")
+    by_name = {s.name: s for s in iface.schemas}
+    order_fields = {f.name for f in by_name["OrderItem"].fields}
+    assert "UnitAmount.GrossValue" in order_fields
+    assert "UnitAmount.Currency" in order_fields
+    assert "UnitAmount" in order_fields
+    customer_fields = {f.name for f in by_name["Customer"].fields}
+    assert "FirstName" in customer_fields

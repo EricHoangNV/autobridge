@@ -214,13 +214,19 @@ def execute_sync(
     all_blocked_failures: list[str] = []
     invariant_failures: list[str] = []
 
+    # Declarative joins (spec v2): enrich base records from other
+    # operations before field mapping; a no-op for entities without joins.
+    from autobridge.runtime.joins import resolve_joins
+
+    enriched_by_entity = resolve_joins(spec, results)
+
     for ent_name, ent_spec in spec.entities.items():
         op_name = ent_spec.from_operation
         res = results.get(op_name)
         if res is None:
             canonical_records[ent_name] = []
             continue
-        raw_records = res.records
+        raw_records = enriched_by_entity.get(ent_name, res.records)
 
         # Map via transforms
         canonical, blocked = map_records_to_entities(

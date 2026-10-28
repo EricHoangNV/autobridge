@@ -486,8 +486,13 @@ def test_v2_wire_names_follow_documented_spelling() -> None:
     assert status_map["Canceled"] == "cancelled"
     folio = spec["entities"]["FolioCharge"]["fields"]
     assert folio["charge_id"]["path"] == "$.Id"
-    assert folio["amount"]["path"] == "$.UnitAmount"
+    # REQ-020 5c: nested money leaves resolve precisely (not the whole object).
+    assert folio["amount"]["path"] == "$.UnitAmount.GrossValue"
+    assert folio["currency"]["path"] == "$.UnitAmount.Currency"
     assert folio["posted_at"]["path"] == "$.PostedUtc"
+    # No documented business-date field: derived from the posting instant.
+    assert folio["business_date"]["path"] == "$.PostedUtc"
+    assert res["property_id"]["path"] == "$.ServiceId"
     # Checkpoints follow the documented instant fields, not legacy names.
     assert spec["operations"]["list_reservations"]["checkpoint"] == {"field": "$.UpdatedUtc", "mode": "max"}
     assert spec["operations"]["list_folios"]["checkpoint"] == {"field": "$.PostedUtc", "mode": "max"}
@@ -532,3 +537,64 @@ def test_derive_body_field_ref() -> None:
     assert _derive_body_field_ref("meridianpms", "ClientToken") == "MERIDIAN_CLIENT_TOKEN"
     assert _derive_body_field_ref("meridianpms", "AccessToken") == "MERIDIAN_ACCESS_TOKEN"
     assert _derive_body_field_ref("my-conn", "ClientToken", credential_ref="CUSTOM_KEY") == "CUSTOM_KEY_CLIENT_TOKEN"
+
+
+# ---------------------------------------------------------------------------
+# Declarative joins proposed from docs (REQ-020 item 5c)
+# ---------------------------------------------------------------------------
+
+
+def test_v2_proposes_name_money_and_reverse_joins() -> None:
+    """Meridian docs propose all three joins keyed on the documented AccountId."""
+    spec = _meridian_v2_result().draft_spec
+    assert spec is not None
+    res_joins = spec["entities"]["Reservation"]["joins"]
+    assert len(res_joins) == 2
+    name_join, money_join = res_joins
+    assert name_join["from_operation"] == "list_customers"
+    assert name_join["local_key"] == "$.AccountId"
+    assert name_join["foreign_key"] == "$.Id"
+    assert name_join["cardinality"] == "one"
+    assert name_join["fields"]["full_name"]["paths"] == ["$.FirstName", "$.LastName"]
+    assert money_join["from_operation"] == "list_folios"
+    assert money_join["local_key"] == money_join["foreign_key"] == "$.AccountId"
+    assert money_join["cardinality"] == "many"
+    assert money_join["fields"]["total_amount"]["aggregate"] == "sum"
+    assert money_join["fields"]["total_amount"]["path"] == "$.UnitAmount.GrossValue"
+    assert money_join["fields"]["currency"]["aggregate"] == "first"
+    folio_joins = spec["entities"]["FolioCharge"]["joins"]
+    assert len(folio_joins) == 1
+    assert folio_joins[0]["from_operation"] == "list_reservations"
+    assert folio_joins[0]["fields"]["reservation_id"]["path"] == "$.Id"
+    load_spec_from_dict(spec)
+
+
+def test_v2_joined_fields_redirect_to_joined_namespace() -> None:
+    """Fields fed by joins read $._joined instead of inventing wire paths."""
+    spec = _meridian_v2_result().draft_spec
+    assert spec is not None
+    res = spec["entities"]["Reservation"]["fields"]
+    assert res["guest_name"]["path"] == "$._joined.customer.full_name"
+    assert res["total_amount"]["path"] == "$._joined.folio.total_amount"
+    assert res["currency"]["path"] == "$._joined.folio.currency"
+    folio = spec["entities"]["FolioCharge"]["fields"]
+    assert folio["reservation_id"]["path"] == "$._joined.reservation.reservation_id"
+
+
+def test_v1_proposes_no_joins() -> None:
+    """The v1 before-refusal still carries no joins (joins are v2)."""
+    from autobridge.discovery.bootstrap import build_draft_spec as _build
+
+    harbor = Path(HARBOR_MD_PATH).read_text(encoding="utf-8")
+    result = _build(harbor, source=HARBOR_MD_PATH, connector_id="harborpms")
+    assert result.success
+    assert "joins" not in result.draft_spec["entities"]["Reservation"]
+    assert "joins" not in result.draft_spec["entities"]["FolioCharge"]
+
+
+def test_harbor_v2_proposes_no_spurious_joins() -> None:
+    """A single-entity-shape API gains no joins under v2 (no partner ops)."""
+    harbor = Path(HARBOR_MD_PATH).read_text(encoding="utf-8")
+    result = build_draft_spec(harbor, source=HARBOR_MD_PATH, connector_id="harborpms", spec_vocabulary="v2")
+    assert result.success, f"visible_errors={result.visible_errors}"
+    assert "joins" not in result.draft_spec["entities"]["Reservation"]

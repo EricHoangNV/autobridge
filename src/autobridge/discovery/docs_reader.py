@@ -197,6 +197,40 @@ def _resolve_response_properties(schema_ref: dict[str, Any], components: dict[st
     return _collect(schema_ref)
 
 
+def _nested_leaf_fields(
+    fdef: Any, components: dict[str, Any]
+) -> list[tuple[str, str, str]]:
+    """One level of dotted sub-fields for an object-typed property.
+
+    Resolves inline ``properties`` or a ``$ref`` into components (e.g.
+    ``UnitAmount: {$ref: Money}`` yields ``UnitAmount.GrossValue``,
+    ``UnitAmount.Currency``). Returns [(sub-name, type, description)].
+    Arrays and scalars yield []. One level only: deeper nesting stays
+    unexpressed, like the rest of the v2 vocabulary.
+    """
+    if not isinstance(fdef, dict):
+        return []
+    target = fdef
+    ref = fdef.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+        schemas = components.get("schemas", {}) if isinstance(components.get("schemas"), dict) else {}
+        node = schemas.get(ref.rsplit("/", 1)[-1], {})
+        target = node if isinstance(node, dict) else {}
+    if target.get("type", "object") != "object":
+        return []
+    props = target.get("properties")
+    if not isinstance(props, dict):
+        return []
+    out: list[tuple[str, str, str]] = []
+    for sub, sdef in props.items():
+        if not isinstance(sub, str) or not sub:
+            continue
+        stype = str(sdef.get("type", "")) if isinstance(sdef, dict) else ""
+        sdesc = str(sdef.get("description", "")) if isinstance(sdef, dict) else ""
+        out.append((sub, stype, sdesc))
+    return out
+
+
 def _merge_schema_props(
     sdef: dict[str, Any], components: dict[str, Any]
 ) -> tuple[dict[str, Any], list[str]]:
@@ -496,6 +530,10 @@ def parse_openapi_dict(
                 ftype = str(fdef.get("type", "")) if isinstance(fdef, dict) else ""
                 fdesc = str(fdef.get("description", "")) if isinstance(fdef, dict) else ""
                 resp_fields.append(ResponseField(name=fname, type=ftype, description=fdesc))
+                for sub, stype, sdesc in _nested_leaf_fields(fdef, components):
+                    resp_fields.append(
+                        ResponseField(name=f"{fname}.{sub}", type=stype, description=sdesc)
+                    )
 
             # body-cursor paging signal + response items/cursor fields (v2)
             cursor_path, count_path, count_max = _body_paging_envelope(body_props, components)
@@ -582,6 +620,10 @@ def parse_openapi_dict(
             if isinstance(fdef, dict) and "enum" in fdef:
                 fdesc = (fdesc + f" enum={fdef['enum']}").strip()
             sfields.append(ResponseField(name=fname, type=ftype, description=fdesc))
+            for sub, stype, sdesc in _nested_leaf_fields(fdef, components):
+                sfields.append(
+                    ResponseField(name=f"{fname}.{sub}", type=stype, description=sdesc)
+                )
             # date/status notes per field
             low = (fname + " " + fdesc).lower()
             if any(k in low for k in ("date", "arrival", "departure", "business_date", "posted_at", "updated_at")):
