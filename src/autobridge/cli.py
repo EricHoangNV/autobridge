@@ -26,6 +26,10 @@ import httpx
 DEFAULT_CONTROL_URL = "http://localhost:8101"
 CONTROL_URL_ENV = "AUTOBRIDGE_CONTROL_URL"
 
+#: Env var carrying the control-plane write token (REQ-012). Sent as
+#: ``Authorization: Bearer <token>`` when set; the CLI never prints it.
+CONTROL_TOKEN_ENV_VAR = "AUTOBRIDGE_CONTROL_TOKEN"
+
 TERMINAL_JOB_STATES = frozenset({"succeeded", "failed"})
 
 
@@ -34,9 +38,17 @@ def resolve_base_url(explicit: str | None) -> str:
     return (explicit or os.environ.get(CONTROL_URL_ENV) or DEFAULT_CONTROL_URL).rstrip("/")
 
 
+def auth_headers() -> dict[str, str]:
+    """Auth headers for control API calls (empty when no token is set)."""
+    token = os.environ.get(CONTROL_TOKEN_ENV_VAR, "")
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _make_client(base_url: str, timeout: float) -> httpx.Client:
     """Client factory (module-level so tests can monkeypatch it)."""
-    return httpx.Client(base_url=base_url, timeout=timeout)
+    return httpx.Client(base_url=base_url, timeout=timeout, headers=auth_headers() or None)
 
 
 def _fail(msg: str) -> int:

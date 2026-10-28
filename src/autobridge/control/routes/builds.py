@@ -7,13 +7,13 @@ import os
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Security
 from sqlalchemy.orm import Session
 
-from autobridge.control.deps import get_db, get_session_factory
+from autobridge.control.deps import get_db, get_session_factory, require_control_token
 from autobridge.control.jobs import JobRunner
 from autobridge.control.models import Connector, ConnectorRelease
-from autobridge.control.schemas import BuildRequest, BuildResponse, SyncRequest, SyncResponse
+from autobridge.control.schemas import AUTH_401, BuildRequest, BuildResponse, SyncRequest, SyncResponse
 
 router = APIRouter(tags=["jobs"])
 
@@ -74,8 +74,8 @@ def _get_runner(db: Session | None = None) -> JobRunner:
     return runner
 
 
-@router.post("/connectors/{connector_id}/build", response_model=BuildResponse)
-def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(get_db)) -> BuildResponse:
+@router.post("/connectors/{connector_id}/build", response_model=BuildResponse, responses=AUTH_401)
+def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> BuildResponse:
     conn = db.get(Connector, connector_id)
     if conn is None:
         raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
@@ -166,8 +166,8 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
     return BuildResponse(job_id=job_id, build_run_id=build_run_id, state=job.state, connector_id=connector_id)
 
 
-@router.post("/connectors/{connector_id}/sync", response_model=SyncResponse)
-def trigger_sync(connector_id: str, body: SyncRequest, db: Session = Depends(get_db)) -> SyncResponse:
+@router.post("/connectors/{connector_id}/sync", response_model=SyncResponse, responses=AUTH_401)
+def trigger_sync(connector_id: str, body: SyncRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> SyncResponse:
     conn = db.get(Connector, connector_id)
     if conn is None:
         raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")

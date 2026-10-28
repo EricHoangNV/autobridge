@@ -44,8 +44,15 @@ schema = schemathesis.openapi.from_asgi("/openapi.json", app, config=Config(seed
 
 
 @pytest.fixture(autouse=True)
-def _isolated_control_db(tmp_path):  # type: ignore[no-untyped-def]
-    """Isolate each test on its own file SQLite DB (mirrors test_autobridge_control_api)."""
+def _isolated_control_db(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """Isolate each test on its own file SQLite DB (mirrors test_autobridge_control_api).
+
+    Sets ``AUTOBRIDGE_CONTROL_TOKEN`` so the write routes enforce auth while
+    fuzzing: schemathesis generates unauthenticated cases and expects the
+    documented 401 (REQ-012). The 2xx paths are covered by the functional
+    control API tests.
+    """
+    monkeypatch.setenv("AUTOBRIDGE_CONTROL_TOKEN", "contract-fuzz-token")
     engine = create_engine(f"sqlite:///{tmp_path}/control.db")
     Base.metadata.create_all(engine)
     factory = session_factory(engine)

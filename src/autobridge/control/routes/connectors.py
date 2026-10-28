@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Security
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from autobridge.control.deps import approved_by_for_releases, get_db
+from autobridge.control.deps import approved_by_for_releases, get_db, require_control_token
 from autobridge.control.models import (
     Connector,
     ConnectorRelease,
@@ -16,6 +16,7 @@ from autobridge.control.models import (
     SyncRun,
 )
 from autobridge.control.schemas import (
+    AUTH_401,
     CONFLICT_409,
     DOMAIN_ERROR_422,
     ConnectorCreate,
@@ -107,8 +108,8 @@ def _dep_to_out(d: DependencyRegistration) -> DependencyOut:
     )
 
 
-@router.post("", response_model=ConnectorOut, status_code=201, responses=DOMAIN_ERROR_422)
-def create_connector(body: ConnectorCreate, db: Session = Depends(get_db)) -> ConnectorOut:
+@router.post("", response_model=ConnectorOut, status_code=201, responses={**DOMAIN_ERROR_422, **AUTH_401})
+def create_connector(body: ConnectorCreate, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> ConnectorOut:
     rt = body.runtime_target or {"kind": "local_process"}
     # Validate runtime_target kind (edge shipped in P2.S2.1)
     kind = rt.get("kind", "local_process")
@@ -183,8 +184,8 @@ def get_connector(connector_id: str, db: Session = Depends(get_db)) -> Connector
     )
 
 
-@router.post("/{connector_id}/dependencies", response_model=DependencyOut, status_code=201, responses=CONFLICT_409)
-def create_dependency(connector_id: str, body: DependencyCreate, db: Session = Depends(get_db)) -> DependencyOut:
+@router.post("/{connector_id}/dependencies", response_model=DependencyOut, status_code=201, responses={**CONFLICT_409, **AUTH_401})
+def create_dependency(connector_id: str, body: DependencyCreate, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> DependencyOut:
     conn = db.get(Connector, connector_id)
     if conn is None:
         raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")

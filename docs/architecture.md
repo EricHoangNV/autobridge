@@ -330,6 +330,19 @@ errors (`POST /connectors`, `POST /demo/inject-fault`); response timestamps
 are UTC-aware RFC 3339 (`UtcDatetime`), and `InjectFaultRequest.target`/`seed`
 are a `Literal`/`StrictInt` so the schema states exactly what is accepted.
 
+Optional write token (REQ-012): when `AUTOBRIDGE_CONTROL_TOKEN` is set, every
+state-changing route (`POST`/`PUT`/`PATCH`/`DELETE`) requires
+`Authorization: Bearer <token>` (constant-time compare, 401 + documented
+`401` response otherwise, `HTTPBearer` scheme in the OpenAPI); when unset or
+empty the API behaves exactly as before. Read-only `GET`s, `/healthz`,
+`/readyz` and the SSE stream stay open. The UI never ships the token to the
+browser — `ui/middleware.ts` injects the header server-side on `/api/*`
+writes from the UI container's env. The bench harness, `make demo` driver,
+`ab` CLI and e2e helpers send it from their own env when set; `compose.yaml`
+passes it to `control` and `ui`, `.env.example` documents it. The token is a
+credential: never logged, never in responses, and covered by the SSE
+redaction (`*_TOKEN` names).
+
 Phase 2 S3 adds the reserved `DiscoveryResult` static import (7 paths,
 `discovery_records` table via migration `0004_discovery_records.py`):
 `POST /discovery/import` validates every record against the reserved

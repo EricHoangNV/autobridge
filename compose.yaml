@@ -36,6 +36,7 @@ services:
     environment:
       APP_MODULE: autobridge.control.app:app
       AUTOBRIDGE_OPERATOR: ${AUTOBRIDGE_OPERATOR:-operator}
+      AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
     networks:
       - engine-net
       - verifier-net
@@ -170,6 +171,8 @@ services:
     build:
       context: ./ui
       dockerfile: Dockerfile
+    environment:
+      AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
     networks:
       - engine-net
     ports:

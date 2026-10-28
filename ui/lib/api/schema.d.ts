@@ -1637,6 +1637,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -1742,6 +1753,17 @@ export interface operations {
             };
             /** @description Malformed request body */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1861,6 +1883,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -1920,6 +1953,17 @@ export interface operations {
             };
             /** @description Malformed request body */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2037,6 +2081,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -2085,6 +2140,17 @@ export interface operations {
             };
             /** @description Malformed request body */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2173,6 +2239,17 @@ export interface operations {
             };
             /** @description Malformed request body */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2303,6 +2380,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -2351,6 +2439,17 @@ export interface operations {
             };
             /** @description Malformed request body */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2417,6 +2516,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -2474,6 +2584,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -2522,6 +2643,17 @@ export interface operations {
             };
             /** @description Malformed request body */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3169,6 +3301,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -3332,6 +3475,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -3380,6 +3534,17 @@ export interface operations {
             };
             /** @description Malformed request body */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

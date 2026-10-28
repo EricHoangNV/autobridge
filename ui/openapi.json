@@ -1827,6 +1827,13 @@
         "title": "ValidationError",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "description": "Optional control-plane write token (AUTOBRIDGE_CONTROL_TOKEN).",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -2143,6 +2150,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -2198,6 +2223,11 @@
             "description": "Request validation failure or domain error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Create Connector",
         "tags": [
           "connectors"
@@ -2335,6 +2365,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -2364,6 +2412,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Trigger Build",
         "tags": [
           "jobs"
@@ -2503,6 +2556,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -2550,6 +2621,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Create Dependency",
         "tags": [
           "connectors"
@@ -2609,6 +2685,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -2638,6 +2732,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Trigger Sync",
         "tags": [
           "jobs"
@@ -2768,6 +2867,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -2823,6 +2940,11 @@
             "description": "Request validation failure or domain error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Inject Fault",
         "tags": [
           "demo"
@@ -2864,6 +2986,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -2883,6 +3023,11 @@
             "description": "Resource not found"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Demo Reset",
         "tags": [
           "demo"
@@ -2992,6 +3137,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -3065,6 +3228,11 @@
             "description": "Request validation failure or domain error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Import Discoveries",
         "tags": [
           "discovery"
@@ -3192,6 +3360,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -3247,6 +3433,11 @@
             "description": "Request validation failure or domain error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Authorize Discovery",
         "tags": [
           "discovery"
@@ -3296,6 +3487,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -3351,6 +3560,11 @@
             "description": "Request validation failure or domain error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Connect Discovery",
         "tags": [
           "discovery"
@@ -3400,6 +3614,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -3455,6 +3687,11 @@
             "description": "Request validation failure or domain error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Mark Healing",
         "tags": [
           "discovery"
@@ -3504,6 +3741,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -3559,6 +3814,11 @@
             "description": "Request validation failure or domain error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Request Confirmation",
         "tags": [
           "discovery"
@@ -3608,6 +3868,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -3663,6 +3941,11 @@
             "description": "Request validation failure or domain error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Resolve Healing",
         "tags": [
           "discovery"
@@ -4583,6 +4866,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -4612,6 +4913,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Rollback Release Endpoint",
         "tags": [
           "repairs"
@@ -4838,6 +5144,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -4867,6 +5191,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Approve Repair",
         "tags": [
           "repairs"
@@ -4926,6 +5255,24 @@
             },
             "description": "Malformed request body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -4955,6 +5302,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "Reject Repair",
         "tags": [
           "repairs"

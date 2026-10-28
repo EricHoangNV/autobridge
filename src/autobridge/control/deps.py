@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import hmac
+import os
 from collections.abc import Generator
 
+from fastapi import HTTPException, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from autobridge.control.models import (
@@ -19,12 +23,52 @@ from autobridge.control.models import (
 OPERATOR_ENV_VAR = "AUTOBRIDGE_OPERATOR"
 DEFAULT_OPERATOR = "operator"
 
+#: Optional bearer token guarding state-changing routes (REQ-012). When unset
+#: or empty, write routes behave exactly as before (open). When set, every
+#: POST/PUT/PATCH/DELETE route requires ``Authorization: Bearer <token>``
+#: (constant-time compare) and answers 401 without it. Read-only GETs,
+#: ``/healthz``, ``/readyz`` and the SSE stream stay open.
+CONTROL_TOKEN_ENV_VAR = "AUTOBRIDGE_CONTROL_TOKEN"
+
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    description="Optional control-plane write token (AUTOBRIDGE_CONTROL_TOKEN).",
+)
+
 
 def get_operator_name() -> str:
     """Return the server-configured operator name (never empty)."""
     import os
 
     return os.environ.get(OPERATOR_ENV_VAR, "").strip() or DEFAULT_OPERATOR
+
+
+def get_control_token() -> str:
+    """Return the configured control write token (empty = auth disabled)."""
+    return os.environ.get(CONTROL_TOKEN_ENV_VAR, "")
+
+
+def require_control_token(
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+) -> None:
+    """FastAPI dependency guarding state-changing routes (REQ-012).
+
+    Open when ``AUTOBRIDGE_CONTROL_TOKEN`` is unset/empty; otherwise requires
+    ``Authorization: Bearer <token>`` compared with ``hmac.compare_digest``.
+    The token value is never logged or echoed — 401 details name only the
+    missing/invalid header.
+    """
+    expected = get_control_token()
+    if not expected:
+        return
+    presented = credentials.credentials if credentials is not None else ""
+    if not presented or not hmac.compare_digest(presented, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid control token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return
 
 
 def approved_by_for_releases(db: Session, release_ids: list[str]) -> dict[str, str]:

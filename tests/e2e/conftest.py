@@ -152,6 +152,10 @@ def _http_post_json(url: str, payload: dict, timeout: float = 5.0, admin: bool =
     try:
         data = json.dumps(payload).encode()
         headers = {"Content-Type": "application/json"}
+        # REQ-012: send the control write token when set (server-side env only).
+        token = os.environ.get("AUTOBRIDGE_CONTROL_TOKEN", "")
+        if token and not admin:
+            headers["Authorization"] = f"Bearer {token}"
         if admin:
             headers["X-Admin-Network"] = "admin-net"
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")

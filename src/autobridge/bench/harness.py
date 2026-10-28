@@ -103,6 +103,18 @@ DEFAULT_CONTROL_API_URL_HOST = "http://localhost:8101"
 DEFAULT_VERIFIER_URL = "http://verifier:8000"
 DEFAULT_VERIFIER_URL_HOST = "http://localhost:8104"
 
+#: Env var carrying the control-plane write token (REQ-012). Sent as
+#: ``Authorization: Bearer <token>`` on control API writes when set.
+CONTROL_TOKEN_ENV_VAR = "AUTOBRIDGE_CONTROL_TOKEN"
+
+
+def control_headers() -> dict[str, str]:
+    """Auth headers for control API calls (empty when no token is set)."""
+    token = os.environ.get(CONTROL_TOKEN_ENV_VAR, "")
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
 
 def _is_in_container() -> bool:
     return pathlib.Path("/.dockerenv").exists() or pathlib.Path("/run/.containerenv").exists()
@@ -680,9 +692,8 @@ def run_autobridge_arm(
             # Minimal flow: create connector → build → poll
             # For bench we delegate to the caller's client; we just prove
             # the inputs were passed through.
-            resp = client.post(
-                f"{url}/connectors",
-                json={
+            _post_kwargs: dict[str, Any] = {
+                "json": {
                     "name": f"bench-{inputs.scenario_id}-{inputs.trial}",
                     "base_url": inputs.sandbox_url,
                     "credential_ref": inputs.credential_refs[0] if inputs.credential_refs else "BENCH_API_KEY",
@@ -690,8 +701,15 @@ def run_autobridge_arm(
                     "target_entities": list(inputs.visible_tests) or ["Reservation"],
                     "runtime_target": inputs.runtime_target,
                 },
-                timeout=timeout,
-            )
+                "timeout": timeout,
+            }
+            # REQ-012: send the control write token when set. The headers
+            # kwarg is only passed then, so header-unaware fake clients keep
+            # working when auth is disabled.
+            _headers = control_headers()
+            if _headers:
+                _post_kwargs["headers"] = _headers
+            resp = client.post(f"{url}/connectors", **_post_kwargs)
             # If client returns error, capture it
             elapsed = (time.monotonic() - start) * 1000.0
             if hasattr(resp, "status_code") and resp.status_code not in (200, 201):

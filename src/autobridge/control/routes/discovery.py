@@ -13,18 +13,19 @@ Trust boundary: stdlib + SQLAlchemy + pydantic only; never imports
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Security
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from autobridge.control.deps import get_db
+from autobridge.control.deps import get_db, require_control_token
 from autobridge.control.models import (
     DISCOVERY_STATUSES,
     DISCOVERY_TRANSITIONS,
     DiscoveryRecord,
 )
 from autobridge.control.schemas import (
+    AUTH_401,
     CONFLICT_409,
     DOMAIN_ERROR_422,
     DiscoveryImportRequest,
@@ -68,10 +69,10 @@ def _validate_record(payload: dict[str, object]) -> DiscoveryResult:
     "/import",
     response_model=DiscoveryImportResponse,
     status_code=201,
-    responses={**DOMAIN_ERROR_422, **CONFLICT_409},
+    responses={**DOMAIN_ERROR_422, **CONFLICT_409, **AUTH_401},
 )
 def import_discoveries(
-    body: DiscoveryImportRequest, db: Session = Depends(get_db)
+    body: DiscoveryImportRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)
 ) -> DiscoveryImportResponse:
     seen: set[str] = set()
     imported: list[DiscoveryRecord] = []
@@ -173,43 +174,43 @@ def _transition(
 @router.post(
     "/{discovery_id}/request-confirmation",
     response_model=DiscoveryRecordOut,
-    responses=DOMAIN_ERROR_422,
+    responses={**DOMAIN_ERROR_422, **AUTH_401},
 )
-def request_confirmation(discovery_id: str, db: Session = Depends(get_db)) -> DiscoveryRecordOut:
+def request_confirmation(discovery_id: str, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> DiscoveryRecordOut:
     return _transition(db, discovery_id, "request-confirmation")
 
 
 @router.post(
     "/{discovery_id}/authorize",
     response_model=DiscoveryRecordOut,
-    responses=DOMAIN_ERROR_422,
+    responses={**DOMAIN_ERROR_422, **AUTH_401},
 )
-def authorize_discovery(discovery_id: str, db: Session = Depends(get_db)) -> DiscoveryRecordOut:
+def authorize_discovery(discovery_id: str, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> DiscoveryRecordOut:
     return _transition(db, discovery_id, "authorize")
 
 
 @router.post(
     "/{discovery_id}/connect",
     response_model=DiscoveryRecordOut,
-    responses=DOMAIN_ERROR_422,
+    responses={**DOMAIN_ERROR_422, **AUTH_401},
 )
-def connect_discovery(discovery_id: str, db: Session = Depends(get_db)) -> DiscoveryRecordOut:
+def connect_discovery(discovery_id: str, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> DiscoveryRecordOut:
     return _transition(db, discovery_id, "connect")
 
 
 @router.post(
     "/{discovery_id}/mark-healing",
     response_model=DiscoveryRecordOut,
-    responses=DOMAIN_ERROR_422,
+    responses={**DOMAIN_ERROR_422, **AUTH_401},
 )
-def mark_healing(discovery_id: str, db: Session = Depends(get_db)) -> DiscoveryRecordOut:
+def mark_healing(discovery_id: str, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> DiscoveryRecordOut:
     return _transition(db, discovery_id, "mark-healing")
 
 
 @router.post(
     "/{discovery_id}/resolve",
     response_model=DiscoveryRecordOut,
-    responses=DOMAIN_ERROR_422,
+    responses={**DOMAIN_ERROR_422, **AUTH_401},
 )
-def resolve_healing(discovery_id: str, db: Session = Depends(get_db)) -> DiscoveryRecordOut:
+def resolve_healing(discovery_id: str, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> DiscoveryRecordOut:
     return _transition(db, discovery_id, "resolve")

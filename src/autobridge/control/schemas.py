@@ -72,6 +72,15 @@ DOMAIN_ERROR_422: dict[int | str, Any] = {
         },
     }
 }
+#: Write routes guarded by ``AUTOBRIDGE_CONTROL_TOKEN`` (REQ-012) answer 401
+#: without a valid ``Authorization: Bearer <token>`` header when the token is
+#: set. Documented so schemathesis validates the 401 shape.
+AUTH_401: dict[int | str, Any] = {
+    401: {
+        "description": "Missing or invalid control token",
+        "content": {"application/json": {"schema": STRING_DETAIL_OBJECT}},
+    }
+}
 
 
 class HealthResponse(BaseModel):

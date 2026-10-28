@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Security
 from sqlalchemy.orm import Session
 
-from autobridge.control.deps import approved_by_for_releases, get_db, get_operator_name
+from autobridge.control.deps import (
+    approved_by_for_releases,
+    get_db,
+    get_operator_name,
+    require_control_token,
+)
 from autobridge.control.models import ConnectorRelease, RepairRun
 from autobridge.control.schemas import (
+    AUTH_401,
     ApprovalOut,
     OperatorOut,
     ReleaseOut,
@@ -55,8 +61,8 @@ def _release_to_out(r: ConnectorRelease, approved_by: str | None = None) -> Rele
     )
 
 
-@router.post("/repairs/{repair_id}/approve", response_model=ApprovalOut)
-def approve_repair(repair_id: str, body: RepairDecisionRequest, db: Session = Depends(get_db)) -> ApprovalOut:
+@router.post("/repairs/{repair_id}/approve", response_model=ApprovalOut, responses=AUTH_401)
+def approve_repair(repair_id: str, body: RepairDecisionRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> ApprovalOut:
     run = db.get(RepairRun, repair_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"RepairRun {repair_id!r} not found")
@@ -106,8 +112,8 @@ def approve_repair(repair_id: str, body: RepairDecisionRequest, db: Session = De
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/repairs/{repair_id}/reject", response_model=ApprovalOut)
-def reject_repair(repair_id: str, body: RepairDecisionRequest, db: Session = Depends(get_db)) -> ApprovalOut:
+@router.post("/repairs/{repair_id}/reject", response_model=ApprovalOut, responses=AUTH_401)
+def reject_repair(repair_id: str, body: RepairDecisionRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> ApprovalOut:
     run = db.get(RepairRun, repair_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"RepairRun {repair_id!r} not found")
@@ -151,8 +157,8 @@ def get_release(release_id: str, db: Session = Depends(get_db)) -> ReleaseOut:
     return _release_to_out(r, approved_by=by_release.get(r.id))
 
 
-@router.post("/releases/{release_id}/rollback", response_model=RollbackResponse)
-def rollback_release_endpoint(release_id: str, body: RollbackRequest, db: Session = Depends(get_db)) -> RollbackResponse:
+@router.post("/releases/{release_id}/rollback", response_model=RollbackResponse, responses=AUTH_401)
+def rollback_release_endpoint(release_id: str, body: RollbackRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> RollbackResponse:
     # release_id in path is the currently active (or any) but we use body.target_release_id as target
     # The path param is for REST consistency; we validate it exists
     current = db.get(ConnectorRelease, release_id)

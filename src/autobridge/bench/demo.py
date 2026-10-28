@@ -46,6 +46,18 @@ SCORECARD_PATH = REPO_ROOT / "experiments" / "scorecard.md"
 DEFAULT_CONTROL_URL = "http://localhost:8101"
 DEFAULT_SEED = 0
 
+#: Env var carrying the control-plane write token (REQ-012). Sent as
+#: ``Authorization: Bearer <token>`` on control API calls when set.
+CONTROL_TOKEN_ENV_VAR = "AUTOBRIDGE_CONTROL_TOKEN"
+
+
+def control_headers() -> dict[str, str]:
+    """Auth headers for control API calls (empty when no token is set)."""
+    token = os.environ.get(CONTROL_TOKEN_ENV_VAR, "")
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
 # Short Harbor-style messy docs excerpt for step 2 (inline so the demo never
 # reads simulator files; the quirks mirror the real Harbor docs: a wrong
 # pagination example, opaque H1..H5 status codes, nested folios, ambiguous
@@ -256,7 +268,13 @@ def _control_call(base_url: str, method: str, path: str, payload: dict[str, Any]
     record: dict[str, Any] = {"method": method, "path": path}
     try:
         with httpx.Client(timeout=10) as client:
-            r = client.request(method, url, json=payload)
+            # REQ-012: send the control write token when set. The headers
+            # kwarg is only passed then, so stub clients in tests keep working
+            # when auth is disabled.
+            _extra: dict[str, Any] = {}
+            if _h := control_headers():
+                _extra["headers"] = _h
+            r = client.request(method, url, json=payload, **_extra)
             record["status"] = r.status_code
             try:
                 body = r.json()

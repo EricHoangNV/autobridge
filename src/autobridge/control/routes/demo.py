@@ -7,9 +7,10 @@ import os
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Security
 
-from autobridge.control.schemas import DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse
+from autobridge.control.deps import require_control_token
+from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 
@@ -47,8 +48,8 @@ def _admin_url_for_target(resolved: str) -> str:
     return f"http://localhost:{port}"
 
 
-@router.post("/inject-fault", response_model=InjectFaultResponse, responses=DOMAIN_ERROR_422)
-def inject_fault(body: InjectFaultRequest) -> InjectFaultResponse:
+@router.post("/inject-fault", response_model=InjectFaultResponse, responses={**DOMAIN_ERROR_422, **AUTH_401})
+def inject_fault(body: InjectFaultRequest, _: None = Security(require_control_token)) -> InjectFaultResponse:
     resolved = _resolve_target(body.target)
     base = _admin_url_for_target(resolved)
 
@@ -101,8 +102,8 @@ def inject_fault(body: InjectFaultRequest) -> InjectFaultResponse:
     )
 
 
-@router.post("/reset", response_model=dict)
-def demo_reset() -> dict[str, Any]:
+@router.post("/reset", response_model=dict, responses=AUTH_401)
+def demo_reset(_: None = Security(require_control_token)) -> dict[str, Any]:
     """Demo helper: reset both simulators to baseline."""
     results: dict[str, Any] = {"labelled": True, "demo": True, "resets": []}
     for target in ("sim-atlas", "sim-harbor"):
