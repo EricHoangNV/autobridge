@@ -383,6 +383,30 @@ class InjectFaultResponse(BaseModel):
     message: str
 
 
+class SimulatorConnectorRef(BaseModel):
+    id: str
+    name: str
+
+
+class SimulatorInfo(BaseModel):
+    """One simulator row for the index (REQ-022 E): registry display data
+    plus live status probed server-side by the control plane."""
+
+    id: str
+    display_name: str
+    api_style: str
+    public_port: int
+    docs_source: str
+    developers_url: str
+    live: bool
+    active_scenario: str | None = None
+    connectors: list[SimulatorConnectorRef] = Field(default_factory=list)
+
+
+class SimulatorsOut(BaseModel):
+    simulators: list[SimulatorInfo]
+
+
 class RungCallOut(BaseModel):
     tier: str
     purpose: str

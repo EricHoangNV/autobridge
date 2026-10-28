@@ -249,7 +249,8 @@ def test_playwright_ui_journey_spec_exists() -> None:
     """Plan §4 W7 requires tests/e2e/test_06_ui_journey.spec.ts (Playwright).
 
     The spec must be non-empty, contain the network isolation assertion, and
-    walk the four screens plus the labelled Inject Fault drawer.
+    walk the screens (connectors, repairs, knowledge, simulators) plus the
+    labelled Inject Fault drawer.
     """
     spec = ROOT / "tests" / "e2e" / "test_06_ui_journey.spec.ts"
     assert spec.is_file(), f"{spec} missing — required by P1.W7.8"
@@ -259,12 +260,14 @@ def test_playwright_ui_journey_spec_exists() -> None:
     assert "isBannedUrl" in text or "BANNED_HOST" in text, "spec must implement banned-host check"
     assert "8105" in text and "8104" in text, "spec must list banned ports 8105/8104"
     assert "bannedRequests" in text, "spec must collect bannedRequests and assert empty"
-    # Journey coverage — four screens
+    # Journey coverage — screens (connectors, repairs, knowledge, simulators)
     for needle in [
         "/connectors",
         "/connectors/new",
         "/connectors/[id]",
         "/repairs/[id]",
+        "/simulators",
+        "simulators-list",
         "inject-fault-drawer",
         "ladder",
         "patch-diff",

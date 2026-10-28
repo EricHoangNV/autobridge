@@ -2364,6 +2364,102 @@
         "title": "ScorecardsResponse",
         "type": "object"
       },
+      "SimulatorConnectorRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "SimulatorConnectorRef",
+        "type": "object"
+      },
+      "SimulatorInfo": {
+        "description": "One simulator row for the index (REQ-022 E): registry display data\nplus live status probed server-side by the control plane.",
+        "properties": {
+          "active_scenario": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Scenario"
+          },
+          "api_style": {
+            "title": "Api Style",
+            "type": "string"
+          },
+          "connectors": {
+            "items": {
+              "$ref": "#/components/schemas/SimulatorConnectorRef"
+            },
+            "title": "Connectors",
+            "type": "array"
+          },
+          "developers_url": {
+            "title": "Developers Url",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "docs_source": {
+            "title": "Docs Source",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "live": {
+            "title": "Live",
+            "type": "boolean"
+          },
+          "public_port": {
+            "title": "Public Port",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "api_style",
+          "public_port",
+          "docs_source",
+          "developers_url",
+          "live"
+        ],
+        "title": "SimulatorInfo",
+        "type": "object"
+      },
+      "SimulatorsOut": {
+        "properties": {
+          "simulators": {
+            "items": {
+              "$ref": "#/components/schemas/SimulatorInfo"
+            },
+            "title": "Simulators",
+            "type": "array"
+          }
+        },
+        "required": [
+          "simulators"
+        ],
+        "title": "SimulatorsOut",
+        "type": "object"
+      },
       "SyncRequest": {
         "properties": {
           "checkpoint": {
@@ -3984,6 +4080,64 @@
           }
         ],
         "summary": "Demo Reset",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
+    "/demo/simulators": {
+      "get": {
+        "description": "Simulators index data (REQ-022 E): every registry simulator with its\ndisplay metadata, live up/down probed server-side from the control\nplane (the browser never calls a simulator directly), the active fault\nscenario if any, and the connectors that use it.",
+        "operationId": "list_simulators_demo_simulators_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimulatorsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          }
+        },
+        "summary": "List Simulators",
         "tags": [
           "demo"
         ]

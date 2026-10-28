@@ -1,4 +1,4 @@
-"""Unit tests for the seven-step demo driver (P1.W10.2, plan §6).
+"""Unit tests for the eight-step demo driver (P1.W10.2, plan §6; step 8 REQ-022 E).
 
 The demo runs offline (local engine evidence) when the Compose stack is
 down and drives the control API when it is up. These tests cover both
@@ -29,6 +29,7 @@ from autobridge.bench.demo import (
     step5_head_to_head,
     step6_reproducibility,
     step7_new_api_style,
+    step8_onprem_pabx,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -48,10 +49,10 @@ def test_run_demo_all_six_steps_ok_offline() -> None:
     report = run_demo(seed=0, control_url="http://127.0.0.1:9")
     assert report["mode"] == "local-evidence"
     assert report["seed"] == 0
-    assert len(report["steps"]) == 7
+    assert len(report["steps"]) == 8
     assert report["failed"] == 0
     for i, step in enumerate(report["steps"], start=1):
-        assert step["number"] == f"{i}/7", step
+        assert step["number"] == f"{i}/8", step
         assert step["status"] == "ok", step
         assert step["control_calls"] == [], step  # offline: no HTTP attempted
 
@@ -157,6 +158,54 @@ def test_step7_rung_row_reports_zero_frontier() -> None:
     assert "0 frontier" in row and "v1 Blocked" in row
 
 
+def test_step8_pabx_layout_repair_zero_frontier() -> None:
+    """REQ-022 E: firmware v2→v3 → L1 rename_field patch, 0 model calls."""
+    step = step8_onprem_pabx(0, False, "http://127.0.0.1:9")
+    assert step["status"] == "ok", step
+    ev = step["evidence"]
+    assert ev["fault"] == "fias_record_layout_change"
+    assert ev["drift_class"] == "FIELD_RENAME"
+    assert ev["renamed_wire"] == {"TA": "TM"} and ev["added_wire"] == ["CX"]
+    assert ev["baseline"] == {"layout": "v2", "outcome": "Complete", "amount": "12.50"}
+    assert ev["stale_mapping_reads"] is None  # silent corruption: why handshake detection
+    assert ev["l1_rule"] == "rename_field"
+    assert ev["patch"] == [
+        {"op": "replace", "path": "/entities/FolioCharge/fields/amount/path", "value": "$.TM"}
+    ]
+    assert ev["repaired"] == {"layout": "v3", "outcome": "Complete", "amount": "12.50"}
+    assert ev["money_type"] == "Decimal(2dp)"
+    assert ev["model_usage_ledger"] == {"calls": 0, "small_tokens": 0, "frontier_tokens": 0}
+    assert ev["resolved_rung"] == "L1"
+    assert [a["rung"] for a in ev["rung_attempts"]] == [0, 1]
+
+
+def test_step8_restart_redelivery_loses_nothing() -> None:
+    step = step8_onprem_pabx(0, False, "http://127.0.0.1:9")
+    restart = step["evidence"]["restart"]
+    assert restart["lost"] == 0 and restart["duplicated"] == 0
+    assert restart["redelivered"] == restart["unique_keys"] >= 1
+
+
+def test_step8_wire_layouts_pinned_to_fault_yaml() -> None:
+    """The demo's v2/v3 wire lists must match the fault scenario file."""
+    import yaml
+
+    from autobridge.bench.demo import FIAS_PS_LAYOUT_V2, FIAS_PS_LAYOUT_V3
+
+    fault = yaml.safe_load((REPO_ROOT / "simulators" / "scenarios" / "fias_record_layout_change.yaml").read_text(encoding="utf-8"))
+    assert "".join(FIAS_PS_LAYOUT_V3) == fault["expected"]["announced_ps_layout"]
+    assert set(FIAS_PS_LAYOUT_V3) - set(FIAS_PS_LAYOUT_V2) == {"TM", "CX"}
+    assert set(FIAS_PS_LAYOUT_V2) - set(FIAS_PS_LAYOUT_V3) == {"TA"}
+
+
+def test_step8_rung_row_reports_l1_zero_frontier() -> None:
+    from autobridge.bench.demo import rung_table_row
+
+    step = step8_onprem_pabx(0, False, "http://127.0.0.1:9")
+    row = rung_table_row(step)
+    assert "resolved L1" in row and "0 frontier" in row and "rename_field" in row
+
+
 def test_step6_signatures_match_build_reports() -> None:
     step = step6_reproducibility(0, False, "http://127.0.0.1:9")
     ev = step["evidence"]
@@ -227,7 +276,7 @@ def test_render_text_lists_all_steps_and_ledger() -> None:
 def test_render_text_failed_step() -> None:
     text = render_text(
         {"mode": "local-evidence", "control_url": "http://x", "seed": 0, "failed": 1,
-         "steps": [{"number": "1/7", "name": "boom", "status": "failed", "error": "nope", "control_calls": []}]}
+         "steps": [{"number": "1/8", "name": "boom", "status": "failed", "error": "nope", "control_calls": []}]}
     )
     assert "FAILED" in text and "nope" in text
 
@@ -235,10 +284,10 @@ def test_render_text_failed_step() -> None:
 def test_main_text_and_json_modes(capsys: Any) -> None:
     assert main(["--control-url", "http://127.0.0.1:9", "--seed", "0"]) == 0
     out = capsys.readouterr().out
-    assert "Step 1/7" in out and "Step 7/7" in out
+    assert "Step 1/8" in out and "Step 8/8" in out
     assert main(["--control-url", "http://127.0.0.1:9", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert len(report["steps"]) == 7 and report["failed"] == 0
+    assert len(report["steps"]) == 8 and report["failed"] == 0
 
 
 def test_control_probe_and_call_with_stubbed_http(monkeypatch: Any) -> None:
@@ -323,7 +372,7 @@ def test_live_ensure_connector_creates_when_absent(monkeypatch: Any) -> None:
 def test_render_text_live_complete_line() -> None:
     text = render_text(
         {"mode": "live-control-api", "control_url": "http://c", "seed": 0, "failed": 0,
-         "steps": [{"number": "1/7", "name": "s", "status": "ok", "evidence": {"k": "v"}, "control_calls": [{"method": "GET", "path": "/healthz", "status": 200}]}]}
+         "steps": [{"number": "1/8", "name": "s", "status": "ok", "evidence": {"k": "v"}, "control_calls": [{"method": "GET", "path": "/healthz", "status": 200}]}]}
     )
     assert "1 steps via control API" in text
 
@@ -413,8 +462,8 @@ def test_demo_labels_live_vs_inprocess_steps(monkeypatch: Any) -> None:
     )
     report = run_demo(seed=0, control_url="http://control:8101")
     modes = {s["number"]: s["mode"] for s in report["steps"]}
-    assert modes["6/7"] == "in-process"  # step 6 never calls the control plane
-    assert modes["1/7"] == "live"
+    assert modes["6/8"] == "in-process"  # step 6 never calls the control plane
+    assert modes["1/8"] == "live"
     text = render_text(report)
     assert "live steps:" in text and "in-process steps:" in text
     assert "(live)" in text and "(in-process)" in text

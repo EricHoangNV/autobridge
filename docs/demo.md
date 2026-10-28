@@ -1,6 +1,6 @@
 # AutoBridge — demo (plan §6, 3–4 minutes, real traces)
 
-> `make demo` drives all seven steps through the control API (P1.W10.2). This page is
+> `make demo` drives all eight steps through the control API (P1.W10.2). This page is
 > the script: what each step does, the calls it makes, and the evidence it renders —
 > the same evidence the UI screens show. Every step is reproducible from seeds and
 > release ids.
@@ -115,11 +115,37 @@ Every step above is reproducible:
 * Releases are immutable and content-addressed (`spec_signature` sha256 of the
   canonical JSON); `generated/connectors/<id>/<release>/` holds `spec.yaml` +
   `build-report.json` (connector id, release id, signature, `built_by`).
- * `make demo` replays steps 1–7 against the same seeds and prints the release ids it
+ * `make demo` replays steps 1–8 against the same seeds and prints the release ids it
    created, so a reviewer can re-fetch any spec, sync, or verifier verdict.
 
 ```
-make demo    # seven steps via the control API; output is the same evidence the UI renders
+make demo    # eight steps via the control API; output is the same evidence the UI renders
+
+## 8. On-premise PABX — the agent keeps working through a firmware change (REQ-022)
+
+Postings flow from the FIAS PABX through the on-premise edge agent; a firmware
+update announces a new `PS` layout (`TA` renamed to `TM`, `CX` added, fields
+reordered). The new shape does not fail the run — it corrupts it silently (the
+amount path reads nothing) — so the drift is detected from the handshake `LR`
+announcement, not from the sync outcome. Detection plus the `rename_field` L1
+rule propose the mapping patch through the ladder (L0 miss → L1, 0 model calls);
+the repaired mapping syncs the new shape `Complete` with `Decimal` amounts. A
+restart moment replays the same durable outbox: identical idempotency keys, so
+each charge lands once — 0 lost, 0 duplicated.
+
+```
+POST /demo/inject-fault                { target: sim-fias-pabx, scenario_id: fias_record_layout_change, seed }
+GET  /demo/simulators                   → FIAS PABX row shows the active fault; the other rows stay green
+POST /repairs (auto) or ladder         → L0 miss → L1 rename_field → JSON Patch (amount path $.TA → $.TM)
+POST /verify { spec, scenario_id }     → verdict pass (visible), regression pass
+GET  /metrics/model-usage?run_id=…     → frontier_tokens 0 (L0/L1 only); the per-run table reads
+                                         "resolved L1 | 0 calls | 0 small / 0 frontier"
+```
+
+Renders in the simulators index (live up/down, active fault, connectors using
+the PABX) and in `/repairs/[id]` (handshake evidence, ladder badges L0→L1, old/
+new mapping diff, verifier verdict). Money stays `Decimal` throughout; the agent
+ACKs the PABX after a durable local write, so the link never stalls on the cloud.
 ```
 
 ## 7. New API style — Meridian refuses safely, then connects (REQ-020)

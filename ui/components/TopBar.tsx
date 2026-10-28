@@ -127,7 +127,7 @@ export function TopBar() {
           </button>
           <a
             data-testid="topbar-healthz"
-            href="/healthz"
+            href="/simulators"
             title={alive === false ? "Control API unreachable" : "All services healthy"}
             className="text-[13px] text-ink-2 no-underline hover:text-ink hover:underline"
           >

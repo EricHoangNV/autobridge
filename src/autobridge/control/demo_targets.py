@@ -37,6 +37,12 @@ class DemoTarget:
     aliases: tuple[str, ...]
     host_admin_port: int
     extra_resets: tuple[tuple[str, str], ...]  # (entry suffix, admin path)
+    # Display metadata for the simulators index (REQ-022 E). Optional so
+    # synthetic test registries stay minimal; validated when present.
+    display_name: str = ""
+    api_style: str = ""
+    public_port: int = 0
+    docs_source: str = ""
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,26 @@ def default_targets_path() -> Path:
         return Path(override)
     # src/autobridge/control/demo_targets.py -> repo root is parents[3].
     return Path(__file__).resolve().parents[3] / CONFIG_RELATIVE
+
+
+def _optional_text(item: dict, key: str, where: str) -> str:
+    """Optional display string: missing/blank is allowed, other types fail."""
+    value = item.get(key, "")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise DemoTargetsError(f"{where}: {key!r} must be a string")
+    return value.strip()
+
+
+def _optional_port(item: dict, key: str, where: str) -> int:
+    """Optional display port: 0 means unset; otherwise a TCP port number."""
+    value = item.get(key, 0)
+    if value is None or value == 0:
+        return 0
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535:
+        raise DemoTargetsError(f"{where}: {key!r} must be a TCP port number")
+    return value
 
 
 def load_demo_targets(path: str | Path | None = None) -> DemoTargets:
@@ -117,6 +143,10 @@ def load_demo_targets(path: str | Path | None = None) -> DemoTargets:
                 aliases=tuple(a.strip() for a in aliases),
                 host_admin_port=port,
                 extra_resets=tuple(extra),
+                display_name=_optional_text(item, "display_name", where),
+                api_style=_optional_text(item, "api_style", where),
+                public_port=_optional_port(item, "public_port", where),
+                docs_source=_optional_text(item, "docs_source", where),
             )
         )
     alias_map = {t.id.lower(): t.id for t in entries}

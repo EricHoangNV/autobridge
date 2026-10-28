@@ -2,7 +2,7 @@
  * P1.W7.8 — Control API + UI acceptance (plan §4 W7, §2.11)
  *
  * 1. Network test: the UI never calls simulators or verifier directly.
- *    Every request issued by the browser while walking the four screens is
+ *    Every request issued by the browser while walking the screens is
  *    captured; none may target sim-atlas/sim-harbor/verifier hosts or their
  *    host ports (8104 simulator admin 8109/8110, public 8105/8106).
  *    REQ-018: the browser only calls same-origin /api/* (Next.js rewrites to
@@ -10,13 +10,14 @@
  *    browser calls to control (:8101 locally, control:8000 in compose) are
  *    banned too — they would bypass the token middleware.
  *
- * 2. User journey v2 §7.4 (four screens + labelled Inject Fault drawer +
- *    model-usage view): mirrors the six demo steps (plan §6) via the browser:
+ * 2. User journey v2 §7.4 (screens + labelled Inject Fault drawer +
+ *    model-usage view): mirrors the demo steps (plan §6) via the browser:
  *      /connectors — table (health, active release, last sync outcome, open drift, sparkline)
  *      /connectors/new — docs upload/URL/paste, sandbox base URL, credential env-ref, target entities, create+build
  *      /connectors/[id] — spec YAML, releases, sync runs (Complete/Degraded/Blocked), fingerprints, dependencies
  *      /repairs/[id] — drift evidence, ladder trace L0-L4, hypotheses+probes, JSON Patch diff old/new, visible tests,
  *                      verifier verdict, model usage, Approve/Reject/Rollback + Inject Fault drawer + model-usage view
+ *      /simulators — registry index (REQ-022 E): one row per simulator, live up/down, active fault, connectors
  *
  * Runs against the Compose stack when it is up (make up) and against mocked
  * API responses when it is not, so it is green in both CI and a plain dev
@@ -434,9 +435,20 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     // Header
     await expect(page.getByRole("heading", { name: /Connectors/ })).toBeVisible();
     // System-status link: found by data-testid, never by its text (REQ-018 —
-    // the /healthz route stays, but the label is "System status", not "healthz").
-    await expect(page.getByTestId("topbar-healthz")).toHaveAttribute("href", "/healthz");
+    // the /healthz route stays for the LIVE indicator, but the label is
+    // "System status" and opens the simulators index, REQ-022 E).
+    await expect(page.getByTestId("topbar-healthz")).toHaveAttribute("href", "/simulators");
     await expect(page.getByTestId("topbar-healthz")).toContainText("System status");
+    // Simulators index: one row per registry simulator (or the settled
+    // empty/error state when control is unreachable).
+    await page.goto(`${UI_BASE}/simulators`, { waitUntil: "domcontentloaded", timeout: 10000 });
+    await expect(
+      page
+        .getByTestId("simulators-list")
+        .or(page.getByTestId("simulators-error")),
+    ).toBeVisible({ timeout: 15000 });
+    // Back to the connectors journey below.
+    await page.goto(`${UI_BASE}/connectors`, { waitUntil: "domcontentloaded", timeout: 10000 });
     // New connector link exists
     await expect(page.getByTestId("new-connector-link")).toBeVisible();
     // Health badge / table or empty state — wait for the settled state

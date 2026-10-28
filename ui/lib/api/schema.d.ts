@@ -260,6 +260,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/demo/simulators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Simulators
+         * @description Simulators index data (REQ-022 E): every registry simulator with its
+         *     display metadata, live up/down probed server-side from the control
+         *     plane (the browser never calls a simulator directly), the active fault
+         *     scenario if any, and the connectors that use it.
+         */
+        get: operations["list_simulators_demo_simulators_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery": {
         parameters: {
             query?: never;
@@ -1885,6 +1908,43 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** SimulatorConnectorRef */
+        SimulatorConnectorRef: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * SimulatorInfo
+         * @description One simulator row for the index (REQ-022 E): registry display data
+         *     plus live status probed server-side by the control plane.
+         */
+        SimulatorInfo: {
+            /** Active Scenario */
+            active_scenario?: string | null;
+            /** Api Style */
+            api_style: string;
+            /** Connectors */
+            connectors?: components["schemas"]["SimulatorConnectorRef"][];
+            /** Developers Url */
+            developers_url: string;
+            /** Display Name */
+            display_name: string;
+            /** Docs Source */
+            docs_source: string;
+            /** Id */
+            id: string;
+            /** Live */
+            live: boolean;
+            /** Public Port */
+            public_port: number;
+        };
+        /** SimulatorsOut */
+        SimulatorsOut: {
+            /** Simulators */
+            simulators: components["schemas"]["SimulatorInfo"][];
+        };
         /** SyncRequest */
         SyncRequest: {
             /** Checkpoint */
@@ -2822,6 +2882,48 @@ export interface operations {
             };
             /** @description Missing or invalid control token */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    list_simulators_demo_simulators_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimulatorsOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

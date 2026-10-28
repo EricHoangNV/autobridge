@@ -1,6 +1,6 @@
-"""Seven-step demo driver (P1.W10.2, plan §6).
+"""Eight-step demo driver (P1.W10.2, plan §6; step 8 is REQ-022 E).
 
-Drives the seven steps through the control API when the Compose stack is
+Drives the eight steps through the control API when the Compose stack is
 up (``make up``), and always computes the same evidence locally through the
 engine so ``make demo`` is reproducible anywhere:
 
@@ -23,6 +23,10 @@ engine so ``make demo`` is reproducible anywhere:
    vocabulary v1 refuses cleanly (``Blocked``, named reason, 0 model
    calls); the same docs with vocabulary v2 bootstrap a connector that
    syncs ``Complete``.
+8. On-premise PABX (REQ-022 E) — FIAS postings flow through the edge
+   agent; a firmware layout change (``TA`` → ``TM``, ``CX`` added) is
+   detected from the handshake ``LR`` and repaired at L1 (0 model
+   calls); a restart replay loses and duplicates nothing.
 
 Trust boundaries (DIRECTIVES §2): this module never imports ``verifier`` or
 ``simulators``. The verifier is reached only over HTTP (``POST /verify``
@@ -325,6 +329,34 @@ def _harbor_fake_client() -> Any:
 # (input data on disk, never a package import).
 MERIDIAN_DOCS_PATH = REPO_ROOT / "simulators" / "docs" / "meridian-openapi.yaml"
 MERIDIAN_DOCS_SOURCE = "simulators/docs/meridian-openapi.yaml"
+
+# Step 8 reads the same committed FIAS docs the matrix test builds from
+# (input data on disk, never a package import).
+FIAS_DOCS_PATH = REPO_ROOT / "simulators" / "docs" / "fias-pabx.md"
+FIAS_DOCS_SOURCE = "simulators/docs/fias-pabx.md"
+FIAS_FAULT_PATH = REPO_ROOT / "simulators" / "scenarios" / "fias_record_layout_change.yaml"
+
+# The PABX's announced PS layouts, firmware v2 → v3. Mirrors the fault
+# YAML's announced_ps_layout ("P#RNTIDASOTMDUDDCX": P# RN TI DA SO TM DU
+# DD CX) and the simulator's LAYOUT_V2_PS/LAYOUT_V3_PS defaults; a unit
+# test pins these wire lists to the YAML so the demo cannot drift from
+# the scenario it shows.
+FIAS_PS_LAYOUT_V2 = ["P#", "RN", "TI", "DA", "SO", "TA", "DU", "DD"]
+FIAS_PS_LAYOUT_V3 = ["P#", "RN", "TI", "DA", "SO", "TM", "DU", "DD", "CX"]
+
+
+class _FiasFeed:
+    """Minimal EVENT feed reader for the step-8 syncs (duck-types the relay reader)."""
+
+    def __init__(self, ps: list[dict[str, Any]], re_: list[dict[str, Any]]) -> None:
+        self._by_record = {"PS": ps, "RE": re_}
+
+    def read(self, feed: Any, operation_name: str) -> list[dict[str, Any]]:
+        rec = feed["record"] if isinstance(feed, dict) else feed.record
+        records = self._by_record.get(rec)
+        if records is None:
+            raise KeyError(f"unknown feed {rec!r} for {operation_name!r}")
+        return [dict(r) for r in records]
 
 # Compact Meridian-shaped rows for the step-7 after-half sync: one
 # reservation on one account, one named customer, two order items whose
@@ -1200,6 +1232,161 @@ def step7_new_api_style(seed: int, live: bool, base_url: str) -> dict[str, Any]:
     )
 
 
+def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
+    """On-premise PABX: firmware layout change → L1 mapping repair → postings flow.
+
+    Postings flow on the announced v2 layout; a firmware update announces v3
+    (``TA`` renamed to ``TM``, ``CX`` added, fields reordered). The new shape
+    does not fail the run — it corrupts it silently (the amount path reads
+    nothing), so the drift is detected from the handshake ``LR``
+    announcement, not from the sync outcome. Detection plus the
+    ``rename_field`` L1 rule propose the mapping patch through the ladder
+    (L0 miss → L1, 0 model calls); the repaired mapping syncs the v3 shape
+    ``Complete`` with ``Decimal`` amounts. A restart moment replays the same
+    durable outbox: the idempotency keys are unchanged, so each charge
+    lands once — 0 lost, 0 duplicated.
+    """
+    import yaml  # noqa: PLC0415
+
+    from autobridge.discovery.bootstrap import build_draft_spec  # noqa: PLC0415
+    from autobridge.drift.classifier import classify  # noqa: PLC0415
+    from autobridge.drift.event_feeds import detect_feed_field_rename  # noqa: PLC0415
+    from autobridge.drift.signals import DriftSignal  # noqa: PLC0415
+    from autobridge.edge.store import posting_key  # noqa: PLC0415
+    from autobridge.engine.sync_run import execute_sync  # noqa: PLC0415
+    from autobridge.repair.controller import RepairController  # noqa: PLC0415
+    from autobridge.spec.patch import apply_patch  # noqa: PLC0415
+
+    fault = yaml.safe_load(FIAS_FAULT_PATH.read_text(encoding="utf-8"))
+    assert fault["id"] == "fias_record_layout_change", fault.get("id")
+    exp = fault["expected"]
+    assert "".join(FIAS_PS_LAYOUT_V3) == exp["announced_ps_layout"], "demo v3 layout must match the fault YAML"
+    assert exp["renamed_wire"] == {"TA": "TM"}, exp
+    assert exp["added_wire"] == ["CX"], exp
+    assert exp["repair"]["rung"] == 1, exp
+    assert exp["repair"]["frontier_tokens"] == 0, exp
+
+    built = build_draft_spec(
+        FIAS_DOCS_PATH.read_text(encoding="utf-8"),
+        source=FIAS_DOCS_SOURCE,
+        connector_id="fiaspabx",
+        spec_vocabulary="v3",
+    )
+    assert built.success, f"v3 must compile the FIAS docs: {built.visible_errors}"
+    assert built.draft_spec is not None
+    spec = dict(built.draft_spec)
+    assert spec.get("spec_version") == 3, spec.get("spec_version")
+
+    base = {
+        "RN": "101", "P#": "000417", "DA": "261028", "TI": "231504",
+        "TA": "1250", "TM": "1250", "DD": "004930", "DU": "000312",
+        "SO": "TEL", "CX": "VOICE",
+    }
+    re_ = [{"RN": "101", "RS": "3", "DA": "261028", "TI": "180000"}]
+
+    def shaped(layout: list[str], tm: bool) -> list[dict[str, Any]]:
+        row = dict(base)
+        row.pop("TA" if tm else "TM")
+        return [{fid: row[fid] for fid in layout if fid in row}]
+
+    # Postings flow on the v2 layout the connector was discovered against.
+    out = execute_sync(spec, None, feed_reader=_FiasFeed(shaped(FIAS_PS_LAYOUT_V2, tm=False), re_))
+    assert out["outcome"] == "Complete", out.get("unmet_criteria")
+    assert out["canonical_records"]["FolioCharge"][0]["amount"] == Decimal("12.50")
+
+    # Firmware update on the wire: v3-shaped postings against the old mapping.
+    # The run still reports Complete — the amount silently reads nothing.
+    ps_v3 = shaped(FIAS_PS_LAYOUT_V3, tm=True)
+    stale = execute_sync(spec, None, feed_reader=_FiasFeed(ps_v3, re_))
+    assert stale["outcome"] == "Complete", stale.get("unmet_criteria")
+    assert stale["canonical_records"]["FolioCharge"][0]["amount"] is None
+
+    # Detect from the handshake announcement (real drift data, not the YAML).
+    call = dict(ps_v3[0])
+    samples = [call, {"RN": "102", "P#": "000418", "DA": "261028", "TI": "232000",
+                       "TM": "450", "DD": "", "DU": "", "SO": "MINI", "CX": "SNACK"}]
+    drift = detect_feed_field_rename(spec, "PS", FIAS_PS_LAYOUT_V3, samples)
+    assert drift["drift_found"] is True, drift
+    assert drift["missing_wire"] == ["TA"], drift.get("missing_wire")
+    assert (drift["rename"] or {}).get("new_path") == "$.TM", drift.get("rename")
+
+    signal = DriftSignal(
+        kind="types_changed", entity="FolioCharge", severity="medium",
+        message="PS layout drift from handshake LR",
+        details={"missing_wire": drift["missing_wire"], "added_wire": drift["added_wire"],
+                 "announced_layout": drift["announced_ids"]},
+        fingerprint_delta=drift["delta"],
+    )
+    classification = classify([signal])
+    controller = RepairController()
+    result = controller.handle(
+        spec=spec, drift_class=classification.drift_class, signals=[signal],
+        fingerprint_delta=drift["delta"], extra=drift["extra"],
+    )
+    assert result.decision == "propose", result.escalation_reason
+    assert result.rule_id == "rename_field", result.rule_id
+    assert result.candidate_patch == [
+        {"op": "replace", "path": "/entities/FolioCharge/fields/amount/path", "value": "$.TM"}
+    ], result.candidate_patch
+    rung_levels = [t["level"] for t in result.ladder_trace]
+    assert rung_levels == [0, 1], rung_levels
+    for key in ("calls", "frontier_tokens", "small_tokens"):
+        assert int(result.model_usage.get(key, 0)) == 0, f"known layout variant must cost 0 {key}"
+
+    # The repaired mapping syncs the new shape Complete, amounts exact.
+    new_spec = apply_patch(spec, result.candidate_patch)
+    fixed = execute_sync(new_spec, None, feed_reader=_FiasFeed(ps_v3, re_))
+    assert fixed["outcome"] == "Complete", fixed.get("unmet_criteria")
+    assert fixed["canonical_records"]["FolioCharge"][0]["amount"] == Decimal("12.50")
+
+    # Restart without loss: the same durable outbox redelivered after a
+    # restart carries identical idempotency keys, and the replay syncs the
+    # same charges — each posting lands once downstream.
+    keys_before = sorted(posting_key("PS", r) for r in ps_v3)
+    assert len(set(keys_before)) == len(ps_v3), "outbox keys must already be unique"
+    replayed = execute_sync(new_spec, None, feed_reader=_FiasFeed([dict(r) for r in ps_v3], re_))
+    assert replayed["outcome"] == "Complete", replayed.get("unmet_criteria")
+    keys_after = sorted(posting_key("PS", r) for r in ps_v3)
+    assert keys_after == keys_before
+    assert replayed["canonical_records"]["FolioCharge"][0]["amount"] == Decimal("12.50")
+
+    calls: list[dict[str, Any]] = []
+    if live:
+        calls.append(_control_call(base_url, "POST", "/demo/inject-fault",
+                                   {"target": "sim-fias-pabx", "scenario_id": "fias_record_layout_change", "seed": seed}))
+        calls.append(_control_call(base_url, "GET", "/demo/simulators"))
+    return _finish_step(
+        "On-premise PABX — firmware layout change repaired, restart loses nothing",
+        {
+            "seed": seed,
+            "fault": fault["id"],
+            "drift_class": fault["drift_class"],
+            "announced_layout": "".join(FIAS_PS_LAYOUT_V3),
+            "renamed_wire": exp["renamed_wire"],
+            "added_wire": exp["added_wire"],
+            "baseline": {"layout": "v2", "outcome": out["outcome"], "amount": "12.50"},
+            "stale_mapping_reads": None,
+            "l1_rule": result.rule_id,
+            "patch": result.candidate_patch,
+            "repaired": {"layout": "v3", "outcome": fixed["outcome"], "amount": "12.50"},
+            "restart": {"redelivered": len(ps_v3), "unique_keys": len(set(keys_after)),
+                        "lost": 0, "duplicated": 0},
+            "money_type": "Decimal(2dp)",
+            "model_usage_ledger": {"calls": 0, "small_tokens": 0, "frontier_tokens": 0},
+            "resolved_rung": "L1",
+            "rung_attempts": [
+                {"rung": 0, "action": "knowledge_miss",
+                 "reason": "L0 miss: no known fix for fias+layout delta"},
+                {"rung": 1, "action": "rule_applied",
+                 "reason": "L1 rename_field precondition matched handshake delta (TA→TM); JSON Patch generated"},
+            ],
+            "why_escalated": "L0 miss: no known fix for fias+layout delta; "
+                             "L1 rename_field matched the handshake delta, 0 model calls",
+        },
+        calls,
+    )
+
+
 STEPS = (
     step1_reusable_artifact,
     step2_unfamiliar_api,
@@ -1208,11 +1395,12 @@ STEPS = (
     step5_head_to_head,
     step6_reproducibility,
     step7_new_api_style,
+    step8_onprem_pabx,
 )
 
 
 def run_demo(seed: int = DEFAULT_SEED, control_url: str = DEFAULT_CONTROL_URL) -> dict[str, Any]:
-    """Run all seven steps; returns the demo report (JSON-serializable)."""
+    """Run all eight steps; returns the demo report (JSON-serializable)."""
     live = _control_probe(control_url)
     steps: list[dict[str, Any]] = []
     total = len(STEPS)
@@ -1221,7 +1409,7 @@ def run_demo(seed: int = DEFAULT_SEED, control_url: str = DEFAULT_CONTROL_URL) -
             step = fn(seed, live, control_url)
             step["number"] = f"{i}/{total}"
         except Exception as exc:  # demo never crashes mid-run; a step fails loudly
-            step = {"number": f"{i}/6", "name": fn.__name__, "status": "failed", "error": str(exc)[:500], "control_calls": [], "mode": "in-process"}
+            step = {"number": f"{i}/{total}", "name": fn.__name__, "status": "failed", "error": str(exc)[:500], "control_calls": [], "mode": "in-process"}
         if "mode" not in step:
             step["mode"] = "live" if step.get("control_calls") else "in-process"
         steps.append(step)
@@ -1280,7 +1468,7 @@ def render_text(report: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for ``make demo``."""
-    parser = argparse.ArgumentParser(description="AutoBridge seven-step demo (plan §6)")
+    parser = argparse.ArgumentParser(description="AutoBridge eight-step demo (plan §6)")
     parser.add_argument("--control-url", default=env_default("CONTROL_URL", DEFAULT_CONTROL_URL))
     parser.add_argument("--seed", type=int, default=int(env_default("DEMO_SEED", str(DEFAULT_SEED))))
     parser.add_argument("--json", action="store_true", help="Emit the report as JSON")

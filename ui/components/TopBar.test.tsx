@@ -25,8 +25,9 @@ describe("TopBar", () => {
     expect(screen.getByRole("link", { name: "Connectors" })).toHaveAttribute("href", "/connectors");
     expect(screen.getByTestId("topbar-demo-inject")).toHaveTextContent("Demo: inject fault");
     // Found by data-testid, never by its text (REQ-018): the /healthz route
-    // stays, but the user-facing label is "System status".
-    expect(screen.getByTestId("topbar-healthz")).toHaveAttribute("href", "/healthz");
+    // stays for the LIVE indicator, but the user-facing "System status" label
+    // opens the simulators index (REQ-022 E).
+    expect(screen.getByTestId("topbar-healthz")).toHaveAttribute("href", "/simulators");
     expect(screen.getByTestId("topbar-healthz")).toHaveTextContent("System status");
     expect(screen.queryByText("healthz")).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("topbar-live")).toHaveTextContent("LIVE"));

@@ -145,6 +145,68 @@ def test_registry_ports_match_compose_and_local_up() -> None:
     assert _local_up_admin_ports() == dict(reg.host_admin_ports)
 
 
+def _compose_public_ports() -> dict[str, int]:
+    compose = yaml.safe_load((REPO_ROOT / "compose.yaml").read_text(encoding="utf-8"))
+    ports: dict[str, int] = {}
+    for name, svc in compose["services"].items():
+        if not isinstance(name, str) or not name.startswith("sim-"):
+            continue
+        for published in (svc or {}).get("ports") or []:
+            m = re.fullmatch(r'"?\$\{AUTOBRIDGE_BIND_HOST:-[^}]*\}:(\d+):8000"?', str(published).strip())
+            if m:
+                ports[name] = int(m.group(1))
+    return ports
+
+
+def _local_up_public_ports() -> dict[str, int]:
+    text = (REPO_ROOT / "scripts" / "local-up.sh").read_text(encoding="utf-8")
+    ports: dict[str, int] = {}
+    for svc in re.finditer(r"start_svc\s+(sim-[\w-]+)", text):
+        head = text[: svc.start()]
+        port = re.findall(r"SIM_PUBLIC_PORT=(\d+)", head)
+        if port:
+            ports[svc.group(1)] = int(port[-1])
+    return ports
+
+
+def test_registry_public_ports_match_compose_and_local_up() -> None:
+    """Display public ports are registry data too: infra must agree."""
+    reg = get_demo_targets()
+    expected = {t.id: t.public_port for t in reg.targets}
+    assert _compose_public_ports() == expected
+    assert _local_up_public_ports() == expected
+
+
+def test_registry_display_metadata_present_for_every_target() -> None:
+    """The simulators index renders from the registry: no blank display rows."""
+    for target in get_demo_targets().targets:
+        assert target.display_name, f"{target.id}: display_name missing"
+        assert target.api_style, f"{target.id}: api_style missing"
+        assert target.docs_source, f"{target.id}: docs_source missing"
+        assert (REPO_ROOT / target.docs_source).exists(), f"{target.id}: {target.docs_source} missing"
+
+
+def test_loader_display_fields_optional_but_validated(tmp_path: pathlib.Path) -> None:
+    full = _entry("sim-full", 8301)
+    full.update(
+        {
+            "display_name": "Probe",
+            "api_style": "REST",
+            "public_port": 8300,
+            "docs_source": "simulators/docs/probe.md",
+        }
+    )
+    reg = load_demo_targets(_write_registry(tmp_path, [full, _entry("sim-bare", 8302)]))
+    assert reg.targets[0].display_name == "Probe"
+    assert reg.targets[0].public_port == 8300
+    assert reg.targets[1].display_name == ""
+    assert reg.targets[1].public_port == 0
+    bad = _entry("sim-bad", 8303)
+    bad["public_port"] = "not-a-port"  # type: ignore[dict-item]
+    with pytest.raises(DemoTargetsError):
+        load_demo_targets(_write_registry(tmp_path, [bad]))
+
+
 # ---------------------------------------------------------------------------
 # Generalization guard at unit level (mirrors the e2e proof, no stack needed)
 # ---------------------------------------------------------------------------

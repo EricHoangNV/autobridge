@@ -42,7 +42,7 @@ Design principles (plan §1):
 | `sim-meridian` | `simulators` | `simulators.meridianpms.app:app` | simulator | 8116 | MeridianPMS synthetic vendor REQ-020 (Mews-style POST/JSON, body auth, Limitation cursor, UTC instants) + admin API |
 | `sim-fias-pabx` | `simulators` | `simulators.fias_pabx.app:app` | simulator | 8118 | FIAS PABX simulator REQ-022 sub-step A (on-premise exchange over TCP: dials the host, admin API; edge-net only) |
 | `mcp-hotel` | `mcp_stretch` | `mcp_stretch.app:app` | engine | 8115 | MCP Guardian Phase 2 (mock HotelTools V1→V2 + compatibility gateway, pinned-consumer replay) |
-| `ui` | `ui` | Node stub → Next.js 15 (W7) | user | 8107 | Four screens over the control plane |
+| `ui` | `ui` | Node stub → Next.js 15 (W7) | user | 8107 | Screens over the control plane (connectors, repairs, knowledge, simulators) |
 | `bench` | `autobridge.bench` | `autobridge.bench.app:app` | engine | 8108 | Matched-budget harness (AutoBridge vs baseline) |
 
 All images are built from `Dockerfile.engine` (engine zone, `APP_MODULE`
@@ -326,13 +326,13 @@ make test     # unit, ≥90% coverage per package + UI component tests
 make up && make smoke   # all services healthz+readyz, negative network checks
 make e2e      # tests/e2e/test_00 … test_07 (+ test_s* in Phase 2), random order
 make bench    # heldout sha check → matched-budget run → experiments/scorecard.md
-make demo     # six demo steps through the control API (W10)
+make demo     # eight demo steps through the control API (W10)
 ```
 
 CI runs unit (coverage gate) → smoke → e2e → demo from a clean clone
 (`.github/workflows/ci.yml`, P1.W9.2 + P1.W10.3): one ordered job — `make test`, then
 `make up`, `make smoke`, `make e2e`, then the Playwright UI journey via
-`make e2e-ui`, then the six demo steps via `make demo` (live against the
+`make e2e-ui`, then the eight demo steps via `make demo` (live against the
 stack, after e2e so fault injection cannot contaminate the suite), with
 `make down` unconditional (`if: always()`). The
 definition of done for a workstream is: unit ≥ 90% + its e2e file green +
@@ -445,6 +445,13 @@ entry -> same drift -> L0 hit, reused + 1) plus unit pins.
 5. `/knowledge` — "What AutoBridge knows" (REQ-021 item 6): vocabulary per
    version plus learned knowledge (entries with reuse counts, connector
    profiles); linked from the top bar.
+6. `/simulators` — "System status" index (REQ-022 E): one row per registry
+   simulator (display name, API style, `/developers` docs link, public
+   port), live up/down probed server-side by `GET /demo/simulators`
+   through the control plane (the browser never calls a simulator), the
+   active fault scenario if any, and the connectors using it; linked from
+   the top bar's "System status" link. Generated from the one registry
+   (`config/demo_targets.yaml`), never a hand-kept list.
 
 Theme (REQ-002, broadcast direction): dark-only on-air tokens in
 `ui/app/globals.css` (`--ground/--band/--ink/--ink-2/--rule/--off/--live/--stop`,
@@ -489,7 +496,7 @@ accepts a credential value (pinned by
 `tests/e2e/test_s7_cli.py` (fakes + live).
 
 ### 9.4 E2E journey (P1.W7.8, plan §4 W7)
-`tests/e2e/test_06_ui_journey.spec.ts` walks the four screens in the browser,
+`tests/e2e/test_06_ui_journey.spec.ts` walks the screens in the browser,
 captures every request, and asserts none target
 `sim-atlas/sim-harbor/verifier` or ports 8104/8105/8106/8109/8110. When the
 Compose stack is up it walks live data; when it is not it intercepts
@@ -536,8 +543,8 @@ All Phase 1 workstreams are complete and documented on their own pages:
   verifier hidden mode, `make bench` reproducibility). See
   [Benchmark](benchmark.md).
 - **W10** — this docs pass (`connector-spec.md`, `safety-model.md`,
-  `benchmark.md`, `demo.md`, README) plus `make demo` driving the six demo
-  steps. See [Demo](demo.md).
+  `benchmark.md`, `demo.md`, README) plus `make demo` driving the eight
+  demo steps. See [Demo](demo.md).
 
 Trust boundaries, money-as-Decimal, business-date semantics, and the
 `/healthz`/`/readyz` contracts were established in W1 and remain load-bearing

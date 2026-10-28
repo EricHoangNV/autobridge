@@ -30,7 +30,7 @@ from autobridge.control.models import (
 	RepairRun,
 	SyncRun,
 )
-from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse
+from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse, SimulatorConnectorRef, SimulatorInfo, SimulatorsOut
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 
@@ -99,8 +99,10 @@ def _admin_url_for_target(resolved: str) -> str:
         # In container: use service DNS
         return f"http://{resolved}:8001"
     # Host mode: map to host ports (registry-derived, single source).
+    # Literal 127.0.0.1, not "localhost": same loopback, but no DNS lookup
+    # (unit tests are hermetic — the DNS guard fails real lookups).
     port = _REGISTRY.host_admin_ports[resolved]
-    return f"http://localhost:{port}"
+    return f"http://127.0.0.1:{port}"
 
 
 @router.post("/inject-fault", response_model=InjectFaultResponse, responses={**DOMAIN_ERROR_422, **AUTH_401})
@@ -272,3 +274,81 @@ def demo_reset(
         "model_usage": {"archived": archived, "session_id": session_id},
         "removed": removed,
     }
+
+
+# The shared scenario slot reports this id when no fault is active
+# (simulators/common/state.py DEFAULT_SCENARIO); the index shows no
+# active fault then. The value is compared, never imported: engine code
+# must not import simulator packages (trust boundary, plan §1.2).
+_BASELINE_SCENARIO = "baseline"
+
+
+def _admin_base_for_target(resolved: str) -> str:
+    """Admin base URL honoring the same env overrides as inject-fault/reset."""
+    base = _admin_url_for_target(resolved)
+    env_key = f"{resolved.upper().replace('-', '_')}_ADMIN_URL"
+    if os.environ.get(env_key):
+        base = os.environ[env_key]
+    if os.environ.get("SIMULATOR_ADMIN_URL"):
+        base = os.environ["SIMULATOR_ADMIN_URL"]
+    return base
+
+
+def _probe_scenario(base: str) -> dict[str, Any] | None:
+    """GET the simulator's admin scenario slot; None when not reachable."""
+    url = f"{base.rstrip('/')}/admin/scenario"
+    try:
+        with httpx.Client(timeout=3) as client:
+            r = client.get(url, headers=_admin_headers())
+    except Exception:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        data = r.json()
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _connector_uses_target(connector: Connector, target_id: str, docs_base: str, public_port: int) -> bool:
+    """A connector uses a simulator when its docs ref names the simulator's
+    docs file, or its base URL names the simulator id or public port."""
+    docs_ref = (connector.vendor_docs_ref or "").lower()
+    if docs_base and docs_base.lower() in docs_ref:
+        return True
+    base_url = (connector.base_url or "").lower()
+    return bool(base_url) and (target_id.lower() in base_url or str(public_port) in base_url)
+
+
+@router.get("/simulators", response_model=SimulatorsOut)
+def list_simulators(db: Session = Depends(get_db)) -> SimulatorsOut:
+    """Simulators index data (REQ-022 E): every registry simulator with its
+    display metadata, live up/down probed server-side from the control
+    plane (the browser never calls a simulator directly), the active fault
+    scenario if any, and the connectors that use it."""
+    connectors = db.query(Connector).all()
+    rows: list[SimulatorInfo] = []
+    for target in _REGISTRY.targets:
+        probed = _probe_scenario(_admin_base_for_target(target.id))
+        scenario_id = (probed or {}).get("scenario_id")
+        docs_base = target.docs_source.rsplit("/", 1)[-1] if target.docs_source else ""
+        used_by = [
+            SimulatorConnectorRef(id=c.id, name=c.name)
+            for c in connectors
+            if _connector_uses_target(c, target.id, docs_base, target.public_port)
+        ]
+        rows.append(
+            SimulatorInfo(
+                id=target.id,
+                display_name=target.display_name or target.id,
+                api_style=target.api_style,
+                public_port=target.public_port,
+                docs_source=target.docs_source,
+                developers_url=f"http://localhost:{target.public_port}/developers",
+                live=probed is not None and isinstance(scenario_id, str),
+                active_scenario=scenario_id if isinstance(scenario_id, str) and scenario_id != _BASELINE_SCENARIO else None,
+                connectors=used_by,
+            )
+        )
+    return SimulatorsOut(simulators=rows)

@@ -19,18 +19,38 @@ targets:
     aliases: [atlas, atlaspms, atlas-pms]
     host_admin_port: 8109
     extra_resets: []
+    # Display metadata for the simulators index (REQ-022 E): the single
+    # registry — no hand-kept vendor list in a second place. Ports here must
+    # also match the public API publish (compose ``127.0.0.1:<public_port>:8000``
+    # and ``SIM_PUBLIC_PORT=<public_port>`` in scripts/local-up.sh).
+    display_name: AtlasPMS
+    api_style: "Cloudbeds-style method REST"
+    public_port: 8105
+    docs_source: simulators/docs/atlas-openapi.yaml
   - id: sim-harbor
     aliases: [harbor, harborpms, harbor-pms]
     host_admin_port: 8110
     extra_resets: []
+    display_name: HarborPMS
+    api_style: "messy wiki docs over REST"
+    public_port: 8106
+    docs_source: simulators/docs/harbor.md
   - id: sim-legacystay
     aliases: [legacystay, legacy]
     host_admin_port: 8112
     extra_resets: []
+    display_name: LegacyStay
+    api_style: "offset-paged REST"
+    public_port: 8111
+    docs_source: simulators/docs/legacystay.md
   - id: sim-meridian
     aliases: [meridian, meridianpms, meridian-pms]
     host_admin_port: 8117
     extra_resets: []
+    display_name: MeridianPMS
+    api_style: "Mews-style POST/JSON"
+    public_port: 8116
+    docs_source: simulators/docs/meridian-openapi.yaml
   - id: sim-fias-pabx
     # The FIAS link engine keeps its fault state (faults, P# counter,
     # reseeded rooms) outside the shared scenario slot, so the generic
@@ -40,3 +60,7 @@ targets:
     extra_resets:
       - suffix: fias
         path: /admin/fias/reset
+    display_name: FIAS PABX
+    api_style: "FIAS over TCP"
+    public_port: 8118
+    docs_source: simulators/docs/fias-pabx.md
