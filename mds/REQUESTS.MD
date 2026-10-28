@@ -319,6 +319,33 @@ it. Generated from one registry (no hand-kept list in two places), works in loca
 green; grep proves no EdgePOS remnants and no private names. Split into claimable sub-steps in the build note
 (A simulator, B agent, C vocabulary, D scenarios, E demo) and merge each one green.
 
+**Owner check after sub-step B (2026-10-29, on 01e10f3b; fix before sub-step C):**
+1. **`make local-up` never comes up with a keyed `.env`.** With `SIM_ADMIN_TOKEN`, `AUTOBRIDGE_CONTROL_TOKEN` and
+   `EDGE_RELEASE_SECRET` set (what `.env.example` and REQ-014 tell people to do) and `EDGE_BUNDLE_SIGNATURE` empty,
+   edge-worker answers `/readyz` 503 forever: `"bundle":"command bundle is unsigned: set EDGE_BUNDLE_SIGNATURE"`,
+   `"link":"not built (bundle rejected)"`. local-up prints only `readyz TIMEOUT waiting for edge-worker (:8114)` after
+   the full wait, and the PABX sits at `fias_link: down: dialling 127.0.0.1:5010`. A judge who clones the repo, sets the
+   three tokens and runs `make local-up` gets a dead stack with no hint. Keep fail-closed in the agent, but: (a) give a
+   one-command way to pin it (e.g. `make edge-sign`, writing `EDGE_BUNDLE_SIGNATURE` into `.env` the way the other
+   tokens are documented; never print other secrets), (b) `make local-up` and `make up` check this before starting and
+   stop at once with that exact command in the message, instead of a readyz timeout, (c) README/DEPLOY quick start
+   include the step. Test: a keyed `.env` without the signature fails fast with the hint; with it, every readyz is green
+   and the PABX link shows connected.
+2. **The full unit suite crashes 6 tests on macOS since this merge.** On the host (macOS, Homebrew Python 3.12),
+   `uv run pytest tests/unit -p no:randomly` fails `test_autobridge_dotenv_loader.py` (4 tests) and
+   `test_autobridge_ui_client.py` (2: `npm run typecheck`, `export_openapi.py --check`) with `returncode=-11`: the
+   child process segfaults. Every one passes alone. Minimal repro: `uv run pytest
+   tests/unit/test_autobridge_edge_agent.py tests/unit/test_autobridge_dotenv_loader.py -p no:randomly` → 1 failed;
+   the same with `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` → 40 passed. So it is the macOS fork-safety crash: something
+   in the edge-agent tests touches the Objective-C runtime from a thread (likely the system proxy lookup when an
+   HTTP client is built with default `trust_env`), and later `fork()`ed children die. The same run also shows
+   `PytestUnhandledThreadExceptionWarning: Exception in thread Thread-19 (_serve)` (and 20, 22): `_serve` threads
+   are left running/raising after their tests. Linux (the sandbox) never shows this, so verify by reasoning plus the
+   tests below, not by reproducing. Fix the cause, do not set the env var: stop and join every thread a test starts
+   (fixture teardown), make the agent's and tests' HTTP clients not consult system proxy settings where they do not need
+   to, and make the suite fail on unhandled thread exceptions (`filterwarnings = error::pytest.PytestUnhandledThreadExceptionWarning`)
+   so a leaked thread is caught on Linux too. Owner re-runs the full suite on macOS after the fix.
+
 ### REQ-023 — Demo plan v2: main script plus a fault-scenario catalogue (2026-10-28)
 Status: OPEN
 Owner: the demo plan must include the fault scenarios from REQ-019 … REQ-022. Rule: a step enters `docs/demo.md` and
