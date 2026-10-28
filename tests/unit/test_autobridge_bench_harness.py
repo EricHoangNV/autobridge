@@ -970,7 +970,7 @@ def test_main_default_args(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPat
     from autobridge.bench.harness import main
 
     monkeypatch.chdir(tmp_path)
-    # Create simulators/scenarios dir structure via fallback catalog
+    monkeypatch.setenv("AUTOBRIDGE_BENCH_SKIP_PROBE", "1")
     ret = main(["--scenarios", "baseline", "--trials", "1", "--output-dir", str(tmp_path / "out"), "--no-score"])
     assert ret == 0
     out = tmp_path / "out"
@@ -978,13 +978,13 @@ def test_main_default_args(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPat
     assert (out / "_summary.json").exists()
 
 
-def test_main_custom_seed(tmp_path: pathlib.Path) -> None:
+def test_main_custom_seed(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from autobridge.bench.harness import main
 
+    monkeypatch.setenv("AUTOBRIDGE_BENCH_SKIP_PROBE", "1")
     ret = main(["--scenarios", "baseline", "--trials", "1", "--seed", "99", "--output-dir", str(tmp_path / "out"), "--no-score"])
     assert ret == 0
     data = json.loads((tmp_path / "out" / "baseline--trial-0.jsonl").read_text(encoding="utf-8"))
-    # Seed in inputs should be derived from global seed 99
     assert data["seed"] != 0
 
 
@@ -992,6 +992,7 @@ def test_main_with_bench_scenarios_env(tmp_path: pathlib.Path, monkeypatch: pyte
     from autobridge.bench.harness import main
 
     monkeypatch.setenv("BENCH_SCENARIOS", "baseline")
+    monkeypatch.setenv("AUTOBRIDGE_BENCH_SKIP_PROBE", "1")
     ret = main(["--output-dir", str(tmp_path / "out"), "--no-score"])
     assert ret == 0
     assert (tmp_path / "out" / "baseline--trial-0.jsonl").exists()
@@ -1018,6 +1019,47 @@ def test_main_heldout_sha_failure(tmp_path: pathlib.Path, monkeypatch: pytest.Mo
 # ---------------------------------------------------------------------------
 # Import health (compose service)
 # ---------------------------------------------------------------------------
+
+
+def test_harness_picks_host_urls_outside_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    from autobridge.bench.harness import (
+        DEFAULT_CONTROL_API_URL,
+        DEFAULT_CONTROL_API_URL_HOST,
+        DEFAULT_VERIFIER_URL_HOST,
+        HarnessConfig,
+        _is_in_container,
+        _resolve_default_url,
+    )
+
+    monkeypatch.setattr("autobridge.bench.harness._is_in_container", lambda: False)
+    assert _resolve_default_url(DEFAULT_CONTROL_API_URL, DEFAULT_CONTROL_API_URL_HOST) == DEFAULT_CONTROL_API_URL_HOST
+    assert HarnessConfig().control_api_url == DEFAULT_CONTROL_API_URL_HOST
+    assert HarnessConfig().verifier_url == DEFAULT_VERIFIER_URL_HOST
+    monkeypatch.setattr("autobridge.bench.harness._is_in_container", lambda: True)
+    assert _resolve_default_url(DEFAULT_CONTROL_API_URL, DEFAULT_CONTROL_API_URL_HOST) == DEFAULT_CONTROL_API_URL
+    assert HarnessConfig().control_api_url == DEFAULT_CONTROL_API_URL
+
+
+def test_probe_unreachable_returns_nonzero(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    from autobridge.bench.harness import _guard_zero_tool_calls, _probe_services, BenchResult, HarnessConfig, ArmResult, HarnessInputs, TrialResult
+
+    cfg = HarnessConfig(control_api_url="http://127.0.0.1:1", verifier_url="http://127.0.0.1:1")
+    msg = _probe_services(cfg, timeout_s=0.2)
+    assert msg is not None and "127.0.0.1:1" in msg
+
+    inp = HarnessInputs(
+        scenario_id="s", trial=0, seed=0, sandbox_image="x", sandbox_url="http://x",
+        docs_volume="d", docs_ref="d/s", credential_refs=(), visible_tests=(), token_ceiling=100,
+        wall_clock_s=1.0, control_api_url=cfg.control_api_url, verifier_url=cfg.verifier_url, runtime_target={},
+    )
+    bench = BenchResult(config=cfg, trials=[
+        TrialResult(scenario_id="s", trial=0, seed=0, inputs=inp,
+                    autobridge=ArmResult(arm="autobridge", inputs=inp, success=True, tool_calls=0),
+                    baseline=ArmResult(arm="baseline", inputs=inp, success=True, tool_calls=0),
+                    matched=True),
+    ])
+    err = _guard_zero_tool_calls(bench)
+    assert err is not None and "0 tool calls" in err
 
 
 def test_bench_app_health_import() -> None:

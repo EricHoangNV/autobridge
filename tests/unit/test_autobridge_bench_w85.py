@@ -178,7 +178,8 @@ def test_score_and_report_lists_losses(tmp_path: pathlib.Path) -> None:
 # --- main pipeline ---
 
 
-def test_main_full_pipeline_writes_scorecard(tmp_path: pathlib.Path) -> None:
+def test_main_full_pipeline_writes_scorecard(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTOBRIDGE_BENCH_SKIP_PROBE", "1")
     out = tmp_path / "runs"
     sc = tmp_path / "scorecard.md"
     ret = main(

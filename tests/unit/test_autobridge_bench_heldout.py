@@ -214,6 +214,7 @@ def test_main_heldout_wires_private_seeds(
 
     monkeypatch.setattr("httpx.post", fake_post)
     monkeypatch.setenv("SIMULATOR_ADMIN_URL", "http://sim-admin:8001")
+    monkeypatch.setenv("AUTOBRIDGE_BENCH_SKIP_PROBE", "1")
     monkeypatch.delenv("HELDOUT_DIR", raising=False)
 
     ret = harness.main(

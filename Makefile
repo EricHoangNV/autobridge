@@ -50,12 +50,12 @@ e2e-ui:
 # committed manifest first (exit 2 on missing env, missing file, mismatch).
 bench:
 	@echo ">> bench: matched-budget run + scorecard (W8.5)"
-	uv run python -m autobridge.bench.harness
+	uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
 
 bench-heldout:
 	@echo ">> bench (heldout split — private seeds from HELDOUT_DIR, Nov 3 run)"
 	@if [ -z "$(HELDOUT_DIR)" ]; then echo "heldout SHA check failed: HELDOUT_DIR not set" >&2; exit 2; fi
-	BENCH_VISIBILITY=heldout uv run python -m autobridge.bench.harness
+	BENCH_VISIBILITY=heldout uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
 
 demo:
 	@echo ">> demo: six steps via control API (W10)"

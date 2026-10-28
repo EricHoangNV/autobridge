@@ -102,6 +102,14 @@ DEFAULT_CONTROL_API_URL = "http://control:8000"
 DEFAULT_CONTROL_API_URL_HOST = "http://localhost:8101"
 DEFAULT_VERIFIER_URL = "http://verifier:8000"
 DEFAULT_VERIFIER_URL_HOST = "http://localhost:8104"
+
+
+def _is_in_container() -> bool:
+    return pathlib.Path("/.dockerenv").exists() or pathlib.Path("/run/.containerenv").exists()
+
+
+def _resolve_default_url(docker_url: str, host_url: str) -> str:
+    return docker_url if _is_in_container() else host_url
 DEFAULT_TRIALS_PER_SCENARIO = 1
 DEFAULT_SEED = 42
 
@@ -125,8 +133,8 @@ class HarnessConfig:
     visible_tests: tuple[str, ...] = DEFAULT_VISIBLE_TESTS
     token_ceiling: int = DEFAULT_TOKEN_CEILING
     wall_clock_s: float = DEFAULT_WALL_CLOCK_S
-    control_api_url: str = DEFAULT_CONTROL_API_URL
-    verifier_url: str = DEFAULT_VERIFIER_URL
+    control_api_url: str = field(default_factory=lambda: _resolve_default_url(DEFAULT_CONTROL_API_URL, DEFAULT_CONTROL_API_URL_HOST))
+    verifier_url: str = field(default_factory=lambda: _resolve_default_url(DEFAULT_VERIFIER_URL, DEFAULT_VERIFIER_URL_HOST))
     runtime_target: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_RUNTIME_TARGET))
     trials_per_scenario: int = DEFAULT_TRIALS_PER_SCENARIO
     seed: int = DEFAULT_SEED
@@ -1127,6 +1135,31 @@ def score_and_report(
     return scorecard
 
 
+def _probe_services(cfg: HarnessConfig, timeout_s: float = 3.0) -> str | None:
+    import httpx
+
+    for label, url in (("control API", cfg.control_api_url), ("verifier", cfg.verifier_url)):
+        probe = url.rstrip("/") + "/healthz"
+        try:
+            resp = httpx.get(probe, timeout=timeout_s)
+            if resp.status_code != 200:
+                return f"bench harness: {label} unreachable at {url} (healthz {resp.status_code})"
+        except Exception as exc:
+            return f"bench harness: {label} unreachable at {url} ({type(exc).__name__}: {exc})"
+    return None
+
+
+def _guard_zero_tool_calls(bench_result: BenchResult) -> str | None:
+    if not bench_result.trials:
+        return None
+    for arm in ("autobridge", "baseline"):
+        total = sum(getattr(getattr(t, arm), "tool_calls", 0) or 0 for t in bench_result.trials)
+        if total == 0:
+            url = bench_result.config.control_api_url if arm == "autobridge" else bench_result.config.verifier_url
+            return f"bench harness: {arm} has 0 tool calls across {len(bench_result.trials)} trials (url {url}) — refusing empty scorecard"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # CLI entrypoint — ``python -m autobridge.bench.harness``
 # ---------------------------------------------------------------------------
@@ -1259,11 +1292,28 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             pass
 
+    # Env URL overrides (host/container aware)
+    if os.environ.get("CONTROL_API_URL") and "control_api_url" not in cfg_kwargs:
+        cfg_kwargs["control_api_url"] = os.environ["CONTROL_API_URL"]
+    if os.environ.get("VERIFIER_URL") and "verifier_url" not in cfg_kwargs:
+        cfg_kwargs["verifier_url"] = os.environ["VERIFIER_URL"]
+    # Default-in-container logic: if no explicit URL and not in container, use HOST
+    if "control_api_url" not in cfg_kwargs and "verifier_url" not in cfg_kwargs and not _is_in_container():
+        cfg_kwargs.setdefault("control_api_url", DEFAULT_CONTROL_API_URL_HOST)
+        cfg_kwargs.setdefault("verifier_url", DEFAULT_VERIFIER_URL_HOST)
+
     cfg = HarnessConfig(**cfg_kwargs)
 
     print(f"bench harness: seed={cfg.seed} token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
     print(f"  sandbox_image={cfg.sandbox_image} sandbox_url={cfg.sandbox_url}", flush=True)
     print(f"  docs_volume={cfg.docs_volume} control={cfg.control_api_url} verifier={cfg.verifier_url}", flush=True)
+
+    no_score = args.no_score or env_no_score.strip() == "1"
+    if not os.environ.get("AUTOBRIDGE_BENCH_SKIP_PROBE") and not no_score:
+        probe_err = _probe_services(cfg)
+        if probe_err:
+            print(probe_err, flush=True)
+            return 1
 
     bench_result = run_harness(cfg, scenarios=scenarios)
     paths = write_results(bench_result, output_dir=args.output_dir)
@@ -1275,8 +1325,10 @@ def main(argv: list[str] | None = None) -> int:
     if matched != total:
         print("WARNING: some trials were not matched — harness bug", flush=True)
         return 1
-    # 5. Score via verifier hidden mode + render scorecard (wins and losses).
-    no_score = args.no_score or env_no_score.strip() == "1"
+    guard_err = _guard_zero_tool_calls(bench_result)
+    if guard_err and not no_score and not os.environ.get("AUTOBRIDGE_BENCH_SKIP_PROBE"):
+        print(guard_err, flush=True)
+        return 1
     if not no_score:
         scorecard = score_and_report(
             bench_result,
