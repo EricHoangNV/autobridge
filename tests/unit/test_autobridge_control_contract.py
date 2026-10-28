@@ -85,16 +85,27 @@ def test_control_plane_contract(case):  # type: ignore[no-untyped-def]
     (the verifier, unreachable outside the Compose stack) is down. That
     503 is documented in OpenAPI and asserted by the readyz unit tests,
     so it is accepted here when the body reports ``degraded``.
+
+    Same exception (REQ-022 B): the ``/edge/*`` proxy answers a documented
+    502 when the edge-relay queue is unreachable (no relay outside the
+    Compose stack). Accepted only when the body names the relay — a dead
+    relay must not look like an empty queue, and any other 5xx still fails.
     """
+    is_edge = case.operation.path.startswith("/edge/")
     response = case.call_and_validate(
         excluded_checks=[
             allow_header_conformance,
             # AR-2-6: readyz answers a documented 503 while the verifier
             # dependency is unreachable; not a server crash.
             *( [not_a_server_error] if case.operation.path == "/readyz" else [] ),
+            # REQ-022 B: the edge proxy answers a documented 502 while the
+            # relay dependency is unreachable; not a server crash.
+            *( [not_a_server_error] if is_edge else [] ),
         ]
     )
     if case.operation.path == "/readyz" and response.status_code == 503:
         assert response.json()["status"] == "degraded"
+    elif is_edge and response.status_code == 502:
+        assert "relay" in response.json()["detail"]
     else:
         assert response.status_code < 500, f"{case.operation.label} {case.operation.path} -> {response.status_code}"

@@ -291,12 +291,12 @@ def test_runtime_target_defaults_and_allowlist() -> None:
 
 def test_edge_kind_parses_with_allowlist() -> None:
     edge = RUNTIME_ADAPTER.validate_python(
-        {"kind": "edge", "network_allowlist": ["sim-edgepos"]}
+        {"kind": "edge", "network_allowlist": ["edge-relay"]}
     )
     assert edge.kind == "edge"  # type: ignore[union-attr]
-    assert edge.network_allowlist == ["sim-edgepos"]  # type: ignore[union-attr]
+    assert edge.network_allowlist == ["edge-relay"]  # type: ignore[union-attr]
     validate_against_schema(
-        {"kind": "edge", "network_allowlist": ["sim-edgepos"]}, "runtime-target.json"
+        {"kind": "edge", "network_allowlist": ["edge-relay"]}, "runtime-target.json"
     )
 
 

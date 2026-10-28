@@ -747,3 +747,42 @@ def test_run_launcher_rejects_bad_extra_router(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("ADMIN_EXTRA_ROUTER", "no.such.module:router")
     with pytest.raises(SystemExit):
         run_module.main()
+
+
+def test_send_and_wait_ack_survives_idle_poll_tick() -> None:
+    """A recv tick with no data retries the wait (never a premature resend).
+
+    Pins the poll-tick branch deterministically: the peer answers 0.45 s
+    after the frame, so the 0.2 s recv tick must fire (and loop) exactly
+    once before the ACK lands. Without it the simulators coverage gate
+    flaps across 90% run to run.
+    """
+    import socket as _socket
+    import threading
+
+    from simulators.fias_pabx.pabx import PabxConfig, PabxLink
+    from simulators.fias_pabx.protocol import ACK, encode_frame
+
+    link = PabxLink(PabxConfig())
+    a, b = _socket.socketpair()
+    try:
+        a.settimeout(0.2)
+        b.settimeout(5.0)
+
+        def _late_ack() -> None:
+            data = b.recv(65536)
+            assert data.startswith(bytes((0x02,)))
+            time.sleep(0.45)  # past one 0.2 s recv tick, inside ack_wait
+            b.sendall(bytes((ACK,)))
+
+        peer = threading.Thread(target=_late_ack, daemon=True)
+        peer.start()
+        before = link.counters["resends"]
+        link._send_and_wait_ack(a, "LA", [("DA", "261028"), ("TI", "120000")])
+        peer.join(timeout=5.0)
+        assert not peer.is_alive()
+        assert link.counters["resends"] == before  # no resend, just a tick
+        assert link.counters["acks_in"] == 1
+    finally:
+        a.close()
+        b.close()

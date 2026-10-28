@@ -4,7 +4,7 @@
 > Covers the verifier
 > trust boundary, oracle, scenario catalog, semantic invariants, drift
 > detection, escalation bundles and the regression gate on every release.
-> Phase 2 extensions (MCP guardian, Edge) will extend this page.
+> Phase 2 extensions (MCP guardian) and REQ-022 B (on-premise edge agent) extend this page.
 
 ## 1. Why a separate verifier
 
@@ -295,6 +295,8 @@ engine-net   control, worker, runtime-sandbox, ui, bench
 vendor-net   runtime-sandbox ↔ sim-atlas/sim-harbor :8000
 verifier-net control ↔ verifier, bench ↔ verifier
 admin-net    control ↔ sim admin :8001 (+ host 8109/8110 for e2e)
+edge-net     edge-worker (on-premise agent) ↔ edge-relay :8000 +
+             edge-worker ↔ sim-fias-pabx (FIAS TCP dial-out to the host :5010)
 ```
 
 No `internal: true` — host ports are required for `make smoke`/`make e2e`.
@@ -303,6 +305,26 @@ attachments statically; smoke probes assert reachability and isolation live.
 Negative test: `DockerSandbox` cannot reach the verifier or simulator admin
 (runtime target allowlist); host and `control` (admin-net) are the only paths
 with `X-Admin-Network: admin-net`.
+
+### 9.1 On-premise agent boundary (REQ-022 B)
+
+The edge agent is outbound-only: no inbound port from the cloud. It polls
+the `edge-relay` queue (edge-net/engine-net dumb pipe; agent and operator
+sides carry separate bearer tokens, `EDGE_AGENT_TOKEN` and
+`AUTOBRIDGE_CONTROL_TOKEN`, never logged) and reports through
+authenticated callbacks. Delivery is at-least-once with idempotency keys
+(`P#` + room + time for `PS`), answers correlated by request id, command
+expiry enforced (a stale wake-up is never sent), ACK timeouts reported to
+the cloud, one command in flight per link with a bounded wait. The PABX is
+ACKed after a durable local SQLite write, never after the cloud call, so a
+slow cloud cannot stall the link. Link supervision (handshake state
+machine, keep-alive, all-zero resync, reconnect, oversize/flood session
+close) is reported on the agent `/readyz`; a missing PABX peer degrades
+nothing. What the agent executes is declarative spec data
+(`agent_bundle.json`: command kind → FIAS record) verified against a pinned
+signature (HMAC when `EDGE_RELEASE_SECRET` is set — AR-2-4). `edge-relay`
+initiates no connections; the engine has no route to it beyond the control
+proxy `POST /edge/commands` and the drains.
 
 ## 10. Escalation bundle (L4)
 

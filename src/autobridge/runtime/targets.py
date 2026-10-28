@@ -10,12 +10,13 @@ The v1 engine executes :class:`ConnectorSpec` operations inside a
   (negative network test, W3.6).  Isolation is enforced at two layers:
   Docker Compose network attachment (vendor-net only, no verifier-net/admin-net)
   and in-process allowlist checks (host + ``/admin`` path guard).
-* :class:`EdgeTarget` — simulated edge worker (P2.S2) on an isolated Docker
-  network (``edge-net``).  It executes only signed releases: the worker
-  verifies the release signature before running anything
-  (verify centrally, execute locally — HMAC-signed with
-  ``EDGE_RELEASE_SECRET`` when configured, integrity checksum otherwise,
-  AR-2-4), and its egress is restricted to the edge-only sim POS allowlist.
+* :class:`EdgeTarget` — on-premise agent target (REQ-022 B) on the isolated
+  ``edge-net``.  It executes only signed releases: the agent verifies the
+  release signature before running anything (verify centrally, execute
+  locally — HMAC-signed with ``EDGE_RELEASE_SECRET`` when configured,
+  integrity checksum otherwise, AR-2-4).  HTTP egress defaults to deny
+  (empty allowlist): the agent speaks FIAS over TCP and polls the
+  ``edge-relay`` queue instead of proxying vendor HTTP.
 
 This module provides both the real minimal implementations and the
 in-memory fakes used to reach 90% coverage on the control/SSE layer
@@ -41,10 +42,6 @@ import time
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Literal
-
-#: Edge-only sim POS hostname: the only egress an edge worker needs.
-#: The control plane and the cloud sandbox never allowlist it (P2.S2).
-EDGE_POS_HOST = "sim-edgepos"
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -286,7 +283,7 @@ def create_target(config: dict[str, Any]) -> BaseTarget:
     if kind == "edge":
         return EdgeTarget(
             endpoint=config.get("endpoint"),
-            network_allowlist=list(config.get("network_allowlist", [EDGE_POS_HOST])),
+            network_allowlist=list(config.get("network_allowlist", [])),
             timeout_s=int(config.get("timeout_s", DEFAULT_TIMEOUT_S)),
             memory_mb=int(config.get("memory_mb", DEFAULT_MEMORY_MB)),
         )
@@ -513,15 +510,16 @@ class DockerSandboxTarget(BaseTarget):
 
 
 class EdgeTarget(BaseTarget):
-    """Simulated edge worker on an isolated network (P2.S2).
+    """On-premise agent target on an isolated network (REQ-022 B).
 
     Executes only signed releases: :meth:`execute_signed_release` verifies
     the release signature before running anything (HMAC when
     ``EDGE_RELEASE_SECRET`` is set — AR-2-4).  Egress
-    is restricted to ``network_allowlist`` (default: the edge-only sim POS),
-    enforced in-process exactly like :class:`DockerSandboxTarget` plus the
-    Compose attachment     (``edge-net`` only — no engine-net route to the
-    control plane's vendors, no verifier/admin route at all).
+    is restricted to ``network_allowlist`` (default: deny — the agent
+    speaks FIAS over TCP and polls the ``edge-relay`` queue instead of
+    proxying vendor HTTP), enforced in-process exactly like
+    :class:`DockerSandboxTarget` plus the Compose attachment
+    (``edge-net`` only — no vendor-net / verifier-net / admin-net route).
     """
 
     endpoint: str | None
@@ -537,7 +535,7 @@ class EdgeTarget(BaseTarget):
     ) -> None:
         super().__init__(
             kind="edge",
-            network_allowlist=list(network_allowlist if network_allowlist is not None else [EDGE_POS_HOST]),
+            network_allowlist=list(network_allowlist if network_allowlist is not None else []),
             timeout_s=timeout_s,
             memory_mb=memory_mb,
             workdir=workdir,
@@ -602,9 +600,9 @@ class EdgeTarget(BaseTarget):
     ) -> ExecutionResult:
         """Unsigned direct execution is refused: use signed releases.
 
-        The edge worker never runs an unverified spec; callers must go
-        through :meth:`execute_signed_release` (or the worker's ``/execute``
-        endpoint, which enforces the same rule over HTTP).
+        The edge agent never runs an unverified spec; callers must go
+        through :meth:`execute_signed_release` (REQ-022 B removed the old
+        inbound ``/execute`` HTTP port — the agent polls its queue outbound).
         """
         _ = (spec, operation, params)
         return ExecutionResult(
@@ -882,7 +880,7 @@ class FakeEdgeTarget(FakeRuntimeTarget):
     ) -> None:
         super().__init__(
             kind="edge",
-            network_allowlist=network_allowlist if network_allowlist is not None else [EDGE_POS_HOST],
+            network_allowlist=network_allowlist if network_allowlist is not None else [],
             timeout_s=timeout_s,
             memory_mb=memory_mb,
             responses=responses,

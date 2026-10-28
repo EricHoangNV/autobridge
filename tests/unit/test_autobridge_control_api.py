@@ -113,10 +113,10 @@ def test_create_connector_invalid_runtime(client: Any) -> None:  # type: ignore[
         "/connectors",
         json={
             "name": "Edge",
-            "base_url": "http://sim-edgepos:8000",
+            "base_url": "http://edge-relay:8000",
             "credential_ref": "TEST_API_KEY",
             "target_entities": [],
-            "runtime_target": {"kind": "edge", "network_allowlist": ["sim-edgepos"]},
+            "runtime_target": {"kind": "edge", "network_allowlist": ["edge-relay"]},
         },
     )
     assert r.status_code == 201

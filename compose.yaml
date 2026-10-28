@@ -1,24 +1,27 @@
 # AutoBridge Compose stack (plan §2.1). P1.W1.2: every service as a stub app
 # with GET /healthz + GET /readyz, on the four trust-zone networks.
 #
-# Networks (plan §2.1 + §5 S2):
-#   engine-net   control, worker, runtime-sandbox, edge-worker, ui (+ bench reaches control)
+# Networks (plan §2.1 + §5 S2 + REQ-022 B):
+#   engine-net   control, worker, runtime-sandbox, edge-relay, ui (+ bench reaches control)
 #   vendor-net   runtime-sandbox <-> simulator public API (8000) ONLY
 #   verifier-net control <-> verifier ONLY
 #   admin-net    control <-> simulator admin API (8001, W2.2) ONLY
-#   edge-net     edge-worker <-> sim-edgepos public API (8000) ONLY (P2.S2)
-#                + edge-worker <-> sim-fias-pabx (REQ-022; FIAS TCP dial-out
-#                to the host, admin on 8001 loopback-only)
+#   edge-net     edge-worker <-> edge-relay (cloud command queue) +
+#                edge-worker <-> sim-fias-pabx (REQ-022; FIAS TCP dial-out
+#                to the host, public docs on 8000, admin on 8001
+#                loopback-only). The agent is outbound-only: it polls the
+#                relay and dials nothing else; the PABX dials the agent.
 #
 # Negative checks enforced by attachment (asserted in `make smoke`):
 #   runtime-sandbox has no route to verifier-net / admin-net
 #   (sandbox -/-> verifier fixtures, sandbox -/-> simulator admin)
 #   ui is on engine-net only (ui -/-> simulators, ui -/-> verifier)
 #   worker is on engine-net only (no verifier / simulator-admin route)
-#   control has no route to edge-net (control -/-> sim-edgepos, P2.S2;
-#   control -/-> sim-fias-pabx, REQ-022)
+#   control has no route to edge-net (control -/-> sim-fias-pabx, REQ-022;
+#   control reaches the agent only via the edge-relay queue on engine-net)
 #   edge-worker has no route to vendor-net / verifier-net / admin-net
 #   (edge -/-> cloud sims, edge -/-> verifier, edge -/-> simulator admin)
+#   edge-relay initiates no connections at all (dumb authenticated pipe)
 
 x-healthcheck-py: &healthcheck-py
   test:
@@ -57,6 +60,9 @@ services:
       FRONTIER_BASE_URL: ${FRONTIER_BASE_URL:-}
       FRONTIER_MODEL: ${FRONTIER_MODEL:-}
       SMALL_MODEL: ${SMALL_MODEL:-}
+      # REQ-022 B: cloud command queue for the on-premise agent (engine-net
+      # DNS; the agent polls it outbound, control enqueues through it).
+      EDGE_RELAY_URL: ${EDGE_RELAY_URL:-http://edge-relay:8000}
     networks:
       - engine-net
       - verifier-net
@@ -128,28 +134,43 @@ services:
       dockerfile: Dockerfile.engine
     environment:
       APP_MODULE: autobridge.edge.app:app
-      EDGE_ALLOWLIST: sim-edgepos
-      EDGEPOS_API_KEY: dummy-edge-key
-      # AR-2-4: HMAC key for release verification. Must match control/worker
-      # or every /execute is refused; empty (local dev) accepts the legacy
-      # unkeyed integrity checksum.
+      # AR-2-4: HMAC key for the signed command bundle. Must match control
+      # (bundle minting) or startup refuses the bundle; empty (local dev)
+      # accepts the dev-mode unsigned bundle.
       EDGE_RELEASE_SECRET: ${EDGE_RELEASE_SECRET:-}
+      # REQ-022 B: outbound-only agent. Polls the cloud queue, reports back
+      # with a client-credentials style token (never logged); no inbound
+      # execution port from the cloud.
+      EDGE_AGENT_ID: ${EDGE_AGENT_ID:-grand-plaza-pabx}
+      EDGE_RELAY_URL: ${EDGE_RELAY_URL:-http://edge-relay:8000}
+      EDGE_AGENT_TOKEN: ${EDGE_AGENT_TOKEN:-}
+      EDGE_BUNDLE_SIGNATURE: ${EDGE_BUNDLE_SIGNATURE:-}
+      EDGE_STORE_PATH: /srv/edge_agent.db
+      FIAS_LISTEN_HOST: 0.0.0.0
+      FIAS_LISTEN_PORT: 5010
     networks:
       - edge-net
     ports:
       - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8114:8000"
     healthcheck: *healthcheck-py
 
-  sim-edgepos:
+  # REQ-022 B: dumb authenticated command queue between control and the
+  # on-premise agent. The agent polls it (edge-net), control enqueues and
+  # drains through it (engine-net); it initiates no connections itself.
+  edge-relay:
     build:
-      context: ./simulators
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.engine
     environment:
-      APP_MODULE: simulators.edgepos.app:app
+      APP_MODULE: autobridge.edge.relay:app
+      AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
+      EDGE_AGENT_TOKEN: ${EDGE_AGENT_TOKEN:-}
+      EDGE_RELAY_DB: /srv/edge_relay.db
     networks:
       - edge-net
+      - engine-net
     ports:
-      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8113:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8120:8000"
     healthcheck: *healthcheck-py
 
   sim-atlas:

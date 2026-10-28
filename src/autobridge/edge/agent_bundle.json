@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "property_timezone": "America/New_York",
+  "commands": {
+    "guest.in": {
+      "record": "GI",
+      "fields": {
+        "RN": "{room}",
+        "G#": "{reservation}",
+        "GN": "{guest}",
+        "GL": "{language}",
+        "GA": "{arrival}",
+        "GD": "{departure}",
+        "CS": "{class}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "defaults": {"language": "en", "class": "3"},
+      "now": ["date", "time"],
+      "expect": "ack"
+    },
+    "guest.change": {
+      "record": "GC",
+      "fields": {
+        "RN": "{room}",
+        "RO": "{old_room}",
+        "G#": "{reservation}",
+        "GN": "{guest}",
+        "GL": "{language}",
+        "GA": "{arrival}",
+        "GD": "{departure}",
+        "CS": "{class}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "defaults": {"old_room": "", "language": "en", "class": "3"},
+      "now": ["date", "time"],
+      "expect": "ack"
+    },
+    "guest.out": {
+      "record": "GO",
+      "fields": {
+        "RN": "{room}",
+        "G#": "{reservation}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "now": ["date", "time"],
+      "expect": "ack"
+    },
+    "message.on": {
+      "record": "XL",
+      "fields": {
+        "RN": "{room}",
+        "MI": "{message_id}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "now": ["date", "time"],
+      "expect": "ack"
+    },
+    "message.off": {
+      "record": "XD",
+      "fields": {
+        "RN": "{room}",
+        "MI": "{message_id}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "now": ["date", "time"],
+      "expect": "ack"
+    },
+    "wakeup.set": {
+      "record": "WR",
+      "fields": {
+        "RN": "{room}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "expect": "ack"
+    },
+    "wakeup.clear": {
+      "record": "WC",
+      "fields": {
+        "RN": "{room}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "expect": "ack"
+    },
+    "key.write": {
+      "record": "KR",
+      "fields": {
+        "KC": "{encoder}",
+        "RN": "{room}",
+        "K#": "{copies}",
+        "GA": "{arrival}",
+        "GD": "{departure}",
+        "G#": "{reservation}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "defaults": {"encoder": "01", "copies": "1"},
+      "now": ["date", "time"],
+      "expect": "KA"
+    },
+    "key.delete": {
+      "record": "KD",
+      "fields": {
+        "KC": "{encoder}",
+        "RN": "{room}",
+        "G#": "{reservation}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "defaults": {"encoder": "01"},
+      "now": ["date", "time"],
+      "expect": "KA"
+    },
+    "key.read": {
+      "record": "KZ",
+      "fields": {
+        "KC": "{encoder}",
+        "DA": "{date}",
+        "TI": "{time}"
+      },
+      "defaults": {"encoder": "01"},
+      "now": ["date", "time"],
+      "expect": "KZ"
+    }
+  }
+}

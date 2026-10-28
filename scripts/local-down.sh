@@ -13,7 +13,7 @@ if [ ! -d "$PID_DIR" ]; then
 fi
 
 # Stop UI first (it fronts the control API), then the rest.
-for name in ui bench mcp-hotel edge-worker sim-fias-pabx sim-edgepos sim-meridian sim-legacystay sim-harbor sim-atlas verifier runtime-sandbox worker control; do
+for name in ui bench mcp-hotel edge-worker edge-relay sim-fias-pabx sim-meridian sim-legacystay sim-harbor sim-atlas verifier runtime-sandbox worker control; do
   pidfile="$PID_DIR/${name}.pid"
   if [ -f "$pidfile" ]; then
     pid="$(cat "$pidfile")"

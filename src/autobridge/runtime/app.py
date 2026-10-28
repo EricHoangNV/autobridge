@@ -68,13 +68,13 @@ def _check_runtime_target() -> bool:
             pass
 
         # Edge builds, signs, verifies, and blocks verifier/admin paths
-        edge = EdgeTarget(network_allowlist=["sim-edgepos"], timeout_s=60, memory_mb=512)
+        edge = EdgeTarget(network_allowlist=["edge-relay"], timeout_s=60, memory_mb=512)
         assert edge.kind == "edge"
         if edge.can_reach("http://verifier:8000/verify"):
             return False  # pragma: no cover - validate_allowlist rejects blocked hosts at construction
-        if edge.can_reach("http://sim-edgepos:8001/admin/reset"):
+        if edge.can_reach("http://edge-relay:8001/admin/reset"):
             return False  # pragma: no cover - admin paths are always blocked; backstop
-        if not edge.can_reach("http://sim-edgepos:8000/healthz"):
+        if not edge.can_reach("http://edge-relay:8000/v1/agents"):
             return False
         probe_spec = {"spec_version": "v1", "source": {"base_url": "http://x"}}
         sig = release_signature(probe_spec)

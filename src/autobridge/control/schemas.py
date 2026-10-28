@@ -81,6 +81,16 @@ AUTH_401: dict[int | str, Any] = {
         "content": {"application/json": {"schema": STRING_DETAIL_OBJECT}},
     }
 }
+#: The ``/edge/*`` proxy answers 502 when the edge-relay queue is
+#: unreachable or errors (REQ-022 B): a dead relay must not look like an
+#: empty queue. Documented so schemathesis validates the 502 shape; never a
+#: silent empty list, never a crash.
+EDGE_RELAY_502: dict[int | str, Any] = {
+    502: {
+        "description": "Edge relay unreachable or errored",
+        "content": {"application/json": {"schema": STRING_DETAIL_OBJECT}},
+    }
+}
 
 
 class HealthResponse(BaseModel):
@@ -558,3 +568,69 @@ class DiscoveryRecordOut(BaseModel):
 class DiscoveryImportResponse(BaseModel):
     imported: list[DiscoveryRecordOut]
     total: int
+
+
+class EdgeCommandRequest(BaseModel):
+    """Enqueue a command for an on-premise agent (REQ-022 B)."""
+
+    agent_id: str = Field(min_length=1, description="Agent id (e.g. grand-plaza-pabx)")
+    kind: str = Field(
+        min_length=1,
+        description="Declarative command kind from the agent bundle (wakeup.set, guest.in, ...)",
+    )
+    params: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None)
+    expires_at: str | None = Field(
+        default=None, description="ISO-8601 UTC deadline; the agent never sends past it"
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class EdgeCommandResponse(BaseModel):
+    request_id: str
+    existed: bool = False
+
+
+class EdgeResultRow(BaseModel):
+    request_id: str
+    agent_id: str
+    kind: str
+    state: str
+    result_json: str | None = None
+
+    model_config = {"extra": "allow"}
+
+
+class EdgeResultsResponse(BaseModel):
+    results: list[EdgeResultRow]
+
+
+class EdgePostingRow(BaseModel):
+    idempotency_key: str
+    agent_id: str
+    record_type: str
+    fields_json: str
+    occurred_at: str | None = None
+    received_at: str
+
+    model_config = {"extra": "allow"}
+
+
+class EdgePostingsResponse(BaseModel):
+    postings: list[EdgePostingRow]
+
+
+class EdgeAgentRow(BaseModel):
+    agent_id: str
+    link_up: bool = False
+    link_detail: str = ""
+    outbox_depth: int = 0
+    inbox_depth: int = 0
+    updated_at: str
+
+    model_config = {"extra": "allow"}
+
+
+class EdgeAgentsResponse(BaseModel):
+    agents: list[EdgeAgentRow]

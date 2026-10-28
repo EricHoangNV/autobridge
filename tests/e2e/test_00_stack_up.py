@@ -75,6 +75,23 @@ def test_readyz_checks_are_all_ok(e2e_stack: str) -> None:
         for name, value in checks.items():
             if value != "ok":
                 failures.append(f"{svc} check {name}={value}")
+    # REQ-022 B: sim-fias-pabx reports its link as a state string, not
+    # ok/fail (REQ-022 A: a missing peer is never a readiness failure —
+    # the nightly-restart rule flaps links by design). "up" is the only
+    # passing value; a fault-injecting test earlier in random order leaves
+    # a "down" that the PABX redials within 10 s (site setting), so poll
+    # for the redial instead of failing on the window.
+    fias = [f for f in failures if f.startswith("sim-fias-pabx check fias_link=")]
+    if fias and len(fias) == len(failures):
+        import time
+
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            _, body = _get_json(service_url("sim-fias-pabx", "/readyz"))
+            if body.get("checks", {}).get("fias_link") == "up":
+                failures = []
+                break
+            time.sleep(1.0)
     assert not failures, "failing readyz checks:\n" + "\n".join(failures)
 
 

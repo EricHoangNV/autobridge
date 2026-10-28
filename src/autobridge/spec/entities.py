@@ -270,7 +270,7 @@ REFERENCE_RUNTIME_TARGETS: dict[str, dict[str, Any]] = {
         "kind": "docker_sandbox",
         "network_allowlist": ["atlas.example.com"],
     },
-    "edge": {"kind": "edge", "network_allowlist": ["edgepos.example.com"]},
+    "edge": {"kind": "edge", "network_allowlist": ["edge-relay.example.com"]},
 }
 
 #: Reference discovery record: reserved v0, Phase 2 S3 static import only.

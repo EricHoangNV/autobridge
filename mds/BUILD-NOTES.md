@@ -1389,3 +1389,75 @@ import-linter) + `make typecheck` + `make ui-typecheck` green;
 simulators 328 / 90.5%, ui 156); `make up` + `make smoke` green
 (sim-fias-pabx :8118 readyz ok, all new probes pass); new e2e file green
 (4/4, E2E_KEEP_STACK=1); local-mode launch verified on scratch ports.
+
+### REQ-022 sub-step B — outbound-only edge agent + edge-relay queue, EdgePOS removed
+
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+What landed (sub-step B only; C vocabulary, D scenarios, E demo remain):
+- **New service `edge-relay`** (`src/autobridge/edge/relay.py`, edge-net +
+  engine-net, `:8120`): dumb authenticated command queue. Agent side
+  (`EDGE_AGENT_TOKEN`): `GET /v1/commands/next` (oldest queued, or
+  delivered-but-unresulted past `REDELIVER_AFTER_S` — at-least-once),
+  `POST /v1/commands/{id}/result` (first-write-wins), `POST /v1/postings`
+  (dedup on idempotency key), `POST /v1/heartbeats`. Operator side
+  (`AUTOBRIDGE_CONTROL_TOKEN`): `POST /v1/enqueue` (idempotent on key),
+  `GET /v1/results|postings|agents`. SQLite, no Alembic (own file).
+  Either side open when its token is unset (REQ-012 semantics).
+- **Agent rewrite** (`src/autobridge/edge/`): `fias_host.py` (host-side FIAS
+  link engine — own minimal codec from the public spec, no simulator
+  import; handshake, one-command-in-flight with bounded wait, deferred
+  PA-with-ACK-wait at idle, keep-alive/dead-link, zeros resync,
+  oversize/flood session close, second-connection refusal);
+  `store.py` (SQLite durable outbox/inbox, claimed→queued crash recovery,
+  PS key `P#+room+time`); `bundle.py` + `agent_bundle.json` (declarative
+  kind→record mapping with defaults/now-fill, verified against
+  `EDGE_BUNDLE_SIGNATURE` via the AR-2-4 `release_signature` primitive —
+  fail closed when `EDGE_RELEASE_SECRET` is set); `poller.py`
+  (poll/execute/forward/heartbeat loops with backoff; expiry enforced at
+  claim and at the link slot; link_down requeues ≤ `EDGE_MAX_ATTEMPTS`
+  then reports failed); `app.py` keeps only `/healthz`+`/readyz` (no
+  `/execute` — 404; link state informational, bundle/store/thread fail).
+- **Control proxy** (`routes/edge.py` + schemas): `POST /edge/commands`
+  (token-guarded), open `GET /edge/commands/results|postings|agents`
+  forwarding the control credential to the relay; relay down → honest 502
+  (documented `EDGE_RELAY_502`, schemathesis allows only relay-naming 502s).
+- **EdgePOS removal**: sim dir, compose service, smoke/conftest/local/
+  wait_readyz refs, unit tests (`test_simulators_edgepos.py` deleted),
+  `EDGE_POS_HOST` (EdgeTarget default allowlist now deny-`[]`),
+  `EDGEPOS_*`/`EDGE_ALLOWLIST` env, docs + DiscoveryList fixture updated.
+  UI openapi.json + schema.d.ts regenerated.
+- Wiring: compose `edge-worker` stays edge-net-only (outbound-only kept —
+  no engine-net join, so the edge→mcp-hotel negative probe still passes);
+  `EDGE_RELAY_URL` on control + agent; local-up/down entries; `.env.example`
+  (`EDGE_AGENT_TOKEN`, `EDGE_BUNDLE_SIGNATURE` + mint one-liner).
+- Tests: 11 relay + 30 agent (codec/store/bundle/poller steps/link vs real
+  `PabxLink` incl. restart-without-loss, expiry, ack-timeout, flood/oversize/
+  zeros/LE session paths) + 4 proxy + rewritten `test_s2_edge_target.py`
+  (in-process full loop + live round-trip; `/execute` 404 both).
+  `test_00` tolerates the designed 10 s PABX redial window after fault
+  tests (bounded poll for `fias_link == up`).
+- Verification: `make test` green (autobridge 2242 / 90.69%, verifier 99 /
+  93.62%, simulators 325 / 90.36%, ui 156); lint + import-linter +
+  typecheck + ui-typecheck green; `make up` + `make smoke` green (new
+  relay/agent probes all pass; agent↔PABX link up, 6 stay postings PA'd
+  and drained via control); S2 + 00 + fias-admin e2e green live and
+  `make local-up` + local smoke + S2 green in local mode.
+
+Decisions:
+- Queue-on-relay (not agent→control direct) preserves every existing
+  edge-net negative probe; the relay initiates no connections (documented
+  in compose + safety-model §9.1) and is tested to auth both sides.
+- Deferred PA (own ACK wait at idle) fixes a real protocol hazard found in
+  testing: the PABX ACKs every host frame, so a PA flushed mid-command
+  donated a stray ACK to the command wait (false "sent"). Commands now see
+  only their own frame's answers.
+- FIAS TA amounts stay minor-unit strings end to end (no float, DIRECTIVES
+  §4); property-local date math stays in C (bundle `now` fill uses
+  `EDGE_PROPERTY_TZ`, default America/New_York).
+- Simulators gate flapped 89.82↔90.36 on a pre-existing PABX poll-tick
+  timing branch (margin thinned by the EdgePOS deletion); pinned with a
+  deterministic delayed-ACK test on both link engines (3× stable 90.36%).
+- test_00's per-check assertion could never pass for the PABX (A reports
+  `fias_link` as a state string, never "ok"); the retry block accepts
+  "up" and polls through the redial window instead of asserting instant-ok.

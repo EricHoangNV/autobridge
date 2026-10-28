@@ -6,7 +6,7 @@ set -euo pipefail
 TIMEOUT="${1:-120}"
 
 # service -> host port (mirrors compose.yaml)
-SERVICES="control:8101 worker:8102 runtime-sandbox:8103 verifier:8104 sim-atlas:8105 sim-harbor:8106 sim-legacystay:8111 sim-meridian:8116 sim-edgepos:8113 sim-fias-pabx:8118 edge-worker:8114 mcp-hotel:8115 ui:8107 bench:8108"
+SERVICES="control:8101 worker:8102 runtime-sandbox:8103 verifier:8104 sim-atlas:8105 sim-harbor:8106 sim-legacystay:8111 sim-meridian:8116 sim-fias-pabx:8118 edge-worker:8114 edge-relay:8120 mcp-hotel:8115 ui:8107 bench:8108"
 
 deadline=$((SECONDS + TIMEOUT))
 for entry in $SERVICES; do

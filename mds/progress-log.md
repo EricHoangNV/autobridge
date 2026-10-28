@@ -2653,3 +2653,20 @@ move to sub-step B/E (see build note for the split rationale).
 Remaining for REQ-022: B edge agent (outbound-only, outbox/inbox,
 supervision), C FIAS spec vocabulary (before/after), D fault scenarios
 + verifier checks, E demo step + docs + README/index.
+
+## 2026-10-28 — REQ-022 sub-step B done (sbx1)
+
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+Shipped the on-premise edge agent and removed EdgePOS. `edge-relay` queue
+service (edge-net + engine-net, :8120, both sides token-authed) bridges
+control and agent; the agent (edge-net only, :8114, FIAS :5010 listener)
+polls outbound, ACKs the PABX after durable SQLite writes, enforces expiry,
+reports ack_timeouts, retries link_downs, and executes only the signed
+`agent_bundle.json` mapping. Control proxies `/edge/*` (honest 502s).
+Verified live in Compose (link up, postings drained, smoke + S2 e2e green)
+and in local mode (local-up + smoke + S2 green).
+Gates: make test green (2666 unit: 2242/99/325; 90.69 / 93.62 / 90.36) +
+ui 156; lint, typecheck, ui-typecheck green.
+Remaining: REQ-022 C (FIAS spec vocabulary before/after) → D (fault
+scenarios + verifier checks) → E (demo step + simulators index + docs).

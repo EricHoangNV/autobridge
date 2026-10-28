@@ -169,13 +169,18 @@ def test_e2e_timeout_treats_blank_as_unset(monkeypatch: Any) -> None:
 
 def test_edge_env_treats_blank_as_unset(monkeypatch: Any) -> None:
     from autobridge.edge import app as edge_app
-    from autobridge.runtime.targets import EDGE_POS_HOST
 
-    monkeypatch.delenv("EDGE_ALLOWLIST", raising=False)
-    monkeypatch.delenv("EDGE_TIMEOUT_S", raising=False)
-    assert edge_app._allowlist() == [EDGE_POS_HOST]
-    assert edge_app._worker().timeout_s == 60
-    monkeypatch.setenv("EDGE_ALLOWLIST", "")
-    monkeypatch.setenv("EDGE_TIMEOUT_S", "")
-    assert edge_app._allowlist() == [EDGE_POS_HOST]
-    assert edge_app._worker().timeout_s == 60
+    monkeypatch.delenv("EDGE_STORE_PATH", raising=False)
+    monkeypatch.delenv("FIAS_LISTEN_HOST", raising=False)
+    monkeypatch.delenv("FIAS_LISTEN_PORT", raising=False)
+    assert edge_app._store_path() == "./edge_agent.db"
+    assert edge_app._fias_host() == "0.0.0.0"
+    assert edge_app._fias_port() == 5010
+    monkeypatch.setenv("EDGE_STORE_PATH", "")
+    monkeypatch.setenv("FIAS_LISTEN_HOST", "")
+    monkeypatch.setenv("FIAS_LISTEN_PORT", "")
+    assert edge_app._store_path() == "./edge_agent.db"
+    assert edge_app._fias_host() == "0.0.0.0"
+    assert edge_app._fias_port() == 5010
+    monkeypatch.setenv("FIAS_LISTEN_PORT", "not-a-port")
+    assert edge_app._fias_port() == 5010

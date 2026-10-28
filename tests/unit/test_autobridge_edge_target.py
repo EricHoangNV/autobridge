@@ -1,24 +1,25 @@
-"""P2.S2.1 — Simulated Edge target: signed-only execution on an isolated net.
+"""REQ-022 B — on-premise agent target: signed-only execution, deny-by-default.
 
 Covers :class:`EdgeTarget`, the release-signature helpers, ``FakeEdgeTarget``
-and the edge worker app (rejection paths + wired happy path).  Live
+and the edge agent app (health/readyz, no inbound execution port).  Live
 container-network isolation is asserted in ``tests/e2e/test_s2_edge_target.py``
 and ``scripts/smoke.sh``; these unit tests stay green without Docker.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 from autobridge.edge.app import app as edge_app
 from autobridge.runtime.targets import (
-    EDGE_POS_HOST,
     EdgeTarget,
-    ExecutionResult,
     FakeEdgeTarget,
     NetworkBlockedError,
     TargetConfigError,
@@ -35,13 +36,13 @@ def _no_release_secret(monkeypatch: Any) -> None:
     monkeypatch.delenv("EDGE_RELEASE_SECRET", raising=False)
 
 
-def _edge_spec(base_url: str = "http://sim-edgepos:8000") -> dict[str, Any]:
+def _edge_spec(base_url: str = "http://edge-relay:8000") -> dict[str, Any]:
     return {
         "spec_version": 1,
-        "connector": {"id": "edgepos", "vendor": "EdgePOS", "runtime_target": "edge"},
+        "connector": {"id": "edge-http", "vendor": "EdgeRelay", "runtime_target": "edge"},
         "source": {
             "base_url": base_url,
-            "auth": {"type": "bearer", "credential_ref": "EDGEPOS_API_KEY"},
+            "auth": {"type": "bearer", "credential_ref": "TEST_API_KEY"},
             "rate_limit": {
                 "max_rps": 5,
                 "retry": {"statuses": [429, 503], "backoff": "exponential", "max_attempts": 3},
@@ -110,14 +111,20 @@ def test_verify_release_signature_ok_missing_mismatch() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_edge_target_defaults_to_edgepos_allowlist() -> None:
+def test_edge_target_defaults_to_deny_allowlist() -> None:
     t = EdgeTarget()
     assert t.kind == "edge"
-    assert t.network_allowlist == [EDGE_POS_HOST]
-    assert t.can_reach("http://sim-edgepos:8000/reservations")
+    assert t.network_allowlist == []
+    assert not t.can_reach("http://edge-relay:8000/v1/agents")
     assert not t.can_reach("http://verifier:8000/verify")
     assert not t.can_reach("http://sim-atlas:8000/reservations")
-    assert not t.can_reach("http://sim-edgepos:8001/admin/reset")
+
+
+def test_edge_target_explicit_allowlist_reaches_relay() -> None:
+    t = EdgeTarget(network_allowlist=["edge-relay"])
+    assert t.can_reach("http://edge-relay:8000/v1/agents")
+    assert not t.can_reach("http://verifier:8000/verify")
+    assert not t.can_reach("http://edge-relay:8001/admin/reset")
 
 
 def test_edge_target_rejects_blocked_allowlist() -> None:
@@ -132,8 +139,8 @@ def test_edge_target_unsigned_execute_is_blocked() -> None:
 
 
 def test_edge_target_fetch_enforces_allowlist() -> None:
-    t = EdgeTarget()
-    assert t.fetch("http://sim-edgepos:8000/healthz")["url"].endswith("/healthz")
+    t = EdgeTarget(network_allowlist=["edge-relay"])
+    assert t.fetch("http://edge-relay:8000/v1/agents")["url"].endswith("/v1/agents")
     with pytest.raises(NetworkBlockedError):
         t.fetch("http://sim-atlas:8000/healthz")
 
@@ -141,7 +148,7 @@ def test_edge_target_fetch_enforces_allowlist() -> None:
 def test_edge_target_docker_run_args_edge_net() -> None:
     args = EdgeTarget().docker_run_args()
     assert args["network"] == "edge-net"
-    assert args["network_allowlist"] == [EDGE_POS_HOST]
+    assert args["network_allowlist"] == []
 
 
 def test_edge_target_health_check() -> None:
@@ -151,6 +158,7 @@ def test_edge_target_health_check() -> None:
 def test_create_target_and_spec_mapping_edge() -> None:
     t = create_target({"kind": "edge", "endpoint": "http://edge-worker:8000"})
     assert isinstance(t, EdgeTarget)
+    assert t.network_allowlist == []
     mapped = target_from_connector_spec({"connector": {"runtime_target": "edge"}})
     assert isinstance(mapped, EdgeTarget)
 
@@ -171,10 +179,10 @@ def _mock_factory(payload: dict[str, Any]):  # type: ignore[no-untyped-def]
 
 
 def test_edge_signed_release_happy_path(monkeypatch: Any) -> None:
-    monkeypatch.setenv("EDGEPOS_API_KEY", "test-key")
+    monkeypatch.setenv("TEST_API_KEY", "test-key")
     spec = _edge_spec()
     sig = release_signature(spec)
-    t = EdgeTarget()
+    t = EdgeTarget(network_allowlist=["edge-relay"])
     res = t.execute_signed_release(
         spec,
         sig,
@@ -189,7 +197,7 @@ def test_edge_signed_release_happy_path(monkeypatch: Any) -> None:
 
 def test_edge_signed_release_rejects_tampered_and_unsigned() -> None:
     spec = _edge_spec()
-    t = EdgeTarget()
+    t = EdgeTarget(network_allowlist=["edge-relay"])
     with pytest.raises(TargetConfigError, match="mismatch"):
         t.execute_signed_release(spec, "bogus", "list_reservations")
     with pytest.raises(TargetConfigError, match="unsigned"):
@@ -200,7 +208,7 @@ def test_edge_signed_release_blocks_disallowed_host() -> None:
     spec = _edge_spec("http://sim-atlas:8000")
     sig = release_signature(spec)
     with pytest.raises(NetworkBlockedError):
-        EdgeTarget().execute_signed_release(spec, sig, "list_reservations")
+        EdgeTarget(network_allowlist=["edge-relay"]).execute_signed_release(spec, sig, "list_reservations")
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +219,10 @@ def test_edge_signed_release_blocks_disallowed_host() -> None:
 def test_fake_edge_signed_ok_and_rejected() -> None:
     spec = _edge_spec()
     sig = release_signature(spec)
-    fake = FakeEdgeTarget(responses={"list_reservations": [{"reservation_id": "EDGE-1"}]})
+    fake = FakeEdgeTarget(
+        network_allowlist=["edge-relay"],
+        responses={"list_reservations": [{"reservation_id": "EDGE-1"}]},
+    )
     res = fake.execute_signed_release(spec, sig, "list_reservations")
     assert res.status == "ok"
     assert res.records == [{"reservation_id": "EDGE-1"}]
@@ -220,84 +231,67 @@ def test_fake_edge_signed_ok_and_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Edge worker app (rejection paths + wired happy path)
+# Edge agent app (outbound-only: health/readyz, no inbound execution port)
 # ---------------------------------------------------------------------------
 
 
-def test_edge_app_healthz_readyz() -> None:
+def test_edge_app_healthz_readyz_unbuilt_is_degraded() -> None:
+    """Without lifespan startup the state is unbuilt: ready degraded, never forced ok."""
+    from autobridge.edge import app as edge_mod
+
+    edge_mod.reset()
     client = TestClient(edge_app)
     assert client.get("/healthz").json() == {"status": "ok"}
     body = client.get("/readyz").json()
-    assert body["status"] == "ok"
-    assert body["checks"]["edge_target"] == "ok"
-
-
-def test_edge_app_rejects_unsigned_and_tampered() -> None:
-    client = TestClient(edge_app)
-    spec = _edge_spec()
-    r = client.post("/execute", json={"spec": spec, "operation": "list_reservations"})
-    assert r.status_code == 403
-    r = client.post(
-        "/execute",
-        json={"spec": spec, "signature": "bogus", "operation": "list_reservations"},
-    )
-    assert r.status_code == 403
-
-
-def test_edge_app_rejects_disallowed_host() -> None:
-    client = TestClient(edge_app)
-    spec = _edge_spec("http://sim-atlas:8000")
-    r = client.post(
-        "/execute",
-        json={"spec": spec, "signature": release_signature(spec), "operation": "list_reservations"},
-    )
-    assert r.status_code == 403
-
-
-def test_edge_app_readyz_degraded_on_wide_allowlist(monkeypatch: Any) -> None:
-    monkeypatch.setenv("EDGE_ALLOWLIST", "sim-edgepos,verifier")
-    client = TestClient(edge_app)
-    body = client.get("/readyz").json()
     assert body["status"] == "degraded"
-    assert body["checks"]["edge_target"] == "fail"
+    assert body["checks"]["store"] == "fail"
+    assert body["checks"]["bundle"] == "fail"
 
 
-def test_edge_app_readyz_degraded_on_worker_error(monkeypatch: Any) -> None:
+def test_edge_app_has_no_inbound_execute_port() -> None:
+    """Outbound only (REQ-022 B): the old POST /execute is gone entirely."""
+    client = TestClient(edge_app)
+    assert client.post("/execute", json={"spec": {}, "operation": "x"}).status_code == 404
+
+
+def test_edge_app_readyz_ok_after_startup(tmp_path: Path, monkeypatch: Any) -> None:
+    """Built agent with no PABX peer: ready ok, link reported down in info."""
     from autobridge.edge import app as edge_mod
 
-    def boom() -> Any:
-        raise RuntimeError("no worker")
+    monkeypatch.setenv("EDGE_AGENT_DISABLE_LINK", "1")
+    monkeypatch.setenv("EDGE_AGENT_DISABLE_CLOUD", "1")
+    monkeypatch.setenv("EDGE_STORE_PATH", str(tmp_path / "agent.db"))
+    monkeypatch.delenv("EDGE_BUNDLE_SIGNATURE", raising=False)
+    edge_mod.reset()
+    edge_mod.startup()
+    try:
+        client = TestClient(edge_app)
+        body = client.get("/readyz").json()
+        assert body["status"] == "ok", body
+        assert body["checks"] == {"store": "ok", "bundle": "ok", "link_thread": "ok"}
+        assert body["link"]["link_up"] is False
+        assert body["queue"] == {"outbox": 0, "inbox": 0}
+    finally:
+        edge_mod.shutdown()
 
-    monkeypatch.setattr(edge_mod, "_worker", boom)
-    client = TestClient(edge_app)
-    assert client.get("/readyz").json()["status"] == "degraded"
 
-
-def test_edge_app_invalid_spec_maps_to_502() -> None:
-    client = TestClient(edge_app)
-    spec: dict[str, Any] = {"spec_version": 1, "source": {"base_url": "http://sim-edgepos:8000"}}
-    r = client.post(
-        "/execute",
-        json={"spec": spec, "signature": release_signature(spec), "operation": "list_reservations"},
-    )
-    assert r.status_code == 502
-
-
-def test_edge_app_happy_path_wired(monkeypatch: Any) -> None:
+def test_edge_app_readyz_degraded_on_bad_bundle_signature(tmp_path: Path, monkeypatch: Any) -> None:
+    """A pinned signature that does not match refuses the bundle (fail closed)."""
     from autobridge.edge import app as edge_mod
 
-    def fake_exec(self: Any, spec: Any, signature: Any, operation: Any, params: Any = None) -> ExecutionResult:  # noqa: ARG001
-        return ExecutionResult(status="ok", records=[{"reservation_id": "EDGE-1"}], output={"pages_fetched": 1})
-
-    monkeypatch.setattr(edge_mod.EdgeTarget, "execute_signed_release", fake_exec)
-    client = TestClient(edge_app)
-    spec = _edge_spec()
-    r = client.post(
-        "/execute",
-        json={"spec": spec, "signature": release_signature(spec), "operation": "list_reservations"},
-    )
-    assert r.status_code == 200
-    assert r.json()["records"] == [{"reservation_id": "EDGE-1"}]
+    monkeypatch.setenv("EDGE_AGENT_DISABLE_LINK", "1")
+    monkeypatch.setenv("EDGE_AGENT_DISABLE_CLOUD", "1")
+    monkeypatch.setenv("EDGE_STORE_PATH", str(tmp_path / "agent.db"))
+    monkeypatch.setenv("EDGE_BUNDLE_SIGNATURE", "bogus")
+    edge_mod.reset()
+    edge_mod.startup()
+    try:
+        body = TestClient(edge_app).get("/readyz").json()
+        assert body["status"] == "degraded"
+        assert body["checks"]["bundle"] == "fail"
+    finally:
+        edge_mod.shutdown()
+        monkeypatch.delenv("EDGE_BUNDLE_SIGNATURE", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +359,10 @@ def test_keyed_fake_edge_accepts_hmac_rejects_legacy(monkeypatch: Any) -> None:
     spec = _edge_spec()
     legacy = release_signature(spec)
     monkeypatch.setenv("EDGE_RELEASE_SECRET", "test-key-1")
-    fake = FakeEdgeTarget(responses={"list_reservations": [{"reservation_id": "EDGE-1"}]})
+    fake = FakeEdgeTarget(
+        network_allowlist=["edge-relay"],
+        responses={"list_reservations": [{"reservation_id": "EDGE-1"}]},
+    )
     res = fake.execute_signed_release(spec, release_signature(spec), "list_reservations")
     assert res.status == "ok"
     with pytest.raises(TargetConfigError, match="HMAC.*mismatch"):

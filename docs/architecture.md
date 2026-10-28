@@ -78,7 +78,7 @@ engine-net   — control, worker, runtime-sandbox, ui, bench, mcp-hotel
 vendor-net   — runtime-sandbox ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian public API (8000)
 verifier-net — control ↔ verifier, bench ↔ verifier
 admin-net    — control ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian admin API (8001, W2.2)
-edge-net     — edge-worker ↔ sim-edgepos public API (8000) ONLY (P2.S2); edge-worker ↔ sim-fias-pabx (REQ-022: the PABX dials out to the host, FIAS TCP; admin 8001 loopback-only)
+edge-net     — edge-worker ↔ edge-relay (cloud command queue, :8000) + edge-worker ↔ sim-fias-pabx (REQ-022 B: the agent listens on TCP :5010, the PABX dials out to the host; public docs :8000, admin :8001 loopback-only). The agent is outbound-only: no inbound port from the cloud.
 ```
 
 Isolation is by **attachment only** — no `internal: true`. An internal-only
@@ -90,8 +90,7 @@ probes asserted in `scripts/smoke.sh` and statically in
 - `runtime-sandbox` has no route to `verifier-net` or `admin-net`
 - `ui` is on `engine-net` only
 - `worker` is on `engine-net` only
-- P2.S2: `sim-edgepos` and `edge-worker` are on `edge-net` only; `control`,
-  `runtime-sandbox`, `ui` and the cloud sims have no route to it
+- REQ-022 B: `edge-worker` (the on-premise agent) and `sim-fias-pabx` live on `edge-net` only; `edge-relay` bridges edge-net/engine-net as a dumb authenticated queue; `control`, `runtime-sandbox`, `ui` and the cloud sims have no route to edge-net
 
 Positive probes guard against a blanket outage masquerading as isolation:
 

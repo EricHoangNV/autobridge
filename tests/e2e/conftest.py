@@ -67,9 +67,9 @@ SERVICE_PORTS: Final[dict[str, int]] = {
     "sim-harbor": 8106,
     "sim-legacystay": 8111,
     "sim-meridian": 8116,
-    "sim-edgepos": 8113,
     "sim-fias-pabx": 8118,
     "edge-worker": 8114,
+    "edge-relay": 8120,
     "mcp-hotel": 8115,
     "ui": 8107,
     "bench": 8108,
@@ -286,15 +286,15 @@ def is_local_mode() -> bool:
         return False
 
 
-def edge_pos_url() -> str:
-    """Public URL of the edge-only sim POS for the current mode (REQ-017).
+def edge_relay_url() -> str:
+    """URL of the edge command-queue relay for the current mode (REQ-022 B).
 
-    Docker DNS (``sim-edgepos:8000``) inside Compose; loopback (``:8113``)
+    Docker DNS (``edge-relay:8000``) inside Compose; loopback (``:8120``)
     for ``make local-up``.
     """
     if is_local_mode():
-        return "http://localhost:8113"
-    return "http://sim-edgepos:8000"
+        return "http://localhost:8120"
+    return "http://edge-relay:8000"
 
 
 def e2e_timeout_seconds(default: float = 120.0) -> float:

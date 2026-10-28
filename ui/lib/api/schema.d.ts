@@ -430,6 +430,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/edge/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Agents */
+        get: operations["agents_edge_agents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/edge/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enqueue Command */
+        post: operations["enqueue_command_edge_commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/edge/commands/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Command Results */
+        get: operations["command_results_edge_commands_results_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/edge/postings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Postings */
+        get: operations["postings_edge_postings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/evidence/{evidence_id}": {
         parameters: {
             query?: never;
@@ -1191,6 +1259,119 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** EdgeAgentRow */
+        EdgeAgentRow: {
+            /** Agent Id */
+            agent_id: string;
+            /**
+             * Inbox Depth
+             * @default 0
+             */
+            inbox_depth: number;
+            /**
+             * Link Detail
+             * @default
+             */
+            link_detail: string;
+            /**
+             * Link Up
+             * @default false
+             */
+            link_up: boolean;
+            /**
+             * Outbox Depth
+             * @default 0
+             */
+            outbox_depth: number;
+            /** Updated At */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EdgeAgentsResponse */
+        EdgeAgentsResponse: {
+            /** Agents */
+            agents: components["schemas"]["EdgeAgentRow"][];
+        };
+        /**
+         * EdgeCommandRequest
+         * @description Enqueue a command for an on-premise agent (REQ-022 B).
+         */
+        EdgeCommandRequest: {
+            /**
+             * Agent Id
+             * @description Agent id (e.g. grand-plaza-pabx)
+             */
+            agent_id: string;
+            /**
+             * Expires At
+             * @description ISO-8601 UTC deadline; the agent never sends past it
+             */
+            expires_at?: string | null;
+            /** Idempotency Key */
+            idempotency_key?: string | null;
+            /**
+             * Kind
+             * @description Declarative command kind from the agent bundle (wakeup.set, guest.in, ...)
+             */
+            kind: string;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
+        };
+        /** EdgeCommandResponse */
+        EdgeCommandResponse: {
+            /**
+             * Existed
+             * @default false
+             */
+            existed: boolean;
+            /** Request Id */
+            request_id: string;
+        };
+        /** EdgePostingRow */
+        EdgePostingRow: {
+            /** Agent Id */
+            agent_id: string;
+            /** Fields Json */
+            fields_json: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Occurred At */
+            occurred_at?: string | null;
+            /** Received At */
+            received_at: string;
+            /** Record Type */
+            record_type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EdgePostingsResponse */
+        EdgePostingsResponse: {
+            /** Postings */
+            postings: components["schemas"]["EdgePostingRow"][];
+        };
+        /** EdgeResultRow */
+        EdgeResultRow: {
+            /** Agent Id */
+            agent_id: string;
+            /** Kind */
+            kind: string;
+            /** Request Id */
+            request_id: string;
+            /** Result Json */
+            result_json?: string | null;
+            /** State */
+            state: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EdgeResultsResponse */
+        EdgeResultsResponse: {
+            /** Results */
+            results: components["schemas"]["EdgeResultRow"][];
         };
         /** EvidenceOut */
         EvidenceOut: {
@@ -3264,6 +3445,265 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agents_edge_agents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeAgentsResponse"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Edge relay unreachable or errored */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    enqueue_command_edge_commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeCommandRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeCommandResponse"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Edge relay unreachable or errored */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    command_results_edge_commands_results_get: {
+        parameters: {
+            query?: {
+                agent_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeResultsResponse"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Edge relay unreachable or errored */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    postings_edge_postings_get: {
+        parameters: {
+            query?: {
+                agent_id?: string | null;
+                since?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgePostingsResponse"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Edge relay unreachable or errored */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
                 };
             };
         };

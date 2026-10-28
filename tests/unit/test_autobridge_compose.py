@@ -27,9 +27,9 @@ EXPECTED_SERVICES = {
     "sim-harbor",
     "sim-legacystay",
     "sim-meridian",
-    "sim-edgepos",
     "sim-fias-pabx",
     "edge-worker",
+    "edge-relay",
     "mcp-hotel",
     "ui",
     "bench",
@@ -47,9 +47,9 @@ EXPECTED_ATTACHMENT = {
     "sim-harbor": {"vendor-net", "admin-net"},
     "sim-legacystay": {"vendor-net", "admin-net"},
     "sim-meridian": {"vendor-net", "admin-net"},
-    "sim-edgepos": {"edge-net"},
     "sim-fias-pabx": {"edge-net"},
     "edge-worker": {"edge-net"},
+    "edge-relay": {"edge-net", "engine-net"},
     "mcp-hotel": {"engine-net"},
     "ui": {"engine-net"},
     "bench": {"engine-net", "verifier-net"},
@@ -89,9 +89,9 @@ EXPECTED_PORTS = {
     "sim-harbor": 8106,
     "sim-legacystay": 8111,
     "sim-meridian": 8116,
-    "sim-edgepos": 8113,
     "sim-fias-pabx": 8118,
     "edge-worker": 8114,
+    "edge-relay": 8120,
     "mcp-hotel": 8115,
     "ui": 8107,
     "bench": 8108,
@@ -147,15 +147,16 @@ def test_worker_is_engine_net_only(compose: dict) -> None:
 
 
 def test_edge_network_isolated(compose: dict) -> None:
-    """P2.S2 + REQ-022: sim-edgepos / sim-fias-pabx live only on edge-net."""
-    assert set(compose["services"]["sim-edgepos"]["networks"]) == {"edge-net"}
+    """REQ-022 B: the agent + PABX live only on edge-net; the relay bridges
+    edge-net/engine-net as a dumb queue; control never touches edge-net."""
     assert set(compose["services"]["sim-fias-pabx"]["networks"]) == {"edge-net"}
     assert set(compose["services"]["edge-worker"]["networks"]) == {"edge-net"}
+    assert set(compose["services"]["edge-relay"]["networks"]) == {"edge-net", "engine-net"}
     for svc in ("control", "worker", "runtime-sandbox", "verifier", "ui", "bench", "mcp-hotel"):
         assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
     for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian"):
         assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
-    for svc in ("sim-edgepos", "sim-fias-pabx"):
+    for svc in ("sim-fias-pabx",):
         assert "vendor-net" not in set(compose["services"][svc]["networks"]), svc
         assert "admin-net" not in set(compose["services"][svc]["networks"]), svc
 
@@ -245,7 +246,7 @@ def test_verifier_build_context_excludes_engine(compose: dict) -> None:
 
 
 def test_sim_build_context_is_simulators_only(compose: dict) -> None:
-    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian", "sim-edgepos", "sim-fias-pabx"):
+    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian", "sim-fias-pabx"):
         build = compose["services"][svc]["build"]
         assert build["context"] in ("./simulators", "simulators")
 
@@ -293,13 +294,20 @@ def test_edge_worker_app_health() -> None:
     _check_health("autobridge.edge.app")
 
 
+def test_edge_relay_app_health(tmp_path: Path) -> None:
+    """Relay health against a scratch SQLite file (never the repo root)."""
+    from autobridge.edge.relay import _Store, create_app
+
+    client = TestClient(create_app(_Store(str(tmp_path / "relay.db"))))
+    assert client.get("/healthz").json() == {"status": "ok"}
+    body = client.get("/readyz").json()
+    assert body["status"] == "ok"
+    assert body["checks"] == {"relay_store": "ok"}
+
+
 def test_mcp_hotel_app_health() -> None:
     """P2.S4.1: the MCP mock serves the same /healthz + /readyz contract."""
     _check_health("mcp_stretch.app")
-
-
-def test_sim_edgepos_app_health() -> None:
-    _check_health("simulators.edgepos.app")
 
 
 def test_sim_fias_pabx_app_health() -> None:

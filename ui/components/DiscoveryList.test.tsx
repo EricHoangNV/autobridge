@@ -27,7 +27,7 @@ describe("DiscoveryList", () => {
       record({ discovery_id: "a", vendor: "AtlasPMS", status: "discovered" }),
       record({ discovery_id: "b", vendor: "HarborPMS", status: "needs_confirmation" }),
       record({ discovery_id: "c", vendor: "LegacyStay", status: "authorized" }),
-      record({ discovery_id: "d", vendor: "EdgePOS", status: "connected" }),
+      record({ discovery_id: "d", vendor: "FIAS PABX", status: "connected" }),
       record({ discovery_id: "e", vendor: "HealPMS", status: "healing" }),
     ];
     render(<DiscoveryList records={records} />);
