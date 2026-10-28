@@ -2126,3 +2126,29 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Notes for next iteration:**
 - None — self-contained. Remaining Cycle 2 items: AR-1-4 (residual: bind-override exposure), AR-1-5, AR-2-3, AR-2-4, AR-2-5, AR-2-6. FEEDBACKS.MD verdict left for the reviewer to re-verify (precedent from AR-2-1/AR-1-1/AR-1-2).
 - Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## AR-1-5 — Bind gate verdict to requested scenario/mode, fail closed
+**Date:** 2026-10-28
+**Ref:** Code Review Cycle 2 FAIL item AR-1-5 (mds/FEEDBACKS.MD), plan §1.4/§2.7 gate semantics
+
+**What was done:**
+- `src/autobridge/engine/verification.py`: `GateOutcome` gains `mode` + `spec_signature` fields; `verify_spec` raises `GateBlockedError` on response/request scenario or mode mismatch and records the verified spec's sha256 on the outcome
+- `src/autobridge/engine/releases.py`: `_maybe_verify` raises `ReleaseError` (fail closed) when the gate module cannot be imported, instead of silently skipping verification
+- `src/autobridge/engine/build_run.py`: inline best-effort verifier check requires matching `scenario_id`/`mode` before marking `verified=True`; mismatches traced with response values
+- `tests/unit/test_autobridge_verification_gate.py`: mock verifier echoes request scenario/mode (like the real verifier) with explicit mismatch overrides; 5 new AR-1-5 tests
+- Live-verified on compose stack (`make up`, all readyz green): `verify_spec` baseline allowed with signature; e2e `test_05` 24 pass + `test_03` 6 pass; `make down -v` after
+- Full gate: `make lint`, `make typecheck`, `make test` green — 1940 + 97 + 248 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 143 pass
+
+**Key decisions:**
+- No protocol change: the verifier already echoes scenario/mode, so binding is client-side comparison only
+- Signature reuse (`control.models.spec_signature`, local import) keeps `GateOutcome.spec_signature` identical to `ConnectorRelease.signature` for the same spec dict — no new canonicalization
+- FEEDBACKS.MD left untouched (established AR-fix pattern); Cycle 2 verdict stays FAIL until the reviewer re-verifies
+
+**Files changed:**
+- `src/autobridge/engine/verification.py` — binding checks + outcome fields
+- `src/autobridge/engine/releases.py` — fail-closed `_maybe_verify`
+- `src/autobridge/engine/build_run.py` — bound inline check
+- `tests/unit/test_autobridge_verification_gate.py` — echo mock + 5 new tests
+
+**Notes for next iteration:**
+- Remaining Cycle 2 Low items: AR-2-3 (L0 cache invalidation), AR-2-4 (edge signature), AR-2-5 (floating image deps), AR-2-6 (readyz 503). AR-2-6 is the natural next pick (health contract, small, testable without compose).

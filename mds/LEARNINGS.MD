@@ -123,3 +123,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Keep the OpenAPI contract untouched when only server behavior changes (same fields, same 422 shapes): no schema edit means `make openapi-check` passes with zero generated-file churn. And never run `ruff format` on a repo that is not format-clean when `make lint` is check-only — it buries the fix in unrelated hunks.
 
 **Rule:** When a request causes the server to fetch or read, treat the server as the attacker's proxy: delete the primitive if no legitimate caller needs it (identifier-only over file-read), else allowlist the *target class* (scheme/host/routability, DNS as fail-open bonus); scrub caller secrets from every error echo; and keep the diff to behavior, never reformatting.
+
+## 13. A gate verdict is meaningless unless bound to its request — echo-check, then record what ran
+
+**Context:** AR-1-5 (2026-10-28) — the engine's verifier client accepted any `pass` verdict without comparing the response `scenario_id`/`mode` to the request, so a pass for a different scenario would have counted as allowed; and the release path silently skipped verification when the gate module failed to import.
+
+- The real verifier already echoes `scenario_id` and `mode` in every response — binding is a three-line comparison in the client (`scenario_mismatch` / `mode_mismatch` → `GateBlockedError`), not a protocol change. The same echo discipline applies to the best-effort inline check in `build_run.py`, which previously set `verified=True` on verdict alone.
+- Recording the verified spec's sha256 on the outcome (`GateOutcome.spec_signature`, same function that fills `ConnectorRelease.signature`) turns "verified" from a boolean into a binding between a verdict and an exact spec dict — evidence that names what ran instead of what was asked for.
+- A test mock that returns a fixed scenario silently encodes the bug: existing tests requested `baseline` while the mock claimed `rename_guest_id` and passed. Making the mock echo the request (like the real service) with explicit overrides for the mismatch case keeps old tests green and makes the new invariant testable.
+- Skip-on-error and fail-closed differ by one keyword: `except Exception: return` in `_maybe_verify` became `raise ReleaseError(...)`. Any "convenience skip" on a security-relevant path should read as a conscious, logged decision — never a bare return in an except arm.
+
+**Rule:** Every allow-decision from a verifier/gate must assert the response echoes the request (ids, mode, and the signature of exactly what was checked); test doubles must echo too, or they certify the misbinding; and a gate that cannot run must raise, never silently permit.

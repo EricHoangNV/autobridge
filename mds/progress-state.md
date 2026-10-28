@@ -2,7 +2,7 @@
 
 ## Current State
 
-AR-2-2 done (sbx1 2026-10-28): build route no longer fetches internal URLs or reads local files — docs_url allowlisted (http/https only, internal hostnames + non-public IPs incl. resolved IPs rejected 422, userinfo redacted), docs_path identifier-only in route and engine. 18 new unit tests. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+AR-1-5 done (sbx1 2026-10-28): gate verdict bound to requested scenario/mode (mismatch raises GateBlockedError), verified spec signature recorded on GateOutcome, _maybe_verify fails closed on import failure, build_run inline check bound. 5 new unit tests. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - W1 Foundations: scaffold, compose, ConnectorSpec, schemas, DB models, jobs, evidence, LLMProvider, fakes, e2e harness base
@@ -22,13 +22,14 @@ AR-2-2 done (sbx1 2026-10-28): build route no longer fetches internal URLs or re
   - AR-1-2: gate-before-persist on build path + no sync fallback to unapproved releases, 7 new tests
   - AR-1-3: approval bound to repair run's candidate release (route 422 + engine ReleaseError), 3 new tests
   - AR-2-2: docs_url allowlist + identifier-only docs_path (route + engine), userinfo redaction, 18 new tests
-- Tests: 2280 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 143 pass; lint + typecheck + openapi-check green; compose up live-verified AR-2-2 (SSRF 422s, smoke OK), then down -v
+  - AR-1-5: gate verdict bound to scenario/mode + spec signature recorded + fail-closed gate import, 5 new tests
+- Tests: 2285 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 143 pass; lint + typecheck + openapi-check green; compose up live-verified AR-1-5 (binding OK, test_03 6 pass + test_05 24 pass), then down -v
 - Stack: compose up with loopback-bound ports; all readyz green 2026-10-28
 
 ## Next tasks
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS (codeable REQ-007 flow done 2026-10-27)
-3. Code Review Cycle 2 FAIL items still open: AR-1-4 (partly: REQ-012 done), AR-1-5, AR-2-3, AR-2-4, AR-2-5, AR-2-6 (AR-2-2, AR-1-3, AR-1-2, AR-2-1, AR-1-1 fixed, pending re-verification)
+3. Code Review Cycle 2 FAIL items still open: AR-1-4 (partly: REQ-012 done), AR-2-3, AR-2-4, AR-2-5, AR-2-6 (AR-2-2, AR-1-5, AR-1-3, AR-1-2, AR-2-1, AR-1-1 fixed, pending re-verification)
 4. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 … P2.S7.1 DONE — Phase 2 complete
 
 ## Open Requests
