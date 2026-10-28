@@ -9,29 +9,6 @@ Do these before any remaining review FAIL item. Constraint for all of them: some
 Docker and no sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is
 present.
 
-### REQ-017 — Run the demo without Docker (2026-10-28)
-Status: DONE (2026-10-28) — make local-up/down (same host ports, ./local db/logs/pids), LocalProcessTarget in local mode via runtime_mode() honoring DOCKER_HOST, /readyz runtime_mode+network_isolation, UI LOCAL badge, smoke skips w/ note, e2e reuses green stack + local-aware edge test, README No-Docker + safety-model §12; verified live incl. DOCKER_HOST=broken acceptance cycle.
-Today the only way to run AutoBridge is `make up` (Docker Compose). Someone who downloads the repo may have no Docker
-and no sandbox. The demo must run on a plain machine with Python + `uv` and Node/npm.
-Wanted:
-1. `make local-up` / `make local-down` (or `make dev`): start every service the demo needs as local processes on the
-   same host ports as compose (control 8101, verifier 8104, simulators, edge-worker, ui 8107 …), SQLite in a temp or
-   `./.local/` dir, logs in `./.local/logs/`, PIDs tracked so `local-down` stops them. Wait for every `/readyz` like
-   `make up`. Works on macOS and Linux; note Windows (WSL) in the README.
-2. The runtime uses `LocalProcessTarget` instead of `DockerSandboxTarget` when Docker is not available (or when
-   `AUTOBRIDGE_RUNTIME=local`), and says so in `/readyz` and in the UI header (e.g. "local mode: no network
-   isolation"). Never pretend the sandbox exists.
-3. Trust boundaries still hold in code: the engine still never imports verifier/ or simulators/ (import-linter), the
-   verifier and simulator admin still run as separate processes, and admin writes still need `SIM_ADMIN_TOKEN` when
-   set. What local mode cannot enforce (Docker network separation) is listed in docs/safety-model.md and printed once
-   at startup.
-4. `make demo`, `make smoke` (with the network-isolation checks skipped and reported as "skipped: local mode") and the
-   UI journey work against local mode. `make e2e` runs the live tests against it too.
-5. README quickstart gets a "No Docker" section: prerequisites (Python 3.12, uv, Node 22), `cp .env.example .env`,
-   `make local-up`, open http://localhost:8107, `make demo`, `make local-down`.
-6. Check: in a fresh clone with Docker unavailable (`DOCKER_HOST=unix:///nonexistent.sock`), `make local-up && make
-   demo && make local-down` passes.
-
 ### REQ-020 — Add a fifth simulator after the Mews Connector API (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 10:51)
 Depends on REQ-019 (do it after). A new vendor, fictional name **MeridianPMS** (`sim-meridian`), copies the **Mews
@@ -448,6 +425,33 @@ simulators/verifier side; the engine never imports, reads or reaches them.
    known fault types).
 Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make bench-heldout` keeps working.
 
+---
+
+## Resolved Requests (reference only)
+
+### REQ-017 — Run the demo without Docker (2026-10-28)
+Status: DONE (2026-10-28) — make local-up/down (same host ports, ./local db/logs/pids), LocalProcessTarget in local mode via runtime_mode() honoring DOCKER_HOST, /readyz runtime_mode+network_isolation, UI LOCAL badge, smoke skips w/ note, e2e reuses green stack + local-aware edge test, README No-Docker + safety-model §12; verified live incl. DOCKER_HOST=broken acceptance cycle.
+Today the only way to run AutoBridge is `make up` (Docker Compose). Someone who downloads the repo may have no Docker
+and no sandbox. The demo must run on a plain machine with Python + `uv` and Node/npm.
+Wanted:
+1. `make local-up` / `make local-down` (or `make dev`): start every service the demo needs as local processes on the
+   same host ports as compose (control 8101, verifier 8104, simulators, edge-worker, ui 8107 …), SQLite in a temp or
+   `./.local/` dir, logs in `./.local/logs/`, PIDs tracked so `local-down` stops them. Wait for every `/readyz` like
+   `make up`. Works on macOS and Linux; note Windows (WSL) in the README.
+2. The runtime uses `LocalProcessTarget` instead of `DockerSandboxTarget` when Docker is not available (or when
+   `AUTOBRIDGE_RUNTIME=local`), and says so in `/readyz` and in the UI header (e.g. "local mode: no network
+   isolation"). Never pretend the sandbox exists.
+3. Trust boundaries still hold in code: the engine still never imports verifier/ or simulators/ (import-linter), the
+   verifier and simulator admin still run as separate processes, and admin writes still need `SIM_ADMIN_TOKEN` when
+   set. What local mode cannot enforce (Docker network separation) is listed in docs/safety-model.md and printed once
+   at startup.
+4. `make demo`, `make smoke` (with the network-isolation checks skipped and reported as "skipped: local mode") and the
+   UI journey work against local mode. `make e2e` runs the live tests against it too.
+5. README quickstart gets a "No Docker" section: prerequisites (Python 3.12, uv, Node 22), `cp .env.example .env`,
+   `make local-up`, open http://localhost:8107, `make demo`, `make local-down`.
+6. Check: in a fresh clone with Docker unavailable (`DOCKER_HOST=unix:///nonexistent.sock`), `make local-up && make
+   demo && make local-down` passes.
+
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
 Priority: do this first. `make bench-heldout` on Nov 3 has the same bug.
@@ -468,10 +472,6 @@ Wanted:
 3. Add a test for each: host URL selection, and the zero-trial or unreachable guard.
 4. With the stack up, run `make bench` once and record the real dev-split numbers in the build note (not zeros).
 Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
-
----
-
-## Resolved Requests (reference only)
 
 ### REQ-019 — Reshape the Atlas simulator after the Cloudbeds PMS API (2026-10-28)
 Status: DONE (2026-10-28) — Atlas serves the method-style hotel PMS surface (REQ-019 gates green).
