@@ -4595,14 +4595,10 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Readyz Readyz Get",
-                  "type": "object"
-                }
+                "schema": {}
               }
             },
-            "description": "Successful Response"
+            "description": "Ready: every check passed."
           },
           "400": {
             "content": {
@@ -4639,6 +4635,9 @@
               }
             },
             "description": "Resource not found"
+          },
+          "503": {
+            "description": "Degraded: at least one check failed (see body)."
           }
         },
         "summary": "Get Readyz",

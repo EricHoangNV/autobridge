@@ -21,6 +21,11 @@ for entry in $SERVICES; do
   for path in healthz readyz; do
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://localhost:${port}/${path}" || true)"
     [ "$code" = "200" ] || fail "$name /$path -> HTTP $code (want 200)"
+    # AR-2-6: assert the body too, not just the code — a degraded service
+    # answers /readyz with 503, and readyz must report status ok on a green stack.
+    body="$(curl -s --max-time 5 "http://localhost:${port}/${path}" || true)"
+    status="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('status',''))" "$body" 2>/dev/null || true)"
+    [ "$status" = "ok" ] || fail "$name /$path body status '$status' (want ok)"
   done
   echo "  ok $name (:$port)"
 done

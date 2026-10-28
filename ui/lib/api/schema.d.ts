@@ -3128,15 +3128,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Ready: every check passed. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": unknown;
                 };
             };
             /** @description Malformed request body */
@@ -3160,6 +3158,13 @@ export interface operations {
                         detail: string;
                     };
                 };
+            };
+            /** @description Degraded: at least one check failed (see body). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

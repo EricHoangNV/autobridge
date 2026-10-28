@@ -145,3 +145,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Rollback needs provenance to find the patch: the superseded release's `provenance_repair_run_id` leads to its `candidate_patch`; releases created outside any repair run (no provenance) simply skip eviction.
 
 **Rule:** Every cache that stores successful outcomes needs a named invalidation call on every failure path that can disprove a cached entry — evict by the failed artifact's identity, make the eviction unable to fail the decision, and follow provenance links when the failure record does not carry the artifact itself.
+---
+
+## 15. A documented 5xx still trips contract fuzzers from the inside
+
+**Context:** AR-2-6 (2026-10-28) — making control `/readyz` return the honest 503 when degraded broke the schemathesis contract test, even though the 503 was documented in OpenAPI.
+
+- `case.call_and_validate()` runs schemathesis' default checks (including `not_a_server_error`) *before* returning, so asserting on the response afterwards is too late: the documented 503 must be excluded via `excluded_checks=[..., not_a_server_error]` for that operation, with a follow-up assertion that the body still reports the degraded contract.
+- The exclusion must be scoped per-operation (`case.operation.path == "/readyz"`), not global — a blanket exclusion would let a real crash anywhere else in the API pass as "documented".
+- Companion pattern that kept the rest of the suite honest: the shared compose health helper now asserts code↔body consistency (`200↔ok`, `503↔degraded`) instead of a fixed 200, so every app's readyz encodes the contract and a future regression (body says degraded, code says 200, or vice versa) fails in unit tests without a live stack.
+
+**Rule:** When an endpoint legitimately returns 5xx, scope the fuzzer's server-error exclusion to that operation and assert the degraded body explicitly; encode code↔body consistency in shared health helpers so the contract is checked for every service, not just the one you changed.

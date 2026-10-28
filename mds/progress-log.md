@@ -2176,3 +2176,36 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 
 **Notes for next iteration:**
 - Remaining Cycle 2 Low items: AR-2-4 (edge signature), AR-2-5 (floating image deps), AR-2-6 (readyz 503). AR-2-6 is the natural next pick (health contract, small, testable without compose).
+
+## AR-2-6 — Honest /readyz (503 when degraded) + worker DB check
+**Date:** 2026-10-28
+**Ref:** Code Review Cycle 2 (Daily Architecture Review, full-codebase sweep) finding AR-2-6, mds/FEEDBACKS.MD
+
+**What was done:**
+- Finished the uncommitted AR-2-6 work left by this loop's last iteration (control `/readyz` 503 + `readyz_response` helper) and completed the remaining remediation items: worker job-store DB check, unit tests for 503 paths, smoke body assertion, docs + OpenAPI regen.
+- `src/autobridge/health.py`: new `readyz_response(checks)` returning the `readyz()` body with HTTP 200 iff ok else 503.
+- `src/autobridge/control/app.py`: `/readyz` returns `readyz_response`; OpenAPI documents 200 + 503.
+- `src/autobridge/engine/app.py` (worker): `/readyz` runs `SELECT 1` against `default_database_url()` and returns `readyz_response` (503 when the store is unreachable).
+- 6 new tests in `tests/unit/test_health_smoke.py` (faked `httpx.Client`, no network); updated `test_readyz` (control_api), schemathesis contract (scoped `not_a_server_error` exclusion for documented readyz 503), and `_check_health` (compose test code↔body consistency).
+- `scripts/smoke.sh` asserts readyz body `status == ok`, not just HTTP 200; `docs/architecture.md` §2.3 documents the 200/503 contract; `ui/openapi.json` + `schema.d.ts` regenerated (readyz hunks only).
+- Verified live: green stack all readyz 200/ok + smoke OK; stopped verifier → control readyz 503 + degraded body, worker stays 200; restarted, `wait_readyz.sh` green, e2e `test_00_stack_up.py` 8 pass; stack torn down.
+
+**Key decisions:**
+- Kept scope to control + worker: other services' readyz bodies untouched (their green-stack 200 behavior is what e2e asserts); no e2e helper, CLI, or UI proxy changes needed (all three already handle non-200 correctly).
+- `JSONResponse` import placement differs per file: module top in control/app.py (existing TC noqa), `TYPE_CHECKING` block in engine/app.py (lint TC002).
+- Worker DB check reuses `control.models` helpers (leaf module, engine already imports it) instead of duplicating the URL default.
+
+**Files changed:**
+- `src/autobridge/health.py` — `readyz_response()` helper
+- `src/autobridge/control/app.py` — `/readyz` returns 503 when degraded, OpenAPI 200/503 docs
+- `src/autobridge/engine/app.py` — worker job-store `SELECT 1` check + honest status code
+- `tests/unit/test_health_smoke.py` — 6 new AR-2-6 tests
+- `tests/unit/test_autobridge_control_api.py`, `tests/unit/test_autobridge_control_contract.py`, `tests/unit/test_autobridge_smoke.py`, `tests/unit/test_autobridge_compose.py` — updated readyz expectations
+- `scripts/smoke.sh` — readyz body assertion
+- `docs/architecture.md` — §2.3 200/503 contract
+- `ui/openapi.json`, `ui/lib/api/schema.d.ts` — regenerated
+
+**Notes for next iteration:**
+- Remaining Cycle 2 items: AR-1-4 residual (bind-override exposure; REQ-012 done covers the token part), AR-2-4 (edge signature), AR-2-5 (floating image deps). Suggested next: AR-2-4 or AR-2-5 (both small, no compose needed).
+- FEEDBACKS.MD verdict left untouched for the reviewer to re-verify (precedent from earlier AR fixes).
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation).

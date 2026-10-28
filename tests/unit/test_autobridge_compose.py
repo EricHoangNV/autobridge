@@ -225,10 +225,12 @@ def _check_health(app_module: str) -> None:
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
     resp = client.get("/readyz")
-    assert resp.status_code == 200
     # Outside the Compose stack some dependencies are unreachable, so an
     # honest readyz may report "degraded" (plan §3); a forced "ok" is a bug.
+    # AR-2-6: the code is honest too — 200 iff ok, 503 iff degraded.
+    assert resp.status_code in (200, 503)
     assert resp.json()["status"] in ("ok", "degraded")
+    assert (resp.status_code == 200) == (resp.json()["status"] == "ok")
     assert "checks" in resp.json()
 
 

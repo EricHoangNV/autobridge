@@ -79,10 +79,11 @@ def test_healthz(client: Any) -> None:  # type: ignore[no-untyped-def]
 
 def test_readyz(client: Any) -> None:  # type: ignore[no-untyped-def]
     r = client.get("/readyz")
-    assert r.status_code == 200
-    # readyz is honest about dependencies (plan §3): without a reachable
-    # verifier the status is "degraded", never a forced "ok".
-    assert r.json()["status"] in ("ok", "degraded")
+    # readyz is honest about dependencies (plan §3, AR-2-6): without a
+    # reachable verifier the status is "degraded" and the code is 503,
+    # never a misleading 200.
+    assert r.status_code == 503
+    assert r.json()["status"] == "degraded"
     assert "db" in r.json()["checks"]
     assert "verifier" in r.json()["checks"]
 

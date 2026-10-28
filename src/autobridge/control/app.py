@@ -15,6 +15,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from autobridge.control.deps import get_engine
 from autobridge.control.routes.bench import router as bench_router
@@ -69,9 +70,16 @@ def get_healthz() -> dict[str, str]:
     return healthz()  # type: ignore[return-value]
 
 
-@app.get("/readyz", tags=["health"])
-def get_readyz() -> dict[str, object]:
-    from autobridge.health import readyz
+@app.get(
+    "/readyz",
+    tags=["health"],
+    responses={
+        200: {"description": "Ready: every check passed."},
+        503: {"description": "Degraded: at least one check failed (see body)."},
+    },
+)
+def get_readyz() -> JSONResponse:
+    from autobridge.health import readyz_response
 
     checks: dict[str, bool] = {}
     # DB check
@@ -97,7 +105,7 @@ def get_readyz() -> dict[str, object]:
         checks["verifier"] = False
 
     checks["default"] = all(checks.values())
-    return readyz(checks)  # type: ignore[return-value]
+    return readyz_response(checks)
 
 
 @app.get("/", tags=["health"])

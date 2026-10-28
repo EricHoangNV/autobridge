@@ -107,10 +107,11 @@ def test_control_app_readyz() -> None:
 
     client = TestClient(app)
     resp = client.get("/readyz")
-    assert resp.status_code == 200
-    # Honest readyz (plan §3): "degraded" when the verifier is unreachable
-    # from the test host; "ok" only inside the Compose stack.
-    assert resp.json()["status"] in ("ok", "degraded")
+    # Honest readyz (plan §3, AR-2-6): "degraded" with 503 when the verifier
+    # is unreachable from the test host; "ok" with 200 only inside the
+    # Compose stack.
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "degraded"
 
 
 def test_import_all_autobridge_subpackages() -> None:

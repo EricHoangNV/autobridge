@@ -89,13 +89,16 @@ Every service exposes:
   `{"status": "ok"}` with `200` and `application/json`.
 - `GET /readyz` — readiness including dependency checks. Returns
   `{"status": "ok"|"degraded", "checks": {"<name>": "ok"|"fail"}}` with
-  `200`. The top-level `status` is `ok` only when every check is `ok`.
+  `200` when every check passes and `503` when any check fails (AR-2-6),
+  so an operator watching only status codes is not misled by a degraded
+  service. The top-level `status` is `ok` only when every check is `ok`.
+  Liveness probes must use `/healthz`; readiness gates poll `/readyz`.
 
 The stub apps (W1) return `{"default": "ok"}`. Later workstreams wire real
-checks: `control` reports DB/verifier/sandbox reachability, simulators
-report dataset readiness, etc. `make up` runs `scripts/wait_readyz.sh` which
+checks: `control` reports DB/verifier reachability, `worker` reports job-store
+(DB) reachability, simulators report dataset readiness, etc. `make up` runs `scripts/wait_readyz.sh` which
 polls every service's `/readyz` until all are `ok`; `make smoke` asserts
-both endpoints plus the network probes above; `tests/e2e/test_00_stack_up.py`
+both endpoints' codes *and* bodies plus the network probes above; `tests/e2e/test_00_stack_up.py`
 is the e2e acceptance test for the same contract.
 
 ## 3. Repository layout (plan §2.2)

@@ -30,7 +30,7 @@ from sqlalchemy import create_engine
 
 import schemathesis
 from schemathesis import Config
-from schemathesis.checks import allow_header_conformance
+from schemathesis.checks import allow_header_conformance, not_a_server_error
 
 from autobridge.control.app import app
 from autobridge.control.deps import get_db
@@ -80,6 +80,21 @@ def test_control_plane_contract(case):  # type: ignore[no-untyped-def]
     Only ``allow_header_conformance`` is excluded: it probes the implicit
     OPTIONS method (absent from our OpenAPI and from plan §2.11) whose
     ``Allow`` header is computed by Starlette, not by our code.
+
+    Exception (AR-2-6): ``GET /readyz`` answers 503 while a dependency
+    (the verifier, unreachable outside the Compose stack) is down. That
+    503 is documented in OpenAPI and asserted by the readyz unit tests,
+    so it is accepted here when the body reports ``degraded``.
     """
-    response = case.call_and_validate(excluded_checks=[allow_header_conformance])
-    assert response.status_code < 500, f"{case.operation.label} {case.operation.path} -> {response.status_code}"
+    response = case.call_and_validate(
+        excluded_checks=[
+            allow_header_conformance,
+            # AR-2-6: readyz answers a documented 503 while the verifier
+            # dependency is unreachable; not a server crash.
+            *( [not_a_server_error] if case.operation.path == "/readyz" else [] ),
+        ]
+    )
+    if case.operation.path == "/readyz" and response.status_code == 503:
+        assert response.json()["status"] == "degraded"
+    else:
+        assert response.status_code < 500, f"{case.operation.label} {case.operation.path} -> {response.status_code}"
