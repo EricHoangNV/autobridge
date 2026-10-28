@@ -2577,3 +2577,10 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 **Stamp detection, unscripted demo, record-frontier, dated replay labels.** Gates green (2179/99/294 +
 ui 153). Owner live steps: run `make record-frontier SCENARIO=gross_to_net`, commit capture, re-run demo.
 **Next:** REQ-021 sub-step F (capabilities/knowledge). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-021 sub-step F merged; REQ-021 DONE (sbx1)
+**Capabilities + knowledge:** derived endpoints, CLI, UI page, e2e learn/reuse flow (live-verified).
+REQ-021 (all 6 items + 4 owner checks) moved to Resolved. **Gates:** `make test` green (2187/99/294 +
+ui 156); lint + typecheck + ui-typecheck green.
+**Next:** REQ-020 step 7 (demo before/after) → REQ-022 → REQ-024 → REQ-025 (owner order); REQ-023 demo
+plan as steps land; owner live steps (record-frontier capture). Agent: opencode meta/muse-spark-1.3-contributor (escalation).

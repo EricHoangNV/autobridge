@@ -1260,3 +1260,28 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
   green with L3 skipped plainly. Live-owner steps remaining: run record-frontier with the Muse key,
   commit the capture, re-run demo live.
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-021 sub-step F — Capabilities + learned knowledge (2026-10-28)
+- **Did:** `GET /capabilities` derived from code (spec-model Literals minus the v2-only set
+  {POST, body_fields, body_cursor}; 9 transforms; CheckKind/StopCondition Literals; every L1 rule with
+  its module-docstring fix line; static v1→v2 diff; MCP tools/list-style agent surface of 6 control
+  operations). `GET /knowledge` derived from stored runs: one entry per approved repair group
+  (vendor, drift signature, rule, patch, learning run/rung/tokens/cost, times_reused, tokens_saved,
+  cost_saved, approvals) + per-connector profiles (vocabulary + confirmed hypotheses from successful
+  builds). RepairRun gains vendor + drift_signature (migration 0007; migrate.py effects table
+  extended). Entries appear only after approval; reuses count every later propose (L0 hits).
+  CLI: `autobridge capabilities|knowledge` (text or --output json). UI: What AutoBridge Knows page
+  (vocabulary per version, L1 rules, learned entries with reuse counts, connector profiles), top-bar
+  link. Docs: architecture §9.1 endpoints + item-6 paragraph + UI list; OpenAPI + UI types regenerated
+  (44 paths / 44 schemas).
+- **E2E:** `tests/e2e/test_knowledge_flow.py`: in-process empty → L1 propose → no entry → approve →
+  entry (rung 1, tokens 0, reused 0) → same drift → L0 hit, 0 frontier calls, reused 1; live shape test
+  (both endpoints, v1/v2 keys, counts) green against local stack. REQ-021 moved to Resolved/DONE.
+- **Gotchas:** entry tokens/cost come from the run's ModelCall ledger rows (0 for deterministic L1 —
+  asserted honestly instead of fabricating); the second (unapproved) L0 run still counts as a reuse
+  (groups count all proposes, entries require an approval); TopBar Repairs active-state narrowed to
+  /repairs* for the new link (covered by existing tests).
+- **Tests:** `make test` all green (autobridge 2187 / 91.19%, verifier 99, simulators 294, ui 156);
+  `make lint` (incl. import-linter) + `make typecheck` + `make ui-typecheck` green; e2e knowledge +
+  matrix live files green against local stack (up/down clean).
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).
