@@ -626,3 +626,8 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Codeable part of R
 - **Checks:** `make test` green (autobridge 1879 @ 91.51%, verifier 97 @ 93.76%, simulators 241 @ 96.66%, ui 143) — the 5 stale REQ-007 fails are gone; `make lint` (2 contracts KEPT) + typecheck green; e2e trust-boundary tests + test_07 green offline.
 - **Docs:** `docs/benchmark.md` pipeline steps + rewritten `#Heldout-freeze-runbook` for the REQ-007 flow.
 - Gotcha: `make bench-heldout` without `HELDOUT_DIR` fails at the Makefile (exit 2) before Python starts; unit tests must always pass an explicit temp `manifest_path` (default manifest is the frozen committed one).
+
+### REQ-008 — bench host URLs + loud failure (do this first)
+- **Files:** `src/autobridge/bench/harness.py` — added `_is_in_container()` + `_resolve_default_url()` host auto-select (HarnessConfig defaults use _resolve_default_url), `HarnessConfig` fields now use factory, `_probe_services` (GET /healthz for control+verifier, names URL on failure) and `_guard_zero_tool_calls` (zero total tool calls per arm refuses scorecard); Makefile `bench`/`bench-heldout` pass `--control-api-url http://localhost:8101 --verifier-url http://localhost:8104`; `tests/unit/test_autobridge_bench_harness.py` (90 tests: host selection + probe/guard); `tests/unit/test_autobridge_bench_w85.py` + `tests/unit/test_autobridge_bench_heldout.py` updated for SKIP_PROBE; real bench run skipped — no compose in sbx1, stack probe would fail (Compose not running in sandbox).
+- **Checks:** `make lint` green (2 contracts KEPT), `make typecheck` green (93 files), `make test` green: 1879+143 pass, autobridge 91.4% verified, verifier 93.7%, simulators 96.6%.
+- **Agent:** opencode modal/meta-models/Muse-Spark-Open-816B-A42B (backup)

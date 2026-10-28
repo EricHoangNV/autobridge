@@ -3,7 +3,7 @@
 ## Open Requests (read this section only)
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 16:30 UTC)
+Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
 Priority: do this first. `make bench-heldout` on Nov 3 has the same bug.
 Found by a clean-clone check of f516bc0. With the stack up (`make up`), `make bench` exits 0, but every number for
 both arms is zero: verified completion 0.0, 0 tool calls, 0 ms elapsed, 0 frontier tokens, "10 wins, 20 losses".
