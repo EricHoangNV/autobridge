@@ -442,6 +442,19 @@ never touch `verifier/hidden_cases/heldout/SHA256SUMS`. Everything below that ne
 6. Dev-split rehearsal: `make bench` runs all arms on the dev split now (real numbers, REQ-008), so the protocol is
    debugged before the one held-out run.
 
+**Owner check after sub-step A (2026-10-29, on e1960ca7): the leak audit always FAILs, on false positives.** Owner ran
+`HELDOUT_DIR=~/autobridge-heldout python3 scripts/heldout_leak_audit.py` on the host: `FAIL` with transcripts 3 hits
+(ralph-logs iter8 2026-10-27, iter5 2026-10-28, iter16 2026-10-29), worktrees 1 hit
+(`.worktrees/sbx1/verifier/hidden_cases/heldout/SHA256SUMS`), project 4 (the same four). Classified by token kind
+(owner-side, no values printed): **every hit is a sha256 hex from the committed manifest; 0 raw-file hits, 0 nonce
+hits.** The sha256 values are public by design (they are in `SHA256SUMS` in the public repo; that is the point of
+the freeze), so seeing them proves nothing. Fix: (1) search only for material that is actually secret, the raw seed
+file bytes and the nonce (and any other field the seeds hold that is not in the public manifest), never the
+manifest's hashes; (2) the public-manifest exclusion must cover every copy of the manifest (worktrees too), by
+content as it does now, not by path; (3) report hits per kind (`raw`, `nonce`) in the counts-only output and JSON so
+a FAIL says what leaked; (4) unit tests: a transcript quoting the public manifest is a pass, a transcript containing
+a nonce or raw bytes is a fail. Expected on the owner's host after the fix: `OK`, 0 hits. Keep "never prints secrets".
+
 ### REQ-025 — Beacon evaluation: faults generated from public randomness nobody could know in advance (2026-10-28)
 Status: OPEN
 Owner: prove we could not have prepared for the test even if we wanted to. The private-seed held-out split (REQ-007)
