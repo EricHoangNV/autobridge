@@ -6,12 +6,13 @@
  *
  * Usage:
  *   import { createApiClient } from "./client";
- *   const api = createApiClient("http://localhost:8101");
+ *   const api = createApiClient("/api"); // browser: same-origin proxy (REQ-018)
  *   const { data, error } = await api.GET("/connectors");
  */
 
 import createClient, { type Middleware } from "openapi-fetch";
 import type { components, paths } from "./schema.d.ts";
+import { apiBaseUrl } from "./base";
 
 // ---------------------------------------------------------------------------
 // Re-export schema types (so UI screens import from one place)
@@ -55,10 +56,10 @@ export function createApiClient(
   baseUrl?: string,
   opts?: { fetch?: typeof fetch; middleware?: Middleware },
 ): ApiClient {
-  const url =
-    baseUrl ??
-    (typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_URL : undefined) ??
-    "http://localhost:8101";
+  // Browser: same-origin /api so writes pass through middleware (token
+  // injection) and the bundle never contains a control hostname (REQ-018).
+  // Server: CONTROL_URL (compose) or localhost:8101 (local dev).
+  const url = baseUrl ?? apiBaseUrl();
   const client = createClient<paths>({ baseUrl: url, fetch: opts?.fetch });
   if (opts?.middleware) {
     client.use(opts.middleware);
@@ -302,10 +303,9 @@ export function subscribeRunEvents(
   runId: string,
   baseUrl?: string,
 ): EventSource {
-  const base =
-    baseUrl ??
-    (typeof window !== "undefined" ? window.location.origin : "http://localhost:8101");
-  // Prefer control baseUrl when passed; otherwise use window origin with /api proxy.
+  // Same-origin /api in the browser so the SSE stream goes through the
+  // Next.js rewrite (REQ-018); never a control hostname.
+  const base = baseUrl ?? apiBaseUrl();
   const url = `${base.replace(/\/$/, "")}/runs/${encodeURIComponent(runId)}/events`;
   return new EventSource(url);
 }

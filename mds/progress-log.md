@@ -2316,3 +2316,26 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 
 **Notes for next iteration:**
 - Next: REQ-017 (Docker-free local run), then REQ-014 → REQ-015 → REQ-016 per owner priority. `ab activate` output and the activate 422 text assume a reachable control plane; REQ-015 (token in e2e/CLI) will exercise the new route with tokens set — the route already uses `require_control_token` and the CLI already sends the bearer header.
+
+## REQ-018 — UI same-origin /api only (UI was down in compose)
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-018 (owner priority: UI-down first)
+
+**What was done:**
+- Browser bundle no longer references `control:8000` or any `NEXT_PUBLIC_*` var: new `ui/lib/api/base.ts` (`/api` in browser, server-only `CONTROL_URL` server-side), adopted by hooks, openapi client, SSE helper, 4 pages, 3 components.
+- `/api/*` rewrite + token middleware path fixed end to end: `next.config.mjs` on server-only `CONTROL_URL`; `compose.yaml` passes it as build arg (Next evaluates `rewrites()` at build time — found via live 500/EC... build arg `ARG CONTROL_URL` in `ui/Dockerfile`, runtime env for readyz).
+- TopBar: "System status" label with tooltip, same href + testid.
+- Playwright: live no-error-banner test, served-bundle chunk test (no hostname, no token name), mocked approve click, testid healthz assertion; de-flaked settled-state wait; honest skips on unseeded live stack (s6 too; fixed skip-swallowing `catch {}`).
+- Unit: bundle-hygiene test + compose build-arg/env assertions.
+
+**Key decisions:**
+- Same-origin `/api` proxy (rewrite) over direct control calls: keeps token injection server-side via existing middleware, zero browser bundle leakage.
+- Build arg (not pure runtime env) for the rewrite destination because Next bakes `rewrites()` at build time; local dev still works since dev-server evaluates at start with runtime default localhost:8101.
+- Live approve click stays mocked-only (clicking live would mutate a real repair outside the labelled demo drawer).
+
+**Files changed:**
+- `ui/lib/api/base.ts` (new), `ui/lib/api/hooks.ts`, `ui/lib/api/client.ts`, `ui/lib/sse.ts`, `ui/app/connectors/page.tsx`, `ui/app/connectors/[id]/page.tsx`, `ui/app/repairs/page.tsx`, `ui/app/repairs/[id]/page.tsx`, `ui/components/RepairActions.tsx`, `ui/components/NewConnectorForm.tsx`, `ui/components/InjectFaultDrawer.tsx`, `ui/components/TopBar.tsx` (+ test), `ui/next.config.mjs`, `ui/Dockerfile`, `ui/app/readyz/route.ts`, `compose.yaml`, `docs/architecture.md`, `tests/unit/test_autobridge_ui_isolation.py`, `tests/e2e/test_06_ui_journey.spec.ts`, `tests/e2e/test_s6_richer_ui.spec.ts`, `mds/REQUESTS.MD`
+
+**Notes for next iteration:**
+- Next: REQ-017 (Docker-free local run) — note the rewrite build-time coupling: local mode uses dev-server runtime env, unaffected.
+- Live e2e-ui on a seeded stack (make demo) would additionally exercise repairs/[id] + s6 chart/graph; on an empty stack those 4 skip by design.

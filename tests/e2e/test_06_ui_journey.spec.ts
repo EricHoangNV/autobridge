@@ -5,8 +5,10 @@
  *    Every request issued by the browser while walking the four screens is
  *    captured; none may target sim-atlas/sim-harbor/verifier hosts or their
  *    host ports (8104 simulator admin 8109/8110, public 8105/8106).
- *    Legitimate destinations are control (8101 in dev, control:8000 in compose
- *    via /api proxy) and the Next.js UI itself (3000/8107).
+ *    REQ-018: the browser only calls same-origin /api/* (Next.js rewrites to
+ *    control and the middleware injects the token server-side). Direct
+ *    browser calls to control (:8101 locally, control:8000 in compose) are
+ *    banned too — they would bypass the token middleware.
  *
  * 2. User journey v2 §7.4 (four screens + labelled Inject Fault drawer +
  *    model-usage view): mirrors the six demo steps (plan §6) via the browser:
@@ -42,12 +44,15 @@ const UI_BASE = process.env.E2E_UI_BASE || process.env.UI_BASE || "http://localh
 const CONTROL_BASE = process.env.E2E_CONTROL_BASE || "http://localhost:8101";
 
 // Banned request hosts / ports — UI must never call these directly.
-// UI → control (8101 or control:8000 via /api) is allowed.
-// UI self (8107/3000) is allowed.
+// REQ-018: the browser talks only to same-origin /api/* (and the UI itself,
+// 8107/3000). Direct browser calls to control (:8101, control:8000) bypass
+// the token middleware, so they are banned; so are sim/verifier targets.
 const BANNED_HOST_RES = [
   /sim-atlas/i,
   /sim-harbor/i,
   /verifier/i,
+  /control:8000/,
+  /:8101\b/,
   /:8104\b/,
   /:8105\b/,
   /:8106\b/,
@@ -321,13 +326,13 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
         if (route.request().method() === "GET") await mockGet(route);
         else await mockPost(route);
       });
-      // Also intercept direct localhost:8101 when window.origin rewriting is used
+      // Also intercept direct :8101 / control:8000 calls as a safety net —
+      // post-REQ-018 the browser never makes them (same-origin /api only),
+      // and the network-isolation assertion above fails the run if it does.
       await page.route("**/localhost:8101/**", async (route) => {
         if (route.request().method() === "GET") await mockGet(route);
         else await mockPost(route);
       });
-      // Compose UI bakes NEXT_PUBLIC_API_URL=http://control:8000 (Docker DNS,
-      // unreachable from the test browser) — route it to the same mocks
       await page.route("**/control:8000/**", async (route) => {
         if (route.request().method() === "GET") await mockGet(route);
         else await mockPost(route);
@@ -361,6 +366,54 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     expect(body.checks?.ui ?? body.status).toBeTruthy();
   });
 
+  test("REQ-018 live: /connectors loads with no error banner against `make up`", async ({ page, request }) => {
+    // Fails while the browser bundle calls an unreachable control hostname:
+    // with the stack up, /connectors must render without connectors-error.
+    // Skipped when the stack is down (mocked mode covers rendering instead).
+    const uiReachable = await isUiReachable(request);
+    const controlUp = await isControlReachable(request);
+    if (!uiReachable || !controlUp) {
+      test.skip(true, "needs the live stack (`make up`) — control or UI unreachable");
+      return;
+    }
+    await page.goto(`${UI_BASE}/connectors`, { waitUntil: "domcontentloaded", timeout: 10000 });
+    await expect(page.getByTestId("connectors-page")).toBeVisible({ timeout: 10000 });
+    // Wait out the loading state, then there must be no error banner.
+    await expect(page.getByTestId("connectors-loading")).toHaveCount(0, { timeout: 15000 });
+    await expect(page.getByTestId("connectors-error")).toHaveCount(0);
+    // Table or empty state — either is a successful load.
+    const hasTable = await page.getByTestId("connectors-table").isVisible().catch(() => false);
+    const hasEmpty = await page.getByTestId("connectors-empty").isVisible().catch(() => false);
+    expect(hasTable || hasEmpty).toBeTruthy();
+  });
+
+  test("REQ-018 bundle: no built browser chunk contains a control hostname or the token name", async ({
+    page,
+    request,
+  }) => {
+    // Guards item 2: the browser bundle must not embed control:8000 (or any
+    // direct control address) and must never mention AUTOBRIDGE_CONTROL_TOKEN
+    // (writes go through middleware server-side). Runs against whatever UI
+    // server is up — live stack or local dev — by fetching the served chunks.
+    const uiReachable = await isUiReachable(request);
+    if (!uiReachable) {
+      test.skip(true, "UI not reachable — run `make up` or `npm run dev` in ui/");
+      return;
+    }
+    await page.goto(`${UI_BASE}/connectors`, { waitUntil: "domcontentloaded", timeout: 10000 });
+    const srcs = await page.$$eval("script[src]", (els) =>
+      els.map((e) => (e as HTMLScriptElement).src),
+    );
+    expect(srcs.length).toBeGreaterThan(0);
+    for (const src of srcs) {
+      const res = await request.get(src, { timeout: 5000 });
+      if (!res.ok()) continue;
+      const body = await res.text();
+      expect(body, `${src} embeds a control hostname`).not.toContain("control:8000");
+      expect(body, `${src} leaks the control token name`).not.toContain("AUTOBRIDGE_CONTROL_TOKEN");
+    }
+  });
+
   test("journey: /connectors loads with health, active release, last sync outcome, open drift, sparkline", async ({ page, request }) => {
     const uiReachable = await isUiReachable(request);
     if (!uiReachable) {
@@ -380,14 +433,20 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     await expect(page.getByTestId("connectors-page")).toBeVisible({ timeout: 10000 });
     // Header
     await expect(page.getByRole("heading", { name: /Connectors/ })).toBeVisible();
+    // System-status link: found by data-testid, never by its text (REQ-018 —
+    // the /healthz route stays, but the label is "System status", not "healthz").
+    await expect(page.getByTestId("topbar-healthz")).toHaveAttribute("href", "/healthz");
+    await expect(page.getByTestId("topbar-healthz")).toContainText("System status");
     // New connector link exists
     await expect(page.getByTestId("new-connector-link")).toBeVisible();
-    // Health badge / table or empty state — at least one of these must be present
-    const hasTable = await page.getByTestId("connectors-table").isVisible().catch(() => false);
-    const hasEmpty = await page.getByTestId("connectors-empty").isVisible().catch(() => false);
-    const hasLoading = await page.getByTestId("connectors-loading").isVisible().catch(() => false);
-    const hasError = await page.getByTestId("connectors-error").isVisible().catch(() => false);
-    expect(hasTable || hasEmpty || hasLoading || hasError).toBeTruthy();
+    // Health badge / table or empty state — wait for the settled state
+    // (loading is transient; exactly one of table/empty/error remains).
+    await expect(
+      page
+        .getByTestId("connectors-table")
+        .or(page.getByTestId("connectors-empty"))
+        .or(page.getByTestId("connectors-error")),
+    ).toBeVisible({ timeout: 15000 });
     // Model-usage sparkline or panel should eventually appear when data loads
     // (may be loading, so we just ensure page didn't crash)
 
@@ -459,15 +518,28 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
         return;
       }
     } else {
-      // Try to discover a real connector id first
-      let connectorId = MOCK_CONNECTOR_ID;
-      try {
-        const res = await request.get(`${CONTROL_BASE}/connectors`, { timeout: 3000 });
-        if (res.ok()) {
-          const list = await res.json();
-          if (Array.isArray(list) && list.length > 0) connectorId = list[0].id;
-        }
-      } catch {}
+      // Try to discover a real connector id first — prefer one with a
+      // release, since the spec viewer renders from releases. When the
+      // control plane is down the beforeEach mocks stand in, so fall back
+      // to the mock id; skip only when live with nothing to show.
+      const controlUp = await isControlReachable(request);
+      let connectorId: string | null = controlUp ? null : MOCK_CONNECTOR_ID;
+      if (controlUp) {
+        try {
+          const res = await request.get(`${CONTROL_BASE}/connectors`, { timeout: 3000 });
+          if (res.ok()) {
+            const list = await res.json();
+            if (Array.isArray(list) && list.length > 0) {
+              connectorId =
+                list.find((c: any) => c.active_release_id)?.id ?? list[0].id;
+            }
+          }
+        } catch {}
+      }
+      if (!connectorId) {
+        test.skip(true, "no connectors on the live stack — run `make demo` first");
+        return;
+      }
       await page.goto(`${UI_BASE}/connectors/${connectorId}`, { waitUntil: "domcontentloaded", timeout: 10000 });
     }
 
@@ -480,8 +552,14 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     expect(hasReleases || hasNoReleases).toBeTruthy();
     // Release history shows who approved each release (REQ-001)
     if (hasReleases) {
-      await expect(page.getByText("Approved by", { exact: true })).toBeVisible();
-      await expect(page.getByTestId("release-approved-by-rel-2")).toContainText("approved by e2e-operator");
+      if (!uiReachable) {
+        // Mocked fixtures carry the REQ-001 approval attribution.
+        await expect(page.getByText("Approved by", { exact: true })).toBeVisible();
+        await expect(page.getByTestId("release-approved-by-rel-2")).toContainText("approved by e2e-operator");
+      } else {
+        // Live: the release history renders (attribution shown when set).
+        await expect(page.getByTestId("release-history")).toBeVisible();
+      }
     }
     // Sync runs table with outcomes Complete/Degraded/Blocked
     const hasSyncTable = await page.getByTestId("sync-runs-table").isVisible().catch(() => false);
@@ -508,14 +586,25 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
         return;
       }
     } else {
-      let repairId = MOCK_REPAIR_ID;
-      try {
-        const res = await request.get(`${CONTROL_BASE}/repairs`, { timeout: 3000 });
-        if (res.ok()) {
-          const list = await res.json();
-          if (Array.isArray(list) && list.length > 0) repairId = list[0].id;
-        }
-      } catch {}
+      // Live stack: use a real repair when one exists; an empty stack has
+      // nothing to show, so skip. When the control plane is down the
+      // beforeEach mocks stand in, so fall back to the mock id (this is
+      // the path that also covers the approve click).
+      const controlUp = await isControlReachable(request);
+      let repairId: string | null = controlUp ? null : MOCK_REPAIR_ID;
+      if (controlUp) {
+        try {
+          const res = await request.get(`${CONTROL_BASE}/repairs`, { timeout: 3000 });
+          if (res.ok()) {
+            const list = await res.json();
+            if (Array.isArray(list) && list.length > 0) repairId = list[0].id;
+          }
+        } catch {}
+      }
+      if (!repairId) {
+        test.skip(true, "no repairs on the live stack — run `make demo` first");
+        return;
+      }
       await page.goto(`${UI_BASE}/repairs/${repairId}`, { waitUntil: "domcontentloaded", timeout: 10000 });
     }
 
@@ -562,6 +651,18 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     // Server-set operator name next to the approval action (REQ-001)
     if (hasActions) {
       await expect(page.getByTestId("approving-as")).toContainText(/Approving as \S+/);
+      // Approve flow: in mocked mode (no live stack) the mock approves, so
+      // click through and expect the success banner. Against the live stack
+      // we only assert the button is actionable — clicking would mutate a
+      // real repair outside the labelled demo drawer.
+      const controlUp = await isControlReachable(request);
+      if (!controlUp) {
+        await page.getByTestId("repair-approve-btn").click();
+        await expect(page.getByTestId("repair-action-success")).toBeVisible({ timeout: 8000 });
+        await expect(page.getByTestId("repair-action-success")).toContainText(/Approved/);
+      } else {
+        await expect(page.getByTestId("repair-approve-btn")).toBeVisible();
+      }
     }
 
     // Inject Fault drawer — labelled demo action

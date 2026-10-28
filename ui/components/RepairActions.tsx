@@ -2,12 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-function getBaseUrl(): string {
-  if (typeof window !== "undefined") {
-    return process.env.NEXT_PUBLIC_API_URL ?? window.location.origin.replace(/:3000$/, ":8101");
-  }
-  return process.env.NEXT_PUBLIC_API_URL ?? process.env.CONTROL_URL ?? "http://localhost:8101";
-}
+// Same-origin /api base (REQ-018): the rewrite + middleware forward to control.
+import { apiBaseUrl as getBaseUrl } from "@/lib/api/base";
 
 type Props = {
   repairId: string;

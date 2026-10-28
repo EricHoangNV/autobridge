@@ -183,6 +183,26 @@ test.describe("P2.S6.1 richer UI — per-run chart + evidence graph + screenshot
 
   async function gotoRepair(page: any, request: any): Promise<boolean> {
     const uiReachable = await isUiReachable(request);
+    const controlUp = await isControlReachable(request);
+    // Live stack with no repairs has nothing to render — skip (mocked mode
+    // covers the chart/graph with fixtures). Discover a real repair id first.
+    if (uiReachable && controlUp) {
+      let liveRepairId: string | null = null;
+      try {
+        const res = await request.get(`${CONTROL_BASE}/repairs`, { timeout: 3000 });
+        if (res.ok()) {
+          const list = await res.json();
+          if (Array.isArray(list) && list.length > 0) liveRepairId = list[0].id;
+        }
+      } catch {}
+      if (!liveRepairId) {
+        test.skip(true, "no repairs on the live stack — run `make demo` first");
+        return false;
+      }
+      await page.goto(`${UI_BASE}/repairs/${liveRepairId}`, { waitUntil: "domcontentloaded", timeout: 10000 });
+      await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 15000 });
+      return true;
+    }
     try {
       await page.goto(`${UI_BASE}/repairs/${MOCK_REPAIR_ID}`, { waitUntil: "domcontentloaded", timeout: 10000 });
     } catch {

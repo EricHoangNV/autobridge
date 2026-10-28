@@ -18,13 +18,17 @@ describe("TopBar", () => {
     document.body.innerHTML = "";
   });
 
-  it("renders the wordmark, nav, LIVE indicator, labelled demo button and healthz", async () => {
+  it("renders the wordmark, nav, LIVE indicator, labelled demo button and system status", async () => {
     render(<TopBar />);
     expect(screen.getByTestId("topbar")).toBeInTheDocument();
     expect(screen.getByText("AUTOBRIDGE")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Connectors" })).toHaveAttribute("href", "/connectors");
     expect(screen.getByTestId("topbar-demo-inject")).toHaveTextContent("Demo: inject fault");
+    // Found by data-testid, never by its text (REQ-018): the /healthz route
+    // stays, but the user-facing label is "System status".
     expect(screen.getByTestId("topbar-healthz")).toHaveAttribute("href", "/healthz");
+    expect(screen.getByTestId("topbar-healthz")).toHaveTextContent("System status");
+    expect(screen.queryByText("healthz")).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("topbar-live")).toHaveTextContent("LIVE"));
   });
 

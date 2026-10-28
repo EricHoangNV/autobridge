@@ -6,8 +6,13 @@ WORKDIR /srv/ui
 COPY package.json package-lock.json ./
 RUN npm ci --include=dev
 COPY . .
-ARG NEXT_PUBLIC_API_URL=http://control:8000
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# REQ-018: no NEXT_PUBLIC_API_URL — the browser calls same-origin /api/* and
+# must never bake a control hostname (or token) into the .next/static bundle.
+# Next.js evaluates rewrites() at BUILD time, so the server-only CONTROL_URL
+# must be present as a build arg (compose passes http://control:8000; the
+# default localhost:8101 suits plain `npm run dev` / local mode, where
+# rewrites() is evaluated at dev-server start from runtime env instead).
+ARG CONTROL_URL=http://localhost:8101
 RUN npm run build
 
 FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293

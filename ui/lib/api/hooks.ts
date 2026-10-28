@@ -2,14 +2,14 @@
 
 import useSWR from "swr";
 import { createApiClient, type ConnectorOut, type ConnectorDetail, type ModelUsageResponse } from "./client";
+import { apiBaseUrl } from "./base";
 
-// Resolve API base: browser uses NEXT_PUBLIC_API_URL or window origin proxy; server uses env.
+export { apiBaseUrl };
+
+// Browser calls go to same-origin /api (REQ-018); the rewrite + middleware
+// forward to control and attach the token server-side.
 function getBaseUrl(): string {
-  if (typeof window !== "undefined") {
-    // In Compose the UI talks to control over engine-net via /api proxy; locally NEXT_PUBLIC_API_URL.
-    return process.env.NEXT_PUBLIC_API_URL ?? window.location.origin.replace(/:3000$/, ":8101");
-  }
-  return process.env.NEXT_PUBLIC_API_URL ?? process.env.CONTROL_URL ?? "http://localhost:8101";
+  return apiBaseUrl();
 }
 
 const fetcher = async <T>(path: string): Promise<T> => {
@@ -31,10 +31,6 @@ export function useConnectorDetail(id: string | null) {
 
 export function useModelUsage() {
   return useSWR<ModelUsageResponse>("/metrics/model-usage", fetcher, { refreshInterval: 10000 });
-}
-
-export function apiBaseUrl(): string {
-  return getBaseUrl();
 }
 
 export function createClientForSWR() {

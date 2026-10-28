@@ -429,9 +429,15 @@ at L3 and the verdict/action appear only once a patch has passed, all honoring
 
 The UI talks to simulators/verifier **only via the control plane**:
 `compose.yaml` puts `ui` on `engine-net` alone (no `vendor-net`,
-`verifier-net`, `admin-net`); `next.config.mjs` rewrites `/api/*` to
-`control:8000` (8101 on the host). `scripts/smoke.sh` negative probes
-`ui -/-> sim-atlas:8000, sim-harbor:8000, verifier:8000`; the static
+`verifier-net`, `admin-net`); the browser calls same-origin `/api/*` only
+(REQ-018) — `next.config.mjs` rewrites `/api/*` to the server-only
+`CONTROL_URL` (`http://control:8000`, passed as a compose build arg because
+Next.js evaluates `rewrites()` at build time; `http://localhost:8101` for
+local dev), and `ui/middleware.ts` injects the
+control token server-side so it never ships to the browser. No browser code
+may reference `NEXT_PUBLIC_API_URL` or a control hostname
+(`ui/lib/api/base.ts` is the single base-URL helper); `scripts/smoke.sh`
+negative probes `ui -/-> sim-atlas:8000, sim-harbor:8000, verifier:8000`; the static
 precondition is asserted in `tests/unit/test_autobridge_ui_isolation.py` and
 the full journey in `tests/e2e/test_06_ui_journey.spec.ts` (Playwright).
 `POST /demo/inject-fault` is the sole bridge to `admin-net` and every request

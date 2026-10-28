@@ -6,31 +6,6 @@ Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
-### REQ-018 — UI in compose cannot load anything: browser calls `http://control:8000` (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 08:44)
-Opening http://localhost:8107/connectors after `make up` shows "Failed to load connectors: Failed to fetch".
-Cause: `ui/Dockerfile` bakes `NEXT_PUBLIC_API_URL=http://control:8000` into the browser bundle (confirmed: the string
-is in `.next/static/chunks/app/connectors/page-*.js`), and `ui/lib/api/hooks.ts` `getBaseUrl()` and
-`ui/lib/api/client.ts` `createApiClient()` use it in the browser. `control` only resolves inside the compose network,
-so every browser request fails. It also bypasses the `/api/*` rewrite, so `ui/middleware.ts` never adds the control
-token (REQ-012) and browser writes would get 401 even once reachable.
-Wanted:
-1. In the browser, every control-API call (SWR hooks, the openapi client, SSE in `ui/lib/sse.ts`, the demo drawer,
-   approve/reject, build, sync) goes to same-origin `/api/...`. Only server-side code may use `CONTROL_URL`. Drop the
-   `NEXT_PUBLIC_API_URL` build arg (or make it unused in the browser).
-2. Writes from the browser pass through the middleware and work with `AUTOBRIDGE_CONTROL_TOKEN` set; the token never
-   appears in any `.next/static` chunk (add a check: grep the built chunks for the token name and value).
-3. Works the same in local mode (REQ-017): the UI's `/api` rewrite points at `CONTROL_URL`, default
-   `http://localhost:8101`.
-4. A Playwright check that loads /connectors against `make up` with no error banner, and a test that fails if any
-   built browser chunk contains `control:8000`. `make e2e-ui` must cover the connectors list, the inject-fault drawer
-   and an approve.
-5. Small: the "healthz" text link in the top bar (`ui/components/TopBar.tsx:96-99`) looks like debug output on the
-   demo screen. Keep the `/healthz` route and its `data-testid` for the e2e journey, but never show the word
-   "healthz" to the user: label the link "System status" (or make it the LIVE indicator's link with a tooltip such as
-   "All services healthy" / "Control API unreachable"), and move it to a footer or style it as a quiet status detail
-   next to LIVE. Update the e2e journey to find it by `data-testid`, not by its text.
-
 ### REQ-014 — Host tools ignore `.env`, so tokens break smoke, e2e and demo (2026-10-28)
 Status: OPEN
 With `SIM_ADMIN_TOKEN`, `AUTOBRIDGE_CONTROL_TOKEN` and `EDGE_RELEASE_SECRET` set in `.env`, compose passes them to the
@@ -265,6 +240,32 @@ Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDO
 
 ## Resolved Requests (reference only)
 
+### REQ-018 — UI in compose cannot load anything: browser calls `http://control:8000` (2026-10-28)
+Status: DONE (2026-10-28)
+Opening http://localhost:8107/connectors after `make up` shows "Failed to load connectors: Failed to fetch".
+Cause: `ui/Dockerfile` bakes `NEXT_PUBLIC_API_URL=http://control:8000` into the browser bundle (confirmed: the string
+is in `.next/static/chunks/app/connectors/page-*.js`), and `ui/lib/api/hooks.ts` `getBaseUrl()` and
+`ui/lib/api/client.ts` `createApiClient()` use it in the browser. `control` only resolves inside the compose network,
+so every browser request fails. It also bypasses the `/api/*` rewrite, so `ui/middleware.ts` never adds the control
+token (REQ-012) and browser writes would get 401 even once reachable.
+Wanted:
+1. In the browser, every control-API call (SWR hooks, the openapi client, SSE in `ui/lib/sse.ts`, the demo drawer,
+   approve/reject, build, sync) goes to same-origin `/api/...`. Only server-side code may use `CONTROL_URL`. Drop the
+   `NEXT_PUBLIC_API_URL` build arg (or make it unused in the browser).
+2. Writes from the browser pass through the middleware and work with `AUTOBRIDGE_CONTROL_TOKEN` set; the token never
+   appears in any `.next/static` chunk (add a check: grep the built chunks for the token name and value).
+3. Works the same in local mode (REQ-017): the UI's `/api` rewrite points at `CONTROL_URL`, default
+   `http://localhost:8101`.
+4. A Playwright check that loads /connectors against `make up` with no error banner, and a test that fails if any
+   built browser chunk contains `control:8000`. `make e2e-ui` must cover the connectors list, the inject-fault drawer
+   and an approve.
+5. Small: the "healthz" text link in the top bar (`ui/components/TopBar.tsx:96-99`) looks like debug output on the
+   demo screen. Keep the `/healthz` route and its `data-testid` for the e2e journey, but never show the word
+   "healthz" to the user: label the link "System status" (or make it the LIVE indicator's link with a tooltip such as
+   "All services healthy" / "Control API unreachable"), and move it to a footer or style it as a quiet status detail
+   next to LIVE. Update the e2e journey to find it by `data-testid`, not by its text.
+Resolution: browser calls same-origin /api only (new ui/lib/api/base.ts shared by hooks/client/SSE/pages/components); rewrite uses server-only CONTROL_URL (compose build arg + runtime env, default localhost:8101); Dockerfile bakes no NEXT_PUBLIC_*; TopBar link relabelled 'System status' (testid kept); Playwright: live no-error-banner + bundle-chunk (no control:8000, no token name) checks, mocked approve click, testid-based healthz assertion; unit hygiene tests (no NEXT_PUBLIC_API_URL / control hostname in browser code, compose CONTROL_URL build arg + env). Verified live: make up + make e2e-ui 7 passed / 4 documented skips; make test all green.
+
 ### REQ-013 — Build → sync is broken since AR-1-2; sync also runs unapproved releases (2026-10-28)
 Status: DONE (2026-10-28)
 Found by a host regression on 207f7366 (stack up). AR-1-2 (76bbff43) removed the sync fallback to the latest release,
@@ -307,7 +308,6 @@ Wanted:
    localhost); `compose.yaml` passes it to `control` and `ui`.
 Resolution: `require_control_token` dep on all 15 POST routes (401 + HTTPBearer scheme + documented 401); open when unset; UI middleware injects server-side; harness/demo/CLI/e2e send when set; compose+env wired; redaction verified; 11 new unit tests + contract fuzz with enforcement on.
 
-
 ### REQ-011 — Publish compose ports on localhost only (2026-10-28)
 Status: DONE (2026-10-28)
 Every port in `compose.yaml` is published as `"81xx:8000"` with no host IP, so Docker listens on all interfaces. While
@@ -340,7 +340,6 @@ Wanted:
    `make e2e` target sets it.
 Resolution: live/inprocess pytest markers (auto-marked in conftest) + 3 live tests via control API (offset_to_cursor frontier 0, gross_to_net Degraded, invalid_patch_trap rejected) + AUTOBRIDGE_E2E_REQUIRE_STACK=1 set by make e2e (live tests fail, not skip, when unreachable) + fixed control proxy missing X-Admin-Network header (inject/reset 403'd, fault never landed).
 
-
 ### REQ-009 — Clean clone: `make test` and `make e2e-ui` fail without `ui/node_modules` (2026-10-28)
 Status: DONE (2026-10-28)
 Found by a fresh GitHub clone of f516bc0, following the README (`cp .env.example .env`, then make targets).
@@ -356,7 +355,6 @@ Wanted:
 3. Check: a fresh clone into a temp dir, then `make test` passes with 0 failures.
 This is what P1.W10.3 (clean-clone check) needs.
 Resolution: `ui-deps`/`ui-e2e-deps` Makefile targets (prereqs of `test`/`e2e-ui`), `NODE_PATH` in the `e2e-ui` recipe for the root Playwright config, loud skip in `test_ui_client_compiles` without `node_modules`, 6 contract tests, README Node/npm + install step, CI single `make ui-deps`. Fresh-clone check: `make test` 2225 pass / 0 fail + Vitest 143 pass, `make e2e-ui` exit 0 (9 skips by design, no stack up). Drive-by: 4 pre-existing ruff errors in the REQ-008 bench-harness test fixed.
-
 
 ### REQ-007 — Heldout seeds that no agent has seen (2026-10-27)
 Status: DONE (2026-10-27)
@@ -387,7 +385,6 @@ Status: DONE (2026-10-27)
 Daily audit 2026-10-27. DIRECTIVES §2 says shared code goes in a package all three may depend on, never the other way, but plan §2.7 mandates the oracle regenerate ground truth via "the simulator's data generator (shared code)" and `verifier/oracle.py`, `verifier/checks.py`, `verifier/regression.py`, `verifier/app.py` all import `simulators.common.*`. The two documents contradict each other. Owner: either amend DIRECTIVES §2 to name `simulators.common` (generator/faults/scenarios) as the sanctioned shared package the verifier may import, or extract that code into a shared package. Related: plan §2.10 places the harness at `bench/harness.py`, but it is implemented as `src/autobridge/bench/` inside the engine package — the audit removed its `simulators` imports (import-linter contract kept again), yet the harness still reads `simulators/scenarios/*.yaml` and `verifier/hidden_cases/heldout/` from the filesystem; decide whether bench is engine code or a fourth, outside-the-boundaries tool and state it in §2.
 Owner decision (2026-10-27): the verifier MAY use the simulators' data generator. Amend DIRECTIVES §2 to name `simulators.common` (generator, faults, scenarios) as the sanctioned shared code the verifier may import (the engine still may not), keep `verifier/` importing it, and make the import-linter contract express exactly that. Bench: no change requested; leave `src/autobridge/bench/` where it is, and only state in §2 that its filesystem reads of scenario YAMLs and the heldout dir are a harness concern.
 Resolution: DIRECTIVES §2 amended (sanctioned verifier use of simulators/common + simulators/scenarios, engine still isolated, bench reads are a harness concern); import-linter contract 'verifier must not import autobridge' added (both contracts KEPT); tests/unit/test_autobridge_trust_boundaries.py confines verifier simulators imports to common/scenarios; docs/architecture.md noted.
-
 
 ### REQ-004 — Directive: §7 OpenAPI contract — schemathesis tests claimed but absent (2026-10-27)
 Status: DONE (2026-10-27)

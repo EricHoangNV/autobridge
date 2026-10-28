@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 
 export async function GET() {
   // UI readyz: in production proxy to control plane readyz; in tests always ok.
-  const controlUrl = process.env.NEXT_PUBLIC_API_URL || process.env.CONTROL_URL || "http://control:8000";
+  // Server-only CONTROL_URL (REQ-018) — never a NEXT_PUBLIC_ variable.
+  const controlUrl = process.env.CONTROL_URL || "http://localhost:8101";
   try {
     const res = await fetch(`${controlUrl.replace(/\/$/, "")}/readyz`, {
       signal: AbortSignal.timeout(2500),

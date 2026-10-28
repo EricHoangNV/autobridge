@@ -206,8 +206,15 @@ services:
     build:
       context: ./ui
       dockerfile: Dockerfile
+      # REQ-018: rewrites() is evaluated at build time, so the server-only
+      # control address is baked from this build arg (never NEXT_PUBLIC_*,
+      # never into a browser chunk — only the /api/* rewrite destination).
+      args:
+        CONTROL_URL: http://control:8000
     environment:
       AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
+      # REQ-018: server-only control address for the /api/* rewrite (never baked into the browser bundle).
+      CONTROL_URL: http://control:8000
     networks:
       - engine-net
     ports:

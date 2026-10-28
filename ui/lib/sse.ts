@@ -10,7 +10,7 @@
  * No-ops on the server and where `EventSource` is unavailable (SSR, jsdom).
  */
 import { useEffect, useState } from "react";
-import { apiBaseUrl } from "./api/hooks";
+import { apiBaseUrl } from "./api/base";
 import { LADDER_EVENT_KINDS } from "./ladder-events";
 
 export type RunEvent = { type: string; data: unknown };

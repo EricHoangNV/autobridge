@@ -9,6 +9,12 @@ Checked twice:
      containing sim-atlas/sim-harbor are allowed as *spec field values* (the
      connector's source.base_url), not as fetch targets.
 
+REQ-018: the browser only calls same-origin `/api/*` (Next.js rewrites to
+control, `ui/middleware.ts` injects the token server-side). No browser code
+may reference `NEXT_PUBLIC_API_URL` or a control hostname (`control:8000`,
+`:8101`); the server-only `CONTROL_URL` lives in `next.config.mjs`,
+`ui/lib/api/base.ts` (server branch) and `compose.yaml`.
+
 This test is the unit analogue of scripts/smoke.sh negative probes and of the
 Playwright network interception in tests/e2e/test_06_ui_journey.spec.ts.
 """
@@ -25,11 +31,15 @@ COMPOSE_FILE = ROOT / "compose.yaml"
 UI_ROOT = ROOT / "ui"
 
 # Any fetch/XHR to these hosts/ports would be a trust-boundary violation.
-# Control plane is allowed: control:8000 (in-compose) and host 8101 (local dev).
+# REQ-018: the browser talks only to same-origin /api/* — even direct
+# browser calls to control (:8101 locally, control:8000 in compose) are
+# banned because they bypass the token middleware.
 BANNED_FETCH_PATTERNS = [
-    re.compile(r"fetch\s*\(\s*[^)]*sim-atlas", re.IGNORECASE),
-    re.compile(r"fetch\s*\(\s*[^)]*sim-harbor", re.IGNORECASE),
-    re.compile(r"fetch\s*\(\s*[^)]*verifier", re.IGNORECASE),
+    re.compile(r"fetch\s*\([^)]*sim-atlas", re.IGNORECASE),
+    re.compile(r"fetch\s*\([^)]*sim-harbor", re.IGNORECASE),
+    re.compile(r"fetch\s*\([^)]*verifier", re.IGNORECASE),
+    re.compile(r"fetch\s*\([^)]*control:8000", re.IGNORECASE),
+    re.compile(r"fetch\s*\([^)]*:8101", re.IGNORECASE),
     re.compile(r"fetch\s*\(\s*[^)]*:8105", re.IGNORECASE),
     re.compile(r"fetch\s*\(\s*[^)]*:8106", re.IGNORECASE),
     re.compile(r"fetch\s*\(\s*[^)]*:8104", re.IGNORECASE),
@@ -69,8 +79,10 @@ def test_ui_compose_network_isolation() -> None:
 
 def test_ui_next_config_proxies_only_to_control() -> None:
     cfg = (UI_ROOT / "next.config.mjs").read_text(encoding="utf-8")
-    # Should proxy /api/* to control (via CONTROL_URL or NEXT_PUBLIC_API_URL)
-    assert "control:8000" in cfg or "CONTROL_URL" in cfg or "NEXT_PUBLIC_API_URL" in cfg
+    # REQ-018: rewrite destination is the server-only CONTROL_URL
+    # (compose sets http://control:8000; local default localhost:8101).
+    assert "CONTROL_URL" in cfg, "next.config.mjs must rewrite /api/* via server-only CONTROL_URL"
+    assert "NEXT_PUBLIC_API_URL" not in cfg, "rewrite must not use NEXT_PUBLIC_* (it leaks into the browser bundle)"
     # Must not proxy or rewrite to sim / verifier
     for bad in ("sim-atlas", "sim-harbor", "verifier:8000", ":8105", ":8106", ":8104"):
         # Allow control:8000 but not these
@@ -127,15 +139,15 @@ def test_ui_source_never_fetches_simulator_or_verifier() -> None:
 
 
 def test_ui_fetcher_uses_control_base_url() -> None:
-    """The shared fetcher resolves to control, not to sim/verifier."""
+    """The shared fetcher resolves to same-origin /api, never to a control hostname."""
     for candidate in [UI_ROOT / "lib" / "api" / "hooks.ts", UI_ROOT / "lib" / "api" / "client.ts"]:
         if not candidate.exists():
             continue
         text = candidate.read_text(encoding="utf-8")
         rel = str(candidate.relative_to(ROOT))
-        # Must resolve via getBaseUrl / CONTROL_URL / NEXT_PUBLIC_API_URL
-        assert "CONTROL_URL" in text or "NEXT_PUBLIC_API_URL" in text or "getBaseUrl" in text, (
-            f"{rel} must resolve base URL via CONTROL_URL/NEXT_PUBLIC_API_URL"
+        # Must resolve via the shared apiBaseUrl helper (browser: /api, server: CONTROL_URL)
+        assert "apiBaseUrl" in text, (
+            f"{rel} must resolve base URL via apiBaseUrl (REQ-018, no NEXT_PUBLIC_API_URL)"
         )
         # Must not hard-code sim / verifier ports as base
         for bad in (":8105", ":8106", ":8104", "verifier:8000"):
@@ -143,6 +155,74 @@ def test_ui_fetcher_uses_control_base_url() -> None:
                 for line in text.splitlines():
                     if bad in line and "localhost" in line and "http" in line and ":8101" not in line:
                         raise AssertionError(f"{rel} has banned fallback host {bad!r}: {line.strip()!r}")
+
+
+def test_ui_browser_bundle_hygiene() -> None:
+    """REQ-018: no browser code may embed a control hostname or NEXT_PUBLIC_API_URL.
+
+    Anything a browser file reads via NEXT_PUBLIC_* is inlined into
+    .next/static at build time; the browser must only call same-origin /api.
+    Server-only CONTROL_URL is allowed (next.config.mjs, base.ts server branch).
+    """
+    browser_files: list[pathlib.Path] = []
+    for sub in ("app", "components", "lib"):
+        src = UI_ROOT / sub
+        if not src.exists():
+            continue
+        browser_files.extend(sorted(src.rglob("*.ts")))
+        browser_files.extend(sorted(src.rglob("*.tsx")))
+    violations: list[str] = []
+    for path in browser_files:
+        if path.name.endswith(".test.ts") or path.name.endswith(".test.tsx"):
+            continue
+        # Next.js route handlers (app/**/route.ts) run server-side and may use
+        # the server-only CONTROL_URL fallback; the ban is for browser code.
+        if path.name == "route.ts":
+            continue
+        text = path.read_text(encoding="utf-8")
+        rel = str(path.relative_to(ROOT))
+        # base.ts is the one place that knows the server fallback; everything
+        # else must go through it.
+        if "NEXT_PUBLIC_API_URL" in text:
+            violations.append(f"{rel}: references NEXT_PUBLIC_API_URL (banned in browser code)")
+        for i, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("//") or stripped.startswith("*"):
+                continue
+            if "control:8000" in line and path.name != "base.ts":
+                violations.append(f"{rel}:{i}: embeds control:8000 -> {stripped!r}")
+            if ":8101" in line and path.name != "base.ts" and "control API at :8101" not in line:
+                violations.append(f"{rel}:{i}: embeds :8101 -> {stripped!r}")
+    assert not violations, "browser bundle hygiene violated:\n" + "\n".join(violations)
+
+
+def test_ui_compose_sets_server_only_control_url() -> None:
+    """Compose gives the ui container a server-only CONTROL_URL (REQ-018).
+
+    Next.js evaluates rewrites() at build time, so the address must be
+    present both as a build arg (baked rewrite destination) and as runtime
+    env (readyz route). Neither may be a NEXT_PUBLIC_* variable.
+    """
+    data = _load_compose()
+    ui_svc = data["services"]["ui"]
+    ui_env = ui_svc.get("environment", {})
+    if isinstance(ui_env, list):
+        ui_env = dict(item.split("=", 1) for item in ui_env if "=" in item)
+    assert ui_env.get("CONTROL_URL") == "http://control:8000", (
+        f"ui service must set CONTROL_URL=http://control:8000, got {ui_env.get('CONTROL_URL')!r}"
+    )
+    build_args = ui_svc.get("build", {}).get("args", {})
+    assert build_args.get("CONTROL_URL") == "http://control:8000", (
+        "ui build must pass CONTROL_URL=http://control:8000 (rewrites() is build-time)"
+    )
+    dockerfile = (UI_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    for i, line in enumerate(dockerfile.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        assert "NEXT_PUBLIC_" not in stripped, (
+            f"ui/Dockerfile:{i} bakes a NEXT_PUBLIC_ var into the browser bundle: {stripped!r}"
+        )
 
 
 def test_ui_inject_fault_goes_via_control_proxy() -> None:
