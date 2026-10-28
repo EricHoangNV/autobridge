@@ -35,6 +35,7 @@ from autobridge.control.models import (
     RepairRun,
     SyncRun,
 )
+from autobridge.control.routes.demo import expected_reset_targets
 from autobridge.llm.provider import Usage, record_model_call
 from autobridge.repair.knowledge import get_default_cache, reset_default_cache
 
@@ -165,15 +166,15 @@ def test_full_reset_clears_state_and_archives_ledger(tmp_path: pathlib.Path) -> 
 
         r, calls = _post_reset(client)
 
-        # Five simulators reset (REQ-021 item 1 + REQ-022 FIAS PABX), plus the
-        # FIAS link-engine reset.
+        # Simulators reset via the shared registry (REQ-022 owner check
+        # 2026-10-29: expected entries derive from the same registry the
+        # endpoint uses), plus the FIAS link-engine reset.
         assert len(calls) == 6
         body = r.json()
         assert body["labelled"] is True and body["demo"] is True
         assert body["session_id"].startswith("demo-")
         targets = [e["target"] for e in body["resets"]]
-        assert targets == ["sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian",
-                           "sim-fias-pabx", "sim-fias-pabx:fias"]
+        assert targets == expected_reset_targets()
         assert all(e["status"] == 200 for e in body["resets"])
 
         # L0 emptied.

@@ -33,6 +33,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from autobridge.control.models import Base, ModelCall, RepairRun
+from autobridge.control.routes.demo import expected_reset_targets
 from autobridge.discovery.bootstrap import build_draft_spec
 from autobridge.drift.fingerprint import FingerprintDelta
 from autobridge.repair.controller import RepairController
@@ -665,12 +666,9 @@ def test_matrix_live_reset_repeatability(e2e_stack: str) -> None:
     _control_request("POST", "/demo/reset", {})
     first = _control_request("POST", "/demo/reset", {})
     assert first.get("labelled") is True
-    assert [e["target"] for e in first.get("resets", [])] == [
-        "sim-atlas",
-        "sim-harbor",
-        "sim-legacystay",
-        "sim-meridian",
-    ]
+    # Expected entries come from the same registry the reset endpoint uses
+    # (REQ-022 owner check 2026-10-29): adding a simulator updates both.
+    assert [e["target"] for e in first.get("resets", [])] == expected_reset_targets()
     assert all(e.get("status") == 200 for e in first["resets"]), first["resets"]
     assert all(v == 0 for v in first["removed"].values()), first["removed"]
 

@@ -64,6 +64,37 @@ def _resolve_target(target: str) -> str:
     return resolved
 
 
+# Single registry of simulators reset by POST /demo/reset, in call order
+# (REQ-022 owner check 2026-10-29): the endpoint loop and every test that
+# asserts the reset entries derive the expected list from here via
+# expected_reset_targets() — never hand-keep the list in a second place.
+RESET_TARGETS: tuple[str, ...] = (
+    "sim-atlas",
+    "sim-harbor",
+    "sim-legacystay",
+    "sim-meridian",
+    "sim-fias-pabx",
+)
+
+# Extra admin resets beyond the shared ``/admin/reset`` slot, keyed by
+# target: (entry-label suffix, admin path). The FIAS link engine keeps its
+# fault state (faults, P# counter, reseeded rooms) outside the shared
+# scenario slot, so the generic reset is not enough — clear it too.
+EXTRA_RESETS: dict[str, tuple[tuple[str, str], ...]] = {
+    "sim-fias-pabx": (("fias", "/admin/fias/reset"),),
+}
+
+
+def expected_reset_targets() -> list[str]:
+    """Entry labels POST /demo/reset reports, in order (registry-derived)."""
+    entries: list[str] = []
+    for target in RESET_TARGETS:
+        entries.append(target)
+        for suffix, _ in EXTRA_RESETS.get(target, ()):
+            entries.append(f"{target}:{suffix}")
+    return entries
+
+
 def _admin_headers() -> dict[str, str]:
     """Headers proving admin authorization to the simulator admin API.
 
@@ -179,7 +210,7 @@ def demo_reset(
     ensure_migrated(db.get_bind())
 
     resets: list[dict[str, Any]] = []
-    for target in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian", "sim-fias-pabx"):
+    for target in RESET_TARGETS:
         base = _admin_url_for_target(target)
         # Same env overrides as inject-fault (tests point these at scratch sims).
         env_key = f"{target.upper().replace('-', '_')}_ADMIN_URL"
@@ -195,17 +226,14 @@ def demo_reset(
                 resets.append({"target": target, "status": r.status_code})
         except Exception as exc:
             resets.append({"target": target, "error": str(exc)})
-        if target == "sim-fias-pabx":
-            # The FIAS link engine keeps its own fault state (faults, P#
-            # counter, reseeded rooms) outside the shared scenario slot, so
-            # the generic reset above is not enough — clear it too.
-            fias_url = f"{base.rstrip('/')}/admin/fias/reset"
+        for suffix, path in EXTRA_RESETS.get(target, ()):
+            extra_url = f"{base.rstrip('/')}{path}"
             try:
                 with httpx.Client(timeout=5) as client:
-                    r = client.post(fias_url, json={}, headers=_admin_headers())
-                    resets.append({"target": "sim-fias-pabx:fias", "status": r.status_code})
+                    r = client.post(extra_url, json={}, headers=_admin_headers())
+                    resets.append({"target": f"{target}:{suffix}", "status": r.status_code})
             except Exception as exc:
-                resets.append({"target": "sim-fias-pabx:fias", "error": str(exc)})
+                resets.append({"target": f"{target}:{suffix}", "error": str(exc)})
 
     # L0: drop learned fixes (in-process singleton; no persisted form exists —
     # RepairRun rows holding the same patches are wiped below).

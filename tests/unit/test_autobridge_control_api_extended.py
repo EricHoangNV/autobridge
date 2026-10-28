@@ -19,6 +19,7 @@ from autobridge.control.models import (
     RepairRun,
     session_factory,
 )
+from autobridge.control.routes.demo import expected_reset_targets
 
 
 def test_deps_engine_cache(tmp_path: pathlib.Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -536,16 +537,15 @@ def test_demo_reset_sends_admin_net_header(tmp_path: pathlib.Path, monkeypatch) 
         r = client.post("/demo/reset")
         assert r.status_code == 200
         calls = mock_c.return_value.__enter__.return_value.post.call_args_list
-        # REQ-021 item 1: all five simulators reset (atlas, harbor,
-        # legacystay, meridian, fias-pabx) plus the FIAS link-engine reset.
+        # REQ-021 item 1: every registry simulator reset (atlas, harbor,
+        # legacystay, meridian, fias-pabx) plus the FIAS link-engine reset —
+        # expected entries derive from the endpoint's own registry (REQ-022
+        # owner check 2026-10-29), never hand-kept here.
         assert len(calls) == 6
         for _, kwargs in calls:
             assert kwargs.get("headers", {}).get("X-Admin-Network") == "admin-net"
         body = r.json()
-        assert [e["target"] for e in body["resets"]] == [
-            "sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian",
-            "sim-fias-pabx", "sim-fias-pabx:fias",
-        ]
+        assert [e["target"] for e in body["resets"]] == expected_reset_targets()
         assert all(entry["status"] == 200 for entry in body["resets"])
         assert body["labelled"] is True and body["session_id"].startswith("demo-")
 
