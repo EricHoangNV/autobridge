@@ -1926,3 +1926,30 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Notes for next iteration:**
 - REQ-011 (localhost-only ports) and REQ-012 (control token) still OPEN; REQ-012 item 3 (e2e helpers send token) is already satisfied by the helpers added here.
 - P1.W10.3 / P1.W2.8 owner steps unchanged.
+
+## REQ-011 — Localhost-only compose ports
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-011
+
+**What was done:**
+- All 15 published ports in `compose.yaml` now bind `${AUTOBRIDGE_BIND_HOST:-127.0.0.1}` (control 8101, worker 8102, sandbox 8103, verifier 8104, sims 8105/8106/8111 + admin 8109/8110/8112, edgepos 8113, edge-worker 8114, mcp-hotel 8115, ui 8107, bench 8108); container-to-container traffic unchanged (no network attachment touched)
+- `.env.example` documents `AUTOBRIDGE_BIND_HOST=` with a warning against `0.0.0.0` on untrusted networks
+- `tests/unit/test_autobridge_compose.py`: added `_split_published_port` helper (handles `${...}` interpolation containing a colon), reworked `test_host_ports_unique` on parsed host ports, added `test_published_ports_bind_loopback` (fails on missing host IP or literal `0.0.0.0`; `${...}` form must equal the sanctioned var)
+- `docs/architecture.md` §2.1: one paragraph on loopback binding + override warning
+- Verified live: `make up` all readyz green, `docker compose ps` shows every port on 127.0.0.1, `make smoke` green (incl. negative network checks), live `test_00` 8/8, `make demo` 6/6; `docker compose config` validates interpolation
+- Full `make test` green: 2228 python pass (autobridge 91%, verifier 94%, simulators 97%) + ui 143; `make lint` + `make typecheck` green
+
+**Key decisions:**
+- Kept the in-container ports and host port numbers identical, so all host-side URLs (smoke.sh, wait_readyz.sh, e2e SERVICE_PORTS, bench harness host constants) work unchanged
+- Test accepts only the exact `${AUTOBRIDGE_BIND_HOST:-127.0.0.1}` interpolation or a literal loopback IP, so a future edit sneaking in another var/default fails loudly
+- Did not touch `verifier/hidden_cases/heldout/SHA256SUMS` or any network attachment
+
+**Files changed:**
+- `compose.yaml` — 15 port mappings prefixed with the bind-host interpolation
+- `.env.example` — `AUTOBRIDGE_BIND_HOST=` + warning note
+- `tests/unit/test_autobridge_compose.py` — helper + reworked uniqueness test + new loopback test
+- `docs/architecture.md` — loopback-binding paragraph
+- `mds/REQUESTS.MD` — REQ-011 moved to Resolved with Resolution line
+
+**Notes for next iteration:**
+- None — self-contained. REQ-012 (control bearer token) remains open and builds on this (localhost + optional token).

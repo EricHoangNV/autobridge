@@ -48,6 +48,12 @@ switches the app), `verifier/Dockerfile` (context `verifier/` only), and
 `simulators/Dockerfile` (context `simulators/` only). Hidden fixtures are
 mounted read-only into the verifier container and nowhere else.
 
+Every published port binds loopback only
+(`"${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8101:8000"`, REQ-011), so the stack is
+unreachable from the local network by default; set `AUTOBRIDGE_BIND_HOST`
+(e.g. to `0.0.0.0`) only on a trusted network. Container-to-container traffic
+on the compose networks is unchanged.
+
 ### 2.2 Docker networks (plan §2.1)
 
 ```

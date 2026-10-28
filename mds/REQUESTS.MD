@@ -23,21 +23,6 @@ Wanted:
 4. With the stack up, run `make bench` once and record the real dev-split numbers in the build note (not zeros).
 Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
 
-### REQ-011 — Publish compose ports on localhost only (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 04:05)
-Every port in `compose.yaml` is published as `"81xx:8000"` with no host IP, so Docker listens on all interfaces. While
-the stack runs, anyone on the same network (e.g. hackathon Wi-Fi) can reach the control API (unauthenticated write
-routes: approve/reject repairs, inject faults, import/connect connectors), the UI, the simulators, and the verifier on
-8104, whose hidden cases must stay out of reach.
-Wanted:
-1. Every published port binds to loopback: `"127.0.0.1:8101:8000"` and so on, for all services and every second port
-   (8109–8112). Container-to-container traffic on the compose networks is unchanged.
-2. Optional override for anyone who needs LAN access on purpose: a `AUTOBRIDGE_BIND_HOST` variable, default `127.0.0.1`,
-   used as `"${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8101:8000"`. Document it in `.env.example` with a warning.
-3. A test that parses `compose.yaml` and fails if any published port lacks a host IP, or uses `0.0.0.0` as a literal.
-4. `make up`, `make smoke`, `make e2e` and `make demo` still pass on the host (localhost URLs are unchanged).
-Note the trust-boundary smoke checks: the verifier and simulators stay unreachable from the engine network as before.
-
 ### REQ-012 — Optional bearer token on the control API's write routes (2026-10-28)
 Status: OPEN
 The control API has no authentication; the only identity is the server-side `AUTOBRIDGE_OPERATOR` name (REQ-001).
@@ -62,6 +47,22 @@ Wanted:
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-011 — Publish compose ports on localhost only (2026-10-28)
+Status: DONE (2026-10-28)
+Every port in `compose.yaml` is published as `"81xx:8000"` with no host IP, so Docker listens on all interfaces. While
+the stack runs, anyone on the same network (e.g. hackathon Wi-Fi) can reach the control API (unauthenticated write
+routes: approve/reject repairs, inject faults, import/connect connectors), the UI, the simulators, and the verifier on
+8104, whose hidden cases must stay out of reach.
+Wanted:
+1. Every published port binds to loopback: `"127.0.0.1:8101:8000"` and so on, for all services and every second port
+   (8109–8112). Container-to-container traffic on the compose networks is unchanged.
+2. Optional override for anyone who needs LAN access on purpose: a `AUTOBRIDGE_BIND_HOST` variable, default `127.0.0.1`,
+   used as `"${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8101:8000"`. Document it in `.env.example` with a warning.
+3. A test that parses `compose.yaml` and fails if any published port lacks a host IP, or uses `0.0.0.0` as a literal.
+4. `make up`, `make smoke`, `make e2e` and `make demo` still pass on the host (localhost URLs are unchanged).
+Note the trust-boundary smoke checks: the verifier and simulators stay unreachable from the engine network as before.
+Resolution: all 15 published ports bound to `${AUTOBRIDGE_BIND_HOST:-127.0.0.1}` (default loopback); `.env.example` documents the override with a warning; new `test_published_ports_bind_loopback` fails on a missing host IP or a literal `0.0.0.0`; `make up`/`make smoke`/live `test_00`/ `make demo` green on the host, live bindings verified as 127.0.0.1.
 
 ### REQ-010 — e2e: run the demo's headline claims against the live stack (2026-10-28)
 Status: DONE (2026-10-28)

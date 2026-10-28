@@ -51,7 +51,31 @@ EXPECTED_ATTACHMENT = {
     "bench": {"engine-net", "verifier-net"},
 }
 
-# service -> in-container port (mirrors compose.yaml)
+# REQ-011: every published port binds loopback by default, with an opt-in
+# override for LAN access. Container-to-container traffic is unchanged.
+BIND_HOST_VAR = "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}"
+
+
+def _split_published_port(mapping: object) -> tuple[str, str, str]:
+    """Split a compose short-syntax port mapping into (bind, host port, container port).
+
+    Handles the loopback-bound form `"${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8101:8000"`,
+    whose `${...}` interpolation itself contains a colon.
+    """
+    text = str(mapping)
+    if text.startswith("${"):
+        end = text.index("}")
+        rest = text[end + 1 :]
+        assert rest.startswith(":"), f"bad port mapping {text!r}"
+        host_port, container_port = rest[1:].split(":")
+        return text[: end + 1], host_port, container_port
+    parts = text.split(":")
+    assert len(parts) == 3, f"port mapping {text!r} must bind a host IP (bind:host:container)"
+    host_ip, host_port, container_port = parts
+    return host_ip, host_port, container_port
+
+
+# service -> host port (mirrors compose.yaml)
 EXPECTED_PORTS = {
     "control": 8101,
     "worker": 8102,
@@ -130,12 +154,35 @@ def test_host_ports_unique(compose: dict) -> None:
     seen: dict[str, str] = {}
     for svc, cfg in compose["services"].items():
         for mapping in cfg.get("ports", []):
-            host = str(mapping).split(":")[0]
-            assert host not in seen, f"host port {host} shared by {seen[host]} and {svc}"
-            seen[host] = svc
+            _, host_port, _ = _split_published_port(mapping)
+            assert host_port not in seen, f"host port {host_port} shared by {seen[host_port]} and {svc}"
+            seen[host_port] = svc
     for svc, port in EXPECTED_PORTS.items():
         mappings = [str(m) for m in compose["services"][svc].get("ports", [])]
-        assert any(m.startswith(f"{port}:") for m in mappings), f"{svc} missing host port {port}"
+        assert any(
+            _split_published_port(m)[1] == str(port) for m in mappings
+        ), f"{svc} missing host port {port}"
+
+
+def test_published_ports_bind_loopback(compose: dict) -> None:
+    """REQ-011: every published port binds loopback, never all interfaces.
+
+    Fails if any mapping lacks a host IP (`"8101:8000"`) or binds `0.0.0.0`
+    literally. The `${AUTOBRIDGE_BIND_HOST:-127.0.0.1}` override keeps LAN
+    access opt-in; its default must stay loopback.
+    """
+    for svc, cfg in compose["services"].items():
+        for mapping in cfg.get("ports", []):
+            bind, _, _ = _split_published_port(mapping)
+            assert "0.0.0.0" not in bind, f"{svc}: port {mapping!r} binds all interfaces"
+            if bind.startswith("${"):
+                assert bind == BIND_HOST_VAR, (
+                    f"{svc}: port {mapping!r} must use {BIND_HOST_VAR}"
+                )
+            else:
+                assert bind in ("127.0.0.1", "localhost"), (
+                    f"{svc}: port {mapping!r} must bind loopback, got {bind!r}"
+                )
 
 
 def test_every_service_has_healthcheck(compose: dict) -> None:

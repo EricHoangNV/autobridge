@@ -647,3 +647,13 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 - BUG FOUND + FIXED: `POST /demo/inject-fault` and `/demo/reset` never sent `X-Admin-Network: admin-net`, so the sim admin 403'd and faults never landed (demo still printed labelled 200s). Fix in `src/autobridge/control/routes/demo.py` + 2 unit tests asserting the header on the mocked httpx call (`tests/unit/test_autobridge_control_api_extended.py`); reset also honors the SIM_*_ADMIN_URL overrides.
 - `Makefile`: `make e2e` sets `AUTOBRIDGE_E2E_REQUIRE_STACK=1`. `docs/architecture.md` §7 documents markers, the env var, the live tests and the admin-header fix.
 - Verified: full `make test` 2227 pass (autobridge 91% / verifier 94% / simulators 97%) + ui 143; `make lint` clean; `make typecheck` clean; full `make e2e` 107 passed + 1 skip (s5 owner opt-in) against the real stack; DOCKER_HOST=nonexistent → live tests fail under the var, skip without it. Markers: 35 live / 73 inprocess.
+
+### REQ-011 — Localhost-only compose ports (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+- `compose.yaml`: all 15 `ports` entries changed from `"81xx:8000"` to `"${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:81xx:8000"` (incl. sim admin second ports 8109–8112 and `ui 8107:3000`). No service/network/volume key touched.
+- `.env.example`: added `AUTOBRIDGE_BIND_HOST=` with a WARNING comment (never `0.0.0.0` on untrusted networks).
+- `tests/unit/test_autobridge_compose.py`: new `_split_published_port` (splits `bind:host:container`, aware that `${...}` contains a colon); `test_host_ports_unique` reworked to compare parsed host ports + parsed EXPECTED_PORTS; new `test_published_ports_bind_loopback` — fails if a mapping lacks a host IP, contains literal `0.0.0.0`, or uses any other interpolation than the sanctioned var. Negative-checked with old formats (`8101:8000`, `0.0.0.0:...`, `${OTHER:-0.0.0.0}:...` all caught).
+- `docs/architecture.md` §2.1: loopback-binding paragraph.
+- Gotcha: the naive `split(":")[0]` / `startswith(f"{port}:")` assertions in the old uniqueness test break on the interpolated form (first segment becomes the `${VAR` prefix) — hence the parser helper.
+- Directives check (`./directives-for.sh`, no args): §2/§5/§6 printed; no violations — attachments unchanged, smoke negatives re-ran green, no secrets touched (`AUTOBRIDGE_BIND_HOST` is not a credential, empty default in `.env.example`).
+- Verified live in sandbox: `make up` (readyz 12/12), `docker compose ps` = every port `127.0.0.1:81xx->...`, `make smoke` OK, `E2E_SKIP_STACK=1 pytest tests/e2e/test_00_stack_up.py` 8/8, `make demo` 6/6. Full `make test`: 1890+97+241 pass (91%/94%/97%), ui 143 pass. `make lint`, `make typecheck` green.

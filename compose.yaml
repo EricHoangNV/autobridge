@@ -41,7 +41,7 @@ services:
       - verifier-net
       - admin-net
     ports:
-      - "8101:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8101:8000"
     healthcheck: *healthcheck-py
 
   worker:
@@ -53,7 +53,7 @@ services:
     networks:
       - engine-net
     ports:
-      - "8102:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8102:8000"
     healthcheck: *healthcheck-py
 
   runtime-sandbox:
@@ -66,7 +66,7 @@ services:
       - engine-net
       - vendor-net
     ports:
-      - "8103:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8103:8000"
     healthcheck: *healthcheck-py
 
   verifier:
@@ -76,7 +76,7 @@ services:
     networks:
       - verifier-net
     ports:
-      - "8104:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8104:8000"
     volumes:
       # Hidden fixtures are mounted read-only here; no other service mounts
       # this volume and worker / runtime-sandbox have no route to this net.
@@ -94,7 +94,7 @@ services:
     networks:
       - edge-net
     ports:
-      - "8114:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8114:8000"
     healthcheck: *healthcheck-py
 
   sim-edgepos:
@@ -106,7 +106,7 @@ services:
     networks:
       - edge-net
     ports:
-      - "8113:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8113:8000"
     healthcheck: *healthcheck-py
 
   sim-atlas:
@@ -119,8 +119,8 @@ services:
       - vendor-net
       - admin-net
     ports:
-      - "8105:8000"
-      - "8109:8001"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8105:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8109:8001"
     healthcheck: *healthcheck-py
 
   sim-harbor:
@@ -133,8 +133,8 @@ services:
       - vendor-net
       - admin-net
     ports:
-      - "8106:8000"
-      - "8110:8001"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8106:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8110:8001"
     healthcheck: *healthcheck-py
 
   sim-legacystay:
@@ -147,8 +147,8 @@ services:
       - vendor-net
       - admin-net
     ports:
-      - "8111:8000"
-      - "8112:8001"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8111:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8112:8001"
     healthcheck: *healthcheck-py
 
   # P2.S4.1 MCP Guardian: mock HotelTools V1/V2 + compatibility gateway
@@ -163,7 +163,7 @@ services:
     networks:
       - engine-net
     ports:
-      - "8115:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8115:8000"
     healthcheck: *healthcheck-py
 
   ui:
@@ -173,7 +173,7 @@ services:
     networks:
       - engine-net
     ports:
-      - "8107:3000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8107:3000"
     healthcheck:
       test:
         [
@@ -195,7 +195,7 @@ services:
       - engine-net
       - verifier-net
     ports:
-      - "8108:8000"
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8108:8000"
     healthcheck: *healthcheck-py
 
 networks:
