@@ -476,3 +476,73 @@ def test_demo_without_recording_skips_l3_with_zero_frontier(monkeypatch: Any, tm
         if "Hard semantic failure" in step["name"]:
             assert ev["l3_skipped"] is True
             assert "no replay recording" in ev["why_escalated"]
+
+
+def _live_fake_provider(l3_text: str) -> Any:
+    """Frontier answered live (tokens billed) but yielded no usable patch."""
+    from autobridge.llm.provider import Completion, FakeProvider, Usage
+
+    return FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(96, 12)
+            ),
+            "frontier": Completion(text=l3_text, usage=Usage(2000, 115)),
+        },
+        frontier_model="muse-spark-1.3",
+        small_model="muse-spark-1.3",
+    )
+
+
+def test_step4_live_prose_without_patch_says_what_happened(monkeypatch: Any) -> None:
+    """Owner check 2026-10-28: a live L3 answer with no patch must say the
+    call happened (model + tokens), show the redacted raw reply, and never
+    claim "no frontier call available"."""
+    import autobridge.llm.provider as provider_mod
+
+    fake = _live_fake_provider(
+        "I cannot determine a safe mapping. Net vs gross needs an operator decision."
+    )
+    monkeypatch.setattr(provider_mod, "resolve_frontier_provider", lambda: (fake, "live"))
+    step = step4_hard_semantic_failure(0, False, "http://localhost:9")
+    assert step["status"] == "ok", step
+    ev = step["evidence"]
+    assert ev["l3_skipped"] is False
+    assert ev["l3_proposal"] == []
+    assert ev["l3_model"] == "muse-spark-1.3"
+    assert ev["l3_raw_preview"].startswith("I cannot determine")
+    reason = ev["rejection_reason"]
+    assert "L3 called live" in reason
+    assert "muse-spark-1.3" in reason
+    assert "2,115 tokens" in reason
+    assert "no JSON Patch found in response" in reason
+    assert "no frontier call available" not in reason
+    assert "skipped" not in reason.lower()
+    assert ev["frontier_replayed"] is False
+    assert ev["sync_outcome"] == "Degraded"
+    assert ev["release_persisted"] is False
+    assert isinstance(ev["escalation_question"], str) and ev["escalation_question"].endswith("?")
+    assert [a["rung"] for a in ev["rung_attempts"]] == [0, 1, 2, 3, 4]
+
+
+def test_step4_live_unparsable_patch_says_what_happened(monkeypatch: Any) -> None:
+    """Owner check 2026-10-28: a live L3 answer with an unparsable patch is
+    a called rung with a recorded reason, not a skip."""
+    import autobridge.llm.provider as provider_mod
+
+    fake = _live_fake_provider('[{"op": "replace", "path": "/entities/Reservation/fields/total_amount/pa')
+    monkeypatch.setattr(provider_mod, "resolve_frontier_provider", lambda: (fake, "live"))
+    step = step4_hard_semantic_failure(0, False, "http://localhost:9")
+    assert step["status"] == "ok", step
+    ev = step["evidence"]
+    assert ev["l3_skipped"] is False
+    assert ev["l3_proposal"] == []
+    reason = ev["rejection_reason"]
+    assert "L3 called live" in reason
+    assert "muse-spark-1.3" in reason
+    assert "2,115 tokens" in reason
+    assert "does not parse as a patch" in reason
+    assert "no frontier call available" not in reason
+    assert ev["l3_raw_preview"].startswith('[{"op": "replace"')
+    assert ev["sync_outcome"] == "Degraded"
+    assert ev["release_persisted"] is False

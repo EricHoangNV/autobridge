@@ -264,3 +264,64 @@ def test_knowledge_connector_profile(tmp_path: pathlib.Path) -> None:
         assert connectors[0]["confirmed_hypotheses"] == ["pagination:/reservations:cursor"]
     finally:
         app.dependency_overrides.clear()
+
+
+def test_capability_rule_fixes_name_shown_once() -> None:
+    """Owner check 2026-10-28: the L1 rule text must not repeat the rule id
+    (the knowledge page already renders the id beside it)."""
+    from autobridge.control.routes.capabilities import capabilities_payload
+
+    payload = capabilities_payload()
+    assert payload["rules"]
+    for rule in payload["rules"]:
+        assert rule["fixes"], rule["id"]
+        assert not rule["fixes"].startswith(rule["id"]), rule
+        assert "\n" not in rule["fixes"]
+
+
+def test_knowledge_connector_vocabulary_falls_back_to_release(tmp_path: pathlib.Path) -> None:
+    """Owner check 2026-10-28: profiles built before the pinned-vocabulary
+    input show the latest release's spec schema version instead of '?'."""
+    client, factory = _client_for(tmp_path)
+    try:
+        with factory() as s:
+            conn = Connector(
+                name="Harbor", base_url="http://localhost:8106", credential_ref="HARBOR_API_KEY",
+                target_entities=["Reservation"], runtime_target={"kind": "local_process"},
+            )
+            s.add(conn)
+            s.flush()
+            build = BuildRun(
+                connector_id=conn.id, state="succeeded",
+                inputs={"docs_text": "x"},
+                ladder_trace=[],
+                model_usage={},
+                result={"success": True},
+            )
+            s.add(build)
+            s.flush()
+            spec = dict(_load_reference_spec("harborpms"))
+            spec["spec_version"] = 2
+            s.add(ConnectorRelease(connector_id=conn.id, version=1, spec=spec, signature="0" * 64))
+            s.commit()
+        r = client.get("/knowledge")
+        assert r.status_code == 200, r.text
+        connectors = r.json()["connectors"]
+        assert len(connectors) == 1
+        assert connectors[0]["vocabulary"] == "v2"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_knowledge_connector_vocabulary_empty_without_evidence(tmp_path: pathlib.Path) -> None:
+    """No builds and no releases: vocabulary stays empty (the page shows '?')."""
+    client, factory = _client_for(tmp_path)
+    try:
+        with factory() as s:
+            s.add(Connector(name="Bare", base_url="http://localhost:9", credential_ref="X"))
+            s.commit()
+        r = client.get("/knowledge")
+        assert r.status_code == 200, r.text
+        assert r.json()["connectors"][0]["vocabulary"] == ""
+    finally:
+        app.dependency_overrides.clear()

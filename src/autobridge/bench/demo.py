@@ -870,7 +870,15 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     # every rung (attempted or plainly skipped); never silent, never invented.
     assert [a["rung"] for a in attempts[:2]] == [0, 1], f"demo climb must show L0+L1: {attempts}"
     l3_attempts = [a for a in attempts if a["rung"] == 3]
-    l3_skipped = not l3_attempts or l3_attempts[0]["action"] != "frontier_generate"
+    l3_call = l3_attempts[0] if l3_attempts else None
+    # A rung-3 attempt is a real frontier call when it generated text or the
+    # answer came back unusable (rejected/unparsable): both cost tokens.
+    # Only an explicit l3_skipped (no provider, missing replay recording)
+    # means no call was made — the "skipped" wording is reserved for that
+    # case (REQ-021 owner check 2026-10-28: a live answer that yields no
+    # patch must say what happened, never "no frontier call available").
+    l3_called = l3_call is not None and l3_call.get("action") in ("frontier_generate", "proposal_rejected")
+    l3_skipped = not l3_called
     assert l3_attempts or climb.get("replay_missing") or provider is None, (
         f"demo climb must attempt or skip L3 explicitly: {attempts}"
     )
@@ -905,17 +913,59 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             # proves the trap; say exactly what happened instead of failing
             # the step on an environmental error.
             checked_by = f"live verifier unreachable ({exc}); trap predicate used"
+    def _l3_model_name() -> str:
+        getter = getattr(provider, "model_for_tier", None)
+        if callable(getter):
+            try:
+                name = getter("frontier")
+                if name:
+                    return str(name)
+            except Exception:
+                pass
+        try:
+            from autobridge.config import frontier_model as _default_frontier_model  # noqa: PLC0415
+
+            return str(_default_frontier_model())
+        except Exception:
+            return "unknown"
+
+    l3_model = _l3_model_name()
+    frontier_tokens = int(usage.get("frontier_tokens", 0) or 0)
+    l3_raw_preview = ""
+    if l3_call is not None:
+        l3_raw_preview = str(l3_call.get("raw_preview") or (climb.get("l3_text", "") or "").strip()[:300])
     if l3_skipped:
+        if climb.get("replay_missing"):
+            skip_detail = (
+                f"no replay recording for prompt {climb['replay_missing'][0]}; "
+                "run make record-frontier SCENARIO=gross_to_net to capture it"
+            )
+        elif l3_call is not None and l3_call.get("reason"):
+            skip_detail = str(l3_call["reason"])
+        else:
+            skip_detail = "no frontier provider configured (FRONTIER_MODE=off)"
         rejection_reason = (
-            "no frontier call available (no FRONTIER_API_KEY, no replay recording); "
+            f"no frontier call available ({skip_detail}); "
             "L3 labelled skipped, semantic drift still needs the operator"
         )
     elif trapped:
         rejection_reason = "total_amount must stay gross; net_amount is the decoy net"
-    else:
+    elif proposal:
         rejection_reason = (
-            f"frontier proposed {proposal or 'nothing usable'}; no verified fix, operator decides"
+            f"frontier proposed {proposal} via {mode} ({l3_model}, {frontier_tokens:,} tokens); "
+            "no verified fix, operator decides"
         )
+    else:
+        if l3_call is not None and l3_call.get("action") == "proposal_rejected":
+            no_patch_detail = str(l3_call.get("reason", "proposal rejected"))
+        else:
+            no_patch_detail = str((l3_call or {}).get("parse_detail", "") or "no JSON Patch found in response")
+        rejection_reason = (
+            f"L3 called {mode} ({l3_model}, {frontier_tokens:,} tokens): "
+            f"response contained no applicable patch ({no_patch_detail}); "
+            f"raw response: {l3_raw_preview or '<empty>'}"
+        )
+    rejection_reason = " ".join(rejection_reason.split())
     bundle = escalation_for_no_fix(
         "gross_to_net: net is 10% below gross; no deterministic rule maps net_amount safely",
         evidence_ids=["sync-harbor-gross_to_net", "probe-harbor-amounts"],
@@ -960,6 +1010,8 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             "drift_class": "SEMANTIC_VALUE_DRIFT",
             "decoy_patch_rejected": "invalid_patch_trap" if trapped else "no decoy proposed",
             "l3_proposal": proposal,
+            "l3_model": l3_model,
+            "l3_raw_preview": l3_raw_preview,
             "rejection_reason": rejection_reason,
             "checked_by": checked_by,
             "frontier_mode": mode,

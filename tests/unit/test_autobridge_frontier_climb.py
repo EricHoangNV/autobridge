@@ -375,3 +375,48 @@ def test_l3_valid_proposal_passes_validation() -> None:
     l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
     assert l3["action"] == "frontier_generate"
     assert l3.get("proposal_validated") is True
+
+
+def test_l3_prose_without_patch_records_detail_not_skipped() -> None:
+    """Owner check 2026-10-28: provider text with no patch is a real call
+    with a recorded detail — never a silent drop, never a skip."""
+    climb = _climb_with_texts(
+        "I cannot determine a safe mapping. Net vs gross needs an operator decision."
+    )
+    assert climb["proposal"] is None
+    assert climb["resolved_rung"] == 3
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "frontier_generate"
+    assert l3.get("parse_detail") == "no JSON Patch found in response"
+    assert l3["raw_preview"].startswith("I cannot determine")
+    assert climb["usage"]["frontier_tokens"] == 20
+    assert "\n" not in l3["reason"]
+
+
+def test_l3_fenced_patch_inside_prose_is_extracted() -> None:
+    """Reasoning-style answers (prose + fenced patch) still yield a patch."""
+    text = (
+        "The drift maps net_amount onto total_amount, so restore the gross path:\n"
+        "```json\n"
+        '[{"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}]\n'
+        "```\n"
+        "This needs verifier confirmation before release."
+    )
+    climb = _climb_with_texts(text)
+    assert climb["proposal"] == [
+        {"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}
+    ]
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "frontier_generate"
+    assert l3.get("proposal_validated") is True
+
+
+def test_l3_empty_response_records_reason() -> None:
+    """An empty live reply is diagnosed on the rung, not mislabelled."""
+    climb = _climb_with_texts("   ")
+    assert climb["proposal"] is None
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "frontier_generate"
+    assert "empty response" in l3["reason"]
+    assert "empty response" in l3.get("parse_detail", "")
+    assert "raw_preview" not in l3

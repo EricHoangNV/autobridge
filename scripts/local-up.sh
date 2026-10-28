@@ -112,9 +112,42 @@ if command -v npm >/dev/null; then
     echo ">> local-up: installing UI deps (ui/node_modules missing)"
     (cd "$REPO_ROOT/ui" && npm ci)
   fi
+  # REQ-021 owner check: the old marker-only rule rebuilt solely when
+  # ui/.next/BUILD_ID was missing, so a `git pull` kept serving the stale
+  # build (e.g. the missing /knowledge page). Rebuild whenever the ui/
+  # sources changed since the last build: the git tree hash of HEAD:ui
+  # plus a hash of uncommitted ui/ changes, stored next to the build.
+  UI_TREE=""
+  if UI_HEAD_TREE=$(git -C "$REPO_ROOT" rev-parse "HEAD:ui" 2>/dev/null); then
+    UI_DIRTY=$(git -C "$REPO_ROOT" status --porcelain -- ui 2>/dev/null | git -C "$REPO_ROOT" hash-object --stdin 2>/dev/null || echo "nodirty")
+    UI_TREE="$UI_HEAD_TREE/$UI_DIRTY"
+  fi
+  UI_TREE_FILE="$LOCAL_DIR/ui-tree"
+  UI_STORED=""
+  if [ -f "$UI_TREE_FILE" ]; then
+    UI_STORED=$(cat "$UI_TREE_FILE" 2>/dev/null || true)
+  fi
   if [ ! -f "$REPO_ROOT/ui/.next/BUILD_ID" ]; then
-    echo ">> local-up: building UI (one-time; needs the production build marker)"
+    UI_REASON="no production build marker (first build)"
+  elif [ -z "$UI_TREE" ]; then
+    UI_REASON=""
+  elif [ "$UI_STORED" != "$UI_TREE" ]; then
+    UI_REASON="ui/ sources changed since the last build"
+  else
+    UI_REASON=""
+  fi
+  if [ -n "$UI_REASON" ]; then
+    echo ">> local-up: building UI ($UI_REASON)"
     (cd "$REPO_ROOT/ui" && npm run build)
+    if [ -n "$UI_TREE" ]; then
+      printf '%s' "$UI_TREE" >"$UI_TREE_FILE"
+    fi
+  else
+    if [ -z "$UI_TREE" ]; then
+      echo ">> local-up: reusing existing UI build (git unavailable, cannot check for source changes)"
+    else
+      echo ">> local-up: reusing existing UI build (ui/ unchanged since last build)"
+    fi
   fi
   (
     cd "$REPO_ROOT/ui"

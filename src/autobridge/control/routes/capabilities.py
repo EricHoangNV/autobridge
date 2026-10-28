@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autobridge.control.deps import get_db
-from autobridge.control.models import Approval, BuildRun, Connector, DriftEvent, ModelCall, RepairRun
+from autobridge.control.models import Approval, BuildRun, Connector, ConnectorRelease, DriftEvent, ModelCall, RepairRun
 from autobridge.control.schemas import (
     CapabilitiesOut,
     CapabilityRuleOut,
@@ -53,9 +53,24 @@ V2_V3_DIFF = [
 ]
 
 
-def _rule_fixes(module: Any) -> str:
+def _rule_fixes(rule_id: str, module: Any) -> str:
+    """First docstring line of a rule module, without the repeated rule name.
+
+    Rule docstrings open with their own id (``"page_to_cursor rule — ..."``)
+    and the knowledge page already renders the id beside the text, so strip
+    the leading ``<id>[ rule] —|:`` prefix and return the description once
+    (REQ-021 owner check 2026-10-28).
+    """
+    import re as _re  # noqa: PLC0415 - local to keep route import-light
+
     doc = (getattr(module, "__doc__", "") or "").strip().splitlines()
-    return doc[0].strip() if doc else ""
+    first = doc[0].strip() if doc else ""
+    stripped = _re.sub(
+        r"^" + _re.escape(rule_id) + r"(?:\s+rule)?\s*[—–\-:]\s*",
+        "",
+        first,
+    )
+    return stripped or first
 
 
 def capabilities_payload() -> dict[str, Any]:
@@ -114,7 +129,7 @@ def capabilities_payload() -> dict[str, Any]:
     rules = [
         {
             "id": entry.id,
-            "fixes": _rule_fixes(entry.module),
+            "fixes": _rule_fixes(entry.id, entry.module),
             "confidence": entry.confidence,
             "verification_level": entry.verification_level,
             "produces_patch": entry.produces_patch,
@@ -319,6 +334,23 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
             last = successful[-1]
             vocabulary = str((last.inputs or {}).get("spec_vocabulary", "") or "")
             last_built_at = last.created_at
+        if not vocabulary:
+            # Builds that predate the pinned-vocabulary input (or connectors
+            # built outside the build route) still show their vocabulary:
+            # fall back to the latest release's spec schema version.
+            latest = (
+                db.execute(
+                    select(ConnectorRelease)
+                    .where(ConnectorRelease.connector_id == conn.id)
+                    .order_by(ConnectorRelease.version.desc())
+                )
+                .scalars()
+                .first()
+            )
+            if latest is not None:
+                schema_version = (latest.spec or {}).get("spec_version") if isinstance(latest.spec, dict) else None
+                if schema_version in (1, 2, 3):
+                    vocabulary = f"v{schema_version}"
         connectors.append(
             {
                 "connector_id": conn.id,

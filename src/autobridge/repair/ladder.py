@@ -68,6 +68,59 @@ def _extract_vendor(spec: dict[str, Any]) -> str:
     return "unknown"
 
 
+def _is_patch_list(parsed: Any) -> bool:
+    """True when *parsed* JSON is a JSON Patch-shaped list of operations."""
+    return isinstance(parsed, list) and all(
+        isinstance(op, dict) and "op" in op and "path" in op for op in parsed
+    )
+
+
+def _parse_patch_response(text: str) -> tuple[list[dict[str, Any]] | None, str]:
+    """Extract a JSON Patch proposal from a frontier model's raw text.
+
+    Reasoning models often answer with prose around the patch (an
+    explanation plus a fenced `````json`` block), so the whole reply is
+    rarely bare JSON. Returns ``(proposal, detail)`` where *proposal* is
+    the patch list or ``None`` and *detail* is a one-line, secret-free
+    account of what the text contained (``"parsed"`` on success). The
+    caller records the detail on the rung so a live answer that yields no
+    patch is diagnosable instead of silently dropped (REQ-021 owner
+    check 2026-10-28: the frontier answered and the engine could not parse
+    it, then mislabelled the rung as skipped).
+    """
+    import json as _json  # noqa: PLC0415 - local to keep ladder import-light
+    import re as _re  # noqa: PLC0415
+
+    stripped = (text or "").strip()
+    if not stripped:
+        return None, "empty response: the model returned no text"
+    try:
+        parsed = _json.loads(stripped)
+    except Exception:
+        parsed = None
+    if _is_patch_list(parsed):
+        return [dict(op) for op in parsed], "parsed"
+    candidates: list[str] = []
+    fence = _re.search(r"```(?:json)?\s*\n?(.*?)```", stripped, _re.DOTALL)
+    if fence:
+        candidates.append(fence.group(1).strip())
+    start, end = stripped.find("["), stripped.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        candidates.append(stripped[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed = _json.loads(candidate)
+        except Exception:
+            continue
+        if _is_patch_list(parsed):
+            return [dict(op) for op in parsed], "extracted patch from prose wrapper"
+    if parsed is not None:
+        return None, "response JSON is not a patch list (no op/path operations)"
+    if "[" in stripped or "{" in stripped:
+        return None, "response contains JSON-like content that does not parse as a patch"
+    return None, "no JSON Patch found in response"
+
+
 @dataclass(frozen=True, slots=True)
 class LadderResult:
     """Outcome of one ladder walk."""
@@ -1497,25 +1550,18 @@ def run_frontier_climb(
     usage = _merge_model_usage(usage, l3_delta)
     l3_entry["model_usage_delta"] = l3_delta
     l3_text = l3_result.text or ""
-    proposal: list[dict[str, Any]] | None = None
-    try:
-        import json as _json  # noqa: PLC0415
-
-        parsed = _json.loads(l3_text.strip())
-        if isinstance(parsed, list) and all(
-            isinstance(op, dict) and "op" in op and "path" in op for op in parsed
-        ):
-            proposal = [dict(op) for op in parsed]
-            l3_entry["proposal_ops"] = len(proposal)
-        elif l3_text.strip():
-            l3_entry["raw_preview"] = l3_text.strip()[:300]
-    except Exception:
-        proposal = None
+    proposal, parse_detail = _parse_patch_response(l3_text)
+    if proposal is not None:
+        l3_entry["proposal_ops"] = len(proposal)
+    else:
+        # No usable patch is a normal outcome, never an error: record what
+        # the text contained plus a truncated preview so a live answer is
+        # diagnosable (prompts carry no secrets; truncate defense-in-depth).
+        l3_entry["parse_detail"] = parse_detail
         if l3_text.strip():
-            # Malformed JSON is a normal outcome: log a truncated preview so
-            # a silent empty/odd response can be diagnosed (prompts carry no
-            # secrets; truncate defense-in-depth).
             l3_entry["raw_preview"] = l3_text.strip()[:300]
+        else:
+            l3_entry["reason"] = f"L3 returned an empty response ({parse_detail}); no patch proposed"
     if proposal is not None and validate_against is not None:
         try:
             from autobridge.spec.patch import apply_patch as _apply_patch  # noqa: PLC0415
