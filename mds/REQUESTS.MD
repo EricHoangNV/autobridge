@@ -374,6 +374,18 @@ green; grep proves no EdgePOS remnants and no private names. Split into claimabl
 uses instead of a hand-kept list, and run `make e2e` against the stack (local mode is enough) before every REQ-022
 merge from now on: unit-green alone missed this.
 
+**Owner check (2026-10-29, on e2823f4c): the reset fix is verified (matrix test green); full `make e2e` against the
+local stack now gives 144 passed, 2 skipped, 1 failed:** `tests/e2e/test_s1_legacystay.py::test_no_legacystay_specific_rule_or_engine_code`.
+The generalization guard says no file under `src/autobridge` may name LegacyStay, but the demo-reset target registry
+does: `src/autobridge/control/routes/demo.py` (lines ~40–120: target aliases, reset list, admin port map) and
+`src/autobridge/control/schemas.py:353` (the `Literal[...]` of target ids). It dates from REQ-021 sub-step B
+(a569ffa6) and went unnoticed because e2e was not run. Do not weaken or special-case the guard: LegacyStay is the
+"never seen" vendor and the deck relies on that test. Move the simulator target registry (ids, aliases, admin ports)
+out of engine source into a data file the control service loads at start (e.g. `config/demo_targets.yaml`, also used
+by local-up/compose where they need it), validate `target` against it at runtime instead of a hard-coded `Literal`
+(the OpenAPI can list the ids from the file at export), and keep one registry (the reset-targets fix just made it
+one; keep it one). Then `make e2e` against the stack fully green.
+
 ### REQ-023 — Demo plan v2: main script plus a fault-scenario catalogue (2026-10-28)
 Status: OPEN
 Owner: the demo plan must include the fault scenarios from REQ-019 … REQ-022. Rule: a step enters `docs/demo.md` and
