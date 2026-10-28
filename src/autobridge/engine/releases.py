@@ -78,13 +78,17 @@ def _maybe_verify(
 
     Raises GateBlockedError (from verification.py) when verdict or regression
     fail. Caller translates to ReleaseError with the same message.
+
+    AR-1-5: fail closed. If the gate module itself cannot be imported, raise
+    instead of silently skipping verification — an unverified candidate must
+    never persist.
     """
     if not verifier_url:
         return
     try:
         from autobridge.engine.verification import ensure_gate_passes  # noqa: PLC0415
-    except Exception:
-        return
+    except Exception as exc:
+        raise ReleaseError(f"verification gate unavailable: {exc}") from exc
     ensure_gate_passes(
         spec,
         scenario_id,

@@ -18,7 +18,7 @@ Usage:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -49,6 +49,13 @@ class GateOutcome:
     raw: dict[str, Any]
     allowed: bool
     block_reason: str | None = None
+    # Echo of the verifier's response mode ("visible"|"hidden"). verify_spec
+    # requires it to match the requested mode (AR-1-5).
+    mode: str = ""
+    # sha256 canonical-JSON signature of the exact spec that was verified
+    # (matches ConnectorRelease.signature for the same spec dict), recorded
+    # alongside the verification outcome so evidence binds to what ran (AR-1-5).
+    spec_signature: str | None = None
 
 
 def _parse_verifier_response(data: dict[str, Any]) -> GateOutcome:
@@ -67,6 +74,7 @@ def _parse_verifier_response(data: dict[str, Any]) -> GateOutcome:
     if regression_failures is not None:
         regression_failures = list(regression_failures)
     scenario_id = str(data.get("scenario_id", ""))
+    mode = str(data.get("mode", ""))
 
     allowed = verdict == "pass" and regression == "pass"
     block_reason: str | None = None
@@ -97,6 +105,7 @@ def _parse_verifier_response(data: dict[str, Any]) -> GateOutcome:
         raw=data,
         allowed=allowed,
         block_reason=block_reason,
+        mode=mode,
     )
 
 
@@ -122,7 +131,8 @@ def verify_spec(
         timeout: HTTP timeout seconds.
 
     Raises:
-        GateBlockedError: if verifier unreachable or returns non-200.
+        GateBlockedError: if verifier unreachable or returns non-200, or if
+            the response scenario_id/mode does not match the request (AR-1-5).
         ValueError: if verifier_url empty.
 
     Note: This function never imports verifier/simulators (trust boundary).
@@ -163,7 +173,28 @@ def verify_spec(
     except Exception as exc:
         raise GateBlockedError(f"verifier returned non-JSON for {scenario_id}: {exc}") from exc
 
-    return _parse_verifier_response(data)
+    outcome = _parse_verifier_response(data)
+    # AR-1-5: bind the verdict to what was requested. A pass verdict for a
+    # different scenario (or mode) must never count as allowed — e.g. when
+    # the verifier endpoint is redirected, the response could be for
+    # anything. Fail closed.
+    if outcome.scenario_id != scenario_id:
+        raise GateBlockedError(
+            f"verifier response scenario mismatch: requested {scenario_id!r}, got {outcome.scenario_id!r}",
+            result=data,
+            reason="scenario_mismatch",
+        )
+    if outcome.mode != mode:
+        raise GateBlockedError(
+            f"verifier response mode mismatch: requested {mode!r}, got {outcome.mode!r}",
+            result=data,
+            reason="mode_mismatch",
+        )
+    # Record the signature of exactly the spec that was verified, so the
+    # outcome binds to a ConnectorRelease.signature for the same spec dict.
+    from autobridge.control.models import spec_signature  # noqa: PLC0415 - local to keep the client import-light
+
+    return replace(outcome, spec_signature=spec_signature(spec))
 
 
 def check_regression_gate(

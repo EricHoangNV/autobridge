@@ -108,11 +108,26 @@ def execute_build(
                         if r.status_code == 200:
                             v = r.json()
                             out["verifier_response"] = v
-                            if v.get("verdict") == "pass":
+                            # AR-1-5: bind the verdict to the requested
+                            # scenario/mode — a pass for anything else does
+                            # not mark this build verified.
+                            if (
+                                v.get("verdict") == "pass"
+                                and v.get("scenario_id") == scenario_id
+                                and v.get("mode", "visible") == "visible"
+                            ):
                                 out["verified"] = True
                                 out["trace"].append(_now_trace_entry("verifier", verdict="pass", scenario=scenario_id))
                             else:
-                                out["trace"].append(_now_trace_entry("verifier", verdict="fail", failed_checks=v.get("failed_checks")))
+                                out["trace"].append(
+                                    _now_trace_entry(
+                                        "verifier",
+                                        verdict=v.get("verdict", "fail"),
+                                        failed_checks=v.get("failed_checks"),
+                                        response_scenario=v.get("scenario_id"),
+                                        response_mode=v.get("mode"),
+                                    )
+                                )
                         else:
                             out["trace"].append(_now_trace_entry("verifier", error=f"HTTP {r.status_code}"))
             except Exception as exc:

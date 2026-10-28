@@ -20,8 +20,8 @@ import httpx
 import pytest
 from sqlalchemy import create_engine
 
-from autobridge.control.models import Connector, RepairRun, init_db, session_factory
-from autobridge.engine.releases import create_release, create_release_from_patch
+from autobridge.control.models import Connector, RepairRun, init_db, session_factory, spec_signature
+from autobridge.engine.releases import ReleaseError, create_release, create_release_from_patch
 from autobridge.engine.verification import (
     GateBlockedError,
     check_regression_gate,
@@ -104,38 +104,52 @@ def _mock_verifier(
     regression: str = "pass",
     failed_checks: list[dict[str, Any]] | None = None,
     regression_failures: list[dict[str, Any]] | None = None,
-    scenario_id: str = "rename_guest_id",
+    scenario_id: str | None = None,
+    response_mode: str | None = None,
     http_status: int = 200,
     raise_exc: Exception | None = None,
     capture_payload: dict[str, Any] | None = None,
 ):
-    """Install httpx.Client mock that returns verifier response."""
+    """Install httpx.Client mock that returns verifier response.
+
+    Like the real verifier, the mock echoes the request's scenario_id/mode
+    unless *scenario_id* / *response_mode* explicitly override the response
+    (AR-1-5: overrides simulate a verdict bound to the wrong scenario).
+    """
     fc = failed_checks or []
     if verdict == "fail" and not fc:
         fc = [{"name": "field_missing", "count": 1}]
-    body = {
-        "verdict": verdict,
-        "score": 1.0 if verdict == "pass" else 0.5,
-        "failed_checks": fc,
-        "regression": regression,
-        "scenario_id": scenario_id,
-        "mode": "visible",
-    }
-    if regression_failures is not None:
-        body["regression_failures"] = regression_failures
-    # For regression fail we need to include failed scenario
-    # Use caller-provided regression_failures
 
     def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
         if raise_exc is not None:
             raise raise_exc
-        if capture_payload is not None:
+        req_scenario: str | None = None
+        req_mode: str | None = None
+        if capture_payload is not None or scenario_id is None or response_mode is None:
             try:
                 import json as _json
 
-                capture_payload.update(_json.loads(request.content.decode()))
+                req_body = _json.loads(request.content.decode())
+                req_scenario = req_body.get("scenario_id")
+                req_mode = req_body.get("mode")
+                if capture_payload is not None:
+                    capture_payload.update(req_body)
             except Exception:
-                capture_payload["raw"] = request.content.decode(errors="ignore")[:500]
+                if capture_payload is not None:
+                    capture_payload["raw"] = request.content.decode(errors="ignore")[:500]
+        body = {
+            "verdict": verdict,
+            "score": 1.0 if verdict == "pass" else 0.5,
+            "failed_checks": fc,
+            "regression": regression,
+            "scenario_id": scenario_id if scenario_id is not None else (req_scenario or "baseline"),
+            "mode": response_mode if response_mode is not None else (req_mode or "visible"),
+        }
+        if regression_failures is not None:
+            body["regression_failures"] = regression_failures
+        # For regression fail we need to include failed scenario
+        # Use caller-provided regression_failures
+
         if http_status != 200:
             return httpx.Response(http_status, json={"detail": "verifier error"})
         return httpx.Response(200, json=body)
@@ -606,5 +620,75 @@ def test_verification_module_no_verifier_import() -> None:
 def test_verify_spec_mode_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
     capture: dict[str, Any] = {}
     _mock_verifier(monkeypatch, capture_payload=capture)
-    verify_spec(_minimal_spec(), "baseline", "http://verifier:8000", mode="hidden")
+    out = verify_spec(_minimal_spec(), "baseline", "http://verifier:8000", mode="hidden")
     assert capture.get("mode") == "hidden"
+    # The mock echoes the requested mode, so a hidden request binds cleanly
+    assert out.allowed is True
+    assert out.mode == "hidden"
+
+
+# ---------------------------------------------------------------------------
+# AR-1-5 — verdict bound to the requested scenario/mode; fail closed
+# ---------------------------------------------------------------------------
+
+
+def test_verify_spec_mismatched_scenario_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pass verdict for a different scenario must not count as allowed."""
+    _mock_verifier(monkeypatch, verdict="pass", regression="pass", scenario_id="baseline")
+    with pytest.raises(GateBlockedError, match="scenario mismatch"):
+        verify_spec(_minimal_spec(), "rename_guest_id", "http://verifier:8000")
+
+
+def test_verify_spec_mismatched_mode_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pass verdict in the wrong mode must not count as allowed."""
+    _mock_verifier(monkeypatch, verdict="pass", regression="pass", response_mode="visible")
+    with pytest.raises(GateBlockedError, match="mode mismatch"):
+        verify_spec(_minimal_spec(), "baseline", "http://verifier:8000", mode="hidden")
+
+
+def test_verify_spec_records_spec_signature(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The outcome carries the signature of exactly the spec verified."""
+    _mock_verifier(monkeypatch, verdict="pass", regression="pass")
+    spec = _minimal_spec()
+    out = verify_spec(spec, "baseline", "http://verifier:8000")
+    assert out.allowed is True
+    assert out.spec_signature == spec_signature(spec)
+    assert out.scenario_id == "baseline"
+    assert out.mode == "visible"
+
+
+def test_create_release_blocks_on_scenario_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Gate-before-persist refuses a response bound to the wrong scenario."""
+    factory = _session(tmp_path)
+    with factory() as s:
+        conn = _make_connector(s)
+        _mock_verifier(monkeypatch, verdict="pass", regression="pass", scenario_id="baseline")
+        with pytest.raises(GateBlockedError, match="scenario mismatch"):
+            create_release(
+                s,
+                connector_id=conn.id,
+                spec=_minimal_spec(),
+                verifier_url="http://verifier:8000",
+                scenario_id="rename_guest_id",
+            )
+        from autobridge.engine.releases import next_version
+
+        assert next_version(s, conn.id) == 1  # nothing persisted
+
+
+def test_maybe_verify_import_failure_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """If the gate module cannot be imported, creation raises instead of skipping."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "autobridge.engine.verification", None)
+    factory = _session(tmp_path)
+    with factory() as s:
+        conn = _make_connector(s)
+        with pytest.raises(ReleaseError, match="gate unavailable"):
+            create_release(
+                s,
+                connector_id=conn.id,
+                spec=_minimal_spec(),
+                verifier_url="http://verifier:8000",
+                scenario_id="baseline",
+            )
