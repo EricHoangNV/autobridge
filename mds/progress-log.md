@@ -2885,3 +2885,10 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). REQ-022 (FIAS PABX
 ## 2026-10-29 00:10 UTC — REQ-022 owner check (daa5edcd) fixed on keyed stack (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). Relay auth (operator + agent token paths) fixed; live fault teardowns wait for edge readyz link_up.
 Keyed local stack: `make e2e` 158 pass / 2 skip / 0 fail (s2 flake gone); demo 8/8 live; smoke ok; `make test` green. Merging to main.
+
+## 2026-10-28 23:03 — REQ-024 sub-step A merged (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Held-out integrity codeable parts (A1–A5) done and on
+main-bound branch: leak-audit script, isolation-check script, `make verify-heldout-reveal`, scorecard `leak_audit`
+field with auto-load, docs "Held-out protocol", 17 new unit tests. Gates: lint + typecheck + full `make test`
+(2801 pytest: 2346/109/346; ui 158) green; W8 e2e test_07 green against live compose stack (up/down for the run).
+REQ-024 stays IN_PROGRESS for sub-step B (ablation arms, opencode driver, preregistration). Next: B, then REQ-025.

@@ -1686,3 +1686,35 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 - Teardown: the 3 live FIAS fault tests now wait for the agent's own `/readyz` `link.link_up` after reset, in addition to the cloud heartbeat — the next file inherits a connected link. (The readyz shape is flat: `body["link"]`, not `body["info"]["link"]`.)
 - Gate met on a keyed local stack (three tokens + `make edge-sign`, `.env` git-ignored): `make e2e` **158 pass / 2 skip / 0 fail** — the former s2 "flake" is gone with proper teardown waits + auth; `make demo` 8/8 live; smoke ok; `make test` green (2329+109+346 pytest, 158 Vitest). One transient `make test` failure in an un-captured run did not reproduce across 6 subsequent runs (likely port TIME_WAIT right after `local-down`).
 - Note: `.env` with random local tokens lives in the worktree only (git-ignored); owner's host stack is unaffected.
+
+### REQ-024 sub-step A — held-out integrity, checkable (codeable parts A1–A5)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+- `scripts/heldout_leak_audit.py` (new, stdlib-only, +x): reads each private file's nonce/seed in memory and its
+  sha256, scans `ralph-logs/*.jsonl`, every git blob (`git cat-file --batch`, persistent process), every file under
+  `.worktrees/` (+ `--worktrees-dir`), and the project tree for nonces, seed-file sha256s and raw file bytes. One
+  line per source with counts, exit 1 on any hit, exit 2 on usage errors (missing HELDOUT_DIR, manifest mismatch,
+  HELDOUT_DIR inside the repo). Bare seed ints deliberately not searched (false positives); raw bytes cover them.
+  The committed manifest is the one legitimate place for hashes, so the manifest file and identical history blobs are
+  excluded and reported as excluded; post-reveal `revealed/` hits are counted as excluded, not failures. `--write`
+  emits counts-only JSON (no secrets) for the scorecard. Verified manually: leak in file+history → exit 1 with both
+  flagged; removal commit → tree clean but history still fails (intended); HELDOUT_DIR-inside-repo → exit 2.
+- `scripts/heldout_isolation_check.py` (new, +x): prints the checkable facts — git top-level (sandbox scoping via
+  `sbx ls` on host), HELDOUT_DIR set/outside-repo (exit 2 if inside), harness use sites proving HELDOUT_DIR is read
+  only for heldout runs, freeze commit `ff372083` + local date, frozen manifest sha256, and the `gh` command for the
+  GitHub push time.
+- `make verify-heldout-reveal` (Makefile + .PHONY): refuses (exit 2) until the owner publishes
+  `verifier/hidden_cases/heldout/revealed/`; then checks it via `check_heldout_sha` and reruns bench-heldout from it.
+- Scorecard plumbing: `score_bench(..., leak_audit=None)`, schema accepts optional dict, `report.py` renders
+  `Leak audit: clean — …` or `not run`; `score_and_report` auto-loads `<output-dir>/_leak_audit.json` (or
+  `--leak-audit <path>`); `main` gains the `--leak-audit` flag.
+- `docs/benchmark.md` new "Held-out protocol (REQ-024 A)": isolation evidence, leak-audit runbook, public-timestamp
+  owner step (`heldout-freeze` signed tag + GitHub release + optional OpenTimestamps), reveal procedure, honest scope
+  (seeds sealed, scenario defs public, LegacyStay generalization separate).
+- Tests: `tests/unit/test_autobridge_bench_leak_audit.py` (17 tests: clean/tree/transcript/history/manifest-self-hit/
+  revealed-exclusion/inside-repo/missing-env/write-JSON-no-secrets, isolation ok/refuse, scorecard clean/not-run/
+  schema-reject, leak-json loader, reveal guard, Makefile target presence).
+- Gates: `make lint` (incl. import-linter), `make typecheck`, `make test` (autobridge 2346/90.49%, verifier
+  109/93.78%, simulators 346, ui 158) all green; W8 e2e `test_07_benchmark_matched_budget.py` green against a live
+  compose stack (brought up and torn down for the run). No trust-boundary change (filesystem reads only).
+- Remaining for REQ-024: sub-step B (opencode baseline driver default, ablation arms c/d/e, metrics + intervals,
+  learning curve, preregistration, dev-split rehearsal) and REQ-023 catalogue sync as arms land.
