@@ -1,11 +1,19 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down test smoke e2e e2e-ui bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps
+.PHONY: up down test smoke e2e e2e-ui bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles
 
 # ---- Docker ----
 up:
 	@if [ ! -f compose.yaml ]; then echo "compose.yaml not yet created (W1.2) — skipping"; else docker compose up -d --build --wait && ./scripts/wait_readyz.sh; fi
+
+# AR-2-5: regenerate the hash-pinned requirements locks the images install
+# with `pip install --require-hashes`. Run after changing any pyproject.toml;
+# CI fails if the committed locks drift from `uv export` output.
+lockfiles:
+	uv export --frozen --format requirements.txt --package autobridge --no-emit-project -o requirements.engine.lock
+	uv export --frozen --format requirements.txt --package verifier --no-emit-project -o verifier/requirements.lock
+	uv export --frozen --format requirements.txt --package simulators --no-emit-project -o simulators/requirements.lock
 
 down:
 	@if [ -f compose.yaml ]; then docker compose down -v; else echo "no compose.yaml — nothing to do"; fi

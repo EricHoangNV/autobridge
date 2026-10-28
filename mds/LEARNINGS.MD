@@ -175,3 +175,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Keep the unkeyed function for content-addressing, key only the authorization path — but here they were the same function (`spec_signature` feeds both drift fingerprints and the edge gate). The resolution: one function with two modes (HMAC when `EDGE_RELEASE_SECRET` is set, legacy sha256 otherwise), with the integrity-only consumers (fingerprint, registry) explicitly documented as non-authorization uses.
 - Fail closed on key mismatch, not on key absence: with the secret set, a legacy hash is rejected (that is the whole test — "a self-signed foreign spec is rejected"); with it unset, legacy mode keeps dev/e2e green. Absence-as-legacy is acceptable only because the compose default is loopback-only and `.env.example` says to set a key before exposure.
 - **Rule:** When a hash gates execution, HMAC it with an env secret shared by signer and verifier, compare with `compare_digest`, and add the test that matters: the attacker's self-computed unkeyed hash must be rejected while the keyed one passes.
+---
+
+## 18. A lockfile per image beats one lockfile for the repo when images must not share code
+
+**Context:** AR-2-5 (2026-10-28) — the verifier and simulator images installed floating `pip install "fastapi>=…"` ranges, and all base images floated on tags; two builds of one commit could resolve different verifier dependencies.
+
+- One `uv.lock` can source many `pip --require-hashes` requirement files: `uv export --package <member>` emits each image's exact closure from the single resolved set, so the engine (54 pkgs), verifier and simulator (23 pkgs each) stay mutually consistent — asserted by a test that shared pins are identical across all three locks.
+- Export with `--no-emit-project` and install the project `--no-deps` from local source: otherwise pip would try to fetch the workspace project itself from PyPI (version 0.1.0, which does not exist there). Locked deps + local code keeps images slim, pip-only, and free of cross-package installs (trust boundary §2: no engine code in verifier/simulator images).
+- Marker-gated entries (win32-only `colorama`, emscripten-only `httpx2-jsfetch`) are correctly absent from a linux `pip freeze` — a freeze-vs-lock comparison must normalize names (`_`/`-`) and expect marker-skipped packages, or it reports phantom mismatches.
+- **Rule:** When sibling images share one lockfile source, export one hash-pinned requirements file per image, test that shared pins agree across them, and validate reproducibility by building twice and diffing `pip freeze` — never by eyeballing version ranges.

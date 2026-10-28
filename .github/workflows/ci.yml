@@ -55,6 +55,16 @@ jobs:
       - name: Unit tests (90% coverage gate per package + Vitest)
         run: make test
 
+      # ---- AR-2-5: images build from hash-pinned lockfiles, bases pinned ----
+      # Fail if the committed requirements locks drift from uv.lock, then
+      # rebuild the verifier image twice and diff `pip freeze`: the acceptance
+      # root must resolve byte-identical dependencies on every build.
+      - name: Lockfiles in sync + verifier image reproducible
+        run: |
+          make lockfiles
+          git diff --exit-code -- requirements.engine.lock verifier/requirements.lock simulators/requirements.lock
+          ./scripts/check-image-repro.sh
+
       # ---- smoke: stack up + healthz/readyz + network checks ----
       - name: Bring up the Compose stack
         run: make up

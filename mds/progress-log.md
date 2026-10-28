@@ -2257,3 +2257,28 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 - Remaining Cycle 2 FAIL item: AR-2-5 (floating Docker deps — pin images to lockfile digests)
 - No compose stack in sandbox: live HMAC round-trip (set secret, sign via build, execute on edge-worker) left to owner/CI
 - Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+## AR-2-5 — Pin images to digest bases + hash-locked requirements
+**Date:** 2026-10-28
+**Ref:** Code Review Cycle 2 (FEEDBACKS.MD AR-2-5, Low)
+
+**What was done:**
+- Digest-pinned all base images (`python:3.12-slim@sha256:6b25cbe…27a07`, `node:20-alpine@sha256:fb4cd12…293`, resolved via live registry pull) in Dockerfile.engine, verifier/Dockerfile, simulators/Dockerfile, ui/Dockerfile
+- Generated requirements.engine.lock + verifier/requirements.lock + simulators/requirements.lock via `uv export --frozen` (single uv.lock source); Dockerfiles install with `pip install --require-hashes`; engine project installs `--no-deps` from local source; ui uses `npm ci`
+- Added `make lockfiles`, CI lockfile-drift gate + twice-build freeze-diff step, scripts/check-image-repro.sh, 5 unit tests, docs/architecture.md paragraph
+- Validated with live docker builds: verifier freeze identical across two builds; sim/engine freeze == lock (minus platform-marker-skipped colorama/httpx2-jsfetch); all engine APP_MODULEs import; ui image builds; `docker compose build` green; full make test green
+
+**Key decisions:**
+- `uv export` over `uv sync --frozen` in images: keeps slim pip-only images (no uv binary, no workspace install), verifier/simulator images stay free of engine code per trust boundary §2
+- ui `npm ci` with no fallback: CI's own `make ui-deps` already runs plain `npm ci`, and the image build proved it resolves — the `--legacy-peer-deps` fallback only masked lockfile drift
+- Left FEEDBACKS.MD verdict for the reviewer to re-verify
+
+**Files changed:**
+- `Dockerfile.engine`, `verifier/Dockerfile`, `simulators/Dockerfile`, `ui/Dockerfile` — digest pins + locked installs
+- `requirements.engine.lock`, `verifier/requirements.lock`, `simulators/requirements.lock` — new committed locks
+- `Makefile` (`lockfiles` target), `.github/workflows/ci.yml` (drift gate + repro step), `scripts/check-image-repro.sh` (new)
+- `tests/unit/test_autobridge_image_reproducibility.py` (new, 5 tests), `docs/architecture.md` (images paragraph)
+
+**Notes for next iteration:**
+- Remaining Cycle 2 FAIL items: none code-open (AR-1-1, AR-1-2, AR-1-3, AR-1-4 residual, AR-1-5, AR-2-1, AR-2-2, AR-2-3, AR-2-4, AR-2-6 fixed earlier; all pending reviewer re-verification)
+- Base-image digests float upstream over time by design; to refresh, re-pull and update the four FROM lines, then re-run `make lockfiles` only if pyproject/uv.lock changed
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation).

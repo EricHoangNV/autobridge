@@ -1,6 +1,13 @@
 # Engine-zone image: control, worker, runtime-sandbox, bench (plan §2.1).
 # Build context is the repo root; serves any engine app via $APP_MODULE.
-FROM python:3.12-slim
+#
+# AR-2-5 reproducible builds: the base image is digest-pinned, and Python
+# dependencies come from requirements.engine.lock (regenerate with
+# `make lockfiles` after changing pyproject.toml/uv.lock) installed with
+# --require-hashes. The project itself installs --no-deps from the
+# version-controlled source — local code is deterministic by definition, so
+# no PyPI lookup can float the engine.
+FROM python:3.12-slim@sha256:6b25cbe6577518889d553cdd5a5da97d259348d8f6e45b527dd731caaba27a07
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -8,12 +15,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv
 
-# Install the engine's declared runtime dependencies (P1.W9.1: the image
+# Install the engine's locked runtime dependencies (P1.W9.1: the image
 # previously installed only fastapi/uvicorn, so control/worker crashed on
-# `import sqlalchemy`). Installing the project keeps the image in sync with
-# pyproject.toml instead of duplicating the pin list here.
+# `import sqlalchemy`). The lockfile keeps the image in sync with uv.lock
+# instead of duplicating the pin list here.
+COPY requirements.engine.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.engine.lock
+
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 COPY src/ ./src/
 

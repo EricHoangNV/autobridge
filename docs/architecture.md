@@ -44,9 +44,20 @@ Design principles (plan §1):
 | `bench` | `autobridge.bench` | `autobridge.bench.app:app` | engine | 8108 | Matched-budget harness (AutoBridge vs baseline) |
 
 All images are built from `Dockerfile.engine` (engine zone, `APP_MODULE`
-switches the app), `verifier/Dockerfile` (context `verifier/` only), and
-`simulators/Dockerfile` (context `simulators/` only). Hidden fixtures are
-mounted read-only into the verifier container and nowhere else.
+switches the app), `verifier/Dockerfile` (context repo root, but only
+`verifier/` + `simulators/` copied in), `simulators/Dockerfile` (context
+`simulators/` only), and `ui/Dockerfile` (context `ui/` only). Hidden
+fixtures are mounted read-only into the verifier container and nowhere else.
+
+Reproducible builds (AR-2-5): every base image is digest-pinned
+(`python:3.12-slim@sha256:…`, `node:20-alpine@sha256:…`), Python images
+install from hash-pinned requirements locks (`requirements.engine.lock`,
+`verifier/requirements.lock`, `simulators/requirements.lock` — regenerate
+with `make lockfiles` after changing any `pyproject.toml`) via
+`pip install --require-hashes`, and the UI installs with `npm ci` from the
+committed `package-lock.json`. CI fails if the locks drift from `uv.lock`
+and rebuilds the verifier image twice, diffing `pip freeze`
+(`scripts/check-image-repro.sh`).
 
 Every published port binds loopback only
 (`"${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8101:8000"`, REQ-011), so the stack is
