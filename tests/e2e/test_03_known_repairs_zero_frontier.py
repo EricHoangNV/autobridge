@@ -722,21 +722,19 @@ _LIVE_SEED = 42  # generate_dataset(42): 30 reservations, 77 folios (page size 5
 
 
 def _control_headers() -> dict[str, str]:
-    """JSON headers for control API calls, forwarding REQ-012's token when set."""
-    headers = {"Content-Type": "application/json"}
-    token = os.environ.get("AUTOBRIDGE_CONTROL_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return headers
+    """JSON headers for control API calls (REQ-015: shared helper in conftest)."""
+    from tests.e2e.conftest import control_headers  # noqa: PLC0415
+
+    return control_headers()
 
 
 def _control_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     """POST to the control API; fail/skip when the stack is unreachable (REQ-010)."""
-    from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+    from tests.e2e.conftest import control_headers, stack_unreachable  # noqa: PLC0415
 
     try:
         with httpx.Client(timeout=10.0) as client:
-            resp = client.post(f"{CONTROL_API_URL}{path}", json=payload, headers=_control_headers())
+            resp = client.post(f"{CONTROL_API_URL}{path}", json=payload, headers=control_headers())
     except Exception as exc:
         stack_unreachable(f"control API unreachable live: {exc}")
     if resp.status_code != 200:
@@ -746,11 +744,11 @@ def _control_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 def _control_get(path: str) -> dict[str, Any]:
     """GET from the control API; fail/skip when the stack is unreachable (REQ-010)."""
-    from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+    from tests.e2e.conftest import control_headers, stack_unreachable  # noqa: PLC0415
 
     try:
         with httpx.Client(timeout=10.0) as client:
-            resp = client.get(f"{CONTROL_API_URL}{path}", headers=_control_headers())
+            resp = client.get(f"{CONTROL_API_URL}{path}", headers=control_headers())
     except Exception as exc:
         stack_unreachable(f"control API unreachable live: {exc}")
     if resp.status_code != 200:

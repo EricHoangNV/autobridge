@@ -307,6 +307,15 @@ escalation; the trapped patch is rejected by the stack verifier).
 `SIM_ADMIN_TOKEN` (AR-1-1) — without authorization the fault never
 lands (403).
 
+Token matrix (REQ-015): `make e2e` passes both with no tokens and with all
+tokens set (`AUTOBRIDGE_CONTROL_TOKEN`, `SIM_ADMIN_TOKEN`,
+`EDGE_RELEASE_SECRET`). Live control-API calls share one helper —
+`control_headers()` in `tests/e2e/conftest.py` — that forwards
+`AUTOBRIDGE_CONTROL_TOKEN` as `Authorization: Bearer` when set; the
+`ab` CLI does the same via `auth_headers()` in `src/autobridge/cli.py`.
+In-process (fake) tests pin the token themselves with `monkeypatch`
+(`delenv` by default) so they pass whatever the shell has.
+
 ## 8. Verification ladder (plan §8)
 
 ```

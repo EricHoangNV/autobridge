@@ -149,16 +149,30 @@ def _http_get_json(url: str, timeout: float = 3.0) -> dict | None:
         return None
 
 
+def control_headers() -> dict[str, str]:
+    """Headers for control-API calls (REQ-015).
+
+    Forwards ``AUTOBRIDGE_CONTROL_TOKEN`` as ``Authorization: Bearer`` when
+    set (non-empty); otherwise returns JSON headers only. Every live
+    control-API call in ``tests/e2e`` must use this helper so ``make e2e``
+    passes both with no tokens and with all tokens set.
+    """
+    headers = {"Content-Type": "application/json"}
+    # REQ-012: send the control write token when set (server-side env only).
+    token = os.environ.get("AUTOBRIDGE_CONTROL_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def _http_post_json(url: str, payload: dict, timeout: float = 5.0, admin: bool = False) -> bool:
     try:
         data = json.dumps(payload).encode()
-        headers = {"Content-Type": "application/json"}
-        # REQ-012: send the control write token when set (server-side env only).
-        token = os.environ.get("AUTOBRIDGE_CONTROL_TOKEN", "")
-        if token and not admin:
-            headers["Authorization"] = f"Bearer {token}"
         if admin:
+            headers = {"Content-Type": "application/json"}
             headers.update(admin_headers())
+        else:
+            headers = control_headers()
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300

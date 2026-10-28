@@ -34,6 +34,8 @@ CONTROL_URL = "http://localhost:8101"
 @contextmanager
 def _fake_cli_client(tmp_path: pathlib.Path, monkeypatch: Any) -> Any:  # type: ignore[no-untyped-def]
     """Yield a TestClient-as-CLI-client: ``ab`` talks HTTP, no network."""
+    # REQ-015: pin the token so fakes pass whatever the shell has.
+    monkeypatch.delenv("AUTOBRIDGE_CONTROL_TOKEN", raising=False)
     from autobridge.control.app import app
     from autobridge.control.deps import get_db
     from autobridge.control.models import Base, session_factory

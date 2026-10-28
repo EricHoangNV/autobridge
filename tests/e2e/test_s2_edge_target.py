@@ -301,6 +301,8 @@ def test_edge_execute_signed_release_live(e2e_stack: str) -> None:
     assert bad.status_code == 403
     # Control plane accepts edge connectors (kind=edge shipped in P2.S2.1).
     os.environ.pop("EDGEPOS_API_KEY", None)
+    from tests.e2e.conftest import control_headers  # noqa: PLC0415
+
     created = httpx.post(
         "http://localhost:8101/connectors",
         json={
@@ -310,6 +312,7 @@ def test_edge_execute_signed_release_live(e2e_stack: str) -> None:
             "target_entities": ["Reservation"],
             "runtime_target": {"kind": "edge", "network_allowlist": ["sim-edgepos"]},
         },
+        headers=control_headers(),
         timeout=15.0,
     )
     assert created.status_code == 201, created.text

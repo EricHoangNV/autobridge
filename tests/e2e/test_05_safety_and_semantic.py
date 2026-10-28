@@ -1498,26 +1498,22 @@ _LIVE_SEED = 42
 
 
 def _control_headers() -> dict[str, Any]:
-    """JSON headers for control API calls, forwarding REQ-012's token when set."""
-    import os as _os
+    """JSON headers for control API calls (REQ-015: shared helper in conftest)."""
+    from tests.e2e.conftest import control_headers  # noqa: PLC0415
 
-    headers: dict[str, Any] = {"Content-Type": "application/json"}
-    token = _os.environ.get("AUTOBRIDGE_CONTROL_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return headers
+    return dict(control_headers())
 
 
 def _control_live(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Call the control API; fail/skip when the stack is unreachable (REQ-010)."""
-    from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+    from tests.e2e.conftest import control_headers, stack_unreachable  # noqa: PLC0415
 
     try:
         with httpx.Client(timeout=10.0) as client:
             if method == "POST":
-                resp = client.post(f"{_CONTROL_API_URL}{path}", json=payload or {}, headers=_control_headers())
+                resp = client.post(f"{_CONTROL_API_URL}{path}", json=payload or {}, headers=control_headers())
             else:
-                resp = client.get(f"{_CONTROL_API_URL}{path}", headers=_control_headers())
+                resp = client.get(f"{_CONTROL_API_URL}{path}", headers=control_headers())
     except Exception as exc:
         stack_unreachable(f"control API unreachable live: {exc}")
     if resp.status_code != 200:

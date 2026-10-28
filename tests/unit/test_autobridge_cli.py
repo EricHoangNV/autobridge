@@ -427,3 +427,19 @@ def test_sync_wait_poll_failure_is_exit_1(monkeypatch: Any, capsys: Any) -> None
     _client_for(_handler, monkeypatch)
     assert main(["sync", "c", "--wait", "--wait-timeout", "5"]) == 1
     assert "gone" in capsys.readouterr().err
+
+
+def test_cli_forwards_control_token_when_set(monkeypatch: Any) -> None:
+    """REQ-015: ``ab`` sends ``Authorization: Bearer`` when the token env is set."""
+    from autobridge.cli import auth_headers
+
+    monkeypatch.delenv("AUTOBRIDGE_CONTROL_TOKEN", raising=False)
+    assert auth_headers() == {}
+    monkeypatch.setenv("AUTOBRIDGE_CONTROL_TOKEN", "cli-token-123")
+    assert auth_headers() == {"Authorization": "Bearer cli-token-123"}
+    # The real factory wires the header into the client (no value logged).
+    client = cli_mod._make_client("http://localhost:1", 0.1)
+    try:
+        assert client.headers.get("Authorization") == "Bearer cli-token-123"
+    finally:
+        client.close()

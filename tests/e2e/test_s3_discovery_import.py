@@ -95,7 +95,9 @@ def test_s3_fixture_validates_against_reserved_schema() -> None:
     }
 
 
-def test_s3_import_and_list_fake(tmp_path: pathlib.Path) -> None:
+def test_s3_import_and_list_fake(tmp_path: pathlib.Path, monkeypatch: Any) -> None:  # type: ignore[no-untyped-def]
+    # REQ-015: pin the token so this passes whatever the shell has.
+    monkeypatch.delenv("AUTOBRIDGE_CONTROL_TOKEN", raising=False)
     with _fake_client(tmp_path) as client:
         r = client.post("/discovery/import", json=_fixture())
         assert r.status_code == 201, r.text
@@ -113,7 +115,9 @@ def test_s3_import_and_list_fake(tmp_path: pathlib.Path) -> None:
 
 
 
-def test_s3_lifecycle_only_via_explicit_endpoints_fake(tmp_path: pathlib.Path) -> None:
+def test_s3_lifecycle_only_via_explicit_endpoints_fake(tmp_path: pathlib.Path, monkeypatch: Any) -> None:  # type: ignore[no-untyped-def]
+    # REQ-015: pin the token so this passes whatever the shell has.
+    monkeypatch.delenv("AUTOBRIDGE_CONTROL_TOKEN", raising=False)
     with _fake_client(tmp_path) as client:
         rec = {
             "discovery_id": "disc-s3-e2e-life-001",
@@ -155,20 +159,24 @@ def _live_id(prefix: str) -> str:
 def test_s3_import_and_list_live(e2e_stack: str) -> None:
     """Live control plane imports the static fixture and lists all 5 states."""
     assert e2e_stack
+    from tests.e2e.conftest import control_headers  # noqa: PLC0415
+
     payload = _fixture()
     # Unique ids per run: the live DB persists across tests in one session.
     suffix = uuid.uuid4().hex[:8]
     for rec in payload["records"]:
         rec["discovery_id"] = f"{rec['discovery_id']}-{suffix}"
     try:
-        r = httpx.post(f"{CONTROL_URL}/discovery/import", json=payload, timeout=15.0)
+        r = httpx.post(
+            f"{CONTROL_URL}/discovery/import", json=payload, headers=control_headers(), timeout=15.0
+        )
     except httpx.ConnectError as exc:
         from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
 
         stack_unreachable(f"control plane unreachable live: {exc}")
     assert r.status_code == 201, r.text
     assert r.json()["total"] == 5
-    listed = httpx.get(f"{CONTROL_URL}/discovery", timeout=15.0)
+    listed = httpx.get(f"{CONTROL_URL}/discovery", headers=control_headers(), timeout=15.0)
     assert listed.status_code == 200, listed.text
     by_id = {row["discovery_id"]: row["status"] for row in listed.json()}
     for rec in payload["records"]:
@@ -178,6 +186,8 @@ def test_s3_import_and_list_live(e2e_stack: str) -> None:
 def test_s3_lifecycle_live(e2e_stack: str) -> None:
     """Live: full lifecycle walks only through explicit endpoints."""
     assert e2e_stack
+    from tests.e2e.conftest import control_headers  # noqa: PLC0415
+
     did = _live_id("disc-s3-live-life")
     rec = {
         "discovery_id": did,
@@ -189,7 +199,10 @@ def test_s3_lifecycle_live(e2e_stack: str) -> None:
     }
     try:
         created = httpx.post(
-            f"{CONTROL_URL}/discovery/import", json={"records": [rec]}, timeout=15.0
+            f"{CONTROL_URL}/discovery/import",
+            json={"records": [rec]},
+            headers=control_headers(),
+            timeout=15.0,
         )
     except httpx.ConnectError as exc:
         from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
@@ -197,7 +210,7 @@ def test_s3_lifecycle_live(e2e_stack: str) -> None:
         stack_unreachable(f"control plane unreachable live: {exc}")
     assert created.status_code == 201, created.text
     # Illegal skip is rejected live too.
-    bad = httpx.post(f"{CONTROL_URL}/discovery/{did}/connect", timeout=15.0)
+    bad = httpx.post(f"{CONTROL_URL}/discovery/{did}/connect", headers=control_headers(), timeout=15.0)
     assert bad.status_code == 422, bad.text
     for action, nxt in [
         ("request-confirmation", "needs_confirmation"),
@@ -206,6 +219,6 @@ def test_s3_lifecycle_live(e2e_stack: str) -> None:
         ("mark-healing", "healing"),
         ("resolve", "connected"),
     ]:
-        r = httpx.post(f"{CONTROL_URL}/discovery/{did}/{action}", timeout=15.0)
+        r = httpx.post(f"{CONTROL_URL}/discovery/{did}/{action}", headers=control_headers(), timeout=15.0)
         assert r.status_code == 200, (action, r.text)
         assert r.json()["status"] == nxt
