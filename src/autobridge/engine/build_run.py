@@ -256,16 +256,12 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
     inputs: dict[str, Any] = dict(run.inputs or {})
     docs_text = inputs.get("docs_text") or inputs.get("docs") or inputs.get("docs_content") or ""
     if not docs_text and inputs.get("docs_path"):
-        # Allow docs_path as file read (only if file exists and is not a reference spec)
+        # AR-2-2: the server never reads local files. docs_path is an opaque
+        # identifier (callers read files client-side and send docs_text).
         p = inputs["docs_path"]
         if "generated/connectors" in p:
             raise ValueError("build must not read reference specs")
-        try:
-            from pathlib import Path as _Path
-
-            docs_text = _Path(p).read_text(encoding="utf-8")
-        except Exception as exc:
-            raise ValueError(f"cannot read docs_path {p!r}: {exc}") from exc
+        docs_text = f"docs from {p}"
 
     if not docs_text:
         raise ValueError("build inputs missing docs_text (or docs/docs_content)")

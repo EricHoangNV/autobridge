@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
+import concurrent.futures
+import ipaddress
 import os
+import socket
+import urllib.parse
 from typing import Any
 
 import httpx
@@ -16,6 +20,97 @@ from autobridge.control.models import Connector, ConnectorRelease
 from autobridge.control.schemas import AUTH_401, BuildRequest, BuildResponse, SyncRequest, SyncResponse
 
 router = APIRouter(tags=["jobs"])
+
+
+# AR-2-2: docs_url allowlist. The build route fetches a caller-supplied URL
+# from the control process, which sits on verifier-net + admin-net — without
+# guards it becomes a read proxy for internal services. Only public http(s)
+# targets are fetched; internal hostnames, non-public IPs (literal or
+# resolved) and non-http(s) schemes are rejected with 422.
+_INTERNAL_DOCS_HOSTS = frozenset(
+    {
+        "localhost",
+        "verifier",
+        "control",
+        "worker",
+        "runtime-sandbox",
+        "bench",
+        "host.docker.internal",
+        "host.containers.internal",
+    }
+)
+_INTERNAL_DOCS_PREFIXES = ("sim-",)
+_INTERNAL_DOCS_SUFFIXES = (".local", ".internal", ".localhost", ".docker")
+
+
+def _docs_url_host_blocked(host: str) -> str | None:
+    """Return a reason when a docs_url host is internal-only, else None."""
+    h = host.lower().rstrip(".")
+    if h in _INTERNAL_DOCS_HOSTS:
+        return f"internal host {host!r}"
+    if h.startswith(_INTERNAL_DOCS_PREFIXES):
+        return f"internal host {host!r}"
+    if h.endswith(_INTERNAL_DOCS_SUFFIXES):
+        return f"internal host {host!r}"
+    try:
+        if not ipaddress.ip_address(h).is_global:
+            return f"non-public IP {host!r}"
+    except ValueError:
+        pass
+    return None
+
+
+def _docs_url_resolves_internal(host: str, port: int | None) -> bool:
+    """Best-effort DNS check: True when the host resolves to a non-public IP."""
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(socket.getaddrinfo, host, port or 80, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            infos = fut.result(timeout=2)
+    except Exception:
+        return False  # fail open: denylist + literal-IP checks above still apply
+    for info in infos:
+        try:
+            if not ipaddress.ip_address(info[4][0]).is_global:
+                return True
+        except ValueError:
+            return True
+    return False
+
+
+def _redact_url(url: str) -> str:
+    """Strip userinfo from a URL for safe inclusion in error details (§6)."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if parts.username or parts.password:
+            netloc = parts.hostname or ""
+            if parts.port:
+                netloc += f":{parts.port}"
+            return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    except Exception:
+        pass
+    return url
+
+
+def validate_docs_url(url: str) -> None:
+    """Reject docs_url values the server must not fetch; raises HTTPException(422)."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"docs_url is not a valid URL: {exc}") from exc
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise HTTPException(status_code=422, detail=f"docs_url scheme must be http or https, got {parsed.scheme!r}")
+    host = parsed.hostname
+    if not host:
+        raise HTTPException(status_code=422, detail="docs_url must include a host")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"docs_url has an invalid port: {exc}") from exc
+    reason = _docs_url_host_blocked(host)
+    if reason is not None:
+        raise HTTPException(status_code=422, detail=f"docs_url target is not allowed: {reason}")
+    if _docs_url_resolves_internal(host, port):
+        raise HTTPException(status_code=422, detail=f"docs_url target is not allowed: {host!r} resolves to a non-public IP")
 
 
 def _get_runner(db: Session | None = None) -> JobRunner:
@@ -83,29 +178,25 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
     docs_text: str | None = body.docs_text
     # If docs_url given, fetch inline (best effort, but not required for contract)
     if not docs_text and body.docs_url:
+        validate_docs_url(body.docs_url)
         try:
             with httpx.Client(timeout=5) as client:
                 r = client.get(body.docs_url)
                 r.raise_for_status()
                 docs_text = r.text
         except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"cannot fetch docs_url: {exc}") from exc
+            safe_url = _redact_url(body.docs_url)
+            # Scrub userinfo if the library error echoes the request URL.
+            safe_err = str(exc).replace(body.docs_url, safe_url)
+            raise HTTPException(status_code=422, detail=f"cannot fetch docs_url {safe_url}: {safe_err}") from exc
     if not docs_text and body.docs_path:
-        # Block reference spec reads
+        # AR-2-2: the server never reads local files. docs_path is an opaque
+        # identifier (callers read files client-side and send docs_text);
+        # only the reference-spec guard below still inspects the value.
         if "generated/connectors" in body.docs_path:
             raise HTTPException(status_code=422, detail="build must not read reference specs")
-        try:
-            # Try local file (may not exist in container)
-            from pathlib import Path as _Path
-
-            p = _Path(body.docs_path)
-            if p.is_file():
-                docs_text = p.read_text(encoding="utf-8")
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"cannot read docs_path: {exc}") from exc
-        if not docs_text:
-            # Allow docs_path as identifier, synthesize placeholder docs
-            docs_text = f"docs from {body.docs_path}"
+        # Synthesize placeholder docs from the identifier.
+        docs_text = f"docs from {body.docs_path}"
     if not docs_text:
         raise HTTPException(status_code=422, detail="build requires docs_text, docs_url, or docs_path")
 

@@ -2099,3 +2099,30 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Notes for next iteration:**
 - Remaining Cycle 2 FAIL items: AR-1-4 (partly: REQ-012 done), AR-1-5, AR-2-2, AR-2-3, AR-2-4, AR-2-5, AR-2-6. Suggested next: AR-2-2 (build-route SSRF/file-read, Medium) or AR-1-5 (verdict/scenario binding, Low)
 - Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+## AR-2-2 — Build route SSRF + local-file read closed (Code Review Cycle 2, sbx1 2026-10-28)
+**Date:** 2026-10-28
+**Ref:** FEEDBACKS.MD Code Review Cycle 2, AR-2-2 (Medium)
+
+**What was done:**
+- `src/autobridge/control/routes/builds.py`: new `validate_docs_url()` — http/https scheme only; denylist of internal hostnames (`localhost`, `verifier`, `control`, `worker`, `runtime-sandbox`, `bench`, `sim-*`, `*.local/*.internal/*.localhost/*.docker`, `host.docker.internal`); `ipaddress` non-public check on literal IPs; best-effort DNS resolution check (2 s timeout, fail-open) against resolved non-public IPs. All rejections 422.
+- Same file: removed server-side `docs_path` file read; `docs_path` is now an opaque identifier (placeholder `docs from <path>`), reference-spec guard kept. Fetch errors redact userinfo (`_redact_url`) from both the URL and the echoed exception text (§6).
+- `src/autobridge/engine/build_run.py`: removed the engine-side `docs_path` file read (defense in depth for worker path); identifier placeholder + reference-spec guard kept.
+- New `tests/unit/test_autobridge_build_docs_guard.py`: 18 tests (internal-host/literal-IP/scheme parametrization, no-fetch assertion, marker-file non-read proof at route and engine level, userinfo redaction, public-host fetch still works).
+- Live-verified on compose stack: `docs_url=http://verifier:8000/healthz`, `sim-harbor`, `file:///etc/passwd` all 422; `docs_path=/etc/hostname` 200 via placeholder; `scripts/smoke.sh` OK; stack torn down after.
+
+**Key decisions:**
+- Chose removal over confinement (review offered either): no allowlisted docs dir to maintain, no env to configure, and the CLI already reads `--docs-file` client-side — server file reads had zero legitimate callers. `docs_path` keeps its identifier fallback so CLI `inline-ci-docs` and existing tests keep working.
+- DNS check is fail-open on resolution failure/timeout (sandbox has no DNS guarantees); denylist + literal-IP checks are the deterministic layer unit tests assert.
+- Left `verifier_url` (client-supplied) alone: that is AR-1-5 territory, out of scope.
+- Did not touch `schemas.py` (same accepted values) so `make openapi-check` passes with zero generated-file churn; no docs page references these fields.
+- Did not run `ruff format` on touched src files: repo is not format-clean and `make lint` is check-only; diff kept minimal.
+
+**Files changed:**
+- `src/autobridge/control/routes/builds.py` — `validate_docs_url`, `_redact_url`, identifier-only `docs_path`
+- `src/autobridge/engine/build_run.py` — identifier-only `docs_path`
+- `tests/unit/test_autobridge_build_docs_guard.py` — new, 18 tests
+
+**Notes for next iteration:**
+- None — self-contained. Remaining Cycle 2 items: AR-1-4 (residual: bind-override exposure), AR-1-5, AR-2-3, AR-2-4, AR-2-5, AR-2-6. FEEDBACKS.MD verdict left for the reviewer to re-verify (precedent from AR-2-1/AR-1-1/AR-1-2).
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation).

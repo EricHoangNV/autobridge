@@ -112,3 +112,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Describing the semantics on the schema field (`RepairDecisionRequest.to_release_id`) and regenerating OpenAPI/TS client keeps the contract visible to API consumers and the UI.
 
 **Rule:** When a request id selects a security-sensitive target, ignore-and-resolve beats validate-and-trust: resolve the only legal target from server state, treat the client's value as an assertion (422 on mismatch), bind it again one layer down, and document the semantics in the schema description.
+
+## 12. A route that fetches a caller-supplied URL is a read proxy — constrain the target, never the content
+
+**Context:** AR-2-2 (2026-10-28) — `POST /connectors/{id}/build` fetched any `docs_url` from the control process (verifier-net + admin-net member) and read any local `docs_path`, so an internal URL or a container/dev filesystem path became server-side readable, with the content flowing into bootstrap evidence and (on L2/L3 paths) model prompts.
+
+- Removal beats confinement when the read has no legitimate server-side caller: the CLI already reads `--docs-file` client-side into `docs_text`, so deleting both server reads broke nothing and left no allowlist directory or env var to maintain; `docs_path` survives as an opaque identifier so existing callers/tests keep their 200s.
+- Layer the URL check deterministically-first: scheme + hostname denylist + literal-IP `is_global` are pure and unit-assertable; DNS resolution is a best-effort bonus with a short timeout that fails open (sandbox DNS is unreliable). Tests must only depend on the deterministic layers.
+- `parsed.hostname` already strips userinfo, but the *error path* re-echoes the caller URL — redact userinfo there too (§6), including inside the library exception string (`str(exc).replace(raw, redacted)`), or a `http://user:secret@host` 422 leaks the secret it was meant to protect.
+- Keep the OpenAPI contract untouched when only server behavior changes (same fields, same 422 shapes): no schema edit means `make openapi-check` passes with zero generated-file churn. And never run `ruff format` on a repo that is not format-clean when `make lint` is check-only — it buries the fix in unrelated hunks.
+
+**Rule:** When a request causes the server to fetch or read, treat the server as the attacker's proxy: delete the primitive if no legitimate caller needs it (identifier-only over file-read), else allowlist the *target class* (scheme/host/routability, DNS as fail-open bonus); scrub caller secrets from every error echo; and keep the diff to behavior, never reformatting.
