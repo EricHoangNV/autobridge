@@ -26,8 +26,10 @@ Wanted:
    built browser chunk contains `control:8000`. `make e2e-ui` must cover the connectors list, the inject-fault drawer
    and an approve.
 5. Small: the "healthz" text link in the top bar (`ui/components/TopBar.tsx:96-99`) looks like debug output on the
-   demo screen. Keep the route and its `data-testid` for the e2e journey, but move the link to a footer or style it as a
-   quiet status detail next to LIVE.
+   demo screen. Keep the `/healthz` route and its `data-testid` for the e2e journey, but never show the word
+   "healthz" to the user: label the link "System status" (or make it the LIVE indicator's link with a tooltip such as
+   "All services healthy" / "Control API unreachable"), and move it to a footer or style it as a quiet status detail
+   next to LIVE. Update the e2e journey to find it by `data-testid`, not by its text.
 
 ### REQ-013 — Build → sync is broken since AR-1-2; sync also runs unapproved releases (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 08:25)
