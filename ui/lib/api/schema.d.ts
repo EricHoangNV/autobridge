@@ -1431,10 +1431,9 @@ export interface components {
             seed?: number | null;
             /**
              * Target
-             * @description Simulator target id: sim-atlas, sim-harbor, sim-legacystay, sim-meridian, sim-fias-pabx, atlas, harbor, legacystay, meridian, fias, atlaspms, harborpms, meridianpms, fiaspms
-             * @enum {string}
+             * @description Simulator target id (see config/demo_targets.yaml): sim-atlas, sim-harbor, sim-legacystay, sim-meridian, sim-fias-pabx, atlas, atlas-pms, atlaspms, fias, fiaspms, harbor, harbor-pms, harborpms, legacy, legacystay, meridian, meridian-pms, meridianpms
              */
-            target: "sim-atlas" | "sim-harbor" | "sim-legacystay" | "sim-meridian" | "sim-fias-pabx" | "atlas" | "harbor" | "legacystay" | "legacy" | "meridian" | "fias" | "atlaspms" | "harborpms" | "meridianpms" | "fiaspms" | "atlas-pms" | "harbor-pms" | "meridian-pms";
+            target: string;
         } & {
             [key: string]: unknown;
         };

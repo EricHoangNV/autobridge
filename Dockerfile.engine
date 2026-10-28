@@ -31,6 +31,12 @@ COPY src/ ./src/
 # must ship the Alembic scripts next to src/ (mirrors the repo layout).
 COPY alembic/ ./alembic/
 
+# REQ-022 owner check 2026-10-29: the demo target registry lives in
+# config/demo_targets.yaml (out of engine source); the control plane loads
+# it at startup, so the image must ship it next to src/ (mirrors the repo
+# layout: default_targets_path() resolves parents[3]/config).
+COPY config/ ./config/
+
 # P2.S4.1: the MCP Guardian mock lives in mcp_stretch/ (engine trust zone)
 # and is served as APP_MODULE=mcp_stretch.app:app by the mcp-hotel service.
 COPY mcp_stretch/ ./mcp_stretch/

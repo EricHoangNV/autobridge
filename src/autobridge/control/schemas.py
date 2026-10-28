@@ -349,9 +349,23 @@ class JobOut(BaseModel):
     updated_at: UtcDatetime
 
 
+def _demo_target_ids() -> list[str]:
+    """Accepted demo target ids for the OpenAPI description (file-derived).
+
+    Lazy import keeps ``schemas`` free of route imports; a missing registry
+    degrades the description (the endpoint itself fails closed at import).
+    """
+    try:
+        from autobridge.control.demo_targets import known_target_ids  # noqa: PLC0415
+
+        return known_target_ids()
+    except Exception:
+        return []
+
+
 class InjectFaultRequest(BaseModel):
-    target: Literal["sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian", "sim-fias-pabx", "atlas", "harbor", "legacystay", "legacy", "meridian", "fias", "atlaspms", "harborpms", "meridianpms", "fiaspms", "atlas-pms", "harbor-pms", "meridian-pms"] = Field(
-        description="Simulator target id: sim-atlas, sim-harbor, sim-legacystay, sim-meridian, sim-fias-pabx, atlas, harbor, legacystay, meridian, fias, atlaspms, harborpms, meridianpms, fiaspms"
+    target: str = Field(
+        description=f"Simulator target id (see config/demo_targets.yaml): {', '.join(_demo_target_ids())}"
     )
     scenario_id: str = Field(description="Scenario id to inject (e.g. rename_guest_id, baseline)")
     seed: StrictInt | None = Field(default=None, description="Optional seed override")

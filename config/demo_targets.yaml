@@ -1,0 +1,42 @@
+# Demo/simulator target registry (REQ-022 owner check 2026-10-29).
+#
+# Single source of truth for the control plane's demo targets: canonical
+# simulator ids, their accepted aliases, the loopback admin port used from
+# the host (local mode and e2e), and any extra admin resets beyond the
+# shared ``POST /admin/reset`` slot. The control service loads this file at
+# startup (see ``src/autobridge/control/demo_targets.py``); engine source
+# names no simulator — the "never seen" vendor proof
+# (``tests/e2e/test_s1_legacystay.py::test_no_legacystay_specific_rule_or_engine_code``)
+# scans ``src/autobridge/*.py`` and fails on any vendor literal there.
+#
+# Port numbers here must match the infra that publishes/starts the sims:
+# ``compose.yaml`` (``127.0.0.1:<host_admin_port>:8001``) and
+# ``scripts/local-up.sh`` (``SIM_ADMIN_PORT=<host_admin_port>``). A unit
+# test (``tests/unit/test_autobridge_demo_targets.py``) cross-checks them
+# so the registry stays one.
+targets:
+  - id: sim-atlas
+    aliases: [atlas, atlaspms, atlas-pms]
+    host_admin_port: 8109
+    extra_resets: []
+  - id: sim-harbor
+    aliases: [harbor, harborpms, harbor-pms]
+    host_admin_port: 8110
+    extra_resets: []
+  - id: sim-legacystay
+    aliases: [legacystay, legacy]
+    host_admin_port: 8112
+    extra_resets: []
+  - id: sim-meridian
+    aliases: [meridian, meridianpms, meridian-pms]
+    host_admin_port: 8117
+    extra_resets: []
+  - id: sim-fias-pabx
+    # The FIAS link engine keeps its fault state (faults, P# counter,
+    # reseeded rooms) outside the shared scenario slot, so the generic
+    # reset is not enough — clear it too.
+    aliases: [fias, fiaspms]
+    host_admin_port: 8119
+    extra_resets:
+      - suffix: fias
+        path: /admin/fias/reset

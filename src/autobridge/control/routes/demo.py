@@ -14,75 +14,56 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from autobridge.control.deps import get_db, require_control_token
+from autobridge.control.demo_targets import get_demo_targets
 from autobridge.control.models import (
-    Approval,
-    BuildRun,
-    Connector,
-    ConnectorRelease,
-    DependencyRegistration,
-    DiscoveryRecord,
-    DriftEvent,
-    EvidenceRecord,
-    Job,
-    ModelCall,
-    ModelCallArchive,
-    RepairRun,
-    SyncRun,
+	Approval,
+	BuildRun,
+	Connector,
+	ConnectorRelease,
+	DependencyRegistration,
+	DiscoveryRecord,
+	DriftEvent,
+	EvidenceRecord,
+	Job,
+	ModelCall,
+	ModelCallArchive,
+	RepairRun,
+	SyncRun,
 )
 from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 
-# Normalize target aliases to service hostnames and admin paths
-TARGET_MAP = {
-    "sim-atlas": "sim-atlas",
-    "sim-harbor": "sim-harbor",
-    "sim-legacystay": "sim-legacystay",
-    "sim-meridian": "sim-meridian",
-    "sim-fias-pabx": "sim-fias-pabx",
-    "atlas": "sim-atlas",
-    "harbor": "sim-harbor",
-    "legacystay": "sim-legacystay",
-    "legacy": "sim-legacystay",
-    "meridian": "sim-meridian",
-    "fias": "sim-fias-pabx",
-    "atlaspms": "sim-atlas",
-    "harborpms": "sim-harbor",
-    "meridianpms": "sim-meridian",
-    "fiaspms": "sim-fias-pabx",
-    "atlas-pms": "sim-atlas",
-    "harbor-pms": "sim-harbor",
-    "meridian-pms": "sim-meridian",
-}
+# Demo target registry (REQ-022 owner check 2026-10-29): every id, alias,
+# host admin port and extra reset comes from config/demo_targets.yaml,
+# loaded once at startup. This module names no simulator — the "never
+# seen" vendor proof scans src/autobridge/*.py and fails on any vendor
+# literal there, so keep it that way (including in comments and messages).
+_REGISTRY = get_demo_targets()
+
+# Normalize target aliases to canonical simulator ids (registry-derived;
+# kept under the historical names so existing imports keep working).
+TARGET_MAP: dict[str, str] = dict(_REGISTRY.alias_map)
 
 
 def _resolve_target(target: str) -> str:
     key = target.strip().lower()
     resolved = TARGET_MAP.get(key)
     if not resolved:
-        raise HTTPException(status_code=422, detail=f"unknown demo target {target!r}; use sim-atlas, sim-harbor, sim-legacystay, sim-meridian or sim-fias-pabx")
+        known = ", ".join(t.id for t in _REGISTRY.targets)
+        raise HTTPException(status_code=422, detail=f"unknown demo target {target!r}; known targets: {known}")
     return resolved
 
 
-# Single registry of simulators reset by POST /demo/reset, in call order
-# (REQ-022 owner check 2026-10-29): the endpoint loop and every test that
-# asserts the reset entries derive the expected list from here via
+# Canonical simulator ids POST /demo/reset walks, in call order (REQ-022
+# owner check 2026-10-29): the endpoint loop and every test that asserts
+# the reset entries derive the expected list from here via
 # expected_reset_targets() — never hand-keep the list in a second place.
-RESET_TARGETS: tuple[str, ...] = (
-    "sim-atlas",
-    "sim-harbor",
-    "sim-legacystay",
-    "sim-meridian",
-    "sim-fias-pabx",
-)
+RESET_TARGETS: tuple[str, ...] = _REGISTRY.reset_targets
 
 # Extra admin resets beyond the shared ``/admin/reset`` slot, keyed by
-# target: (entry-label suffix, admin path). The FIAS link engine keeps its
-# fault state (faults, P# counter, reseeded rooms) outside the shared
-# scenario slot, so the generic reset is not enough — clear it too.
-EXTRA_RESETS: dict[str, tuple[tuple[str, str], ...]] = {
-    "sim-fias-pabx": (("fias", "/admin/fias/reset"),),
-}
+# canonical id: (entry-label suffix, admin path).
+EXTRA_RESETS: dict[str, tuple[tuple[str, str], ...]] = dict(_REGISTRY.extra_resets)
 
 
 def expected_reset_targets() -> list[str]:
@@ -110,15 +91,15 @@ def _admin_headers() -> dict[str, str]:
 
 
 def _admin_url_for_target(resolved: str) -> str:
-    # Inside Docker Compose, admin API is at http://sim-atlas:8001 and http://sim-harbor:8001
+    # Inside Docker Compose, each simulator's admin API answers on its
+    # container port 8001 at its canonical id as hostname.
     # From host (when not in Docker), we use localhost ports 8109/8110
     # Detect via env: if ADMIN_NET_HOST is set, use Docker hostnames; else try host ports
     if os.environ.get("ADMIN_NET_HOST") or os.path.exists("/.dockerenv"):
         # In container: use service DNS
         return f"http://{resolved}:8001"
-    # Host mode: map to host ports
-    port_map = {"sim-atlas": 8109, "sim-harbor": 8110, "sim-legacystay": 8112, "sim-meridian": 8117, "sim-fias-pabx": 8119}
-    port = port_map.get(resolved, 8109)
+    # Host mode: map to host ports (registry-derived, single source).
+    port = _REGISTRY.host_admin_ports[resolved]
     return f"http://localhost:{port}"
 
 
