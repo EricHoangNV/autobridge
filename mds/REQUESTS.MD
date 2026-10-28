@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2), then REQ-022. Do these before any
+Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2), then REQ-022, with REQ-023 (demo plan) applied as each of those lands. Do these before any
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
@@ -287,6 +287,52 @@ guarantees), README vendor table, `make up` / smoke / local mode (REQ-017; the a
 **F. Gates.** Unit and e2e tests for every item above, `make test`, `make up && make smoke && make e2e && make demo`
 green; grep proves no EdgePOS remnants and no private names. Split into claimable sub-steps in the build note
 (A simulator, B agent, C vocabulary, D scenarios, E demo) and merge each one green.
+
+### REQ-023 — Demo plan v2: main script plus a fault-scenario catalogue (2026-10-28)
+Status: OPEN
+Owner: the demo plan must include the fault scenarios from REQ-019 … REQ-022. Rule: a step enters `docs/demo.md` and
+`make demo` only when the feature behind it has merged and its e2e test is green; until then it stays listed here.
+Every step runs after `make demo-reset` (REQ-021) and prints REQ-021's per-run table (rung that resolved it, model
+calls, small / frontier tokens, why it escalated). Never show heldout seeds; demo the dev variants only.
+**Main script** (keep within the hackathon time limit; if it runs over, move steps to the catalogue, never cut the
+evidence):
+1. *What AutoBridge knows*: capabilities page (vocabulary v1/v2) and an empty learned-knowledge list. [REQ-021]
+2. *Reusable artifact*: the Atlas (Cloudbeds-style) reference release syncs with zero inference. [REQ-019]
+3. *Unfamiliar API*: Harbor's messy wiki page (its `/developers` site on screen) bootstraps a connector; the outdated
+   offset example and the `H1`–`H5` status codes are resolved from probes, not guessed.
+4. *Zero-token recovery + learning*: inject `page_to_cursor` on Atlas → L1 rule, 0 model calls → approve → the fix
+   appears on the knowledge page → inject it again → L0 hit, "times reused" + 1. [REQ-019, REQ-021]
+5. *Hard semantic failure*: `gross_to_net` → climbs L0 → L1 → L2 → L3 (Muse frontier, live or labelled replay) with
+   the reason at each rung; the `invalid_patch_trap` candidate is rejected by the verifier; ends Degraded with one
+   question for the operator. Show that this is the only main-script step that calls the frontier model.
+6. *New API style*: Meridian (Mews-style) docs with vocabulary v1 → `Blocked`, named reason, 0 model calls; same docs
+   with v2 → connector passes the gate and syncs `Complete`; then a Meridian drift (`Limitation` cursor contract
+   change) repaired. [REQ-020, REQ-021]
+7. *On-premise PABX*: FIAS postings flowing through the edge agent; `fias_record_layout_change` (firmware update
+   announces a new `PS` layout) → repaired → postings flow again; then `agent_restart_inflight` → nothing lost, nothing
+   duplicated. [REQ-022]
+8. *Head-to-head and reproducibility*: bench scorecard (real numbers, REQ-008), the model-usage summary across all
+   steps, seeds and release ids, `make demo` to replay.
+**Fault-scenario catalogue** (backup and Q&A; each runnable alone with `make demo SCENARIO=<name>` and listed in
+docs/demo.md with its expected rung and model calls):
+- Transport, no patch, 0 model calls: `rate_limit_429` (also LegacyStay's normal throttling), `transient_503`,
+  `cloud_slow` (FIAS link keeps getting ACKs).
+- Auth: `token_expired` → refresh if permitted; `token_revoked` → escalate, no patch, `Blocked`.
+- Capability: `endpoint_removed` → escalate, never patched around.
+- Known structural drifts at L0/L1, 0 model calls: `rename_guest_id`, `nested_path_shift`, `offset_to_cursor`
+  (LegacyStay), `page_to_cursor` (Atlas), `cursor_repeat_token` (Harbor loop guard), `fias_record_layout_change`
+  (known variant).
+- Semantic and data quality: `gross_to_net`, `status_vocab_change` (new Harbor code / Cloudbeds-style
+  `not_confirmed`), `tz_boundary_shift` (Atlas zone-less date-times, Meridian UTC → business date),
+  `duplicate_late_records`, Atlas money as JSON numbers → Decimal without float drift, `invalid_patch_trap`.
+- On-premise reliability: `fias_link_resync`, `fias_ack_timeout`, `agent_restart_inflight`,
+  `fias_duplicate_records`, `fias_oversize_frame`, `fias_record_flood`, `session_lost_with_command`, `stale_command`.
+- Safety and boundaries: v1 refusal of Meridian and of a FIAS source; inject-fault without the admin token rejected;
+  UI writes without the control token rejected; the engine cannot reach the verifier or simulator admin (smoke).
+Wanted: `docs/demo.md` rewritten to this structure as steps land (main script on top, catalogue table below with
+scenario | vendor | expected outcome | rung | model calls | REQ), `make demo` running the main script and
+`make demo SCENARIO=…` any catalogue entry, `docs/demo.md` and `make demo` kept in sync by a test that every catalogue
+entry has a scenario file, an e2e test and a row in REQ-021's model-usage matrix.
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
