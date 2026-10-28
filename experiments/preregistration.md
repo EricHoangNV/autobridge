@@ -1,0 +1,71 @@
+# Pre-registration: engine vs. untrained frontier model (REQ-024 B5)
+
+Committed before the November 3 held-out run. Whatever the numbers say,
+they are published as-is: wins and losses both land in the scorecard, and a
+result that contradicts the hypothesis below is reported, not re-run.
+
+## Arms (same FRONTIER_MODEL through the same provider on every arm)
+
+| arm | what it is | code |
+| --- | --- | --- |
+| `frontier_oneshot` | the model alone, one prompt with the docs | `bench.one_shot` via the frontier provider |
+| `frontier_agent` | the model as a coding agent with tools (the untrained-frontier baseline) | `opencode run` (default driver, `OPENCODE_MODEL` = same provider+model as `FRONTIER_MODEL`) |
+| `engine_no_knowledge` | AutoBridge with L0 and L1 disabled (ladder, verifier gate and budgets kept, so only the model repairs) | `RepairController(..., enable_knowledge=False, enable_rules=False)` |
+| `autobridge_cold` | full AutoBridge, empty learned knowledge | fresh `KnowledgeCache` |
+| `autobridge_warm` | full AutoBridge after learning on the dev split only (never on held-out) | cache from `warm_knowledge(dev scenarios)` |
+
+`c` vs `d` isolates what the engine's built-in knowledge (rules + known
+fixes) adds; `d` vs `e` isolates learning; `b` vs `d` is the headline.
+
+## Matched budget (self-test fails the run on mismatch)
+
+Every scenario × trial builds one `HarnessInputs`; all five arms receive an
+equal copy (`assert_all_inputs_equal`, pairwise over arms): same docs
+volume, sandbox URL, credentials (refs only), visible tests, token ceiling
+and wall clock. Grading is the verifier's hidden mode, by `verify_fn` over
+HTTP — never an import, never a guess.
+
+## Metrics (per arm, per scenario and overall; mean + 95 % interval, normal approx)
+
+- verified completion rate (judged only by the verifier),
+- wrong patches that reached a release (must be 0 for AutoBridge arms),
+- correct escalations (escalated exactly when the scenario says so),
+- frontier tokens, small tokens, estimated cost (REQ-021 prices), wall time.
+
+Minimum 5 trials per scenario (different seeds derived from the private
+seed for held-out, from the dev seeds otherwise). Intervals below n=5 are
+labelled illustrative.
+
+## Primary hypothesis
+
+On held-out, `autobridge_cold` reaches a verified-completion rate at least
+that of `frontier_agent` with at least 10× fewer frontier tokens. `c` vs `d`
+is expected to show the built-in knowledge doing most deterministic repairs
+at 0 model calls; `d` vs `e` is expected to show learning as L0 hits on
+repeat drifts (see `learning_curve.md`).
+
+## Held-out integrity (REQ-024 A, committed)
+
+- Leak audit: `scripts/heldout_leak_audit.py` (owner runs with `HELDOUT_DIR`);
+  the counts-only result is copied to `<output-dir>/_leak_audit.json` and
+  written into the scorecard. Exit 1 on any hit.
+- Isolation evidence: `scripts/heldout_isolation_check.py` + `docs/benchmark.md`
+  "Held-out protocol".
+- Reveal: after the run the owner publishes seeds under
+  `verifier/hidden_cases/heldout/revealed/`; `make verify-heldout-reveal`
+  checks them against `SHA256SUMS` and reruns the bench from them.
+
+## Rehearsal (REQ-024 B6)
+
+`make bench-ablation` (no stack needed; grading degrades to unverified when
+the verifier is down, labels say so) and the full `make bench` (stack up:
+scorecard first, then all ablation arms, then the learning curve) run the
+identical protocol on the dev split. `experiments/learning_curve.md` holds
+the raw repeat-drift rows.
+
+## What could change this plan
+
+Nothing after this commit except the round/seeds it names: scenario set,
+arm definitions, metric definitions and the hypothesis are frozen. If the
+pipeline breaks on Nov 3, the breakage is published with the numbers, not
+patched around.

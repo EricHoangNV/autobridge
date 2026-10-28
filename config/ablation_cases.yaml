@@ -1,0 +1,95 @@
+# REQ-024 B2 case library (data, not code).
+#
+# Scenario -> repair inputs for the ablation arms. Vendor names (spec ids,
+# docs paths, field names) live HERE so src/autobridge stays vendor-generic:
+# the trust-boundary guard tests fail on hardcoded vendor names in engine
+# source (same rationale as config/demo_targets.yaml for the reset registry).
+# ablation.py only implements generic machinery (spec loaders by kind,
+# delta builders by kind); every vendor-specific string comes from this file
+# at runtime.
+cases:
+  offset_to_cursor:
+    spec: {kind: generated_offset, base: atlaspms}
+    drift_class: PAGINATION_CHANGE
+    delta: {kind: pagination_strategy, previous: offset, current: cursor}
+    extra: {target_strategy: cursor}
+    expected: repair
+  rename_guest_id:
+    spec: {kind: generated, connector: atlaspms}
+    drift_class: SCHEMA_RENAME
+    delta: {kind: rename, entity: Reservation, old: guest_name, new: guest_identifier}
+    extra:
+      entity: Reservation
+      field: guest_name
+      new_field: guestIdentifier
+      new_path: $.guestIdentifier
+      rename: {entity: Reservation, old_field: guest_name, new_field: guestIdentifier}
+    expected: repair
+  cursor_repeat_token:
+    spec: {kind: generated, connector: atlaspms}
+    drift_class: PAGINATION_CHANGE
+    delta: {kind: pagination_strategy, previous: page, current: cursor}
+    extra: {target_strategy: cursor}
+    expected: repair
+  page_to_cursor:
+    spec: {kind: generated, connector: atlaspms}
+    drift_class: PAGINATION_CHANGE
+    delta: {kind: pagination_strategy, previous: page, current: cursor}
+    extra: {target_strategy: cursor}
+    expected: repair
+  rate_limit_429:
+    spec: {kind: generated, connector: atlaspms}
+    drift_class: RATE_LIMIT
+    delta: {kind: generic}
+    extra: {}
+    expected: no_patch
+  transient_503:
+    spec: {kind: generated, connector: atlaspms}
+    drift_class: TRANSIENT
+    delta: {kind: generic}
+    extra: {}
+    expected: no_patch
+  token_expired:
+    spec: {kind: generated, connector: atlaspms}
+    drift_class: AUTH_EXPIRED
+    delta: {kind: generic}
+    extra: {}
+    expected: no_patch
+  gross_to_net:
+    spec: {kind: generated, connector: harborpms}
+    drift_class: SEMANTIC_VALUE_DRIFT
+    delta: {kind: generic}
+    extra: {}
+    hypotheses: gross_net
+    enumerator_yield_count: 1
+    validate_against: {kind: generated, connector: harborpms}
+    expected: degraded_question
+  status_vocab_change:
+    spec: {kind: generated, connector: atlaspms}
+    drift_class: STATUS_VOCAB
+    delta: {kind: generic}
+    extra: {}
+    expected: no_patch
+  duplicate_late_records:
+    spec: {kind: generated, connector: atlaspms}
+    drift_class: DUPLICATE_DELIVERY
+    delta: {kind: generic}
+    extra: {}
+    expected: no_patch
+  meridian_cursor_renamed:
+    spec: {kind: docs, path: simulators/docs/meridian-openapi.yaml, connector: meridianpms, vocabulary: v2}
+    drift_class: PAGINATION_CHANGE
+    delta: {kind: cursor_next_path, operation: list_reservations, previous: $.Cursor, current: $.NextCursor}
+    extra: {new_next_path: $.NextCursor}
+    expected: repair
+  meridian_state_renamed:
+    spec: {kind: docs, path: simulators/docs/meridian-openapi.yaml, connector: meridianpms, vocabulary: v2}
+    drift_class: SCHEMA_RENAME
+    delta: {kind: rename, entity: Reservation, old: status, new: Status}
+    extra:
+      entity: Reservation
+      field: status
+      new_field: Status
+      new_path: $.Status
+      rename: {entity: Reservation, old_field: status, new_field: Status}
+    expected: repair

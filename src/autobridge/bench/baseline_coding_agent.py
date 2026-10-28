@@ -26,6 +26,7 @@ plain text and usage is zero.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -504,6 +505,271 @@ class CodexCliDriver:
 
 
 # ---------------------------------------------------------------------------
+# OpenCode CLI driver (REQ-024 B1, plan §2.10)
+#
+# Adapter for the ``opencode`` headless CLI (``opencode run --format json``).
+# This is the default baseline driver for ``make bench`` (REQ-024: the
+# untrained-frontier baseline is a coding agent driven with the same
+# FRONTIER_MODEL every arm uses).  The interface mirrors
+# :class:`ClaudeCodeDriver` so the harness can swap drivers without
+# changing inputs; ``claude`` / ``codex`` stay available via
+# :func:`get_baseline_driver`, and :class:`BaselineLLMDriver` remains the
+# documented fallback when no CLI is available (plan §9).
+#
+# ``opencode run --format json`` streams one JSON event per line.  Event
+# shapes vary by version, so :func:`parse_opencode_output` is defensive:
+# it accumulates assistant text from known message shapes and takes the
+# maximum input/output token counters seen (cumulative counters grow, so
+# the max is the run total).  Unknown shapes are ignored — never raised.
+# ---------------------------------------------------------------------------
+
+
+def _opencode_event_text(event: dict[str, Any]) -> str:
+    """Extract assistant text from one ``opencode run --format json`` event."""
+    etype = str(event.get("type", ""))
+    # Direct text/result/output/message shapes
+    for key in ("text", "result", "output"):
+        val = event.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
+    msg = event.get("message")
+    if isinstance(msg, str) and msg.strip():
+        return msg
+    # Message with content parts: {"message": {"role":..,"content":[{"type":"text","text":..}]}},
+    # or {"content": [...]} at top level.
+    content = event.get("content")
+    if isinstance(event.get("message"), dict):
+        content = event["message"].get("content", content)
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                t = part.get("text")
+                if isinstance(t, str) and t.strip():
+                    parts.append(t)
+            elif isinstance(part, str) and part.strip():
+                parts.append(part)
+        if parts:
+            return "".join(parts)
+    # Delta shapes: {"type": "text_delta"/"message_delta", "delta": {"text": ...}}
+    if etype in ("text_delta", "message_delta", "content_delta"):
+        delta = event.get("delta")
+        if isinstance(delta, dict):
+            t = delta.get("text")
+            if isinstance(t, str) and t:
+                return t
+        elif isinstance(delta, str) and delta:
+            return delta
+    return ""
+
+
+def _opencode_event_usage(event: dict[str, Any]) -> tuple[int, int]:
+    """Extract (input_tokens, output_tokens) from one event; (0, 0) if absent."""
+    containers: list[Any] = [event.get("usage"), event.get("tokenUsage"), event.get("tokens"), event]
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        inp = container.get("input_tokens", container.get("inputTokens", container.get("input", container.get("prompt_tokens", container.get("promptTokens")))))
+        out = container.get("output_tokens", container.get("outputTokens", container.get("output", container.get("completion_tokens", container.get("completionTokens")))))
+        try:
+            i = int(inp) if inp is not None else 0
+            o = int(out) if out is not None else 0
+        except (TypeError, ValueError):
+            continue
+        if i or o:
+            return (max(i, 0), max(o, 0))
+    return (0, 0)
+
+
+def parse_opencode_output(stdout: str) -> ClaudeCliResult:
+    """Parse ``opencode run --format json`` stdout.
+
+    Accepts a JSON-lines event stream (one event per line) or a single
+    JSON object (claude/codex shape for cross-driver tests).  Never
+    raises: unparsable input yields empty text with zero usage.
+    """
+    raw = stdout.strip()
+    if not raw:
+        return ClaudeCliResult(text="", raw_output=stdout)
+    texts: list[str] = []
+    max_in = 0
+    max_out = 0
+    model = ""
+    cost: Decimal | None = None
+    events: list[Any] = []
+    # Whole-document JSON first (single object or array)
+    try:
+        whole = json.loads(raw)
+        events = whole if isinstance(whole, list) else [whole]
+    except ValueError:
+        events = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                # Plain-text line: keep as assistant text fallback
+                texts.append(line)
+    for event in events:
+        if not isinstance(event, dict):
+            if isinstance(event, str) and event.strip():
+                texts.append(event)
+            continue
+        t = _opencode_event_text(event)
+        if t:
+            texts.append(t)
+        i, o = _opencode_event_usage(event)
+        max_in = max(max_in, i)
+        max_out = max(max_out, o)
+        m = event.get("model")
+        if isinstance(m, str) and m.strip():
+            model = m.strip()
+        for cost_key in ("cost_usd", "cost", "total_cost"):
+            c = event.get(cost_key)
+            if c is not None:
+                with contextlib.suppress(Exception):
+                    cost = Decimal(str(c))
+                break
+    # A claude-shaped single object may carry result text under "result"
+    # while content parts were missed; whole-doc parse via parse_claude_output
+    # is intentionally not reused so opencode semantics stay explicit.
+    text = "".join(texts) if any("delta" in str(e.get("type", "")) for e in events if isinstance(e, dict)) else "\n".join(texts)
+    return ClaudeCliResult(
+        text=text,
+        usage=Usage(input_tokens=max_in, output_tokens=max_out),
+        model=model,
+        cost_usd=cost,
+        raw_output=stdout,
+    )
+
+
+def build_fake_opencode_output(
+    text: str,
+    *,
+    input_tokens: int = 10,
+    output_tokens: int = 20,
+    model: str = "fake-opencode",
+    cost_usd: str | float | None = None,
+) -> str:
+    """Build a JSON-lines string matching the ``opencode run`` event stream.
+
+    Used by the fake CLI and by tests to generate canned stdout.
+    """
+    message = {"type": "message", "role": "assistant", "content": [{"type": "text", "text": text}]}
+    done: dict[str, Any] = {
+        "type": "done",
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        "model": model,
+    }
+    if cost_usd is not None:
+        done["cost_usd"] = cost_usd
+    return json.dumps(message) + "\n" + json.dumps(done)
+
+
+class OpenCodeCliError(ClaudeCliError):
+    """Raised when the opencode CLI exits non-zero or times out."""
+
+
+class OpenCodeCliDriver:
+    """Headless ``opencode run`` driver with usage capture (REQ-024 B1).
+
+    Default baseline driver for ``make bench``.  Command::
+
+        opencode run --format json [-m <provider/model>] <prompt>
+
+    *model* defaults to :func:`autobridge.config.opencode_model`
+    (env ``OPENCODE_MODEL``); when unset the ``-m`` flag is omitted and
+    opencode uses its configured default.  REQ-024 requires every
+    frontier arm to use the same model — set ``OPENCODE_MODEL`` to match
+    ``FRONTIER_MODEL`` (same provider, ``provider/model`` form) and the
+    run records both ids in the results for audit.
+
+    *cli_path* defaults to ``OPENCODE_CLI_PATH`` env or ``"opencode"``.
+    """
+
+    def __init__(
+        self,
+        *,
+        cli_path: str | None = None,
+        timeout_s: float = 120.0,
+        model: str | None = None,
+        extra_args: list[str] | None = None,
+    ) -> None:
+        self.cli_path = cli_path or os.environ.get("OPENCODE_CLI_PATH", "") or "opencode"
+        self.timeout_s = timeout_s
+        if model is None:
+            try:
+                from autobridge.config import opencode_model as _opencode_model  # noqa: PLC0415
+
+                model = _opencode_model() or None
+            except Exception:
+                model = None
+        self.model = model
+        self.extra_args = list(extra_args or [])
+        self.calls: list[dict[str, Any]] = []
+
+    def _build_command(self, prompt: str) -> list[str]:
+        cmd: list[str] = [self.cli_path, "run", "--format", "json"]
+        if self.model:
+            cmd.extend(["-m", self.model])
+        cmd.extend(self.extra_args)
+        cmd.append(prompt)
+        return cmd
+
+    def run(
+        self,
+        prompt: str,
+        *,
+        cwd: Path | None = None,
+        timeout_s: float | None = None,
+    ) -> ClaudeCliResult:
+        """Execute ``opencode run --format json`` with *prompt*."""
+        cmd = self._build_command(prompt)
+        t = timeout_s if timeout_s is not None else self.timeout_s
+        self.calls.append({"cmd": cmd, "prompt": prompt, "cwd": str(cwd) if cwd else None})
+        start = time.monotonic()
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=t,
+                cwd=str(cwd) if cwd else None,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise OpenCodeCliError(
+                f"opencode CLI timed out after {t}s",
+                stderr=getattr(e, "stderr", "") or "",
+                stdout=getattr(e, "stdout", "") or "",
+            ) from e
+        except FileNotFoundError as e:
+            raise OpenCodeCliError(
+                f"opencode CLI not found: {self.cli_path!r} — "
+                "fallback: use BaselineLLMDriver via LLMProvider (plan §9)",
+                stderr=str(e),
+            ) from e
+
+        elapsed = (time.monotonic() - start) * 1000.0
+        if proc.returncode != 0:
+            raise OpenCodeCliError(
+                f"opencode CLI failed with exit {proc.returncode}: {proc.stderr.strip()[:500]}",
+                exit_code=proc.returncode,
+                stderr=proc.stderr,
+                stdout=proc.stdout,
+            )
+        result = parse_opencode_output(proc.stdout)
+        result.exit_code = proc.returncode
+        result.duration_ms = elapsed
+        return result
+
+    @property
+    def last_prompt(self) -> str | None:
+        return self.calls[-1]["prompt"] if self.calls else None
+
+
+# ---------------------------------------------------------------------------
 # In-memory fake drivers (no subprocess) — W1 fakes reused in bench tests
 # ---------------------------------------------------------------------------
 
@@ -562,6 +828,73 @@ class FakeCodexDriver:
                 usage=self.default_usage,
                 model=self.default_model,
                 raw_output=build_fake_codex_output(
+                    val,
+                    input_tokens=self.default_usage.input_tokens,
+                    output_tokens=self.default_usage.output_tokens,
+                    model=self.default_model,
+                ),
+            )
+        return ClaudeCliResult(text=str(val), usage=self.default_usage, model=self.default_model)
+
+    @property
+    def last_prompt(self) -> str | None:
+        return self.calls[-1]["prompt"] if self.calls else None
+
+
+class FakeOpenCodeDriver:
+    """In-memory fake for the opencode CLI (no subprocess).
+
+    Mirrors :class:`FakeClaudeDriver` so tests can exercise the default
+    baseline driver without a real binary.
+    """
+
+    def __init__(
+        self,
+        responses: dict[str, ClaudeCliResult | str | Any] | None = None,
+        *,
+        default_text: str = "fake opencode response",
+        default_usage: Usage | None = None,
+        default_model: str = "fake-opencode",
+    ) -> None:
+        self.responses = dict(responses or {})
+        self.default_text = default_text
+        self.default_usage = default_usage or Usage(input_tokens=10, output_tokens=20)
+        self.default_model = default_model
+        self.calls: list[dict[str, Any]] = []
+
+    def run(self, prompt: str, *, cwd: Path | None = None, **_kwargs: Any) -> ClaudeCliResult:
+        self.calls.append({"prompt": prompt, "cwd": str(cwd) if cwd else None})
+        if prompt in self.responses:
+            return self._coerce(self.responses[prompt], prompt)
+        for key, val in self.responses.items():
+            if key in prompt:
+                return self._coerce(val, prompt)
+        return ClaudeCliResult(
+            text=self.default_text,
+            usage=self.default_usage,
+            model=self.default_model,
+            raw_output=build_fake_opencode_output(
+                self.default_text,
+                input_tokens=self.default_usage.input_tokens,
+                output_tokens=self.default_usage.output_tokens,
+                model=self.default_model,
+            ),
+        )
+
+    def _coerce(self, val: Any, prompt: str) -> ClaudeCliResult:
+        if isinstance(val, ClaudeCliResult):
+            return val
+        if callable(val):
+            res = val(prompt)
+            if isinstance(res, ClaudeCliResult):
+                return res
+            return ClaudeCliResult(text=str(res), usage=self.default_usage, model=self.default_model)
+        if isinstance(val, str):
+            return ClaudeCliResult(
+                text=val,
+                usage=self.default_usage,
+                model=self.default_model,
+                raw_output=build_fake_opencode_output(
                     val,
                     input_tokens=self.default_usage.input_tokens,
                     output_tokens=self.default_usage.output_tokens,
@@ -762,7 +1095,7 @@ class BaselineLLMDriver:
 
 
 def get_baseline_driver(
-    kind: str = "claude",
+    kind: str = "opencode",
     *,
     provider: Any | None = None,
     cli_path: str | None = None,
@@ -771,6 +1104,9 @@ def get_baseline_driver(
 ) -> Any:
     """Factory returning a baseline driver by *kind*.
 
+    * ``"opencode"`` → :class:`OpenCodeCliDriver` (default, REQ-024: the
+      untrained-frontier baseline is a coding agent on the same
+      FRONTIER_MODEL every arm uses)
     * ``"claude"`` → :class:`ClaudeCodeDriver`
     * ``"codex"`` → :class:`CodexCliDriver`
     * ``"llm"`` / ``"fallback"`` → :class:`BaselineLLMDriver` (plan §9)
@@ -782,6 +1118,8 @@ def get_baseline_driver(
     documented in :mod:`autobridge.bench.harness` and ``docs/benchmark.md``.
     """
     kind_norm = kind.lower().strip()
+    if kind_norm in ("opencode", "opencode_cli"):
+        return OpenCodeCliDriver(cli_path=cli_path, timeout_s=timeout_s, model=model)
     if kind_norm in ("claude", "claude_code", "claude_code_headless"):
         return ClaudeCodeDriver(cli_path=cli_path, timeout_s=timeout_s, model=model)
     if kind_norm in ("codex", "codex_cli"):
@@ -793,4 +1131,4 @@ def get_baseline_driver(
         from autobridge.bench.one_shot import OneShotGenerator  # noqa: PLC0415
 
         return OneShotGenerator(provider=provider, model=model)
-    raise ValueError(f"unknown baseline driver kind {kind!r}; expected 'claude', 'codex', 'llm' or 'one_shot'")
+    raise ValueError(f"unknown baseline driver kind {kind!r}; expected 'opencode', 'claude', 'codex', 'llm' or 'one_shot'")

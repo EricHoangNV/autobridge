@@ -13,7 +13,26 @@ Secrets are never in `HarnessInputs` — only `credential_ref` (env key names) a
 
 The harness is deterministic from `seed`: same seed → identical inputs and scenario seed. `make bench` is idempotent and reproducible — results go to `experiments/benchmark_runs/<scenario>--trial-<n>.jsonl` with `seed` in the payload, and `check_heldout_sha` guards the heldout split.
 
-## Baseline drivers (P1.W8.2)
+## Baseline drivers (P1.W8.2, REQ-024 B1)
+
+### `opencode` — default headless coding-agent driver
+
+`src/autobridge/bench/baseline_coding_agent.py:OpenCodeCliDriver` drives
+(the default since REQ-024: the untrained-frontier baseline is a coding
+agent on the same `FRONTIER_MODEL` every arm uses):
+
+```bash
+opencode run --format json [-m <provider/model>] "<prompt>"
+```
+
+`--format json` streams one JSON event per line; `parse_opencode_output`
+accumulates assistant text from message/content/delta shapes and takes the
+maximum input/output token counters (cumulative, so the max is the run
+total), plus model and cost when present. Unknown shapes are ignored, never
+raised. Env: `OPENCODE_CLI_PATH` overrides the binary; `OPENCODE_MODEL`
+(`provider/model` form — set it to the same provider+model as
+`FRONTIER_MODEL`) selects the model, and is omitted when unset. Unit tests
+use `FakeOpenCodeDriver` (in-memory, no subprocess).
 
 ### `claude_code_headless` — headless CLI with usage capture
 
@@ -64,13 +83,15 @@ Factory:
 ```python
 from autobridge.bench.baseline_coding_agent import get_baseline_driver
 
-driver = get_baseline_driver("claude")   # ClaudeCodeDriver
-driver = get_baseline_driver("codex")    # CodexCliDriver (stub)
-driver = get_baseline_driver("llm")      # BaselineLLMDriver (fallback, plan §9)
-driver = get_baseline_driver("one_shot") # OneShotGenerator (secondary control, P1.W8.3)
+driver = get_baseline_driver()             # OpenCodeCliDriver (default, REQ-024)
+driver = get_baseline_driver("opencode")   # OpenCodeCliDriver
+driver = get_baseline_driver("claude")     # ClaudeCodeDriver
+driver = get_baseline_driver("codex")      # CodexCliDriver (stub)
+driver = get_baseline_driver("llm")        # BaselineLLMDriver (fallback, plan §9)
+driver = get_baseline_driver("one_shot")   # OneShotGenerator (secondary control, P1.W8.3)
 ```
 
-`make bench` selects via `BASELINE_DRIVER` env (`claude` | `codex` | `llm` | `one_shot`); default is `claude` when the binary is present, otherwise `llm` fallback so the harness is runnable in CI without credentials.
+`make bench` selects via `BASELINE_DRIVER` env (`opencode` | `claude` | `codex` | `llm` | `one_shot`); default is `opencode`, and offline runs (no `FRONTIER_API_KEY`) fall back to the in-memory fake driver — labelled `fake-*` in every result so rehearsal numbers are never mistaken for live ones.
 
 ## Secondary diagnostic control — `one_shot_generator` (P1.W8.3)
 
@@ -87,20 +108,69 @@ Helpers:
 
 If the agentic baseline beats the one-shot, the gain is from tool use/iteration, not just model size. The one-shot's `spec_dict` is available for verifier scoring (W8.4) alongside the other arms.
 
+## Ablation arms — engine vs. untrained frontier model (REQ-024 B)
+
+`src/autobridge/bench/ablation.py` runs five arms under one matched budget
+(`assert_all_inputs_equal`, pairwise over all five — the B2 extension of the
+harness self-test). Every arm that calls a frontier model uses the same
+`FRONTIER_MODEL` through the same provider (`ablation_provider()`), so the
+only difference between arms is the engine.
+
+| arm | what it is |
+| --- | --- |
+| `frontier_oneshot` | the model alone, one prompt with the docs |
+| `frontier_agent` | the model as a coding agent with tools (`opencode run` by default) |
+| `engine_no_knowledge` | AutoBridge with L0+L1 disabled (ladder, verifier gate, budgets kept) |
+| `autobridge_cold` | full AutoBridge, empty learned knowledge |
+| `autobridge_warm` | full AutoBridge after learning on the dev split only |
+
+Engine arms run in-process through `RepairController`; structural drifts
+wire no provider (zero-call rows stay zero-call — any model call would be a
+failure), semantic drifts climb with the shared provider exactly like the
+model-usage matrix. `warm_knowledge()` learns only dev-split cases (needs a
+session: verified propose patches are what populate L0).
+
+Metrics (`summarize_ablation`, per arm / per arm+scenario / overall, mean +
+95 % normal-approx interval, ≥5 trials): verified completion rate (verifier
+only), wrong patches released (must be 0), correct escalation rate,
+frontier/small tokens, cost, wall time. `grade_ablation_trial` verifies
+released patches over HTTP and degrades to unverified — never guessed —
+when the verifier is unreachable. `render_ablation_table` prints the
+per-run table (rung that resolved it, model calls, small/frontier tokens,
+why it escalated comes from the ladder trace).
+
+```bash
+make bench-ablation   # all arms on the dev split, no stack needed (5 trials)
+make bench            # scorecard first, then all ablation arms, then the learning curve
+```
+
+The learning curve (`run_learning_curve`, `experiments/learning_curve.md`)
+injects the same drift five times: the agent pays every repair, cold
+repairs via the ladder once then hits L0, warm is L0 from the start — with
+the driver/provider provenance printed on the file so rehearsal rows
+(fake-labelled) cannot be mistaken for publication numbers.
+
+Pre-registration (frozen before the Nov 3 run): `experiments/preregistration.md`
+— arms, metrics, trials, budgets, the primary hypothesis
+(`autobridge_cold` ≥ `frontier_agent` verified completion at ≥10× fewer
+frontier tokens), and the promise that results are published whatever they
+are.
+
 ## Scoring and reports
 
 Scoring (P1.W8.4, `bench/scoring.py`) queries the verifier in hidden mode and reports: verified completion, repair success, false-fix/unsafe rate, escalation quality, elapsed, tool calls, model calls, frontier tokens, estimated cost, zero-frontier solves. `bench/report.py` writes `experiments/scorecard.md` listing wins and losses — both are reported.
 
-## `make bench` pipeline (P1.W8.5)
+## `make bench` pipeline (P1.W8.5, REQ-024 B6)
 
 One command runs the whole benchmark (plan §8 verification ladder:
 heldout sha check → matched-budget run → `experiments/scorecard.md`):
 
 ```bash
-make bench                                    # dev split, seed 42
+make bench                                    # dev split: scorecard, then all ablation arms, then learning curve
 BENCH_SCENARIOS=baseline BENCH_TRIALS=2 make bench
 BENCH_SEED=99 make bench                      # reproducible from seeds
 BENCH_NO_SCORE=1 make bench                   # harness JSONL only, skip scoring
+make bench-ablation                           # rehearsal without a stack (5 trials, unverified labels)
 make bench-heldout                            # Nov 3 run: BENCH_VISIBILITY=heldout
 ```
 

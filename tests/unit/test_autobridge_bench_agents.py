@@ -18,8 +18,14 @@ from autobridge.bench.baseline_coding_agent import (
     CodexCliDriver,
     CodexCliError,
     FakeClaudeDriver,
+    FakeOpenCodeDriver,
+    OpenCodeCliDriver,
+    OpenCodeCliError,
     build_fake_claude_output,
+    build_fake_opencode_output,
+    get_baseline_driver,
     parse_claude_output,
+    parse_opencode_output,
 )
 from autobridge.llm.provider import Usage
 
@@ -468,3 +474,168 @@ def test_fake_claude_script_model(monkeypatch: pytest.MonkeyPatch) -> None:  # n
     proc = subprocess.run([sys.executable, str(script), "-p", "hi"], capture_output=True, text=True, env=env, timeout=5)
     data = json.loads(proc.stdout)
     assert data["model"] == "my-fake-model"
+
+
+# ---------------------------------------------------------------------------
+# OpenCodeCliDriver (REQ-024 B1 — default baseline driver)
+# ---------------------------------------------------------------------------
+
+
+def test_opencode_parse_empty() -> None:
+    res = parse_opencode_output("")
+    assert res.text == ""
+    assert res.total_tokens == 0
+    assert res.model == ""
+
+
+def test_opencode_parse_fake_stream() -> None:
+    stdout = build_fake_opencode_output("generated spec", input_tokens=100, output_tokens=200, model="spark-test")
+    res = parse_opencode_output(stdout)
+    assert res.text == "generated spec"
+    assert res.usage.input_tokens == 100
+    assert res.usage.output_tokens == 200
+    assert res.model == "spark-test"
+
+
+def test_opencode_parse_prompt_tokens_shape() -> None:
+    stdout = json.dumps({"type": "step_finish", "tokenUsage": {"prompt_tokens": 30, "completion_tokens": 40}, "model": "m"})
+    res = parse_opencode_output(stdout)
+    assert res.usage.input_tokens == 30
+    assert res.usage.output_tokens == 40
+
+
+def test_opencode_parse_tokens_input_output_shape() -> None:
+    stdout = json.dumps({"tokens": {"input": 7, "output": 9}})
+    res = parse_opencode_output(stdout)
+    assert res.total_tokens == 16
+
+
+def test_opencode_parse_max_wins_across_events() -> None:
+    lines = [
+        json.dumps({"type": "message", "content": [{"type": "text", "text": "part one"}]}),
+        json.dumps({"type": "usage", "usage": {"input_tokens": 50, "output_tokens": 60}}),
+        json.dumps({"type": "done", "usage": {"input_tokens": 120, "output_tokens": 200}, "model": "spark"}),
+    ]
+    res = parse_opencode_output("\n".join(lines))
+    assert "part one" in res.text
+    assert res.total_tokens == 320
+    assert res.model == "spark"
+
+
+def test_opencode_parse_cost() -> None:
+    stdout = build_fake_opencode_output("t", cost_usd=0.011)
+    res = parse_opencode_output(stdout)
+    assert res.cost_usd == Decimal("0.011")
+
+
+def test_opencode_parse_plain_text_fallback() -> None:
+    res = parse_opencode_output("just some text\nmore text")
+    assert "just some text" in res.text
+    assert res.total_tokens == 0
+
+
+def test_opencode_parse_unknown_shape_never_raises() -> None:
+    res = parse_opencode_output(json.dumps({"weird": [1, {"nested": True}]}))
+    assert res.text == ""
+    assert res.total_tokens == 0
+
+
+def test_opencode_driver_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENCODE_CLI_PATH", raising=False)
+    monkeypatch.delenv("OPENCODE_MODEL", raising=False)
+    d = OpenCodeCliDriver()
+    assert d.cli_path == "opencode"
+    assert d.model is None
+    assert d.last_prompt is None
+
+
+def test_opencode_driver_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENCODE_CLI_PATH", "/tmp/opencode_fake")
+    monkeypatch.setenv("OPENCODE_MODEL", "meta/muse-spark-1.3")
+    d = OpenCodeCliDriver()
+    assert d.cli_path == "/tmp/opencode_fake"
+    assert d.model == "meta/muse-spark-1.3"
+
+
+def test_opencode_driver_build_command() -> None:
+    d = OpenCodeCliDriver(model="meta/muse-spark-1.3")
+    assert d._build_command("hi") == ["opencode", "run", "--format", "json", "-m", "meta/muse-spark-1.3", "hi"]
+
+
+def test_opencode_driver_build_command_no_model() -> None:
+    d = OpenCodeCliDriver(cli_path="opencode", model=None)
+    # model=None + OPENCODE_MODEL unset in this env path is not guaranteed;
+    # explicit empty string also omits -m.
+    d.model = None
+    cmd = d._build_command("hi")
+    assert cmd[:4] == ["opencode", "run", "--format", "json"]
+    assert "-m" not in cmd
+    assert cmd[-1] == "hi"
+
+
+def test_opencode_driver_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_stdout = build_fake_opencode_output("spec yaml", input_tokens=11, output_tokens=22, model="spark")
+    monkeypatch.setattr(
+        "autobridge.bench.baseline_coding_agent.subprocess.run",
+        lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=0, stdout=fake_stdout, stderr=""),  # noqa: ARG005
+    )
+    d = OpenCodeCliDriver(cli_path="opencode", model="meta/muse-spark-1.3")
+    res = d.run("make a spec")
+    assert res.text == "spec yaml"
+    assert res.total_tokens == 33
+    assert res.model == "spark"
+    assert d.last_prompt == "make a spec"
+    assert d.calls[0]["cmd"][4:6] == ["-m", "meta/muse-spark-1.3"]
+
+
+def test_opencode_driver_run_nonzero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "autobridge.bench.baseline_coding_agent.subprocess.run",
+        lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout="out", stderr="bad"),  # noqa: ARG005
+    )
+    with pytest.raises(OpenCodeCliError, match="failed with exit 1"):
+        OpenCodeCliDriver(cli_path="opencode").run("prompt")
+
+
+def test_opencode_driver_run_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
+        raise subprocess.TimeoutExpired(cmd="opencode", timeout=1, output="o", stderr="e")
+
+    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    with pytest.raises(OpenCodeCliError, match="timed out"):
+        OpenCodeCliDriver(cli_path="opencode", timeout_s=1).run("prompt")
+
+
+def test_opencode_driver_run_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
+        raise FileNotFoundError("no such file")
+
+    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    with pytest.raises(OpenCodeCliError, match="not found"):
+        OpenCodeCliDriver(cli_path="opencode-not-exist").run("prompt")
+
+
+def test_fake_opencode_driver_default() -> None:
+    f = FakeOpenCodeDriver()
+    res = f.run("hello")
+    assert res.text == "fake opencode response"
+    assert res.total_tokens == 30
+    assert res.model == "fake-opencode"
+
+
+def test_fake_opencode_driver_substring() -> None:
+    f = FakeOpenCodeDriver(responses={"spec": "custom spec"})
+    assert f.run("make a spec").text == "custom spec"
+
+
+def test_baseline_driver_default_is_opencode() -> None:
+    d = get_baseline_driver()
+    assert isinstance(d, OpenCodeCliDriver)
+
+
+def test_baseline_driver_kinds() -> None:
+    assert isinstance(get_baseline_driver("claude"), ClaudeCodeDriver)
+    assert isinstance(get_baseline_driver("codex"), CodexCliDriver)
+    assert isinstance(get_baseline_driver("opencode"), OpenCodeCliDriver)
+    with pytest.raises(ValueError, match="unknown baseline driver kind"):
+        get_baseline_driver("nope")

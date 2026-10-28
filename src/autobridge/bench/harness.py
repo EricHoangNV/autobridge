@@ -50,7 +50,7 @@ The baseline arm is pluggable via the drivers in
   :class:`Budget` using the same ``token_ceiling`` / ``wall_clock_s``
   as AutoBridge, so the matched-budget self-test still holds.
   ``make bench`` selects the driver via ``BASELINE_DRIVER`` env
-  (``claude`` | ``codex`` | ``llm``) or the ``get_baseline_driver()``
+  (``opencode`` | ``claude`` | ``codex`` | ``llm``) or the ``get_baseline_driver()``
   factory — documented in ``docs/benchmark.md``.
 
   Both arms therefore receive identical
@@ -369,7 +369,16 @@ def assert_budget_fields_equal(a: HarnessInputs, b: HarnessInputs) -> None:
 class ArmResult:
     """Result of one arm for one scenario × trial."""
 
-    arm: Literal["autobridge", "baseline", "one_shot"]
+    arm: Literal[
+        "autobridge",
+        "baseline",
+        "one_shot",
+        "frontier_oneshot",
+        "frontier_agent",
+        "engine_no_knowledge",
+        "autobridge_cold",
+        "autobridge_warm",
+    ]
     inputs: HarnessInputs
     success: bool
     elapsed_ms: float = 0.0
@@ -758,6 +767,7 @@ def run_baseline_arm(
     *,
     driver: Any | None = None,
     prompt_template: str | None = None,
+    arm: str = "baseline",
 ) -> ArmResult:
     """Run the baseline arm for *inputs* via the coding-agent CLI driver.
 
@@ -798,7 +808,7 @@ def run_baseline_arm(
                 except Exception:
                     cost = None
             return ArmResult(
-                arm="baseline",
+                arm=arm,  # type: ignore[arg-type]
                 inputs=inputs,
                 success=True,
                 elapsed_ms=elapsed,
@@ -812,7 +822,7 @@ def run_baseline_arm(
             )
         elapsed = (time.monotonic() - start) * 1000.0
         return ArmResult(
-            arm="baseline",
+            arm=arm,  # type: ignore[arg-type]
             inputs=inputs,
             success=True,
             elapsed_ms=elapsed,
@@ -822,7 +832,7 @@ def run_baseline_arm(
         elapsed = (time.monotonic() - start) * 1000.0
         err_msg = f"{type(exc).__name__}: {exc}"
         return ArmResult(
-            arm="baseline",
+            arm=arm,  # type: ignore[arg-type]
             inputs=inputs,
             success=False,
             elapsed_ms=elapsed,
@@ -1267,6 +1277,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wall-clock", type=float, default=None)
     parser.add_argument("--control-api-url", type=str, default=None)
     parser.add_argument("--verifier-url", type=str, default=None)
+    parser.add_argument(
+        "--arms",
+        choices=("matched", "ablation"),
+        default=None,
+        help="Arm set (default: matched; env BENCH_ARMS). 'ablation' runs the REQ-024 "
+        "five-arm comparison (frontier_oneshot, frontier_agent, engine_no_knowledge, "
+        "autobridge_cold, autobridge_warm) on the dev split.",
+    )
     args = parser.parse_args(argv)
 
     # Env overrides (for Docker Compose)
@@ -1362,6 +1380,34 @@ def main(argv: list[str] | None = None) -> int:
     print(f"bench harness: seed={cfg.seed} token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
     print(f"  sandbox_image={cfg.sandbox_image} sandbox_url={cfg.sandbox_url}", flush=True)
     print(f"  docs_volume={cfg.docs_volume} control={cfg.control_api_url} verifier={cfg.verifier_url}", flush=True)
+
+    arms_mode = args.arms or (os.environ.get("BENCH_ARMS", "").strip() or None) or "matched"
+    if arms_mode == "ablation":
+        from autobridge.bench.ablation import (  # noqa: PLC0415
+            render_ablation_table,
+            run_ablation_harness,
+            write_ablation_results,
+        )
+
+        if visibility != "dev":
+            print("bench harness: ablation mode runs the dev split only (heldout stays sealed)", flush=True)
+            return 2
+        if cfg.trials_per_scenario < 5:
+            print(
+                f"bench harness: ablation with {cfg.trials_per_scenario} trial(s) per scenario — "
+                "intervals are illustrative below 5 (REQ-024 B3 needs >= 5)",
+                flush=True,
+            )
+        trials, _grades, summary = run_ablation_harness(cfg, scenarios, verifier_url=cfg.verifier_url)
+        paths = write_ablation_results(trials, summary, args.output_dir)
+        matched = sum(1 for t in trials if t.matched)
+        total = len(trials)
+        print(f"bench harness: {matched}/{total} ablation trials matched, wrote {[str(p) for p in paths]}", flush=True)
+        if matched != total:
+            print("WARNING: some trials were not matched — harness bug", flush=True)
+            return 1
+        print(render_ablation_table(summary), flush=True)
+        return 0
 
     no_score = args.no_score or env_no_score.strip() == "1"
     if not os.environ.get("AUTOBRIDGE_BENCH_SKIP_PROBE") and not no_score:

@@ -364,6 +364,19 @@ def score_trial(
         }
         if trial.get("one_shot") is not None:
             arms_raw["one_shot"] = trial.get("one_shot")
+        # REQ-024 ablation arms (run_ablation_trial nests them under "arms").
+        nested = trial.get("arms")
+        if isinstance(nested, dict):
+            arms_raw.update(nested)
+        for _extra in (
+            "frontier_oneshot",
+            "frontier_agent",
+            "engine_no_knowledge",
+            "autobridge_cold",
+            "autobridge_warm",
+        ):
+            if trial.get(_extra) is not None and _extra not in arms_raw:
+                arms_raw[_extra] = trial.get(_extra)
     else:
         scenario_id = str(getattr(trial, "scenario_id", ""))
         trial_n = int(getattr(trial, "trial", 0) or 0)
@@ -375,6 +388,10 @@ def score_trial(
         one_shot = getattr(trial, "one_shot", None)
         if one_shot is not None:
             arms_raw["one_shot"] = one_shot
+        # REQ-024 AblationTrialResult nests arm results under .results.
+        nested_results = getattr(trial, "results", None)
+        if isinstance(nested_results, dict):
+            arms_raw.update(nested_results)
 
     arm_scores: dict[str, dict[str, Any]] = {}
     for name, raw in arms_raw.items():

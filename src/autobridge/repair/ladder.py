@@ -787,6 +787,11 @@ def run_ladder(
     session: Any | None = None,
     run_id: str | None = None,
     probe_budget: Any | None = None,
+    # REQ-024 ablation: disable built-in knowledge (L0 cache + L1 rules) so
+    # only the model (L2/L3) can repair. The ladder, verifier gate and
+    # budgets are kept — defaults preserve existing behavior exactly.
+    enable_knowledge: bool = True,
+    enable_rules: bool = True,
 ) -> LadderResult:
     """Execute L0/L1 ladder deterministically (no model calls).
 
@@ -910,10 +915,10 @@ def run_ladder(
             classification=classification,
             extra=extra_dict,
         )
-        # Find retry rule if present
-        matched = matching_rules(ctx)
+        # Find retry rule if present (skipped when L1 is disabled for ablation)
+        backoff_matched = matching_rules(ctx) if enable_rules else []
         retry_entry = None
-        for e in matched:
+        for e in backoff_matched:
             if e.id == "retry_backoff_only":
                 retry_entry = e
                 break
@@ -992,7 +997,17 @@ def run_ladder(
         )
 
     # --- L0: Knowledge lookup ---
-    if knowledge_cache is not None and fingerprint_delta is not None:
+    if not enable_knowledge:
+        trace.append(
+            {
+                "level": 0,
+                "action": "knowledge_disabled",
+                "reason": "L0 disabled for ablation (engine_no_knowledge): built-in known fixes off",
+                "drift_class": drift_class,
+                "vendor": vendor_val,
+            }
+        )
+    elif knowledge_cache is not None and fingerprint_delta is not None:
         # Need vendor to key; if missing still try
         cache_entry = knowledge_cache.lookup(vendor_val, fingerprint_delta)
         if cache_entry is not None:
@@ -1057,7 +1072,18 @@ def run_ladder(
         classification=classification,
         extra=extra_dict,
     )
-    matched = matching_rules(ctx)
+    if not enable_rules:
+        trace.append(
+            {
+                "level": 1,
+                "action": "rules_disabled",
+                "reason": "L1 disabled for ablation (engine_no_knowledge): built-in rules off",
+                "drift_class": drift_class,
+            }
+        )
+        matched: list[Any] = []
+    else:
+        matched = matching_rules(ctx)
     if matched:
         for entry in matched:
             try:
@@ -1279,6 +1305,10 @@ def run_frontier_climb(
     l2_threshold: float = L2_CONFIDENCE_THRESHOLD,
     scenario: str | None = None,
     validate_against: dict[str, Any] | None = None,
+    # REQ-024 ablation: disable built-in knowledge (L0 + L1) so only the
+    # model (L2/L3) can decide. Defaults preserve existing behavior exactly.
+    enable_knowledge: bool = True,
+    enable_rules: bool = True,
 ) -> dict[str, Any]:
     """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then stop (REQ-021).
 
@@ -1323,7 +1353,16 @@ def run_frontier_climb(
     replay_captured_at = ""
 
     # --- L0: learned knowledge ---
-    if knowledge_cache is not None and fingerprint_delta is not None:
+    if not enable_knowledge:
+        attempts.append(
+            {
+                "rung": 0,
+                "action": "knowledge_disabled",
+                "reason": "L0 disabled for ablation (engine_no_knowledge): built-in known fixes off",
+                "calls": [],
+            }
+        )
+    elif knowledge_cache is not None and fingerprint_delta is not None:
         entry = knowledge_cache.lookup(vendor_val, fingerprint_delta)
         if entry is not None:
             attempts.append(
@@ -1363,8 +1402,17 @@ def run_frontier_climb(
         classification=None,
         extra=dict(extra or {}),
     )
-    matched = matching_rules(ctx)
-    if matched:
+    matched = matching_rules(ctx) if enable_rules else []
+    if not enable_rules:
+        attempts.append(
+            {
+                "rung": 1,
+                "action": "rules_disabled",
+                "reason": "L1 disabled for ablation (engine_no_knowledge): built-in rules off",
+                "calls": [],
+            }
+        )
+    elif matched:
         names = ", ".join(e.id for e in matched)
         attempts.append(
             {

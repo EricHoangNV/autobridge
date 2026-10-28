@@ -87,6 +87,18 @@ def small_model() -> str:
     return os.environ.get("SMALL_MODEL", "") or frontier_model()
 
 
+def opencode_model() -> str:
+    """Model for the opencode baseline driver (env ``OPENCODE_MODEL``).
+
+    ``opencode run`` takes ``-m provider/model``; empty (unset) omits the
+    flag and opencode uses its configured default.  REQ-024 requires every
+    frontier arm to use the same model — set this to the same provider and
+    model as ``FRONTIER_MODEL`` (``provider/model`` form); the bench
+    records both ids per arm so a mismatch is visible in the scorecard.
+    """
+    return os.environ.get("OPENCODE_MODEL", "").strip()
+
+
 def model_price_per_million(model: str) -> tuple[str, str] | None:
     """Published (input, output) USD per 1M tokens for *model*, if known."""
     return MODEL_PRICES_PER_MILLION.get((model or "").strip())

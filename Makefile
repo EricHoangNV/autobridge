@@ -88,15 +88,25 @@ ui-e2e-deps: ui-deps
 e2e-ui: ui-e2e-deps
 	cd ui && NODE_PATH="$$PWD/node_modules" npm run test:e2e
 
-# Env: BENCH_SCENARIOS (csv) · BENCH_SEED · BENCH_TRIALS · BENCH_VISIBILITY
-# (dev|heldout|all) · BENCH_NO_SCORE=1 (harness JSONL only). Dev runs skip
-# the heldout gate; heldout/all runs verify HELDOUT_DIR against the
-# committed manifest first (exit 2 on missing env, missing file, mismatch).
+# Env: BENCH_SCENARIOS (csv) · BENCH_SEED · BENCH_TRIALS (bench defaults 5
+# for publishable 95% intervals, REQ-024 B3) · BENCH_VISIBILITY (dev|heldout|all) ·
+# BENCH_NO_SCORE=1 (harness JSONL only) · BENCH_ARMS (matched|ablation).
+# Dev runs skip the heldout gate; heldout/all runs verify HELDOUT_DIR against
+# the committed manifest first (exit 2 on missing env, missing file, mismatch).
 # Host targets load repo .env first (REQ-014: scripts/load_dotenv.sh exports
 # only non-empty KEY=value lines; explicit environment always wins).
 bench:
-	@echo ">> bench: matched-budget run + scorecard (W8.5)"
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
+	@echo ">> bench: matched-budget run + scorecard (W8.5), then all ablation arms (REQ-024 B)"
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
+	. ./scripts/load_dotenv.sh && BENCH_TRIALS=$${BENCH_TRIALS:-5} uv run python -m autobridge.bench.harness --arms ablation --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.ablation_curve
+
+# REQ-024 B6 rehearsal without a stack: engine arms run in-process and grading
+# degrades to unverified when the verifier is down (labels say so).
+bench-ablation:
+	@echo ">> bench-ablation: all arms on the dev split + learning curve (REQ-024 B)"
+	. ./scripts/load_dotenv.sh && BENCH_TRIALS=$${BENCH_TRIALS:-5} AUTOBRIDGE_BENCH_SKIP_PROBE=1 uv run python -m autobridge.bench.harness --arms ablation --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.ablation_curve
 
 bench-heldout:
 	@echo ">> bench (heldout split — private seeds from HELDOUT_DIR, Nov 3 run)"

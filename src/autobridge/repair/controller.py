@@ -96,6 +96,11 @@ class RepairController:
         scenario: str | None = None,
         validate_against: dict[str, Any] | None = None,
         run_id: str | None = None,
+        # REQ-024 ablation: disable built-in knowledge (L0 + L1) so only the
+        # model (L2/L3) can repair. The ladder, verifier gate and budgets
+        # are kept. Defaults preserve existing behavior exactly.
+        enable_knowledge: bool = True,
+        enable_rules: bool = True,
     ) -> LadderResult:
         """Run ladder for given drift context and optionally persist RepairRun.
 
@@ -127,6 +132,8 @@ class RepairController:
                 scenario=scenario,
                 validate_against=validate_against,
                 run_id=run_id,
+                enable_knowledge=enable_knowledge,
+                enable_rules=enable_rules,
             )
 
         result = run_ladder(
@@ -138,6 +145,14 @@ class RepairController:
             classification=classification,
             extra=extra_dict,
             knowledge_cache=self.knowledge_cache,
+            hypotheses=hypotheses,
+            enumerator_yield_count=enumerator_yield_count,
+            provider=provider,
+            budget=budget,
+            session=session,
+            run_id=run_id,
+            enable_knowledge=enable_knowledge,
+            enable_rules=enable_rules,
         )
 
         # Persist RepairRun if session provided
@@ -192,6 +207,8 @@ class RepairController:
         scenario: str | None,
         validate_against: dict[str, Any] | None,
         run_id: str | None,
+        enable_knowledge: bool = True,
+        enable_rules: bool = True,
     ) -> LadderResult:
         """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then escalate.
 
@@ -223,6 +240,8 @@ class RepairController:
             vendor=vendor_val,
             scenario=scenario,
             validate_against=validate_against,
+            enable_knowledge=enable_knowledge,
+            enable_rules=enable_rules,
         )
         if climb.get("resolved_rung") == 0:
             # L0 knew this drift: fall back to the deterministic path, which
@@ -236,6 +255,8 @@ class RepairController:
                 vendor=vendor_val,
                 drift_event_ids=drift_event_ids,
                 session=session,
+                enable_knowledge=enable_knowledge,
+                enable_rules=enable_rules,
             )
 
         # Normalize rung-keyed climb attempts to level-keyed ladder trace
