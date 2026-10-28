@@ -1953,3 +1953,34 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 
 **Notes for next iteration:**
 - None — self-contained. REQ-012 (control bearer token) remains open and builds on this (localhost + optional token).
+
+## REQ-012 — Optional bearer token on the control API's write routes
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-012 (OPEN → DONE)
+
+**What was done:**
+- `control/deps.py`: `CONTROL_TOKEN_ENV_VAR`, `bearer_scheme` (HTTPBearer, auto_error=False), `get_control_token()`, `require_control_token` (open when unset; `hmac.compare_digest`, 401 + `WWW-Authenticate: Bearer` when set; token never in the error body)
+- Wired `Security(require_control_token)` into all 15 POST routes (connectors 2, builds 2, demo 2, discovery 6, repairs 3); added shared `AUTH_401` to `control/schemas.py` and merged into every POST decorator
+- `ui/middleware.ts`: server-side `Authorization` injection for `/api/*` writes, no `NEXT_PUBLIC_` variable
+- Callers send the token when set: `bench/demo.py`, `bench/harness.py`, `cli.py`, `tests/e2e/conftest.py`; `compose.yaml` → `control`+`ui`, `.env.example` documented
+- `docs/architecture.md` §9.1 paragraph on the token
+- Contract fuzz fixture sets the token (enforcement on while fuzzing); regenerated `ui/openapi.json` + `schema.d.ts`
+- New `tests/unit/test_autobridge_control_token.py`: 11 tests (unset-open incl. empty string, 401 matrix, GETs/SSE open, OpenAPI scheme, redaction, caller helpers)
+
+**Key decisions:**
+- `Security(...)` (not `Depends`) in route signatures so FastAPI emits the `HTTPBearer` scheme on write routes only; verified 15 SEC / 0 NOSEC POSTs, 0 GETs with security
+- Headers kwarg passed to httpx/fake clients only when a token is set, so existing header-unaware fakes keep working with auth disabled
+- `scripts/smoke.sh` untouched (healthz/readyz only); token documented as must-set before exposing beyond localhost (pairs with REQ-011 loopback default)
+
+**Files changed:**
+- `src/autobridge/control/deps.py`, `src/autobridge/control/schemas.py`
+- `src/autobridge/control/routes/builds.py`, `connectors.py`, `demo.py`, `discovery.py`, `repairs.py`
+- `src/autobridge/bench/demo.py`, `src/autobridge/bench/harness.py`, `src/autobridge/cli.py`
+- `tests/e2e/conftest.py`, `tests/unit/test_autobridge_control_token.py` (new), `tests/unit/test_autobridge_control_contract.py`
+- `ui/middleware.ts` (new), `ui/openapi.json`, `ui/lib/api/schema.d.ts`
+- `compose.yaml`, `.env.example`, `docs/architecture.md`, `mds/REQUESTS.MD`
+
+**Notes for next iteration:**
+- `make openapi-check` passes only after the regenerated files are committed (its `git diff --exit-code` compares worktree to index) — verify post-merge
+- No live-stack verification in sandbox (docker present, stack down); first `make up` run with a token set should exercise one authed write + one 401 to confirm compose wiring end to end
+- Open: P1.W10.3 + P1.W2.8 owner steps; Code Review Cycle 2 FAIL items (AR-1-1…AR-1-5, AR-2-1…AR-2-6) still unaddressed

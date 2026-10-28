@@ -23,8 +23,12 @@ Wanted:
 4. With the stack up, run `make bench` once and record the real dev-split numbers in the build note (not zeros).
 Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
 
+---
+
+## Resolved Requests (reference only)
+
 ### REQ-012 — Optional bearer token on the control API's write routes (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 04:35)
+Status: DONE (2026-10-28)
 The control API has no authentication; the only identity is the server-side `AUTOBRIDGE_OPERATOR` name (REQ-001).
 That is fine on localhost (REQ-011), but not if the stack is ever hosted for judges.
 Wanted:
@@ -43,10 +47,8 @@ Wanted:
    either way. Update the OpenAPI contract (security scheme on the write routes) and `make openapi-check`.
 6. `.env.example` gets `AUTOBRIDGE_CONTROL_TOKEN=` with a one-line note (set it before exposing the stack beyond
    localhost); `compose.yaml` passes it to `control` and `ui`.
+Resolution: `require_control_token` dep on all 15 POST routes (401 + HTTPBearer scheme + documented 401); open when unset; UI middleware injects server-side; harness/demo/CLI/e2e send when set; compose+env wired; redaction verified; 11 new unit tests + contract fuzz with enforcement on.
 
----
-
-## Resolved Requests (reference only)
 
 ### REQ-011 — Publish compose ports on localhost only (2026-10-28)
 Status: DONE (2026-10-28)

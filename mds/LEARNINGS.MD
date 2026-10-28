@@ -71,3 +71,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed by sending the header in `inject-fault` and `reset` (plus env-override parity for reset), with unit tests asserting the header on the mocked `httpx.Client` call.
 
 **Rule:** Any proxy endpoint that returns success while delegating the real work must assert the upstream status in at least one test — a 200 envelope around a failed delegation is a silent lie.
+---
+
+## 8. Declaring an OpenAPI security scheme makes schemathesis require 401s, even for optional auth
+
+**Context:** REQ-012 (2026-10-28) — optional `AUTOBRIDGE_CONTROL_TOKEN` on control write routes
+
+- Adding `HTTPBearer` security to the 15 POST routes turned 4 previously-green schemathesis cases red (`ST401`, `ST203`, `ST201`): the fuzzer generates unauthenticated cases and expects 401/403 once a scheme is declared, but with the token unset the routes correctly return 2xx.
+- Root cause: OpenAPI has no "optional security" that matches conditional runtime enforcement — the declared scheme reads as required to the fuzzer.
+- Fixed two ways: documented the `401` response on every guarded route (shared `AUTH_401` so the 401 shape validates), and set the token in the contract test's fixture so enforcement is active while fuzzing; the 2xx paths stay covered by the functional API tests.
+
+**Rule:** When auth is conditional at runtime but declared in OpenAPI, run contract fuzzing with enforcement switched on and document the 401, otherwise the fuzzer will flag the open-when-unset path as an auth failure.
