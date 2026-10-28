@@ -708,6 +708,54 @@ def test_oversize_probe_is_rejected_by_host_splitter(host: Host) -> None:
         link.join(timeout=5)
 
 
+def test_pa_before_link_ack_confirms_posting(host: Host) -> None:
+    """PA racing ahead of the link-ACK must confirm, not count duplicate.
+
+    Forces the order instead of relying on timing: the host holds back the
+    link-ACK, delivers the PA first, and only then lets the ACK through.
+    Before the pre-registration fix the PA found no ``_unacked`` entry and
+    was dropped as a duplicate (the charge looked lost).
+    """
+    link = _start_link(host)
+    try:
+        host.handshake()
+        host.no_ack = True  # hold every link-ACK back
+        seen: set[str] = set()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline and len(seen) < 2:
+            for rec in host.pump(0.2):
+                if rec.record_type == "PS" and rec.field("P#") not in seen:
+                    seen.add(rec.field("P#"))
+                    _pa(host, rec)  # PA lands while the PABX is in its ACK wait
+            for rec in list(host.inbox):
+                if rec.record_type == "PS" and rec.field("P#") not in seen:
+                    seen.add(rec.field("P#"))
+                    _pa(host, rec)
+        assert len(seen) >= 2, "stay postings never arrived"
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            host.pump(0.2)
+            snap = link.snapshot()
+            if snap["counters"]["pa_ok"] >= len(seen):
+                break
+        snap = link.snapshot()
+        assert snap["counters"]["pa_ok"] == len(seen), snap["counters"]
+        assert snap["counters"]["duplicates_seen_by_host"] == 0
+        assert snap["unacked"] == []  # confirmed, nothing to resend
+        host.no_ack = False  # let the held-back ACK through; the send completes
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            host.pump(0.2)
+            if link.snapshot()["counters"]["postings_sent"] >= 1:
+                break
+        assert link.snapshot()["counters"]["postings_sent"] >= 1
+        assert link.snapshot()["counters"]["duplicates_seen_by_host"] == 0
+    finally:
+        host.no_ack = False
+        link.stop()
+        link.join(timeout=5)
+
+
 def test_peer_le_ends_link_cleanly_then_reconnect(host: Host) -> None:
     link = _start_link(host)
     try:

@@ -757,17 +757,32 @@ class PabxLink(threading.Thread):
                     # change between links reshapes replays and never-sent
                     # stay postings alike (same P#, amounts, timestamps).
                     rec = self._ps_in_layout(rec, self._current_layouts()["PS"])
-                self._send_record_and_wait_ack(sock, rec)
-                with self.lock:
-                    pno = rec.field("P#")
-                    if self._pending and self._pending[0].field("P#") == pno:
-                        self._pending.pop(0)
-                    if rec.record_type == "PS" and pno:
+                # Register the P# BEFORE the frame goes out: the host's PA
+                # can arrive while we are still inside the ACK wait (its
+                # link-ACK and the deferred PA race each other), and a PA
+                # for an unregistered P# would be miscounted as a duplicate
+                # and dropped — a charge that looks lost (REQ-022 owner
+                # check 2026-10-29). A failed send drops the entry again;
+                # the record stays queued and is sent on the next link.
+                pno = rec.field("P#") if rec.record_type == "PS" else ""
+                if pno:
+                    with self.lock:
                         self._unacked[pno] = {
                             "record": rec,
                             "last": time.monotonic(),
                             "seq": int(pno),
                         }
+                try:
+                    self._send_record_and_wait_ack(sock, rec)
+                except _LinkDropped:
+                    if pno:
+                        with self.lock:
+                            self._unacked.pop(pno, None)
+                    raise
+                with self.lock:
+                    if self._pending and self._pending[0].field("P#") == rec.field("P#"):
+                        self._pending.pop(0)
+                    if pno:
                         self.counters["postings_sent"] += 1
                         self._sent_history.append(rec)
                 last_out = time.monotonic()
