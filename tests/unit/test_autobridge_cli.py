@@ -443,3 +443,60 @@ def test_cli_forwards_control_token_when_set(monkeypatch: Any) -> None:
         assert client.headers.get("Authorization") == "Bearer cli-token-123"
     finally:
         client.close()
+
+
+# ---------------------------------------------------------------------------
+# capabilities / knowledge (REQ-021 item 6)
+# ---------------------------------------------------------------------------
+
+
+def test_capabilities_text_and_json(monkeypatch: Any, capsys: Any) -> None:
+    payload = {
+        "versions": {
+            "v1": {"methods": ["GET"], "auth_types": ["bearer"], "pagination_strategies": ["page"], "joins": False, "body_templates": False},
+            "v2": {"methods": ["GET", "POST"], "auth_types": ["bearer", "body_fields"], "pagination_strategies": ["page", "body_cursor"], "joins": True, "body_templates": True},
+        },
+        "transforms": ["money"],
+        "checks": ["money_invariant"],
+        "stop_conditions": ["null_cursor"],
+        "rules": [{"id": "page_to_cursor", "fixes": "flip", "confidence": 0.94, "verification_level": "visible", "produces_patch": True}],
+        "v1_v2_diff": ["POST ops"],
+        "tools": [{"name": "reset_demo", "description": "reset", "inputSchema": {"type": "object"}}],
+    }
+    seen = _client_for(lambda r: _ok(payload) if r.url.path == "/capabilities" else _ok({}), monkeypatch)
+    assert main(["capabilities"]) == 0
+    out = capsys.readouterr().out
+    assert "vocabulary v1" in out and "vocabulary v2" in out
+    assert "page_to_cursor" in out and "reset_demo" in out
+    assert seen[0].url.path == "/capabilities"
+    assert main(["--output", "json", "capabilities"]) == 0
+    assert json.loads(capsys.readouterr().out)["versions"]["v2"]["joins"] is True
+
+
+def test_knowledge_text_empty_and_entry(monkeypatch: Any, capsys: Any) -> None:
+    empty = {"entries": [], "connectors": [], "counts": {"entries": 0, "reuses": 0, "tokens_saved": 0}}
+    _client_for(lambda r: _ok(empty) if r.url.path == "/knowledge" else _ok({}), monkeypatch)
+    assert main(["knowledge"]) == 0
+    assert "empty" in capsys.readouterr().out
+    full = {
+        "entries": [{
+            "vendor": "AtlasPMS", "drift_class": "PAGINATION_CHANGE", "drift_signature": "abc",
+            "rule_id": "page_to_cursor", "patch": [],
+            "learned_from": {"run_id": "r1", "rung": 1, "tokens": 0, "cost": "0", "at": "2026-01-01T00:00:00Z"},
+            "times_reused": 2, "tokens_saved": 0, "cost_saved": "0", "approvals": 1,
+        }],
+        "connectors": [{
+            "connector_id": "c1", "name": "Atlas", "vocabulary": "v1", "builds": 1,
+            "confirmed_hypotheses": ["pagination:/reservations:cursor"], "last_built_at": None,
+        }],
+        "counts": {"entries": 1, "reuses": 2, "tokens_saved": 0},
+    }
+    _client_for(lambda r: _ok(full) if r.url.path == "/knowledge" else _ok({}), monkeypatch)
+    assert main(["knowledge"]) == 0
+    out = capsys.readouterr().out
+    assert "AtlasPMS / PAGINATION_CHANGE -> page_to_cursor" in out
+    assert "reused: 2x" in out
+    assert "Atlas (vocabulary v1)" in out
+    assert "pagination:/reservations:cursor" in out
+    assert main(["--output", "json", "knowledge"]) == 0
+    assert json.loads(capsys.readouterr().out)["counts"]["entries"] == 1

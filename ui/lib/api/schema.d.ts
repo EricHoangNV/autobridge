@@ -58,6 +58,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Capabilities */
+        get: operations["get_capabilities_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connectors": {
         parameters: {
             query?: never;
@@ -481,6 +498,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/knowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Knowledge */
+        get: operations["get_knowledge_knowledge_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metrics/model-usage": {
         parameters: {
             query?: never;
@@ -847,6 +881,83 @@ export interface components {
             /** State */
             state: string;
         };
+        /** CapabilitiesOut */
+        CapabilitiesOut: {
+            /** Checks */
+            checks?: string[];
+            /** Rules */
+            rules?: components["schemas"]["CapabilityRuleOut"][];
+            /** Stop Conditions */
+            stop_conditions?: string[];
+            /** Tools */
+            tools?: components["schemas"]["CapabilityToolOut"][];
+            /** Transforms */
+            transforms?: string[];
+            /** V1 V2 Diff */
+            v1_v2_diff?: string[];
+            /** Versions */
+            versions?: {
+                [key: string]: components["schemas"]["CapabilityVersionOut"];
+            };
+        };
+        /** CapabilityRuleOut */
+        CapabilityRuleOut: {
+            /**
+             * Confidence
+             * @default 0
+             */
+            confidence: number;
+            /**
+             * Fixes
+             * @default
+             */
+            fixes: string;
+            /** Id */
+            id: string;
+            /**
+             * Produces Patch
+             * @default false
+             */
+            produces_patch: boolean;
+            /**
+             * Verification Level
+             * @default
+             */
+            verification_level: string;
+        };
+        /** CapabilityToolOut */
+        CapabilityToolOut: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Inputschema */
+            inputSchema?: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name: string;
+        };
+        /** CapabilityVersionOut */
+        CapabilityVersionOut: {
+            /** Auth Types */
+            auth_types?: string[];
+            /**
+             * Body Templates
+             * @default false
+             */
+            body_templates: boolean;
+            /**
+             * Joins
+             * @default false
+             */
+            joins: boolean;
+            /** Methods */
+            methods?: string[];
+            /** Pagination Strategies */
+            pagination_strategies?: string[];
+        };
         /** ConnectorCreate */
         ConnectorCreate: {
             /**
@@ -1191,6 +1302,111 @@ export interface components {
             /** Worker Id */
             worker_id?: string | null;
         };
+        /** KnowledgeConnectorOut */
+        KnowledgeConnectorOut: {
+            /**
+             * Builds
+             * @default 0
+             */
+            builds: number;
+            /** Confirmed Hypotheses */
+            confirmed_hypotheses?: string[];
+            /** Connector Id */
+            connector_id: string;
+            /** Last Built At */
+            last_built_at?: string | null;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Vocabulary
+             * @default
+             */
+            vocabulary: string;
+        };
+        /** KnowledgeEntryOut */
+        KnowledgeEntryOut: {
+            /**
+             * Approvals
+             * @default 0
+             */
+            approvals: number;
+            /**
+             * Cost Saved
+             * @default 0
+             */
+            cost_saved: string;
+            /**
+             * Drift Class
+             * @default
+             */
+            drift_class: string;
+            /**
+             * Drift Signature
+             * @default
+             */
+            drift_signature: string;
+            learned_from: components["schemas"]["KnowledgeLearnedFromOut"];
+            /** Patch */
+            patch?: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Rule Id
+             * @default
+             */
+            rule_id: string;
+            /**
+             * Times Reused
+             * @default 0
+             */
+            times_reused: number;
+            /**
+             * Tokens Saved
+             * @default 0
+             */
+            tokens_saved: number;
+            /**
+             * Vendor
+             * @default
+             */
+            vendor: string;
+        };
+        /** KnowledgeLearnedFromOut */
+        KnowledgeLearnedFromOut: {
+            /** At */
+            at?: string | null;
+            /**
+             * Cost
+             * @default 0
+             */
+            cost: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Rung
+             * @default 0
+             */
+            rung: number;
+            /**
+             * Tokens
+             * @default 0
+             */
+            tokens: number;
+        };
+        /** KnowledgeOut */
+        KnowledgeOut: {
+            /** Connectors */
+            connectors?: components["schemas"]["KnowledgeConnectorOut"][];
+            /** Counts */
+            counts?: {
+                [key: string]: number;
+            };
+            /** Entries */
+            entries?: components["schemas"]["KnowledgeEntryOut"][];
+        };
         /** ModelUsageEntry */
         ModelUsageEntry: {
             /** By Run */
@@ -1314,6 +1530,8 @@ export interface components {
             decision: string;
             /** Drift Event Ids */
             drift_event_ids: string[];
+            /** Drift Signature */
+            drift_signature?: string | null;
             /** Escalation Bundle */
             escalation_bundle?: {
                 [key: string]: unknown;
@@ -1340,6 +1558,8 @@ export interface components {
             };
             /** Rule Id */
             rule_id?: string | null;
+            /** Vendor */
+            vendor?: string | null;
             /** Verifier Report Id */
             verifier_report_id?: string | null;
             /** Visible Test Results */
@@ -1677,6 +1897,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScorecardsResponse"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    get_capabilities_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilitiesOut"];
                 };
             };
             /** @description Malformed request body */
@@ -3194,6 +3456,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_knowledge_knowledge_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
                 };
             };
         };

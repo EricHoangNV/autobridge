@@ -96,6 +96,10 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
     ("0004_discovery_records", {"tables": ["discovery_records"], "columns": []}),
     ("0005_model_call_archive", {"tables": ["model_call_archive"], "columns": []}),
     ("0006_repair_ladder_trace", {"tables": [], "columns": ["repair_runs.ladder_trace"]}),
+    (
+        "0007_repair_knowledge_provenance",
+        {"tables": [], "columns": ["repair_runs.vendor", "repair_runs.drift_signature"]},
+    ),
 )
 
 

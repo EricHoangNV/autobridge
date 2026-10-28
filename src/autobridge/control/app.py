@@ -21,6 +21,7 @@ from autobridge.control.deps import get_engine
 from autobridge.control.routes.bench import router as bench_router
 from autobridge.control.schemas import BAD_REQUEST_400, NOT_FOUND_404
 from autobridge.control.routes.builds import router as builds_router
+from autobridge.control.routes.capabilities import router as capabilities_router
 from autobridge.control.routes.connectors import router as connectors_router
 from autobridge.control.routes.demo import router as demo_router
 from autobridge.control.routes.discovery import router as discovery_router
@@ -53,6 +54,7 @@ app = FastAPI(
 # Register routers (order determines OpenAPI grouping)
 app.include_router(connectors_router)
 app.include_router(builds_router)
+app.include_router(capabilities_router)
 app.include_router(runs_router)
 app.include_router(drift_router)
 app.include_router(repairs_router)

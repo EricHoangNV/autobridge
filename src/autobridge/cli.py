@@ -288,6 +288,69 @@ def cmd_repairs_list(client: httpx.Client, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_capabilities(client: httpx.Client, args: argparse.Namespace) -> int:
+    """Show the engine vocabulary (GET /capabilities)."""
+    try:
+        resp = client.get("/capabilities")
+    except httpx.HTTPError as exc:
+        return _fail(f"capabilities failed: {exc}")
+    payload = _check(resp, "capabilities")
+    if payload is None:
+        return 1
+    if args.output == "json":
+        _emit(payload, args.output)
+        return 0
+    versions = payload.get("versions", {})
+    for version in ("v1", "v2"):
+        v = versions.get(version, {})
+        print(f"vocabulary {version}:")
+        print(f"  methods: {', '.join(v.get('methods', []))}")
+        print(f"  auth: {', '.join(v.get('auth_types', []))}")
+        print(f"  pagination: {', '.join(v.get('pagination_strategies', []))}")
+        print(f"  joins: {v.get('joins')}, body templates: {v.get('body_templates')}")
+    print(f"transforms ({len(payload.get('transforms', []))}): {', '.join(payload.get('transforms', []))}")
+    print(f"checks: {', '.join(payload.get('checks', []))}")
+    print("L1 rules:")
+    for rule in payload.get("rules", []):
+        print(f"  {rule.get('id')}: {rule.get('fixes', '')} [confidence {rule.get('confidence')}]")
+    print("v1 -> v2:")
+    for diff in payload.get("v1_v2_diff", []):
+        print(f"  - {diff}")
+    print("agent tools (MCP tools/list style):")
+    for tool in payload.get("tools", []):
+        print(f"  {tool.get('name')}: {tool.get('description', '')}")
+    return 0
+
+
+def cmd_knowledge(client: httpx.Client, args: argparse.Namespace) -> int:
+    """Show learned knowledge (GET /knowledge)."""
+    try:
+        resp = client.get("/knowledge")
+    except httpx.HTTPError as exc:
+        return _fail(f"knowledge failed: {exc}")
+    payload = _check(resp, "knowledge")
+    if payload is None:
+        return 1
+    if args.output == "json":
+        _emit(payload, args.output)
+        return 0
+    entries = payload.get("entries", [])
+    if not entries:
+        print("learned knowledge: empty (inject a drift, repair, approve, and re-inject to learn)")
+    for entry in entries:
+        learned = entry.get("learned_from", {})
+        print(f"{entry.get('vendor')} / {entry.get('drift_class')} -> {entry.get('rule_id')}")
+        print(f"  learned: run {learned.get('run_id')} at rung {learned.get('rung')} ({learned.get('tokens')} tokens)")
+        print(f"  reused: {entry.get('times_reused')}x, saved {entry.get('tokens_saved')} tokens")
+    print("connector profiles:")
+    for conn in payload.get("connectors", []):
+        confirmed = conn.get("confirmed_hypotheses", [])
+        print(f"  {conn.get('name')} (vocabulary {conn.get('vocabulary') or '?'}): {len(confirmed)} confirmed hypotheses")
+        for hyp in confirmed:
+            print(f"    - {hyp}")
+    return 0
+
+
 def cmd_repairs_get(client: httpx.Client, args: argparse.Namespace) -> int:
     try:
         resp = client.get(f"/repairs/{args.repair_id}")
@@ -467,6 +530,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     h = sub.add_parser("health", help="Check /healthz and /readyz")
     h.set_defaults(func=cmd_health)
+
+    cap = sub.add_parser("capabilities", help="Show the engine vocabulary (GET /capabilities)")
+    cap.set_defaults(func=cmd_capabilities)
+
+    kn = sub.add_parser("knowledge", help="Show learned knowledge (GET /knowledge)")
+    kn.set_defaults(func=cmd_knowledge)
     return p
 
 

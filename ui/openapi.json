@@ -204,6 +204,154 @@
         "title": "BuildResponse",
         "type": "object"
       },
+      "CapabilitiesOut": {
+        "properties": {
+          "checks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/CapabilityRuleOut"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "stop_conditions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stop Conditions",
+            "type": "array"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/CapabilityToolOut"
+            },
+            "title": "Tools",
+            "type": "array"
+          },
+          "transforms": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Transforms",
+            "type": "array"
+          },
+          "v1_v2_diff": {
+            "items": {
+              "type": "string"
+            },
+            "title": "V1 V2 Diff",
+            "type": "array"
+          },
+          "versions": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CapabilityVersionOut"
+            },
+            "title": "Versions",
+            "type": "object"
+          }
+        },
+        "title": "CapabilitiesOut",
+        "type": "object"
+      },
+      "CapabilityRuleOut": {
+        "properties": {
+          "confidence": {
+            "default": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "fixes": {
+            "default": "",
+            "title": "Fixes",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "produces_patch": {
+            "default": false,
+            "title": "Produces Patch",
+            "type": "boolean"
+          },
+          "verification_level": {
+            "default": "",
+            "title": "Verification Level",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "CapabilityRuleOut",
+        "type": "object"
+      },
+      "CapabilityToolOut": {
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "inputSchema": {
+            "additionalProperties": true,
+            "title": "Inputschema",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CapabilityToolOut",
+        "type": "object"
+      },
+      "CapabilityVersionOut": {
+        "properties": {
+          "auth_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Auth Types",
+            "type": "array"
+          },
+          "body_templates": {
+            "default": false,
+            "title": "Body Templates",
+            "type": "boolean"
+          },
+          "joins": {
+            "default": false,
+            "title": "Joins",
+            "type": "boolean"
+          },
+          "methods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Methods",
+            "type": "array"
+          },
+          "pagination_strategies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pagination Strategies",
+            "type": "array"
+          }
+        },
+        "title": "CapabilityVersionOut",
+        "type": "object"
+      },
       "ConnectorCreate": {
         "properties": {
           "base_url": {
@@ -1041,6 +1189,180 @@
         "title": "JobOut",
         "type": "object"
       },
+      "KnowledgeConnectorOut": {
+        "properties": {
+          "builds": {
+            "default": 0,
+            "title": "Builds",
+            "type": "integer"
+          },
+          "confirmed_hypotheses": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Confirmed Hypotheses",
+            "type": "array"
+          },
+          "connector_id": {
+            "title": "Connector Id",
+            "type": "string"
+          },
+          "last_built_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Built At"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "vocabulary": {
+            "default": "",
+            "title": "Vocabulary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connector_id"
+        ],
+        "title": "KnowledgeConnectorOut",
+        "type": "object"
+      },
+      "KnowledgeEntryOut": {
+        "properties": {
+          "approvals": {
+            "default": 0,
+            "title": "Approvals",
+            "type": "integer"
+          },
+          "cost_saved": {
+            "default": "0",
+            "title": "Cost Saved",
+            "type": "string"
+          },
+          "drift_class": {
+            "default": "",
+            "title": "Drift Class",
+            "type": "string"
+          },
+          "drift_signature": {
+            "default": "",
+            "title": "Drift Signature",
+            "type": "string"
+          },
+          "learned_from": {
+            "$ref": "#/components/schemas/KnowledgeLearnedFromOut"
+          },
+          "patch": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Patch",
+            "type": "array"
+          },
+          "rule_id": {
+            "default": "",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "times_reused": {
+            "default": 0,
+            "title": "Times Reused",
+            "type": "integer"
+          },
+          "tokens_saved": {
+            "default": 0,
+            "title": "Tokens Saved",
+            "type": "integer"
+          },
+          "vendor": {
+            "default": "",
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "learned_from"
+        ],
+        "title": "KnowledgeEntryOut",
+        "type": "object"
+      },
+      "KnowledgeLearnedFromOut": {
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "cost": {
+            "default": "0",
+            "title": "Cost",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "rung": {
+            "default": 0,
+            "title": "Rung",
+            "type": "integer"
+          },
+          "tokens": {
+            "default": 0,
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "KnowledgeLearnedFromOut",
+        "type": "object"
+      },
+      "KnowledgeOut": {
+        "properties": {
+          "connectors": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeConnectorOut"
+            },
+            "title": "Connectors",
+            "type": "array"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeEntryOut"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "title": "KnowledgeOut",
+        "type": "object"
+      },
       "ModelUsageEntry": {
         "properties": {
           "by_run": {
@@ -1356,6 +1678,17 @@
             "title": "Drift Event Ids",
             "type": "array"
           },
+          "drift_signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift Signature"
+          },
           "escalation_bundle": {
             "anyOf": [
               {
@@ -1412,6 +1745,17 @@
               }
             ],
             "title": "Rule Id"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
           },
           "verifier_report_id": {
             "anyOf": [
@@ -2207,6 +2551,63 @@
         "summary": "List Scorecards",
         "tags": [
           "bench"
+        ]
+      }
+    },
+    "/capabilities": {
+      "get": {
+        "operationId": "get_capabilities_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilitiesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          }
+        },
+        "summary": "Get Capabilities",
+        "tags": [
+          "knowledge"
         ]
       }
     },
@@ -4708,6 +5109,63 @@
         "summary": "Get Job",
         "tags": [
           "runs"
+        ]
+      }
+    },
+    "/knowledge": {
+      "get": {
+        "operationId": "get_knowledge_knowledge_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          }
+        },
+        "summary": "Get Knowledge",
+        "tags": [
+          "knowledge"
         ]
       }
     },

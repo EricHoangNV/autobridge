@@ -77,14 +77,25 @@ export function TopBar() {
           </a>
           <a
             href="/repairs"
-            aria-current={!onConnectors ? "page" : undefined}
+            aria-current={pathname.startsWith("/repairs") ? "page" : undefined}
             className={
-              !onConnectors
+              pathname.startsWith("/repairs")
                 ? "border-b-2 border-live pb-4 pt-[18px] font-semibold text-ink no-underline"
                 : "border-b-2 border-transparent pb-4 pt-[18px] text-ink-2 no-underline"
             }
           >
             Repairs
+          </a>
+          <a
+            href="/knowledge"
+            aria-current={pathname.startsWith("/knowledge") ? "page" : undefined}
+            className={
+              pathname.startsWith("/knowledge")
+                ? "border-b-2 border-live pb-4 pt-[18px] font-semibold text-ink no-underline"
+                : "border-b-2 border-transparent pb-4 pt-[18px] text-ink-2 no-underline"
+            }
+          >
+            What AutoBridge knows
           </a>
         </nav>
         <div className="ml-auto flex min-w-0 shrink-0 items-center gap-[18px]">

@@ -171,6 +171,8 @@ class RepairRunOut(BaseModel):
     id: str
     drift_event_ids: list[str]
     ladder_level_reached: int
+    vendor: str | None = None
+    drift_signature: str | None = None
     candidate_patch: list[dict[str, Any]] | None = None
     rule_id: str | None = None
     hypothesis_ids: list[str]
@@ -381,6 +383,74 @@ class RungLedgerOut(BaseModel):
     small_tokens: int = 0
     frontier_tokens: int = 0
     total_cost: str = "0"
+
+
+class CapabilityVersionOut(BaseModel):
+    methods: list[str] = Field(default_factory=list)
+    auth_types: list[str] = Field(default_factory=list)
+    pagination_strategies: list[str] = Field(default_factory=list)
+    joins: bool = False
+    body_templates: bool = False
+
+
+class CapabilityRuleOut(BaseModel):
+    id: str
+    fixes: str = ""
+    confidence: float = 0.0
+    verification_level: str = ""
+    produces_patch: bool = False
+
+
+class CapabilityToolOut(BaseModel):
+    name: str
+    description: str = ""
+    inputSchema: dict[str, Any] = Field(default_factory=dict)
+
+
+class CapabilitiesOut(BaseModel):
+    versions: dict[str, CapabilityVersionOut] = Field(default_factory=dict)
+    transforms: list[str] = Field(default_factory=list)
+    checks: list[str] = Field(default_factory=list)
+    stop_conditions: list[str] = Field(default_factory=list)
+    rules: list[CapabilityRuleOut] = Field(default_factory=list)
+    v1_v2_diff: list[str] = Field(default_factory=list)
+    tools: list[CapabilityToolOut] = Field(default_factory=list)
+
+
+class KnowledgeLearnedFromOut(BaseModel):
+    run_id: str
+    rung: int = 0
+    tokens: int = 0
+    cost: str = "0"
+    at: UtcDatetime | None = None
+
+
+class KnowledgeEntryOut(BaseModel):
+    vendor: str = ""
+    drift_class: str = ""
+    drift_signature: str = ""
+    rule_id: str = ""
+    patch: list[dict[str, Any]] = Field(default_factory=list)
+    learned_from: KnowledgeLearnedFromOut
+    times_reused: int = 0
+    tokens_saved: int = 0
+    cost_saved: str = "0"
+    approvals: int = 0
+
+
+class KnowledgeConnectorOut(BaseModel):
+    connector_id: str
+    name: str = ""
+    vocabulary: str = ""
+    builds: int = 0
+    confirmed_hypotheses: list[str] = Field(default_factory=list)
+    last_built_at: UtcDatetime | None = None
+
+
+class KnowledgeOut(BaseModel):
+    entries: list[KnowledgeEntryOut] = Field(default_factory=list)
+    connectors: list[KnowledgeConnectorOut] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)
 
 
 class ModelUsageEntry(BaseModel):

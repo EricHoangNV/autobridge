@@ -452,6 +452,10 @@ class RepairRun(Base):
         GenericJSON, nullable=False, default=list
     )
     ladder_level_reached: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Vendor this repair ran against (REQ-021 item 6: knowledge attribution).
+    vendor: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Fingerprint-delta signature the L0 key was built from (REQ-021 item 6).
+    drift_signature: Mapped[str | None] = mapped_column(String(32), nullable=True)
     #: Candidate JSON Patch (list of RFC 6902 ops) on the ConnectorSpec.
     candidate_patch: Mapped[list[dict[str, Any]] | None] = mapped_column(
         GenericJSON, nullable=True

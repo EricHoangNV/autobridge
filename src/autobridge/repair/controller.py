@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from autobridge.control.models import DriftEvent, RepairRun
 from autobridge.drift.classifier import DriftClassification, classify
-from autobridge.repair.knowledge import KnowledgeCache, get_default_cache
+from autobridge.repair.knowledge import KnowledgeCache, delta_signature, get_default_cache
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -93,6 +93,8 @@ class RepairController:
             run = RepairRun(
                 drift_event_ids=list(drift_event_ids or []),
                 ladder_level_reached=result.ladder_level_reached,
+                vendor=vendor_val,
+                drift_signature=delta_signature(fingerprint_delta),
                 candidate_patch=result.candidate_patch,
                 rule_id=result.rule_id,
                 hypothesis_ids=[],

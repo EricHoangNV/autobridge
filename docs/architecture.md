@@ -341,7 +341,7 @@ its readyz checks green + its docs page updated (plan §3).
 ## 9. Control plane + UI (plan §2.11, §4 W7)
 
 The control plane is a FastAPI app (`src/autobridge/control/app.py`) with
-40 paths and 33 schemas (OpenAPI at `ui/openapi.json`, typed client in
+44 paths and 44 schemas (OpenAPI at `ui/openapi.json`, typed client in
 `ui/lib/api/client.ts` via `openapi-typescript`). Every service has
 `/healthz`/`/readyz`; the UI has its own readyz proxy to control.
 
@@ -350,7 +350,8 @@ The control plane is a FastAPI app (`src/autobridge/control/app.py`) with
 `POST /connectors`, `GET /connectors`, `GET /connectors/{id}`,
 `POST /connectors/{id}/build|sync`, `GET /runs/{id}`, `GET /runs/{id}/events`
 (SSE, redacted), `GET /drift`, `POST /repairs/{id}/approve|reject`,
-`POST /releases/{id}/rollback`, `GET /operator` (server-configured operator
+`POST /releases/{id}/rollback`, `GET /repairs/{id}/ledger` (rung-by-rung
+ledger with linked model calls), `GET /operator` (server-configured operator
 name from `AUTOBRIDGE_OPERATOR`; approve/reject/rollback always record
 `Approval.actor` from it and ignore any client-sent actor; `ReleaseOut`
 carries `approved_by`), `POST /demo/inject-fault` (labelled, proxies
@@ -409,8 +410,20 @@ unsafe mappings (dropped money param, money routed to non-money) are
 rejected with 422. Acceptance: `tests/e2e/test_s4_mcp_gateway.py`
 (fakes + live).
 
-### 9.2 UI screens (Next.js 15, App Router, Tailwind, SWR + SSE)
+REQ-021 item 6 adds what-the-engine-knows endpoints (derived, never
+hand-kept): `GET /capabilities` is the vocabulary per version (HTTP methods,
+auth types, pagination strategies from the spec-model Literals, minus the
+v2-only set; 9 transforms; checks; stop conditions; every L1 rule with what
+it fixes; the v1 -> v2 diff; plus an MCP `tools/list`-style agent surface),
+and `GET /knowledge` is learned knowledge (one entry per approved repair
+group — vendor, drift signature, patch, learning run/rung/tokens/cost,
+times reused, tokens saved — plus per-connector learned profiles from
+successful builds). Both are cleared by `POST /demo/reset` like everything
+else. CLI: `autobridge capabilities|knowledge` (text or `--output json`).
+Acceptance: `tests/e2e/test_knowledge_flow.py` (empty -> L1 -> approve ->
+entry -> same drift -> L0 hit, reused + 1) plus unit pins.
 
+### 9.2 UI screens (Next.js 15, App Router, Tailwind, SWR + SSE)
 1. `/connectors` — table: health, active release, last sync outcome, open drift,
    model-usage sparkline; plus the `DiscoveryList` section showing statically
    imported vendors and their lifecycle state (P2.S3.1).
@@ -427,7 +440,11 @@ rejected with 422. Acceptance: `tests/e2e/test_s4_mcp_gateway.py`
    `GET /metrics/model-usage` `entries[].by_run`, repair-linked runs
    highlighted) and an evidence graph (`EvidenceGraph`, SVG nodes for drift
    events + evidence records with drift→evidence and evidence→parent edges,
-   dangling parents as stub nodes).
+   dangling parents as stub nodes). REQ-021 item 3 adds the rung ledger
+   section (`RungLedger` from `GET /repairs/{id}/ledger`).
+5. `/knowledge` — "What AutoBridge knows" (REQ-021 item 6): vocabulary per
+   version plus learned knowledge (entries with reuse counts, connector
+   profiles); linked from the top bar.
 
 Theme (REQ-002, broadcast direction): dark-only on-air tokens in
 `ui/app/globals.css` (`--ground/--band/--ink/--ink-2/--rule/--off/--live/--stop`,
