@@ -230,3 +230,11 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The hang was located only by rerunning with faulthandler; `--timeout=30` failed because `pytest-timeout` was never installed.
 - Fix: `pytest-timeout` in dev deps, `timeout = 30` + `timeout_method = "thread"` in `[tool.pytest.ini_options]` (thread method dumps every thread's stack and works on macOS and Linux), 180 s per `tests/e2e` item via `pytest_collection_modifyitems` (stack startup must fit inside it).
 - **Rule:** Run single tests with `-x` and rely on the 30 s limit; never wrap pytest in long shell timeouts to find a hang.
+
+## 24. A rejected model answer is still a model call — count it, name it, show it
+
+**Context:** REQ-021 owner check 2026-10-28: demo step 4 called the frontier live (tokens billed) but reported "no frontier call available" with an empty proposal.
+
+- The ladder had recorded the call faithfully (usage tokens, `proposal_rejected` action); the *reader* of the trace (`l3_skipped = action != "frontier_generate"`) misclassified the rejection as a skip.
+- Fix: call-ness is `action in ("frontier_generate", "proposal_rejected")`; only an explicit skip action means no call. The called-but-unusable reason names mode + model + tokens with the parse/apply detail and carries the truncated raw reply on the run.
+- **Rule:** Never derive "was the model called" from proposal presence — a rejection, an unparsable reply and an empty reply are all billed calls. Reserve "skipped" for paths where no provider call happened, and say why (no provider, missing replay + the capture command).

@@ -2729,3 +2729,30 @@ flap). Next: REQ-022 D (fault scenarios) then E (demo + docs + index).
 **Notes for next iteration:**
 - REQ-022 sub-step D (fault scenarios) is next per progress-state; it must also resolve the `/demo/reset` vs `test_matrix_live_reset_repeatability` mismatch (fias entries unreachable from control-in-Docker by edge-net design)
 - No returncode -11 segfaults observed in this sandbox run
+
+## REQ-021 23:05 owner check — L3 mislabel fix, stale-UI rebuild, knowledge details
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-021, owner check after `6f686e22` + `d5b5ed2a` (2026-10-28 23:05)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Demo step 4 (`src/autobridge/bench/demo.py`): a rung-3 attempt with action `frontier_generate` *or* `proposal_rejected` now counts as a call; only an explicit `l3_skipped` (no provider, missing replay) is labelled skipped. When the frontier answered but yielded no patch, the reason reads `L3 called <mode> (<model>, <N> tokens): response contained no applicable patch (<parse/apply detail>); raw response: <preview>`; new evidence fields `l3_model`, `l3_raw_preview`. Skip reasons reuse the climb's own text (replay hash + `make record-frontier` hint, or `FRONTIER_MODE=off`). Live-verifier path untouched.
+- Ladder (`src/autobridge/repair/ladder.py`): new `_parse_patch_response` extracts a patch from reasoning-style replies (whole-body JSON, fenced ```json block, first-`[`/last-`]` slice) and otherwise records a one-line `parse_detail` (`empty response`, `not a patch list`, `JSON-like but does not parse`, `no JSON Patch found`) plus the truncated `raw_preview`; empty replies get a diagnostic rung reason. `proposal_rejected` path unchanged.
+- `scripts/local-up.sh`: UI rebuilds when the `ui/` tree key (`HEAD:ui` + hash of uncommitted `ui/` changes, stored in `.local/ui-tree`, gitignored) differs from last build, or on first build; reuses otherwise. Prints the reason either way; falls back to marker-only behaviour when git is unavailable. Mechanism verified (content change flips the key, mtime-only touch does not).
+- Knowledge (`src/autobridge/control/routes/capabilities.py`): `_rule_fixes` strips the leading `<id>[ rule] —|: ` prefix so each L1 rule shows its name once; connector profiles fall back to the latest `ConnectorRelease.spec.spec_version` (`v1|v2|v3`) when build inputs predate the pinned vocabulary. The v2 row already rendered `everything in v1, plus:` — verified compliant, no UI change.
+- Tests: 3 ladder tests (prose-no-patch detail, fenced-patch extraction, empty-reply reason) + 2 step-4 tests (live prose, live truncated patch: assert `L3 called live (muse-spark-1.3, 2,115 tokens)` reason, `l3_skipped False`, raw preview, Degraded + question, no release) + 3 knowledge tests (fixes name-once, vocab fallback `v2`, empty-vocab case).
+
+**Key decisions:**
+- Step-4 fix placed at the `l3_called`/`l3_skipped` computation rather than in the ladder, because the ladder already recorded the call faithfully (tokens in usage, `proposal_rejected` action) — only the demo's reading of it was wrong.
+- Parser stays strict (top-level list of op/path dicts) but gains one fenced/bracket extraction pass before giving up: reasoning models lead with prose, and a strict-only parser is what dropped the live answer.
+- No frontend change: the asked-for v2 wording was already on the page; backend carried the other two defects.
+
+**Files changed:**
+- `src/autobridge/bench/demo.py` — step-4 L3 call/skip semantics, reason text, `l3_model`/`l3_raw_preview` evidence
+- `src/autobridge/repair/ladder.py` — `_parse_patch_response`, `parse_detail`/`raw_preview`/empty-reply reason
+- `scripts/local-up.sh` — tree-hash UI rebuild with printed reason
+- `src/autobridge/control/routes/capabilities.py` — rule-name dedup, vocabulary release fallback
+- `tests/unit/test_autobridge_frontier_climb.py`, `tests/unit/test_autobridge_demo.py`, `tests/unit/test_autobridge_knowledge.py` — 8 new tests
+
+**Verification:** `make lint` (incl. import-linter) + `make typecheck` + `make ui-typecheck` + `make openapi-check` green; `make test` green (2715 pytest + 156 UI, autobridge cov 91%); `tests/e2e/test_model_usage_matrix.py` in-process 18 pass.
+**Left open (same REQ):** 21:10 matrix rows `[0,4]`→`[0,1,2,3,4]` for gross_to_net/invalid_patch_trap + ladder must satisfy them; owner `make record-frontier SCENARIO=gross_to_net` capture.
