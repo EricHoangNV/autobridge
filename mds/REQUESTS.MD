@@ -24,7 +24,7 @@ Wanted:
 Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
 
 ### REQ-010 — e2e: run the demo's headline claims against the live stack (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 12:10 UTC)
 With Docker hidden (`DOCKER_HOST=unix:///nonexistent.sock`), 72 of the 104 tests in `tests/e2e` still pass: they run
 engine code in-process against fake HTTP transports. Only about 32 exercise the running stack. In particular
 `test_03` (known repairs spend 0 frontier tokens) passes 5/5 with no stack, and `test_05` passes 20 of 22. These are
@@ -39,7 +39,7 @@ Wanted:
    `make e2e` target sets it.
 
 ### REQ-011 — Publish compose ports on localhost only (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 12:10 UTC)
 Every port in `compose.yaml` is published as `"81xx:8000"` with no host IP, so Docker listens on all interfaces. While
 the stack runs, anyone on the same network (e.g. hackathon Wi-Fi) can reach the control API (unauthenticated write
 routes: approve/reject repairs, inject faults, import/connect connectors), the UI, the simulators, and the verifier on
@@ -54,7 +54,7 @@ Wanted:
 Note the trust-boundary smoke checks: the verifier and simulators stay unreachable from the engine network as before.
 
 ### REQ-012 — Optional bearer token on the control API's write routes (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 12:10 UTC)
 The control API has no authentication; the only identity is the server-side `AUTOBRIDGE_OPERATOR` name (REQ-001).
 That is fine on localhost (REQ-011), but not if the stack is ever hosted for judges.
 Wanted:
