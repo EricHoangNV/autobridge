@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-017, then REQ-014 → REQ-015 → REQ-016. Do these before any
+Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020. Do these before any
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
@@ -88,6 +88,84 @@ Wanted:
    `make local-up`, open http://localhost:8107, `make demo`, `make local-down`.
 6. Check: in a fresh clone with Docker unavailable (`DOCKER_HOST=unix:///nonexistent.sock`), `make local-up && make
    demo && make local-down` passes.
+
+### REQ-019 — Reshape the Atlas simulator after the Cloudbeds PMS API (2026-10-28)
+Status: OPEN
+Owner wants the simulated vendors to look like real hotel PMS APIs. Atlas (the "clean, documented" vendor) follows the
+**Cloudbeds API** shape. Keep the fictional name Atlas/AtlasPMS everywhere (simulator, docs site, UI): copy the API
+*shape*, never Cloudbeds' name, logo, branding or doc text. Read the reference before coding and match names exactly:
+https://developers.cloudbeds.com/reference/get_getreservations-2.md, `get_getreservation-2.md`, `get_getguest-2.md`,
+https://developers.cloudbeds.com/reference/tech-specs.md, and the docs index https://developers.cloudbeds.com/llms.txt
+(find the hotels/property and transactions endpoints there; if a field cannot be confirmed, say so in the build note).
+What the research already confirmed (2026-10-28):
+- Methods are named endpoints under a versioned prefix: `GET /api/v1.3/getReservations`, `GET /api/v1.3/getReservation`
+  (`reservationID`), plus the property list (getHotels) and transactions/folio endpoint from the index.
+- Auth: `x-api-key: <key>` header (also accept `Authorization: Bearer <token>` as OAuth2). Missing → 401.
+- Envelope: `{"success": true, "data": [...], "count": <items on this page>, "total": <all>}`.
+- Pagination: page based, `pageNumber` (default 1) and `pageSize` (default 100, max 100). Filters include
+  `propertyID`, `status`, `modifiedFrom`/`modifiedTo`, `checkInFrom`/`checkInTo`, `resultsFrom`/`resultsTo`.
+- Reservation fields (camelCase): `propertyID`, `reservationID`, `dateCreated`, `dateModified`, `status`, `guestID`,
+  `guestName`, `startDate`, `endDate`, `adults`, `children`, `balance` (a JSON **number**), `sourceName`.
+  Status enum: `not_confirmed`, `confirmed`, `canceled`, `checked_in`, `checked_out`, `no_show`.
+- Dates `YYYY-MM-DD`; date-times `YYYY-MM-DD HH:MM:SS` (no zone; document the zone you choose and keep it a real trap).
+- Rate limit 10 req/s per key (the simulator may model it).
+Wanted:
+1. `simulators/atlaspms/app.py` serves the Cloudbeds-style surface above (old routes removed, not aliased), backed by the
+   same seeded generator, with the fault switchboard still working on it. Money arrives as JSON numbers: the engine must
+   parse them to `Decimal` without float rounding (DIRECTIVES §4) and the verifier must check that.
+2. Replace `simulators/docs/atlas-openapi.yaml` and `.json` (and the `atlaspms-*` aliases) with an OpenAPI 3.1 document
+   of the new surface; the `/developers` page re-renders it automatically. Update `simulators/devportal/openapi.js`
+   only if the new spec needs it (e.g. the curl example must send `x-api-key`).
+3. Update everything that encodes the old Atlas shape: the reference connector (`generated/connectors/`), runtime and
+   discovery (page pagination, status mapping, `canceled` → canonical `cancelled`, `not_confirmed` mapping decided and
+   documented), verifier oracle, the 14 fault scenarios where they touch Atlas, bench, `make demo`, UI copy, e2e and
+   unit tests. Atlas pagination becomes `page`, so demo step 3 (offset → cursor on Atlas) needs a new L1 rule
+   `page_to_cursor` (mirroring `offset_to_cursor`, zero frontier tokens, same tests) or the step moves to LegacyStay,
+   which stays offset based. Prefer the new rule; keep `offset_to_cursor` covered on LegacyStay.
+4. Heldout: never touch `verifier/hidden_cases/heldout/SHA256SUMS` or `HELDOUT_DIR`. The heldout scenarios must still
+   run against the new Atlas (`make bench-heldout` dry run with the SHA check passing).
+5. Gates: `make test`, `make up && make smoke && make e2e && make demo` green; README vendor table updated.
+
+### REQ-020 — Add a fifth simulator after the Mews Connector API (2026-10-28)
+Status: OPEN
+Depends on REQ-019 (do it after). A new vendor, fictional name **MeridianPMS** (`sim-meridian`), copies the **Mews
+Connector API** shape: the "modern but very different" vendor. Same rule: shape only, no Mews name, branding or doc text.
+Read first: https://docs.mews.com/connector-api/guidelines/pagination.md, `.../guidelines/authentication.md`,
+`.../guidelines/requests.md`, `.../guidelines/responses.md`, `.../guidelines/environments.md`,
+https://docs.mews.com/connector-api/operations/reservations.md, the customers and order items operations, and the
+machine-readable spec https://api.mews.com/Swagger/connector/swagger.yaml (match names exactly from it).
+What the research already confirmed (2026-10-28):
+- Every operation is `POST` with a JSON body, e.g. `POST /api/connector/v1/reservations/getAll/2023-06-06`.
+- Auth is in the body, not a header: `ClientToken`, `AccessToken`, `Client` (app name + version).
+- Pagination: body `Limitation: {"Count": 1..1000, "Cursor": "<id or null>"}`; the response `Cursor` is the id of the
+  last item returned and is `null` only when no data comes back. Stop when `Cursor` is null or fewer than `Count` items.
+- Filters: `EnterpriseIds`, `ServiceIds`, `ReservationIds` (max 1000 each), `UpdatedUtc: {StartUtc, EndUtc}` (max
+  3 months), `States`.
+- Reservation fields are PascalCase: `Id`, `ServiceId`, `AccountId`, `BookerId`, `Number`, `State`, `Origin`,
+  `CreatedUtc`, `UpdatedUtc`, `ScheduledStartUtc`, `ScheduledEndUtc`, `ActualStartUtc`, `ActualEndUtc`, `RateId`,
+  `AssignedResourceId`. `State`: `Inquired`, `Confirmed`, `Started`, `Processed`, `Canceled`, `Optional`, `Requested`.
+- There is no guest name or amount on a reservation: the name comes from customers (`AccountId`), money from order
+  items (Amount with currency, net, gross and tax values), and dates are UTC instants, so property-local business dates
+  need the enterprise time zone. Those joins and conversions are the point of this vendor.
+Wanted:
+1. Simulator `simulators/meridianpms/` with reservations getAll (2023-06-06), customers getAll, order items getAll and
+   the enterprise/configuration call that gives time zone and currency; seeded from the shared generator; fault
+   switchboard and admin API like the others (admin token, loopback-only admin port). Wrong or missing tokens answer
+   the way the docs specify (confirm status and body).
+2. Compose service `sim-meridian` on vendor-net + admin-net, public `127.0.0.1:8116`, admin `127.0.0.1:8117`
+   (loopback-only like the other admin ports); readiness in `make up`, smoke positive and negative probes, local mode
+   (REQ-017) included.
+3. Docs: `simulators/docs/meridian-openapi.yaml` in the Mews swagger style, and a `/developers` page with its own look
+   (a modern docs portal, clearly different from Atlas), registered via `mount_devportal`.
+4. Engine support for this kind of API, as JSON-Patchable spec data, never code: `ConnectorSpec` operations gain
+   `method: POST` with a JSON body template, `auth` type `body_fields`, pagination strategy for a body cursor
+   (`Limitation.Cursor` in, `Cursor` out), and the joins needed (reservation → customer name, reservation → order item
+   totals) expressed in the spec. Bump the spec schema version and keep v1 specs valid. Verifier oracle and canonical
+   mapping for Meridian, including UTC → property-local business date.
+5. A demo path: bootstrap a Meridian connector from its docs (the "unfamiliar API" story) and at least two fault
+   scenarios on it (e.g. `Limitation` cursor change, a renamed field). Bench includes Meridian only if the plan's
+   matched-budget rules allow; otherwise note it.
+6. Gates as REQ-019, README vendor table updated.
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
