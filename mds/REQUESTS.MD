@@ -6,16 +6,6 @@ Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
-### REQ-016 — `make demo` reports [ok] when its writes fail (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 09:55)
-With the token missing, `make demo` printed `control POST /connectors -> 401` and `POST /demo/inject-fault -> 401`,
-yet every step said `[ok]` and the run exited 0. A demo check that cannot fail protects nothing.
-Wanted:
-1. Any live control-API call that is part of a step must succeed (2xx) or the step is FAILED and `make demo` exits
-   non-zero with the method, path, status and detail.
-2. Say clearly in the output which steps ran against the live stack and which were computed in-process.
-3. Tests: a 401 and a 500 on a step's write make that step fail.
-
 ### REQ-017 — Run the demo without Docker (2026-10-28)
 Status: DONE (2026-10-28) — make local-up/down (same host ports, ./local db/logs/pids), LocalProcessTarget in local mode via runtime_mode() honoring DOCKER_HOST, /readyz runtime_mode+network_isolation, UI LOCAL badge, smoke skips w/ note, e2e reuses green stack + local-aware edge test, README No-Docker + safety-model §12; verified live incl. DOCKER_HOST=broken acceptance cycle.
 Today the only way to run AutoBridge is `make up` (Docker Compose). Someone who downloads the repo may have no Docker
@@ -375,6 +365,17 @@ Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDO
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-016 — `make demo` reports [ok] when its writes fail (2026-10-28)
+Status: DONE (2026-10-28) — fail-loud writes (non-2xx fails step, exit non-zero), per-step live/in-process labels; 401+500 unit tests.
+With the token missing, `make demo` printed `control POST /connectors -> 401` and `POST /demo/inject-fault -> 401`,
+yet every step said `[ok]` and the run exited 0. A demo check that cannot fail protects nothing.
+Wanted:
+1. Any live control-API call that is part of a step must succeed (2xx) or the step is FAILED and `make demo` exits
+   non-zero with the method, path, status and detail.
+2. Say clearly in the output which steps ran against the live stack and which were computed in-process.
+3. Tests: a 401 and a 500 on a step's write make that step fail.
+Resolution: `_finish_step()` fails a step on any non-2xx live control call (method/path/status/detail in error); `main` exits 1; header + per-step `(live)`/`(in-process)` labels; 4 new unit tests; docs/demo.md notes the contract.
 
 ### REQ-015 — e2e tests do not send the control token (2026-10-28)
 Status: DONE (2026-10-28)

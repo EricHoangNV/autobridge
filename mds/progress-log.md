@@ -2411,3 +2411,24 @@ Next: REQ-014 → REQ-015 → REQ-016 (owner priority), then REQ-019 → REQ-020
 
 **Notes for next iteration:**
 - REQ-016 next (demo fail-loud); live stack run not possible in sandbox — owner CI covers live e2e
+
+## REQ-016 — demo fail-loud
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-016 (owner priority: demo fail-loud)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Demo driver fails loudly: any non-2xx live control-API call in a step marks the step FAILED (method, path, status, detail) and `make demo` exits 1.
+- Per-step `live` / `in-process` mode in the JSON report and in text output (header split + per-step tag); step 6 always in-process.
+- 4 new unit tests (401 fail, 500 fail, labels, non-zero exit); docs/demo.md updated.
+
+**Key decisions:**
+- Fail on ANY non-2xx live call (reads included), not just writes: a demo check backed by a failing read is equally untrustworthy.
+- Kept `control_calls` on failed steps so the evidence shows exactly which call failed.
+
+**Files changed:**
+- `src/autobridge/bench/demo.py`, `tests/unit/test_autobridge_demo.py`, `docs/demo.md`
+- `mds/REQUESTS.MD` — REQ-016 moved to Resolved
+
+**Notes for next iteration:**
+- REQ-019 next per owner order (Atlas → Cloudbeds shape); live stack verification needs Docker/CI.

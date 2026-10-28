@@ -872,3 +872,11 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 - CLI: `src/autobridge/cli.py` already sent the token (`auth_headers` → `_make_client`); added `test_cli_forwards_control_token_when_set`.
 - Docs: `docs/architecture.md` §7 token-matrix note.
 - Gates: targeted e2e+unit green with and without all tokens set; `make lint`, `make typecheck`, `make test` green (autobridge/verifier/simulators ≥90%, ui 147 pass).
+
+### REQ-016 — `make demo` fail-loud on write failures + live/in-process labels (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD REQ-016.
+- `src/autobridge/bench/demo.py`: new `_call_ok()` (2xx check), `_failed_call_error()` (first failing call → "control METHOD PATH -> STATUS: detail"), `_finish_step()` (any non-2xx live call → step FAILED with that error, control calls preserved). Steps 1–5 return via `_finish_step()`; step 6 marked `in-process`. `run_demo` exception path and every step carry `mode: live|in-process`; `render_text` prints a "live steps: …; in-process steps: …" header line plus a `(live)`/`(in-process)` tag per step, and for failed steps a `FAILED control METHOD PATH -> STATUS: detail` line. `main` already exited 1 on `failed > 0` — now reachable.
+- Offline behavior unchanged (no calls → `in-process`, all ok); live 2xx behavior unchanged.
+- Tests: 4 new in `tests/unit/test_autobridge_demo.py` — 401 on step-3 write fails step + poisons `run_demo`, 500 on step-4 write fails with detail in rendered text, live/in-process labeling (step 6 always in-process; offline all in-process), `main` exits 1 on 401.
+- Docs: `docs/demo.md` notes the 2xx-or-FAILED contract and the labels.
+- Gates: 26/26 demo unit tests pass; `make lint`, `make typecheck`, full `make test` green (≥90% per package + ui 147). Live stack run not possible in this no-Docker sandbox — owner CI covers live demo.
