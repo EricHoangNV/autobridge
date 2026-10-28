@@ -137,7 +137,11 @@ Wanted:
   checked and the run still needs operator confirmation per the scenario's rules) → L4 one operator question. With
   `FRONTIER_API_KEY` unset the run uses replay (item 5) or says plainly that L3 was skipped for lack of a provider, never
   silently. Update REQ-021 item 4's matrix test to require an L3 attempt for `gross_to_net`, and assert that every
-  other main-script step makes 0 frontier calls.
+  other main-script step makes 0 frontier calls. Concretely, sub-step E (`640cd850`) pinned the current skip as
+  expected: in `tests/e2e/test_model_usage_matrix.py` the `gross_to_net` and `invalid_patch_trap` rows have
+  `"expected_levels": [0, 4]`. Those rows are wrong by owner decision: change them to the full climb
+  (`[0, 1, 2, 3, 4]`, with an L3 frontier call recorded and the verifier's rejection of the L3 proposal), then make the
+  ladder satisfy them. Do not keep `[0, 4]` because the current code does that.
 
 5. **Reliable frontier calls in the demo.** Two modes, chosen by env: `live` (a real frontier provider; model ids in
    config, never in code) and `replay` (responses recorded from a live run, stored redacted under `tests/fixtures/` or
