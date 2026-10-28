@@ -329,6 +329,19 @@ three tokens + bundle signature) `tests/e2e` gives:
 Gate from now on: run `make e2e` against a **keyed** local stack (set the three tokens and `make edge-sign` in the
 sandbox `.env`), and do not merge with any e2e failure, "flake" included, without an owner note.
 
+**Owner check (2026-10-29, on 6a294fd8): keyed-stack fixes verified (fault tests green, auth fixed); `make demo` 8/8
+including the new PABX step. Two left:**
+1. **`test_s2_edge_target.py::test_agent_live_command_and_postings` still fails after the fault file, every time.**
+   Repro on a keyed local stack: `pytest tests/e2e/test_fias_faults.py
+   tests/e2e/test_s2_edge_target.py::test_agent_live_command_and_postings -p no:randomly` → 13 passed, 1 failed at line
+   337 (`/edge/agents` has no `grand-plaza-pabx` with `link_up`). Alone it passes (2/2). The fault teardown waits for
+   the PABX link, but the cloud only learns about it from the agent's next heartbeat (`HEARTBEAT_INTERVAL_S = 10`),
+   and line 337 reads `/edge/agents` once. Make the teardown (or the test) wait until `/edge/agents` reports
+   `link_up` for the agent, bounded by ~2 heartbeat intervals, then the full `make e2e` must be green.
+2. **Simulators index shows broken docs URLs:** every row reads `localhost:8105/developers/developers` (the href is
+   right; the label appends `/developers` to a URL that already has it, `ui/app/simulators/page.tsx:46`). The page is
+   on camera; fix the label and add the label to the UI test.
+
 ### REQ-023 — Demo plan v2: main script plus a fault-scenario catalogue (2026-10-28)
 Status: OPEN
 Owner: the demo plan must include the fault scenarios from REQ-019 … REQ-022. Rule: a step enters `docs/demo.md` and
