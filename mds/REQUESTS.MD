@@ -243,8 +243,21 @@ keep the negative smoke probes). FIAS over TCP:
 - Host → PABX records: Guest In / Change / Out `GI` `GC` `GO`, Wake-up Request / Clear `WR` `WC`, message light
   `XL` / `XD`, key write / delete / read `KR` `KD` `KZ` answered by `KA` (or `KZ`), Posting Answer `PA`.
 - Seeded and deterministic from the shared generator (rooms and guests consistent with the PMS simulators, so postings
-  land on real in-house guests), with an admin API (token, loopback-only port) for the fault switchboard and a
-  `/developers` docs page rendered from `simulators/docs/fias-pabx.md` (already written; it is the spec).
+  land on real in-house guests), with an admin API (token, loopback-only port) for the fault switchboard.
+- **Docs are a document, not a website** (owner, 2026-10-28). A hotel PABX vendor hands over a file, so the PABX's
+  docs are a PDF (and a Word .docx) generated from `simulators/docs/fias-pabx.md`, the single source: title page
+  "Grand Plaza — PABX Interface Specification (FIAS)", version and date, contents, then the spec, with the records as
+  a command list (one table: record type, name, direction, fields, answer expected). Generated deterministically by a
+  script and checked in as `simulators/docs/fias-pabx.pdf` and `.docx`, with a test that they are up to date with the
+  `.md`. The PABX's `/developers` page is a plain document viewer: the PDF in a page frame, a "Download PDF / DOCX"
+  pair, and nothing else (no site navigation, no web styling).
+- **Loading a document into AutoBridge.** "Build a connector" in the UI, the CLI (`autobridge build --docs-file …`)
+  and the control API accept an uploaded `.pdf`, `.docx`, `.md` or `.txt` file (size limit, type checked by content,
+  not by extension). The engine extracts the text (tables kept as rows) with a pure-Python library pinned in the
+  lockfile, then the docs reader runs as for Markdown. The upload is stored as build evidence with its hash. Never
+  executes or follows anything inside the file (no macros, no embedded links fetched). Demo: download the PABX PDF from
+  its page, drop it into "Build a connector", and the FIAS connector bootstraps from it (after part C's vocabulary).
+  Unit tests for extraction of each format and for rejected files; an e2e test for the upload path.
 
 **B. Edge agent** (the edge worker becomes a proper on-premise agent; generic pattern, done right):
 - Outbound only: no inbound port from the cloud. It polls a cloud command queue (a simple queue endpoint on the
