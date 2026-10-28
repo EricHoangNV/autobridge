@@ -7,7 +7,7 @@ remaining review FAIL item. Constraint for all of them: someone who downloads th
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
 ### REQ-014 — Host tools ignore `.env`, so tokens break smoke, e2e and demo (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 09:36)
 With `SIM_ADMIN_TOKEN`, `AUTOBRIDGE_CONTROL_TOKEN` and `EDGE_RELEASE_SECRET` set in `.env`, compose passes them to the
 containers, but `make smoke`, `make e2e`, `make demo` and `make bench` run on the host and never read `.env`. Result:
 smoke says the token is unset, e2e has 35 errors (simulator reset rejected), demo writes get 401. It only works after
