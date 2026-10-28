@@ -70,11 +70,18 @@ Wanted:
    discovery (page pagination, status mapping, `canceled` → canonical `cancelled`, `not_confirmed` mapping decided and
    documented), verifier oracle, the 14 fault scenarios where they touch Atlas, bench, `make demo`, UI copy, e2e and
    unit tests. Atlas pagination becomes `page`, so demo step 3 (offset → cursor on Atlas) needs a new L1 rule
-   `page_to_cursor` (mirroring `offset_to_cursor`, zero frontier tokens, same tests) or the step moves to LegacyStay,
-   which stays offset based. Prefer the new rule; keep `offset_to_cursor` covered on LegacyStay.
+   `page_to_cursor` (mirroring `offset_to_cursor`, zero frontier tokens, same tests). Keep `offset_to_cursor` covered by
+   its existing rule tests and fixtures (not by switching the demo or its tests onto another vendor).
 4. Heldout: never touch `verifier/hidden_cases/heldout/SHA256SUMS` or `HELDOUT_DIR`. The heldout scenarios must still
    run against the new Atlas (`make bench-heldout` dry run with the SHA check passing).
-5. Gates: `make test`, `make up && make smoke && make e2e && make demo` green; README vendor table updated.
+5. **LegacyStay stays unseen** (owner, 2026-10-28; plan S1: "unseen generalization vendor, heldout only … no
+   vendor-specific rule added"). No L1 rule, hypothesis enumerator, classifier, prompt or knowledge entry may
+   reference LegacyStay or be developed or tuned against it; no new tests target it by name except the existing S1
+   bootstrap/repair test. Add a guard test that greps `src/autobridge` for `legacystay` (case-insensitive) outside
+   comments and fails on a hit. Showing LegacyStay in the demo (its docs page, a run against it) is fine; tuning on it
+   is not. Meridian and the FIAS PABX are dev/demo vendors: no heldout cases for them, and the heldout manifest is not
+   re-frozen.
+6. Gates: `make test`, `make up && make smoke && make e2e && make demo` green; README vendor table updated.
 
 ### REQ-020 — Add a fifth simulator after the Mews Connector API (2026-10-28)
 Status: OPEN
@@ -325,12 +332,12 @@ SCENARIO=…` / `make demo STEP=…`) after a reset, and `make demo` runs the fu
    steps, seeds and release ids, `make demo` to replay.
 **Fault-scenario catalogue** (backup and Q&A; each runnable alone with `make demo SCENARIO=<name>` and listed in
 docs/demo.md with its expected rung and model calls):
-- Transport, no patch, 0 model calls: `rate_limit_429` (also LegacyStay's normal throttling), `transient_503`,
+- Transport, no patch, 0 model calls: `rate_limit_429`, `transient_503`,
   `cloud_slow` (FIAS link keeps getting ACKs).
 - Auth: `token_expired` → refresh if permitted; `token_revoked` → escalate, no patch, `Blocked`.
 - Capability: `endpoint_removed` → escalate, never patched around.
-- Known structural drifts at L0/L1, 0 model calls: `rename_guest_id`, `nested_path_shift`, `offset_to_cursor`
-  (LegacyStay), `page_to_cursor` (Atlas), `cursor_repeat_token` (Harbor loop guard), `fias_record_layout_change`
+- Known structural drifts at L0/L1, 0 model calls: `rename_guest_id`, `nested_path_shift`, `offset_to_cursor`,
+  `page_to_cursor` (Atlas), `cursor_repeat_token` (Harbor loop guard), `fias_record_layout_change`
   (known variant).
 - Semantic and data quality: `gross_to_net`, `status_vocab_change` (new Harbor code / Cloudbeds-style
   `not_confirmed`), `tz_boundary_shift` (Atlas zone-less date-times, Meridian UTC → business date),
