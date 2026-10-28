@@ -9,92 +9,6 @@ Do these before any remaining review FAIL item. Constraint for all of them: some
 Docker and no sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is
 present.
 
-### REQ-020 — Add a fifth simulator after the Mews Connector API (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 20:40; closing: signature fix + step 7 merged, verifying gates)
-Depends on REQ-019 (do it after). A new vendor, fictional name **MeridianPMS** (`sim-meridian`), copies the **Mews
-Connector API** shape: the "modern but very different" vendor. Same rule: shape only, no Mews name, branding or doc text.
-Read first: https://docs.mews.com/connector-api/guidelines/pagination.md, `.../guidelines/authentication.md`,
-`.../guidelines/requests.md`, `.../guidelines/responses.md`, `.../guidelines/environments.md`,
-https://docs.mews.com/connector-api/operations/reservations.md, the customers and order items operations, and the
-machine-readable spec https://api.mews.com/Swagger/connector/swagger.yaml (match names exactly from it).
-What the research already confirmed (2026-10-28):
-- Every operation is `POST` with a JSON body, e.g. `POST /api/connector/v1/reservations/getAll/2023-06-06`.
-- Auth is in the body, not a header: `ClientToken`, `AccessToken`, `Client` (app name + version).
-- Pagination: body `Limitation: {"Count": 1..1000, "Cursor": "<id or null>"}`; the response `Cursor` is the id of the
-  last item returned and is `null` only when no data comes back. Stop when `Cursor` is null or fewer than `Count` items.
-- Filters: `EnterpriseIds`, `ServiceIds`, `ReservationIds` (max 1000 each), `UpdatedUtc: {StartUtc, EndUtc}` (max
-  3 months), `States`.
-- Reservation fields are PascalCase: `Id`, `ServiceId`, `AccountId`, `BookerId`, `Number`, `State`, `Origin`,
-  `CreatedUtc`, `UpdatedUtc`, `ScheduledStartUtc`, `ScheduledEndUtc`, `ActualStartUtc`, `ActualEndUtc`, `RateId`,
-  `AssignedResourceId`. `State`: `Inquired`, `Confirmed`, `Started`, `Processed`, `Canceled`, `Optional`, `Requested`.
-- There is no guest name or amount on a reservation: the name comes from customers (`AccountId`), money from order
-  items (Amount with currency, net, gross and tax values), and dates are UTC instants, so property-local business dates
-  need the enterprise time zone. Those joins and conversions are the point of this vendor.
-Wanted:
-1. Simulator `simulators/meridianpms/` with reservations getAll (2023-06-06), customers getAll, order items getAll and
-   the enterprise/configuration call that gives time zone and currency; seeded from the shared generator; fault
-   switchboard and admin API like the others (admin token, loopback-only admin port). Wrong or missing tokens answer
-   the way the docs specify (confirm status and body).
-2. Compose service `sim-meridian` on vendor-net + admin-net, public `127.0.0.1:8116`, admin `127.0.0.1:8117`
-   (loopback-only like the other admin ports); readiness in `make up`, smoke positive and negative probes, local mode
-   (REQ-017) included.
-3. Docs: `simulators/docs/meridian-openapi.yaml` in the Mews swagger style (the single source), and a `/developers`
-   page registered via `mount_devportal` that renders it at load time. Owner (2026-10-28): Meridian is a **modern
-   PMS developer portal**, and it must not look like Atlas. Atlas is a single-page API reference (left nav, operation
-   per section, dark code panel on the right). Meridian is a guides-first docs site in the style of today's hosted
-   docs platforms: a top bar with product switcher (Connector API · Webhooks · Changelog), a search box with a ⌘K
-   hint, and light/dark toggle; a left sidebar grouped into **Guides** (Getting started, Authentication, Requests,
-   Responses, Pagination, Serialization: written from the YAML's descriptions and the "What the research confirmed"
-   notes above, in Meridian's own words) and **Operations** (one page per operation, grouped by resource:
-   Reservations, Customers, Order items, Configuration); each operation page shows `POST` + the versioned path, a
-   request-body table and a response table with nested objects expandable, a tabbed code sample (cURL / JavaScript /
-   Python) with the tokens in the body, an example response, and callouts ("Uses pagination", "Max interval 3 months",
-   deprecation note for older versions); a right-hand "On this page" rail; a "Was this page helpful?" footer and a
-   last-updated date. Hash routing between pages (one HTML page, no build step, no external fonts or CDNs, works
-   offline like the other portals). Include it in the simulators index (REQ-022).
-4. **Before** (owner decision 2026-10-28: the demo shows both halves). With the simulator and docs in place and the
-   engine still unchanged, run a build from Meridian's docs and record the result in the build note. It must stop
-   cleanly: `BuildRun` ends `Blocked` with a named reason (e.g. "operations need POST with a JSON body and body-field
-   auth; not expressible in ConnectorSpec v1"), escalated to L4, no release persisted, no half-working connector, no
-   crash. If today's bootstrap fails messily instead, fix that first (generally, for any API outside the vocabulary).
-   Add an e2e test that pins this behavior for a spec-v1-only engine configuration, so the refusal stays demonstrable.
-5. **Extend the spec vocabulary, once and generally** (owner decision: required, not optional). As JSON-Patchable spec
-   data, never code, and with no Meridian-specific branch anywhere in the engine (grep must find no "meridian" in
-   `src/autobridge` outside tests and fixtures): `ConnectorSpec` operations gain `method: POST` with a JSON body
-   template; `auth` type `body_fields` (credential refs placed into named body fields, still never in specs or
-   evidence as values); a body-cursor pagination strategy (cursor and page size in named body paths in, cursor path
-   out, stop on null cursor or short page); and declarative joins (enrich one entity from another operation by key,
-   e.g. reservation → customer name, reservation → sum of order item gross amounts). Bump the spec schema version,
-   keep every v1 spec valid and behaving the same, update `connector-spec` JSON schema, docs reader / classifiers /
-   hypotheses so discovery can propose these from docs, the runtime interpreter, and JSON Patch repair rules that touch
-   the new fields. Verifier oracle and canonical mapping for Meridian, including UTC → property-local business date.
-6. **After.** The same Meridian docs, with no other input, now bootstrap a connector that passes the verifier gate and
-   syncs `Complete`. Then at least two fault scenarios on Meridian (e.g. the `Limitation` cursor contract changes, a
-   renamed field) repaired through the ladder, with a known one at zero frontier tokens. Bench includes Meridian only
-   if the plan's matched-budget rules allow; otherwise note it.
-7. Demo: add the before/after to `docs/demo.md` and `make demo` as one step ("unfamiliar API style: engine refuses
-   safely → vocabulary extended once → same docs connect"), with the evidence each half shows.
-**Owner check after sub-step 6 (2026-10-28 19:55) — regression, fix FIRST, before REQ-021:** sub-step 5a
-(`c4bef3b2`, ConnectorSpec v2) changed `spec_signature()` for v1 specs. Bisected on the committed reference releases
-`generated/connectors/{atlaspms,harborpms}/reference/`: signatures verify at `45b3d8ca` and mismatch at `c4bef3b2` and
-every later commit. So every release stored before the upgrade now loads as `ReleaseCorruptError: … signature
-mismatch`; `tests/e2e/test_02_reference_sync.py::test_reference_specs_exist_and_validate` fails on the owner's host
-(`make e2e`: 1 failed, 118 passed) with or without `EDGE_RELEASE_SECRET`. This breaks item 5's "keep every v1 spec valid
-and behaving the same".
-Fix: make the signature of a v1 spec byte-identical to before v2 (canonicalise without v2-only fields when they are at
-their defaults, or sign by schema version), so the committed reference `build-report.json` files verify **unchanged**.
-Do not re-sign or rewrite the committed reference releases to make the test pass. Add regression tests: (1) the
-committed reference signatures verify; (2) a golden test pinning `spec_signature()` of each committed v1 reference spec
-to its stored value; (3) a v2 spec's signature changes when a v2 field changes. Find out why the sandbox gates did not
-catch this (the e2e file was reported green) and close that gap.
-
-**Owner check of sub-step A (2026-10-28, fix first in the next sub-step):** the Meridian portal loads its guides but
-shows no Operations: `simulators/devportal/meridian.html` calls `fetch("source")`, which from `/developers` resolves
-to `/source` (404). Use the absolute `/developers/source` like the other portals, and add a unit test that the page
-references `/developers/source` and a rendering test (or Playwright check) that at least one operation page appears.
-8. Gates as REQ-019, README vendor table updated. This is the largest REQ in the queue: split it into claimable
-   sub-steps in the build note (4, 5a schema+runtime, 5b discovery, 5c joins, 6, 7) and merge each one green.
-
 ### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 19:10; matrix full-climb merged, remaining: owner record-frontier capture + live step-4 check)
 Owner: every demo scenario must run the same way every time, including REQ-020's "before" refusal after the vocabulary
@@ -551,6 +465,93 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-020 — Add a fifth simulator after the Mews Connector API (2026-10-28)
+Status: DONE (2026-10-28) — all 8 items landed (simulator+docs portal, v1 before-refusal, v2 schema+runtime+discovery+joins, after-proof + 2 ladder faults, signature-regression fix, demo step 7); gates green, verified live in sbx1 2026-10-28.
+Depends on REQ-019 (do it after). A new vendor, fictional name **MeridianPMS** (`sim-meridian`), copies the **Mews
+Connector API** shape: the "modern but very different" vendor. Same rule: shape only, no Mews name, branding or doc text.
+Read first: https://docs.mews.com/connector-api/guidelines/pagination.md, `.../guidelines/authentication.md`,
+`.../guidelines/requests.md`, `.../guidelines/responses.md`, `.../guidelines/environments.md`,
+https://docs.mews.com/connector-api/operations/reservations.md, the customers and order items operations, and the
+machine-readable spec https://api.mews.com/Swagger/connector/swagger.yaml (match names exactly from it).
+What the research already confirmed (2026-10-28):
+- Every operation is `POST` with a JSON body, e.g. `POST /api/connector/v1/reservations/getAll/2023-06-06`.
+- Auth is in the body, not a header: `ClientToken`, `AccessToken`, `Client` (app name + version).
+- Pagination: body `Limitation: {"Count": 1..1000, "Cursor": "<id or null>"}`; the response `Cursor` is the id of the
+  last item returned and is `null` only when no data comes back. Stop when `Cursor` is null or fewer than `Count` items.
+- Filters: `EnterpriseIds`, `ServiceIds`, `ReservationIds` (max 1000 each), `UpdatedUtc: {StartUtc, EndUtc}` (max
+  3 months), `States`.
+- Reservation fields are PascalCase: `Id`, `ServiceId`, `AccountId`, `BookerId`, `Number`, `State`, `Origin`,
+  `CreatedUtc`, `UpdatedUtc`, `ScheduledStartUtc`, `ScheduledEndUtc`, `ActualStartUtc`, `ActualEndUtc`, `RateId`,
+  `AssignedResourceId`. `State`: `Inquired`, `Confirmed`, `Started`, `Processed`, `Canceled`, `Optional`, `Requested`.
+- There is no guest name or amount on a reservation: the name comes from customers (`AccountId`), money from order
+  items (Amount with currency, net, gross and tax values), and dates are UTC instants, so property-local business dates
+  need the enterprise time zone. Those joins and conversions are the point of this vendor.
+Wanted:
+1. Simulator `simulators/meridianpms/` with reservations getAll (2023-06-06), customers getAll, order items getAll and
+   the enterprise/configuration call that gives time zone and currency; seeded from the shared generator; fault
+   switchboard and admin API like the others (admin token, loopback-only admin port). Wrong or missing tokens answer
+   the way the docs specify (confirm status and body).
+2. Compose service `sim-meridian` on vendor-net + admin-net, public `127.0.0.1:8116`, admin `127.0.0.1:8117`
+   (loopback-only like the other admin ports); readiness in `make up`, smoke positive and negative probes, local mode
+   (REQ-017) included.
+3. Docs: `simulators/docs/meridian-openapi.yaml` in the Mews swagger style (the single source), and a `/developers`
+   page registered via `mount_devportal` that renders it at load time. Owner (2026-10-28): Meridian is a **modern
+   PMS developer portal**, and it must not look like Atlas. Atlas is a single-page API reference (left nav, operation
+   per section, dark code panel on the right). Meridian is a guides-first docs site in the style of today's hosted
+   docs platforms: a top bar with product switcher (Connector API · Webhooks · Changelog), a search box with a ⌘K
+   hint, and light/dark toggle; a left sidebar grouped into **Guides** (Getting started, Authentication, Requests,
+   Responses, Pagination, Serialization: written from the YAML's descriptions and the "What the research confirmed"
+   notes above, in Meridian's own words) and **Operations** (one page per operation, grouped by resource:
+   Reservations, Customers, Order items, Configuration); each operation page shows `POST` + the versioned path, a
+   request-body table and a response table with nested objects expandable, a tabbed code sample (cURL / JavaScript /
+   Python) with the tokens in the body, an example response, and callouts ("Uses pagination", "Max interval 3 months",
+   deprecation note for older versions); a right-hand "On this page" rail; a "Was this page helpful?" footer and a
+   last-updated date. Hash routing between pages (one HTML page, no build step, no external fonts or CDNs, works
+   offline like the other portals). Include it in the simulators index (REQ-022).
+4. **Before** (owner decision 2026-10-28: the demo shows both halves). With the simulator and docs in place and the
+   engine still unchanged, run a build from Meridian's docs and record the result in the build note. It must stop
+   cleanly: `BuildRun` ends `Blocked` with a named reason (e.g. "operations need POST with a JSON body and body-field
+   auth; not expressible in ConnectorSpec v1"), escalated to L4, no release persisted, no half-working connector, no
+   crash. If today's bootstrap fails messily instead, fix that first (generally, for any API outside the vocabulary).
+   Add an e2e test that pins this behavior for a spec-v1-only engine configuration, so the refusal stays demonstrable.
+5. **Extend the spec vocabulary, once and generally** (owner decision: required, not optional). As JSON-Patchable spec
+   data, never code, and with no Meridian-specific branch anywhere in the engine (grep must find no "meridian" in
+   `src/autobridge` outside tests and fixtures): `ConnectorSpec` operations gain `method: POST` with a JSON body
+   template; `auth` type `body_fields` (credential refs placed into named body fields, still never in specs or
+   evidence as values); a body-cursor pagination strategy (cursor and page size in named body paths in, cursor path
+   out, stop on null cursor or short page); and declarative joins (enrich one entity from another operation by key,
+   e.g. reservation → customer name, reservation → sum of order item gross amounts). Bump the spec schema version,
+   keep every v1 spec valid and behaving the same, update `connector-spec` JSON schema, docs reader / classifiers /
+   hypotheses so discovery can propose these from docs, the runtime interpreter, and JSON Patch repair rules that touch
+   the new fields. Verifier oracle and canonical mapping for Meridian, including UTC → property-local business date.
+6. **After.** The same Meridian docs, with no other input, now bootstrap a connector that passes the verifier gate and
+   syncs `Complete`. Then at least two fault scenarios on Meridian (e.g. the `Limitation` cursor contract changes, a
+   renamed field) repaired through the ladder, with a known one at zero frontier tokens. Bench includes Meridian only
+   if the plan's matched-budget rules allow; otherwise note it.
+7. Demo: add the before/after to `docs/demo.md` and `make demo` as one step ("unfamiliar API style: engine refuses
+   safely → vocabulary extended once → same docs connect"), with the evidence each half shows.
+**Owner check after sub-step 6 (2026-10-28 19:55) — regression, fix FIRST, before REQ-021:** sub-step 5a
+(`c4bef3b2`, ConnectorSpec v2) changed `spec_signature()` for v1 specs. Bisected on the committed reference releases
+`generated/connectors/{atlaspms,harborpms}/reference/`: signatures verify at `45b3d8ca` and mismatch at `c4bef3b2` and
+every later commit. So every release stored before the upgrade now loads as `ReleaseCorruptError: … signature
+mismatch`; `tests/e2e/test_02_reference_sync.py::test_reference_specs_exist_and_validate` fails on the owner's host
+(`make e2e`: 1 failed, 118 passed) with or without `EDGE_RELEASE_SECRET`. This breaks item 5's "keep every v1 spec valid
+and behaving the same".
+Fix: make the signature of a v1 spec byte-identical to before v2 (canonicalise without v2-only fields when they are at
+their defaults, or sign by schema version), so the committed reference `build-report.json` files verify **unchanged**.
+Do not re-sign or rewrite the committed reference releases to make the test pass. Add regression tests: (1) the
+committed reference signatures verify; (2) a golden test pinning `spec_signature()` of each committed v1 reference spec
+to its stored value; (3) a v2 spec's signature changes when a v2 field changes. Find out why the sandbox gates did not
+catch this (the e2e file was reported green) and close that gap.
+
+**Owner check of sub-step A (2026-10-28, fix first in the next sub-step):** the Meridian portal loads its guides but
+shows no Operations: `simulators/devportal/meridian.html` calls `fetch("source")`, which from `/developers` resolves
+to `/source` (404). Use the absolute `/developers/source` like the other portals, and add a unit test that the page
+references `/developers/source` and a rendering test (or Playwright check) that at least one operation page appears.
+8. Gates as REQ-019, README vendor table updated. This is the largest REQ in the queue: split it into claimable
+   sub-steps in the build note (4, 5a schema+runtime, 5b discovery, 5c joins, 6, 7) and merge each one green.
+
 
 ### REQ-026 — Per-test timeout so a hanging test fails fast with a stack trace (2026-10-29)
 Status: DONE (2026-10-28)

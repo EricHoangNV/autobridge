@@ -2862,3 +2862,11 @@ flap). Next: REQ-022 D (fault scenarios) then E (demo + docs + index).
 **Notes for next iteration:**
 - Owner verifies on macOS: the 3-test repro + full `uv run pytest tests/unit` must pass with zero new crash reports (sandbox is Linux, cannot show the crash).
 - Next in REQ-022: sub-step D fault scenarios, then E demo; `make demo`/`make e2e` already exercised against the local stack here.
+
+## 2026-10-28 20:55 UTC — REQ-020 DONE (sbx1 closure run)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). REQ-020 (MeridianPMS fifth simulator) was code-complete on main (A + 5a + 5b + 5c + 6 + signature-regression fix + portal-source fix + step 7) but still IN_PROGRESS in REQUESTS.MD. This run refreshed the sbx1 claim, verified every gate, and closed it — no code changes.
+- Owner-priority item (signature regression) confirmed fixed: both committed reference releases `load_release` clean, golden hex pins hold on both the registry and control/DB signature paths, v1 specs stay byte-identical.
+- Live stack (compose up/down in-sandbox, all 14 readyz green): test_02_reference_sync 6 pass; meridian before/after/runtime_v2/joins/faults 12 pass incl. all live variants (v1 Blocked with named reason + 0 model calls; v2 Complete with property-local business dates; wrong tokens fail cleanly).
+- Unit spot-checks: spec pins, demo+trust-boundaries, devportal+meridian-sim all green; lint (import-linter contracts kept) + typecheck green.
+- Full `make test`/`make e2e` not re-run (nothing changed in code); last full results stand.
+- Next: REQ-021 owner steps (record-frontier capture + live step-4 check), then REQ-022 sub-step D scenarios.
