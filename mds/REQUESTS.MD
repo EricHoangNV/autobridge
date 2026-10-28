@@ -219,17 +219,21 @@ Wanted:
 Status: OPEN
 Owner: make the edge story reflect how hotel on-premise integrations really work. Replace the EdgePOS toy (P2.S2) with
 a **FIAS PABX** simulator speaking the public FIAS protocol, and turn the edge worker into an on-premise agent.
-**IP rule (owner, binding):** build only from the public FIAS standard and generic, well-known patterns. Do not read
-any PDF or file under `tmp/` for this REQ (everything needed is here or in the public spec), and do not use any
-company, product or class name from the owner's private material. The public reference is Oracle Hospitality's
-"Fidelio Interface Application Specification (FIAS)" (search docs.oracle.com); confirm record and field ids from it and
-cite the section in the build note. Name things "FIAS PABX" (`simulators/fias_pabx/`, service `sim-fias-pabx`); remove
-EdgePOS (`simulators/edgepos/`, `sim-edgepos`, tests, smoke probes, docs) rather than keeping both.
+**Spec (owner, binding): implement from `simulators/docs/fias-pabx.md`**, the hotel's PABX interface
+specification (FIAS) as handed to integration partners. It is the single source of truth for framing, handshake,
+record layouts, site settings and PABX behavior; do not go online to rebuild the spec, and do not read any file under
+`tmp/`. Do not use any company, product or class name from the owner's private material. Where the spec is silent,
+choose the simplest behavior consistent with it and note it in the build note. Section 2.2's "site extension" (the
+PABX announces its own layout for records it originates) is intentional: it is what makes the firmware-change
+scenario possible. Name things "FIAS PABX" (`simulators/fias_pabx/`, service `sim-fias-pabx`); remove EdgePOS
+(`simulators/edgepos/`, `sim-edgepos`, tests, smoke probes, docs) rather than keeping both.
 
 **A. Simulator `sim-fias-pabx`** (edge-net only; reachable by the edge agent, never by control, worker, sandbox or UI;
 keep the negative smoke probes). FIAS over TCP:
-- Framing: each record `STX` (0x02) + `RecordType|FieldId value|FieldId value|…|` + `ETX` (0x03); ACK (0x06) / NAK
-  (0x15) per record when ACK mode is on (configurable).
+- Everything in `simulators/docs/fias-pabx.md`: framing and ACK/NAK (§1), link control and the handshake including
+  the PABX's own `LR` announcement (§2), keep-alive and all-zero resync (§2.3), the records and fields of §3–§4, the
+  operational behavior of §5 (one link, nightly interface restart, firmware layout changes, bursts, `PS` resend until
+  `PA`). Site settings are simulator configuration with the spec's values as defaults. Summary of what that covers:
 - Link handshake: Link Start `LS`, Link Description `LD` (date, time, version, interface family), one Link Record
   `LR` per record type announcing its field ids, Link Alive `LA`, Link End `LE`. Keep-alive `LA` on an interval.
   All-zero bytes on the line mean "out of sync": restart the handshake.
@@ -240,7 +244,7 @@ keep the negative smoke probes). FIAS over TCP:
   `XL` / `XD`, key write / delete / read `KR` `KD` `KZ` answered by `KA` (or `KZ`), Posting Answer `PA`.
 - Seeded and deterministic from the shared generator (rooms and guests consistent with the PMS simulators, so postings
   land on real in-house guests), with an admin API (token, loopback-only port) for the fault switchboard and a
-  `/developers` docs page rendered from a new `simulators/docs/fias-pabx.md` written from the public spec.
+  `/developers` docs page rendered from `simulators/docs/fias-pabx.md` (already written; it is the spec).
 
 **B. Edge agent** (the edge worker becomes a proper on-premise agent; generic pattern, done right):
 - Outbound only: no inbound port from the cloud. It polls a cloud command queue (a simple queue endpoint on the
@@ -294,8 +298,10 @@ Owner: the demo plan must include the fault scenarios from REQ-019 … REQ-022. 
 `make demo` only when the feature behind it has merged and its e2e test is green; until then it stays listed here.
 Every step runs after `make demo-reset` (REQ-021) and prints REQ-021's per-run table (rung that resolved it, model
 calls, small / frontier tokens, why it escalated). Never show heldout seeds; demo the dev variants only.
-**Main script** (keep within the hackathon time limit; if it runs over, move steps to the catalogue, never cut the
-evidence):
+**Owner decision (2026-10-28):** the demo video is 3 minutes. Build and test everything below; the owner picks which
+steps go into the video. So every main-script step and every catalogue entry must run on its own (`make demo
+SCENARIO=…` / `make demo STEP=…`) after a reset, and `make demo` runs the full main script for rehearsal.
+**Main script** (the full set; the owner cuts it down for the video):
 1. *What AutoBridge knows*: capabilities page (vocabulary v1/v2) and an empty learned-knowledge list. [REQ-021]
 2. *Reusable artifact*: the Atlas (Cloudbeds-style) reference release syncs with zero inference. [REQ-019]
 3. *Unfamiliar API*: Harbor's messy wiki page (its `/developers` site on screen) bootstraps a connector; the outdated
