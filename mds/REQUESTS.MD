@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2). Do these before any
+Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2), then REQ-022. Do these before any
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
@@ -214,6 +214,79 @@ Wanted:
    - Demo flow it must support, repeatably after `make demo-reset`: knowledge list empty → inject a drift → climb to
      L1/L2/L3, approve → a new entry appears on the page → inject the same drift again → L0 hit, 0 model calls, the
      entry's "times reused" goes up. Assert this sequence in an e2e test.
+
+### REQ-022 — FIAS PABX simulator and a real on-premise edge agent (replaces EdgePOS) (2026-10-28)
+Status: OPEN
+Owner: make the edge story reflect how hotel on-premise integrations really work. Replace the EdgePOS toy (P2.S2) with
+a **FIAS PABX** simulator speaking the public FIAS protocol, and turn the edge worker into an on-premise agent.
+**IP rule (owner, binding):** build only from the public FIAS standard and generic, well-known patterns. Do not read
+any PDF or file under `tmp/` for this REQ (everything needed is here or in the public spec), and do not use any
+company, product or class name from the owner's private material. The public reference is Oracle Hospitality's
+"Fidelio Interface Application Specification (FIAS)" (search docs.oracle.com); confirm record and field ids from it and
+cite the section in the build note. Name things "FIAS PABX" (`simulators/fias_pabx/`, service `sim-fias-pabx`); remove
+EdgePOS (`simulators/edgepos/`, `sim-edgepos`, tests, smoke probes, docs) rather than keeping both.
+
+**A. Simulator `sim-fias-pabx`** (edge-net only; reachable by the edge agent, never by control, worker, sandbox or UI;
+keep the negative smoke probes). FIAS over TCP:
+- Framing: each record `STX` (0x02) + `RecordType|FieldId value|FieldId value|…|` + `ETX` (0x03); ACK (0x06) / NAK
+  (0x15) per record when ACK mode is on (configurable).
+- Link handshake: Link Start `LS`, Link Description `LD` (date, time, version, interface family), one Link Record
+  `LR` per record type announcing its field ids, Link Alive `LA`, Link End `LE`. Keep-alive `LA` on an interval.
+  All-zero bytes on the line mean "out of sync": restart the handshake.
+- PABX → host records: Posting Simple `PS` (call / minibar charge: room `RN`, date `DA`, time `TI`, total amount `TA`,
+  sequence `P#`, plus what the spec lists), Room Equipment / status `RE`, Wake-up Answer `WA`, Database Resync request
+  `DR`.
+- Host → PABX records: Guest In / Change / Out `GI` `GC` `GO`, Wake-up Request / Clear `WR` `WC`, message light
+  `XL` / `XD`, key write / delete / read `KR` `KD` `KZ` answered by `KA` (or `KZ`), Posting Answer `PA`.
+- Seeded and deterministic from the shared generator (rooms and guests consistent with the PMS simulators, so postings
+  land on real in-house guests), with an admin API (token, loopback-only port) for the fault switchboard and a
+  `/developers` docs page rendered from a new `simulators/docs/fias-pabx.md` written from the public spec.
+
+**B. Edge agent** (the edge worker becomes a proper on-premise agent; generic pattern, done right):
+- Outbound only: no inbound port from the cloud. It polls a cloud command queue (a simple queue endpoint on the
+  control plane, or a local queue service in compose) and reports through authenticated callbacks to the control
+  API (client-credentials style token, never logged).
+- Delivery guarantees the verifier can check: a durable local outbox and inbox (survive agent restart);
+  at-least-once delivery with idempotency keys so the cloud de-duplicates; answers correlated by request id, never
+  by "whatever arrives next"; command expiry enforced (a stale wake-up is never sent, and the cloud is told it
+  expired); an ACK timeout reported to the cloud, not dropped; one command in flight per link with a bounded wait.
+- Never block the PABX: the agent ACKs the PABX after a durable local write, not after the cloud call, so a slow
+  cloud cannot stall the link. Back-pressure and retries with backoff toward the cloud.
+- Link supervision: handshake state machine, keep-alive, resync on all-zero bytes, reconnect, spam and oversize
+  protection (close the session on a frame over a set limit, or on a long run of identical records), health exposed
+  on `/readyz` and in the UI.
+- The agent runs a verified, signed release (AR-2-4 HMAC) as today; what it executes is still declarative spec data.
+
+**C. Spec vocabulary** (same approach as REQ-020: before → extend once, generally → after). Today ConnectorSpec is
+HTTP-pull only. Add, as JSON-Patchable data, never code: a `protocol: fias_tcp` transport (framing, ACK mode, link
+records), event-driven sources (records pushed to the agent instead of polled), record-to-entity mapping (e.g. `PS`
+fields → canonical `FolioCharge`; `RE` → room status), and command templates for host → PABX records. "Before": the
+v1 engine must refuse a FIAS source cleanly (`Blocked`, named reason, 0 model calls, REQ-021 item 2 pin). "After": the
+same FIAS docs page bootstraps a working connector, with no FIAS-specific branch outside the generic transport.
+
+**D. Fault scenarios** (each a YAML in `simulators/scenarios/`, a verifier check, and an e2e test):
+- `fias_record_layout_change`: after a reconnect, the PABX announces a different `LR` field set for `PS` (a field
+  added, renamed or reordered). The connector detects the drift from the handshake and repairs the mapping with a
+  JSON Patch through the ladder (a known variant at 0 frontier tokens).
+- `fias_link_resync`: all-zero bytes mid-session; the agent re-handshakes and loses nothing.
+- `fias_ack_timeout`: the PABX stops answering a command; the cloud is told it timed out.
+- `agent_restart_inflight`: the agent is killed with commands and postings in flight; after restart nothing is lost
+  or duplicated downstream.
+- `cloud_slow`: callbacks take tens of seconds; the PABX link keeps getting ACKs, the outbox drains later.
+- `fias_duplicate_records`: the PABX repeats postings; each charge lands once (idempotent by `P#` + room + time).
+- `fias_oversize_frame` and `fias_record_flood`: the session is closed and re-opened cleanly; no crash.
+- `session_lost_with_command`: the link drops while a command waits; the command is retried on the new session
+  (never broadcast to other links) or reported failed.
+- `stale_command`: a wake-up request arrives after its expiry; it is not sent and is reported expired.
+
+**E. Demo and docs.** A demo step "on-premise PABX: the agent keeps working through a PABX firmware change" (layout
+change → repair → postings flow again, with REQ-021's per-rung table and model usage), plus a restart-without-loss
+moment. Update docs/architecture.md and docs/safety-model.md (edge-net boundary, outbound-only agent, delivery
+guarantees), README vendor table, `make up` / smoke / local mode (REQ-017; the agent and PABX run as local processes).
+
+**F. Gates.** Unit and e2e tests for every item above, `make test`, `make up && make smoke && make e2e && make demo`
+green; grep proves no EdgePOS remnants and no private names. Split into claimable sub-steps in the build note
+(A simulator, B agent, C vocabulary, D scenarios, E demo) and merge each one green.
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
