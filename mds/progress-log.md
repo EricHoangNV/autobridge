@@ -2559,3 +2559,11 @@ reset→inject→reset repeatability + zero ledger verified against local stack.
 (2156 / 99 / 294 + ui 153).
 **Next:** REQ-021 sub-steps F (capabilities/knowledge), G (replay).
 Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-021 owner-check fix merged (sbx1)
+**Migration on startup** (`ensure_migrated` in lifespan + demo/reset; Dockerfile ships alembic/;
+env.py precedence fixed) with an upgrade-old-DB test. **Real gross_to_net climb** (L0→L1→L2→L3→trap→L4)
+via replay (or live key), `resolve_frontier_provider`, replay-labelled ledger, matrix + demo pins.
+**Gates:** `make test` green (2172/99/294 + ui 153); lint + typecheck green.
+**Next:** REQ-021 sub-step F (capabilities/knowledge). Replay capture script + live repair L2/L3
+wiring remain follow-ups. Agent: opencode meta/muse-spark-1.3-contributor (escalation).

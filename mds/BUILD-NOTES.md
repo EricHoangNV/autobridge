@@ -1191,3 +1191,33 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
   simulators 294, ui 153); lint green. Related suites re-run green (meridian_before + test_03
   in-process). `make local-down` after the live run.
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-021 owner check (2026-10-28 21:10) — migration + real climb (sbx1)
+- **(1) Missing migration.** `create_all` never adds columns: new `control/migrate.ensure_migrated()`
+  (adopt create_all DBs by stamp, upgrade stale ones incl. downgraded fixtures, skip `:memory:`,
+  fail loudly). Runs on control startup (same lifespan covers Docker + local mode) and at the top of
+  `POST /demo/reset`. `alembic/env.py` keeps programmatic URLs while ini-loaded runs still honor
+  `DATABASE_URL` (first attempt inverted the precedence and broke the ini-based cycle tests — caught by
+  the suite, fixed). `Dockerfile.engine` ships `alembic/` (alembic was already in the engine lockfile).
+  New test: downgrade a file DB to 0004, POST /demo/reset (200, migrates), then GET /repairs (200).
+- **(2) gross_to_net never climbed.** Demo step 4 now orchestrates the real climb via
+  `run_frontier_climb` (new in `repair/ladder.py`, L2-confidence-gated L0→L1→L2→L3 with
+  `L2_CONFIDENCE_THRESHOLD = 0.70`; the generic `run_ladder` L3-before-L2 order is untouched):
+  L0 miss → L1 no rule matched → L2 rank (0.41 < 0.70) → L3 Muse call (tokens + exact-split cost in
+  the ledger) proposing the net→total decoy → checked live by verifier verdict (`invalid_patch_trap`)
+  or the documented trap predicate in-process (transport errors fall back with a note, never silent)
+  → L4 one question. Provider resolution `resolve_frontier_provider()` (`FRONTIER_MODE`
+  live|replay|auto|off in config + `.env.example`, `REPLAY_DIR`): live with key, else replay;
+  `ReplayProvider` (prompt-sha256 keyed, `ReplayMissing` on absent hash), `Completion.replayed`,
+  ledger purpose suffix ` (replay)`, `demo/recordings/gross_to_net.json` (authored stand-in, labelled;
+  replace with a live capture when a key exists). Usage deltas now carry input/output splits for exact
+  pricing. Matrix: gross_to_net moved to a climb test (L3 attempt + frontier tokens + trap + 2 replay
+  ledger rows required); new demo test asserts every other main-script step makes 0 frontier calls.
+- **Out of scope (noted):** live repairs still never reach L2/L3 (no provider wired in
+  `repair_job_handler`; generic path unchanged, matrix rows unaffected). Enabling that is separate
+  work (budgets, approvals, cost guards).
+- **Tests:** `make test` all green (autobridge 2172 / 91.52%, verifier 99 / 93.62%, simulators 294 /
+  96.10%, ui 153); `make lint` (incl. import-linter) + `make typecheck` green; matrix 19 in-process +
+  climb test green; `make demo` runs the climb in-process (replay, L4 escalated, per-run table shows
+  the only frontier call on the hard-semantic step).
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).
