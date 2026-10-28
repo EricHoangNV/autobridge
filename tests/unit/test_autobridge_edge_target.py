@@ -29,6 +29,12 @@ from autobridge.runtime.targets import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_release_secret(monkeypatch: Any) -> None:
+    """Hermetic default: legacy unkeyed mode unless a test sets the key."""
+    monkeypatch.delenv("EDGE_RELEASE_SECRET", raising=False)
+
+
 def _edge_spec(base_url: str = "http://sim-edgepos:8000") -> dict[str, Any]:
     return {
         "spec_version": 1,
@@ -292,3 +298,75 @@ def test_edge_app_happy_path_wired(monkeypatch: Any) -> None:
     )
     assert r.status_code == 200
     assert r.json()["records"] == [{"reservation_id": "EDGE-1"}]
+
+
+# ---------------------------------------------------------------------------
+# AR-2-4 — HMAC-keyed release signatures
+# ---------------------------------------------------------------------------
+
+
+def test_keyed_signature_agrees_across_signer_and_verifier(monkeypatch: Any) -> None:
+    """Signer (control models) and verifier (runtime targets) derive the same
+    keyed digest from one env var; the keyed value differs from legacy."""
+    from autobridge.control.models import spec_signature
+
+    monkeypatch.setenv("EDGE_RELEASE_SECRET", "test-key-1")
+    spec = _edge_spec()
+    assert release_signature(spec) == spec_signature(spec)
+    assert len(release_signature(spec)) == 64  # still hex sha256
+    monkeypatch.delenv("EDGE_RELEASE_SECRET")
+    legacy = release_signature(spec)
+    assert legacy == spec_signature(spec)
+    assert legacy != release_signature(spec, secret="test-key-1")
+
+
+def test_keyed_signature_rejects_self_computed_legacy_hash(monkeypatch: Any) -> None:
+    """AR-2-4 core: with a key configured, a self-computed unkeyed hash over
+    a foreign spec is rejected — the signature is unforgeable, not just a
+    checksum anyone can recompute."""
+    spec = _edge_spec()
+    legacy = release_signature(spec)  # env unset here: unkeyed sha256
+    monkeypatch.setenv("EDGE_RELEASE_SECRET", "test-key-1")
+    keyed = release_signature(spec)
+    assert keyed != legacy
+    verify_release_signature(spec, keyed)  # no raise
+    with pytest.raises(TargetConfigError, match="HMAC.*mismatch"):
+        verify_release_signature(spec, legacy)
+
+
+def test_keyed_signature_rejects_tampered_wrong_secret_unsigned(monkeypatch: Any) -> None:
+    monkeypatch.setenv("EDGE_RELEASE_SECRET", "test-key-1")
+    spec = _edge_spec()
+    sig = release_signature(spec)
+    tampered = dict(spec)
+    tampered["source"] = {"base_url": "http://evil:8000"}
+    with pytest.raises(TargetConfigError, match="HMAC.*mismatch"):
+        verify_release_signature(tampered, sig)
+    foreign = release_signature(spec, secret="someone-elses-key")
+    with pytest.raises(TargetConfigError, match="HMAC.*mismatch"):
+        verify_release_signature(spec, foreign)
+    with pytest.raises(TargetConfigError, match="unsigned"):
+        verify_release_signature(spec, None)
+    with pytest.raises(TargetConfigError, match="unsigned"):
+        verify_release_signature(spec, "")
+
+
+def test_keyed_signature_explicit_secret_overrides_env(monkeypatch: Any) -> None:
+    monkeypatch.setenv("EDGE_RELEASE_SECRET", "env-key")
+    spec = _edge_spec()
+    explicit = release_signature(spec, secret="explicit-key")
+    assert explicit != release_signature(spec)  # env key gives a different digest
+    verify_release_signature(spec, explicit, secret="explicit-key")  # no raise
+    with pytest.raises(TargetConfigError, match="HMAC.*mismatch"):
+        verify_release_signature(spec, explicit)  # env key does not accept it
+
+
+def test_keyed_fake_edge_accepts_hmac_rejects_legacy(monkeypatch: Any) -> None:
+    spec = _edge_spec()
+    legacy = release_signature(spec)
+    monkeypatch.setenv("EDGE_RELEASE_SECRET", "test-key-1")
+    fake = FakeEdgeTarget(responses={"list_reservations": [{"reservation_id": "EDGE-1"}]})
+    res = fake.execute_signed_release(spec, release_signature(spec), "list_reservations")
+    assert res.status == "ok"
+    with pytest.raises(TargetConfigError, match="HMAC.*mismatch"):
+        fake.execute_signed_release(spec, legacy, "list_reservations")

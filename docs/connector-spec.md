@@ -103,7 +103,8 @@ health:
 * `vendor` — display name.
 * `runtime_target` — `cloud | local | sandbox | edge` (`edge` is the Phase 2 S2
   simulated edge worker: executes only signed releases on the isolated
-  `edge-net`; `sandbox` is the Docker-isolated target in W3.6).
+  `edge-net` — HMAC-signed with `EDGE_RELEASE_SECRET` when set, unkeyed
+  integrity checksum otherwise (AR-2-4); `sandbox` is the Docker-isolated target in W3.6).
 
 ### 2.2 `source`
 

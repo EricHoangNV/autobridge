@@ -81,7 +81,7 @@ def _check_runtime_target() -> bool:
         verify_release_signature(probe_spec, sig)
         try:
             verify_release_signature(probe_spec, "tampered")
-            return False  # pragma: no cover - sha256 mismatch always raises; backstop
+            return False  # pragma: no cover - signature mismatch always raises; backstop
         except TargetConfigError:
             pass
         if edge.execute().status != "blocked":

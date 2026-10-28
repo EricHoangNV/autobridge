@@ -120,7 +120,9 @@ def create_release(
       2. If *parent_release_id* given, it must exist and belong to the same connector.
       3. *spec* validates via :func:`load_spec_from_dict` (path-level errors on failure).
       4. Version is ``max_version + 1`` for this connector.
-      5. Signature is ``spec_signature(spec)`` (sha256 canonical JSON).
+      5. Signature is ``spec_signature(spec)`` (HMAC over canonical JSON when
+       ``EDGE_RELEASE_SECRET`` is set, unkeyed sha256 integrity checksum
+       otherwise — AR-2-4).
 
     The row is flushed and returned; caller commits.
 

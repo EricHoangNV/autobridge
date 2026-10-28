@@ -22,6 +22,7 @@ Standing rules honored here (DIRECTIVES Quick Reference 4–6):
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import uuid
@@ -119,13 +120,44 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def spec_signature(spec: Mapping[str, Any]) -> str:
-    """sha256 over the canonical JSON of a ConnectorSpec document.
+#: Env var carrying the HMAC key that turns a release integrity checksum into
+#: an unforgeable execution authorization (AR-2-4). The signer (control /
+#: worker, via :func:`spec_signature`) and the verifier (edge worker, via
+#: ``autobridge.runtime.targets.verify_release_signature``) read the same
+#: variable, so one compose entry covers both ends. Never logged, never
+#: stored in a spec, release, evidence record or API response (DIRECTIVES §6).
+EDGE_RELEASE_SECRET_ENV = "EDGE_RELEASE_SECRET"
+
+
+def _canonical_spec_bytes(spec: Mapping[str, Any]) -> bytes:
+    return json.dumps(spec, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _signing_key(secret: str | None = None) -> bytes | None:
+    """HMAC key bytes, or ``None`` when no key is configured (legacy mode)."""
+    key = secret if secret is not None else os.environ.get(EDGE_RELEASE_SECRET_ENV)
+    if not key:
+        return None
+    return key.encode("utf-8")
+
+
+def spec_signature(spec: Mapping[str, Any], *, secret: str | None = None) -> str:
+    """HMAC-SHA256 over the canonical JSON of a ConnectorSpec document.
 
     ``ConnectorRelease.signature`` stores this; any spec drift changes it.
+    When ``EDGE_RELEASE_SECRET`` (or *secret*) is set, the digest is keyed:
+    only the holder of the secret can mint a signature the edge worker
+    accepts, so a self-computed hash over a foreign spec is rejected
+    (AR-2-4). When no key is configured the legacy unkeyed sha256 is
+    returned: an integrity checksum only, suitable for local dev and
+    content-addressing but not an authorization decision — set the secret
+    before exposing the stack beyond localhost.
     """
-    canonical = json.dumps(spec, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    payload = _canonical_spec_bytes(spec)
+    key = _signing_key(secret)
+    if key is None:
+        return hashlib.sha256(payload).hexdigest()
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
 def default_database_url() -> str:
@@ -255,7 +287,8 @@ class ConnectorRelease(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
-    #: ``spec_signature(spec)`` at insert time; real signing comes later.
+    #: ``spec_signature(spec)`` at insert time: HMAC-signed when
+    #: ``EDGE_RELEASE_SECRET`` is set, integrity checksum otherwise (AR-2-4).
     signature: Mapped[str] = mapped_column(String(64), nullable=False)
 
     connector: Mapped[Connector] = relationship(

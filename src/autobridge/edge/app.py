@@ -4,8 +4,10 @@ Runs on the isolated ``edge-net`` Docker network and executes only signed
 connector releases against the edge-only sim POS (``sim-edgepos``):
 
 * ``POST /execute`` takes ``{spec, signature, operation}``, verifies
-  ``spec_signature(spec) == signature`` (verify centrally, execute locally),
-  enforces the edge allowlist, and interprets the operation.
+  ``signature`` against the spec (verify centrally, execute locally),
+  enforces the edge allowlist, and interprets the operation. When
+  ``EDGE_RELEASE_SECRET`` is set the signature is an HMAC only the secret
+  holder can mint; otherwise it is an integrity checksum (local dev only).
 * Unsigned (missing signature) and tampered (mismatch) releases are refused
   with 422/403 before any network or interpreter work.
 * ``GET /healthz`` / ``GET /readyz`` mirror the other engine services.
@@ -50,7 +52,11 @@ def _worker() -> EdgeTarget:
 
 class ExecuteRequest(BaseModel):
     spec: dict[str, Any] = Field(description="Full ConnectorSpec document")
-    signature: str | None = Field(default=None, description="spec_signature(spec) from the release")
+    signature: str | None = Field(
+        default=None,
+        description="HMAC-signed spec_signature(spec) from the release "
+        "(EDGE_RELEASE_SECRET); integrity checksum when no key is configured",
+    )
     operation: str = Field(min_length=1, description="Operation to execute")
     params: dict[str, Any] | None = Field(default=None)
 
@@ -74,7 +80,7 @@ def _check_edge() -> bool:
         verify_release_signature(probe, sig)
         try:
             verify_release_signature(probe, "tampered")
-            return False  # pragma: no cover - sha256 mismatch always raises; backstop
+            return False  # pragma: no cover - signature mismatch always raises; backstop
         except TargetConfigError:
             pass
         return worker.execute().status == "blocked"

@@ -38,6 +38,11 @@ services:
       AUTOBRIDGE_OPERATOR: ${AUTOBRIDGE_OPERATOR:-operator}
       AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
       SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+      # AR-2-4: HMAC key for edge release signatures. Control signs releases
+      # with it; the edge worker verifies with it. Empty (local dev) means
+      # unkeyed integrity checksums — set a random value before exposing the
+      # stack beyond localhost.
+      EDGE_RELEASE_SECRET: ${EDGE_RELEASE_SECRET:-}
       # AR-1-2: builds executed inline by control verify the candidate spec
       # before persisting (gate-before-persist). Control has a verifier-net
       # route, so this default works on the stock stack.
@@ -56,6 +61,10 @@ services:
       dockerfile: Dockerfile.engine
     environment:
       APP_MODULE: autobridge.engine.app:app
+      # AR-2-4: repair jobs persisted by the worker sign releases with the
+      # same HMAC key control uses; must match edge-worker or edge
+      # execution refuses the release.
+      EDGE_RELEASE_SECRET: ${EDGE_RELEASE_SECRET:-}
       # NOTE (AR-1-2): no VERIFIER_URL here on purpose. The worker is on
       # engine-net only with no verifier-net route, so it cannot reach the
       # verifier; verification happens on the control-inline build path
@@ -105,6 +114,10 @@ services:
       APP_MODULE: autobridge.edge.app:app
       EDGE_ALLOWLIST: sim-edgepos
       EDGEPOS_API_KEY: dummy-edge-key
+      # AR-2-4: HMAC key for release verification. Must match control/worker
+      # or every /execute is refused; empty (local dev) accepts the legacy
+      # unkeyed integrity checksum.
+      EDGE_RELEASE_SECRET: ${EDGE_RELEASE_SECRET:-}
     networks:
       - edge-net
     ports:

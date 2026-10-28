@@ -322,3 +322,11 @@ def test_worker_has_no_verifier_url(compose: dict) -> None:
     not be configured with a verifier URL that could never resolve."""
     env = compose["services"]["worker"].get("environment") or {}
     assert "VERIFIER_URL" not in env
+
+
+@pytest.mark.parametrize("service", ["control", "worker", "edge-worker"])
+def test_edge_release_secret_shared(compose: dict, service: str) -> None:
+    """AR-2-4: signer (control/worker) and verifier (edge-worker) read the
+    same HMAC key; empty in local dev (unkeyed integrity checksums)."""
+    env = compose["services"][service].get("environment") or {}
+    assert env.get("EDGE_RELEASE_SECRET") == "${EDGE_RELEASE_SECRET:-}"

@@ -12,9 +12,10 @@ The v1 engine executes :class:`ConnectorSpec` operations inside a
   and in-process allowlist checks (host + ``/admin`` path guard).
 * :class:`EdgeTarget` — simulated edge worker (P2.S2) on an isolated Docker
   network (``edge-net``).  It executes only signed releases: the worker
-  verifies ``spec_signature(spec) == signature`` before running anything
-  (verify centrally, execute locally), and its egress is restricted to the
-  edge-only sim POS allowlist.
+  verifies the release signature before running anything
+  (verify centrally, execute locally — HMAC-signed with
+  ``EDGE_RELEASE_SECRET`` when configured, integrity checksum otherwise,
+  AR-2-4), and its egress is restricted to the edge-only sim POS allowlist.
 
 This module provides both the real minimal implementations and the
 in-memory fakes used to reach 90% coverage on the control/SSE layer
@@ -32,6 +33,10 @@ All network checks are via :func:`host_from_url` + allowlist matching;
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import os
 import time
 import urllib.parse
 from dataclasses import dataclass, field
@@ -511,7 +516,8 @@ class EdgeTarget(BaseTarget):
     """Simulated edge worker on an isolated network (P2.S2).
 
     Executes only signed releases: :meth:`execute_signed_release` verifies
-    ``spec_signature(spec) == signature`` before running anything.  Egress
+    the release signature before running anything (HMAC when
+    ``EDGE_RELEASE_SECRET`` is set — AR-2-4).  Egress
     is restricted to ``network_allowlist`` (default: the edge-only sim POS),
     enforced in-process exactly like :class:`DockerSandboxTarget` plus the
     Compose attachment     (``edge-net`` only — no engine-net route to the
@@ -551,7 +557,8 @@ class EdgeTarget(BaseTarget):
 
         Raises :class:`TargetConfigError` for unsigned/tampered releases and
         :class:`NetworkBlockedError` when the spec's ``source.base_url`` is
-        outside the allowlist.
+        outside the allowlist.  When ``EDGE_RELEASE_SECRET`` is set only
+        HMAC signatures minted with the secret are accepted (AR-2-4).
         """
         _ = params  # reserved: the interpreter derives params from the spec operation
         verify_release_signature(spec, signature)
@@ -630,35 +637,63 @@ class EdgeTarget(BaseTarget):
 # Release signatures — verify centrally, execute locally (P2.S2)
 # ---------------------------------------------------------------------------
 
+#: Env var carrying the HMAC key for release signatures (AR-2-4). Same
+#: variable as ``autobridge.control.models.EDGE_RELEASE_SECRET_ENV``; kept
+#: as a literal here so this module never imports control (the signer and
+#: the verifier must read the same variable — covered by the agreement
+#: tests in ``tests/unit/test_autobridge_edge_target.py``).
+_EDGE_RELEASE_SECRET_ENV = "EDGE_RELEASE_SECRET"
 
-def release_signature(spec: dict[str, Any]) -> str:
-    """sha256 over the canonical JSON of a ConnectorSpec document.
+
+def _signing_key(secret: str | None = None) -> bytes | None:
+    """HMAC key bytes, or ``None`` when no key is configured (legacy mode)."""
+    key = secret if secret is not None else os.environ.get(_EDGE_RELEASE_SECRET_ENV)
+    if not key:
+        return None
+    return key.encode("utf-8")
+
+
+def release_signature(spec: dict[str, Any], *, secret: str | None = None) -> str:
+    """HMAC-SHA256 over the canonical JSON of a ConnectorSpec document.
 
     Identical canonicalization to
     :func:`autobridge.control.models.spec_signature` (kept local to avoid a
     control→runtime import); ``ConnectorRelease.signature`` stores this value
     and any spec drift changes it.  The edge worker refuses to execute when
     the presented signature differs.
+
+    When ``EDGE_RELEASE_SECRET`` (or *secret*) is set the digest is keyed,
+    so only the secret holder can mint an accepted signature (AR-2-4).
+    Without a key this is the legacy unkeyed sha256: an integrity checksum
+    only, not an authorization decision.
     """
-    import hashlib
-    import json
+    payload = json.dumps(spec, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    key = _signing_key(secret)
+    if key is None:
+        return hashlib.sha256(payload).hexdigest()
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
-    canonical = json.dumps(spec, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-
-def verify_release_signature(spec: dict[str, Any], signature: str | None) -> None:
+def verify_release_signature(
+    spec: dict[str, Any], signature: str | None, *, secret: str | None = None
+) -> None:
     """Raise :class:`TargetConfigError` unless *signature* matches *spec*.
 
     Missing, empty or mismatched signatures are all rejected: the edge
-    worker executes only signed releases.
+    worker executes only signed releases.  Comparison is constant-time;
+    when a signing key is configured the expected value is the HMAC, so a
+    self-computed unkeyed hash over a foreign spec is rejected (AR-2-4).
     """
     if not signature:
         raise TargetConfigError("edge release is unsigned: signature is required")
-    expected = release_signature(spec)
-    if signature != expected:
+    expected = release_signature(spec, secret=secret)
+    if not hmac.compare_digest(signature, expected):
+        keyed = _signing_key(secret) is not None
         raise TargetConfigError(
             "edge release signature mismatch: refusing to execute (tampered or stale release)"
+            if not keyed
+            else "edge release HMAC signature mismatch: refusing to execute "
+            "(forged, tampered or stale release)"
         )
 
 

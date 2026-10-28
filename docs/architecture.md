@@ -154,7 +154,9 @@ no SQLite-only types; proven to compile on Postgres):
   (env key name, never the value), `target_entities[]`, `runtime_target`,
   `active_release_id`, `health_status`.
 - `ConnectorRelease` — **immutable** (model-layer `before_update`/`before_delete`
-  events raise `ImmutableReleaseError`); `spec` JSON + `spec_signature` sha256,
+  events raise `ImmutableReleaseError`); `spec` JSON + `spec_signature`
+  (HMAC over canonical JSON when `EDGE_RELEASE_SECRET` is set, unkeyed sha256
+  integrity checksum otherwise — AR-2-4),
   `parent_release_id`, provenance (`build_run_id | repair_run_id`).
 - `BuildRun / SyncRun / RepairRun` — job execution records; `SyncRun`
   carries `outcome Complete|Degraded|Blocked + unmet_criteria[]`,
