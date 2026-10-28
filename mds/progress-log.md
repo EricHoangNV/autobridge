@@ -2071,3 +2071,31 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Notes for next iteration:**
 - Needs a live stack to fully close: `make up && make smoke` + build-while-verifier-down manual check (expect no release row), plus the `test_05` e2e extension the finding suggests. Not run here (no Docker in sandbox).
 - Remaining Cycle 2 FAIL items: AR-1-3, AR-1-4 (partly: REQ-012 done), AR-1-5, AR-2-2, AR-2-3, AR-2-4, AR-2-5, AR-2-6 (AR-1-2, AR-2-1, AR-1-1 fixed, pending reviewer re-verification). Suggested next: AR-2-2 (build `docs_url`/`docs_path` SSRF + local-file read) or AR-1-3 (client-chosen `to_release_id`), both well-scoped.
+
+## AR-1-3 — Bind approval to the repair run's candidate release
+**Date:** 2026-10-28
+**Ref:** Code Review Cycle 1 finding AR-1-3 (re-verified open in Cycle 2)
+
+**What was done:**
+- Route `POST /repairs/{repair_id}/approve` now 422s when the client names a release that is not this repair run's candidate (or when no candidate exists); omitting `to_release_id` approves the candidate
+- Engine `approve_release` raises `ReleaseError` unless the target release's `provenance_repair_run_id` matches the repair run
+- Documented the assertion semantics on the schema field, CLI flag help, and regenerated OpenAPI + TS client
+- 3 new tests (engine foreign/unlinked rejection, route 422/200 matrix); updated 7 existing approve tests to link candidates at creation
+
+**Key decisions:**
+- Strict binding (not lenient NULL-provenance allowance): any approvable candidate must carry repair provenance, closing the substitution hole completely; the only route to activation goes through the candidate lookup, so no legitimate flow breaks
+- Check at both layers (route for the HTTP contract, engine for direct callers) rather than route-only
+
+**Files changed:**
+- `src/autobridge/control/routes/repairs.py` — candidate binding + 422 paths
+- `src/autobridge/engine/releases.py` — provenance check in `approve_release`
+- `src/autobridge/control/schemas.py` — `to_release_id` description
+- `src/autobridge/cli.py` — `--to-release` help text
+- `ui/openapi.json`, `ui/lib/api/schema.d.ts` — regenerated
+- `tests/unit/test_autobridge_releases.py` — provenance-linked candidates + new foreign-rejection test
+- `tests/unit/test_autobridge_monitor.py` — provenance-linked candidates
+- `tests/unit/test_autobridge_control_api_extended.py` — new route-level AR-1-3 test
+
+**Notes for next iteration:**
+- Remaining Cycle 2 FAIL items: AR-1-4 (partly: REQ-012 done), AR-1-5, AR-2-2, AR-2-3, AR-2-4, AR-2-5, AR-2-6. Suggested next: AR-2-2 (build-route SSRF/file-read, Medium) or AR-1-5 (verdict/scenario binding, Low)
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation)

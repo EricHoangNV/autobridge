@@ -102,3 +102,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Keep `success: True` on a gate-blocked build: the build (docs → draft) worked; it is the *release* that was withheld. Conflating the two would misreport the lifecycle.
 
 **Rule:** When a persistence gate is missing, thread the existing check into the creation call and quarantine by not persisting (blocked error → no row, reason on the parent run) rather than adding enforcement columns; configure the check only where the trust-boundary topology lets it succeed, and document the path that inherently cannot be checked.
+
+## 11. A client-supplied id that names what to activate is an assertion, never a selector
+
+**Context:** AR-1-3 (2026-10-28) — `POST /repairs/{id}/approve` accepted a client `to_release_id` for any `propose` run, so any caller could activate a stale/rolled-back/unverified release under an unrelated repair's audit cover.
+
+- Resolve the target server-side (here: latest release with `provenance_repair_run_id == repair_id`); a supplied id only *confirms* the resolved one and mismatches 422. Enforce the same invariant in the engine function, not just the route, so direct callers cannot substitute either.
+- Existing tests that approved unlinked releases needed provenance at creation time, not patched afterward — release rows are immutable (`before_update` raises), so the helper pattern is "create the repair run first, pass `provenance_repair_run_id=` into `create_release`".
+- Describing the semantics on the schema field (`RepairDecisionRequest.to_release_id`) and regenerating OpenAPI/TS client keeps the contract visible to API consumers and the UI.
+
+**Rule:** When a request id selects a security-sensitive target, ignore-and-resolve beats validate-and-trust: resolve the only legal target from server state, treat the client's value as an assertion (422 on mismatch), bind it again one layer down, and document the semantics in the schema description.

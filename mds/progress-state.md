@@ -2,7 +2,7 @@
 
 ## Current State
 
-AR-1-2 done (sbx1 2026-10-28): gate-before-persist on builds (blocked verifier = no release, draft kept with `gate_blocked`); sync 422 without active release; `VERIFIER_URL` on control only. 7 new unit tests. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+AR-1-3 done (sbx1 2026-10-28): approval bound to the repair run's candidate release — client `to_release_id` must equal the provenance-linked candidate (else 422), engine raises on mismatch. 3 new unit tests. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - W1 Foundations: scaffold, compose, ConnectorSpec, schemas, DB models, jobs, evidence, LLMProvider, fakes, e2e harness base
@@ -20,13 +20,14 @@ AR-1-2 done (sbx1 2026-10-28): gate-before-persist on builds (blocked verifier =
   - AR-2-1 (Code Review Cycle 2): capped vendor Retry-After + per-job delay budget, 5 new unit tests
   - AR-1-1 (Code Review Cycle 1+2): SIM_ADMIN_TOKEN secret replaces published header as admin credential, 9 new unit tests
   - AR-1-2 (Code Review Cycle 1+2): gate-before-persist on build path + no sync fallback to unapproved releases, 7 new unit tests
-- Tests: 2260 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 143 pass; make lint + typecheck + openapi-check green; no stack in sandbox (unit tests cover AR-1-2 via mocks/TestClient; live e2e + smoke not run)
+  - AR-1-3 (Code Review Cycle 1+2): approval bound to repair run's candidate release (route 422 + engine ReleaseError), 3 new unit tests
+- Tests: 2262 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 143 pass; make lint + typecheck + openapi-check green; no stack in sandbox (unit + TestClient cover AR-1-3; live e2e + smoke not run)
 - Stack: compose up with loopback-bound ports; all readyz green 2026-10-28
 
 ## Next tasks
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS (codeable REQ-007 flow done 2026-10-27)
-3. Code Review Cycle 2 FAIL items still open: AR-1-3, AR-1-4 (partly: REQ-012 done), AR-1-5, AR-2-2, AR-2-3, AR-2-4, AR-2-5, AR-2-6 (AR-1-2, AR-2-1, AR-1-1 fixed, pending reviewer re-verification)
+3. Code Review Cycle 2 FAIL items still open: AR-1-4 (partly: REQ-012 done), AR-1-5, AR-2-2, AR-2-3, AR-2-4, AR-2-5, AR-2-6 (AR-1-3, AR-1-2, AR-2-1, AR-1-1 fixed, pending reviewer re-verification)
 4. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 … P2.S7.1 DONE — Phase 2 complete
 
 ## Open Requests
