@@ -1,6 +1,6 @@
-"""Six-step demo driver (P1.W10.2, plan §6).
+"""Seven-step demo driver (P1.W10.2, plan §6).
 
-Drives the six demo steps through the control API when the Compose stack is
+Drives the seven steps through the control API when the Compose stack is
 up (``make up``), and always computes the same evidence locally through the
 engine so ``make demo`` is reproducible anywhere:
 
@@ -19,11 +19,16 @@ engine so ``make demo`` is reproducible anywhere:
    ``experiments/scorecard.md`` (``make bench`` output); wins and losses
    are read as they are.
 6. Reproducibility — seed, reference release signatures, ``make demo``.
+7. New API style — Meridian (Mews-style POST/JSON-body docs) with
+   vocabulary v1 refuses cleanly (``Blocked``, named reason, 0 model
+   calls); the same docs with vocabulary v2 bootstrap a connector that
+   syncs ``Complete``.
 
 Trust boundaries (DIRECTIVES §2): this module never imports ``verifier`` or
 ``simulators``. The verifier is reached only over HTTP (``POST /verify``
 hidden mode via the control plane when live); simulator datasets are never
-imported — local fixtures are inline below.
+imported — step 7 reads the committed Meridian docs YAML from the repo as
+input data (like the model-usage matrix does), everything else inline below.
 
 Secrets (DIRECTIVES §6): only ``credential_ref`` env-key names travel here;
 no credential value is printed, logged or stored.
@@ -311,6 +316,113 @@ def _harbor_fake_client() -> Any:
     return HttpClient(
         "https://demo.invalid",
         retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=5),
+        client_factory=factory,
+        sleep_fn=lambda _: None,
+    )
+
+
+# Step 7 reads the same committed Meridian docs the matrix test builds from
+# (input data on disk, never a package import).
+MERIDIAN_DOCS_PATH = REPO_ROOT / "simulators" / "docs" / "meridian-openapi.yaml"
+MERIDIAN_DOCS_SOURCE = "simulators/docs/meridian-openapi.yaml"
+
+# Compact Meridian-shaped rows for the step-7 after-half sync: one
+# reservation on one account, one named customer, two order items whose
+# gross sums to the reservation total (Decimal-exact, string money on wire).
+_MERIDIAN_RESERVATIONS = [
+    {
+        "Id": "RES-1",
+        "ServiceId": "SVC-prop-001",
+        "AccountId": "ACC-RES-1",
+        "BookerId": "ACC-RES-1",
+        "Number": "100001",
+        "State": "Confirmed",
+        "ScheduledStartUtc": "2026-10-27T15:00:00Z",
+        "ScheduledEndUtc": "2026-10-29T11:00:00Z",
+        "UpdatedUtc": "2026-10-26T10:00:00Z",
+    }
+]
+_MERIDIAN_CUSTOMERS = [
+    {
+        "Id": "ACC-RES-1",
+        "FirstName": "Ada",
+        "LastName": "Lovelace",
+        "Email": None,
+        "Phone": None,
+        "UpdatedUtc": "2026-10-26T10:00:00Z",
+    }
+]
+_MERIDIAN_ITEMS = [
+    {
+        "Id": "CHG-1",
+        "AccountId": "ACC-RES-1",
+        "ServiceId": "SVC-prop-001",
+        "Name": "Room charge",
+        "UnitCount": 1,
+        "UnitAmount": {"Currency": "USD", "NetValue": "18.18", "GrossValue": "19.99", "TaxValues": []},
+        "PostedUtc": "2026-10-26T10:00:00Z",
+    },
+    {
+        "Id": "CHG-2",
+        "AccountId": "ACC-RES-1",
+        "ServiceId": "SVC-prop-001",
+        "Name": "Mini-bar",
+        "UnitCount": 1,
+        "UnitAmount": {"Currency": "USD", "NetValue": "0.01", "GrossValue": "0.01", "TaxValues": []},
+        "PostedUtc": "2026-10-26T10:00:00Z",
+    },
+]
+_MERIDIAN_ENTERPRISES = [{"Id": "prop-001", "Name": "Test", "TimeZone": "UTC", "CurrencyCode": "USD"}]
+
+
+def _meridian_fake_client() -> Any:
+    """POST-only fake serving Meridian-shaped pages under the cursor contract.
+
+    Reads ``Limitation.Count``/``Limitation.Cursor`` from the JSON body and
+    answers the response ``Cursor`` with the last id (null on empty page),
+    mirroring the documented contract without importing the simulator.
+    """
+    import httpx  # noqa: PLC0415
+
+    from autobridge.runtime.http import HttpClient  # noqa: PLC0415
+    from autobridge.spec.models import RetryPolicy  # noqa: PLC0415
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body: dict[str, Any] = {}
+        try:
+            body = json.loads(request.content.decode() or "{}")
+        except Exception:
+            body = {}
+        path = request.url.path
+        rows: list[dict[str, Any]]
+        key: str
+        if "reservations" in path:
+            rows, key = _MERIDIAN_RESERVATIONS, "Reservations"
+        elif "customers" in path:
+            rows, key = _MERIDIAN_CUSTOMERS, "Customers"
+        elif "orderItems" in path:
+            rows, key = _MERIDIAN_ITEMS, "OrderItems"
+        elif "configuration" in path:
+            return httpx.Response(200, json={"Enterprises": _MERIDIAN_ENTERPRISES})
+        else:  # pragma: no cover - only the four documented ops are fetched
+            raise AssertionError(f"unexpected path {path!r}")
+        limit = int(((body.get("Limitation") or {}).get("Count")) or 100)
+        cursor = (body.get("Limitation") or {}).get("Cursor")
+        start = 0
+        if cursor is not None:
+            ids = [r["Id"] for r in rows]
+            start = ids.index(cursor) + 1 if cursor in ids else 0
+        page = rows[start : start + limit]
+        return httpx.Response(200, json={key: page, "Cursor": page[-1]["Id"] if page else None})
+
+    transport = httpx.MockTransport(handler)
+
+    def factory(**kw: Any) -> httpx.Client:
+        return httpx.Client(transport=transport, timeout=kw.get("timeout", 5))
+
+    return HttpClient(
+        "https://demo.invalid",
+        retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=3),
         client_factory=factory,
         sleep_fn=lambda _: None,
     )
@@ -918,6 +1030,124 @@ def step6_reproducibility(seed: int, live: bool, base_url: str) -> dict[str, Any
     }
 
 
+def step7_new_api_style(seed: int, live: bool, base_url: str) -> dict[str, Any]:
+    """Meridian before/after: v1 refuses the POST/body-auth docs, v2 connects.
+
+    Before: ``build_draft_spec`` on the committed Meridian docs with
+    ``spec_vocabulary="v1"`` stops at the deterministic ``vocabulary_guard``
+    — ``Blocked`` with the named reason, no draft spec, no release, 0 model
+    calls on either tier. After: the same docs with ``"v2"`` compile to a
+    ``spec_version 2`` spec (POST operations, ``body_fields`` auth,
+    ``body_cursor`` pagination, declarative joins) that syncs ``Complete``
+    against Meridian-shaped pages: the guest name resolves through the
+    customer join and reservation totals equal summed order-item gross,
+    money ``Decimal`` throughout.
+    """
+    from autobridge.discovery.bootstrap import build_draft_spec  # noqa: PLC0415
+    from autobridge.engine.sync_run import execute_sync  # noqa: PLC0415
+    from autobridge.spec.models import load_spec_from_dict  # noqa: PLC0415
+
+    docs_text = MERIDIAN_DOCS_PATH.read_text(encoding="utf-8")
+    before = build_draft_spec(
+        docs_text,
+        source=MERIDIAN_DOCS_SOURCE,
+        connector_id="meridianpms",
+        spec_vocabulary="v1",
+    )
+    assert not before.success, "v1 must refuse POST/body-auth docs, not invent GET ops"
+    assert before.draft_spec is None, "refusal must persist no draft spec"
+    reason = before.degradation_reason or ""
+    assert "POST" in reason and "ConnectorSpec v1" in reason, f"unnamed refusal: {reason!r}"
+    assert any(t.get("stage") == "vocabulary_guard" for t in before.trace), before.trace
+    for key in ("calls", "frontier_tokens", "small_tokens"):
+        assert int(before.model_usage.get(key, 0)) == 0, f"refusal must cost 0 {key}"
+
+    after = build_draft_spec(
+        docs_text,
+        source=MERIDIAN_DOCS_SOURCE,
+        connector_id="meridianpms",
+        spec_vocabulary="v2",
+    )
+    assert after.success, f"v2 must compile the same docs: {after.visible_errors}"
+    assert after.draft_spec is not None
+    spec = dict(after.draft_spec)
+    assert spec.get("spec_version") == 2, spec.get("spec_version")
+    ops = spec.get("operations", {})
+    assert ops and all(op.get("method") == "POST" for op in ops.values()), "v2 spec must be POST-only"
+    assert (spec.get("source", {}).get("auth", {}) or {}).get("type") == "body_fields"
+    assert any(
+        (op.get("pagination", {}) or {}).get("strategy") == "body_cursor" for op in ops.values()
+    ), "v2 spec must page with a body cursor"
+    for key in ("calls", "frontier_tokens", "small_tokens"):
+        assert int(after.model_usage.get(key, 0)) == 0, f"v2 build must cost 0 {key}"
+    load_spec_from_dict(spec)  # validates; raises on a bad spec
+
+    # Body-field credentials come from env by ref-name only; the fake ignores
+    # values, so demo placeholders are restored afterwards, never stored.
+    saved = {k: os.environ.get(k) for k in ("MERIDIAN_CLIENT_TOKEN", "MERIDIAN_ACCESS_TOKEN")}
+    os.environ["MERIDIAN_CLIENT_TOKEN"] = "demo-client-token"
+    os.environ["MERIDIAN_ACCESS_TOKEN"] = "demo-access-token"
+    try:
+        summary = execute_sync(spec, _meridian_fake_client())
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    assert summary["outcome"] == "Complete", f"v2 after-half unmet: {summary.get('unmet_criteria')}"
+    reservations = (summary.get("canonical_records", {}) or {}).get("Reservation", [])
+    assert reservations and reservations[0].get("guest_name") == "Ada Lovelace", reservations
+    total = reservations[0].get("total_amount")
+    assert isinstance(total, Decimal) and total == Decimal("20.00"), total
+
+    calls: list[dict[str, Any]] = []
+    if live:
+        # Read-only: show which vocabulary the control plane advertises.
+        calls.append(_control_call(base_url, "GET", "/capabilities"))
+    return _finish_step(
+        "New API style — Meridian v1 refuses, v2 connects",
+        {
+            "seed": seed,
+            "docs_ref": MERIDIAN_DOCS_SOURCE,
+            "before": {
+                "spec_vocabulary": "v1",
+                "outcome": "Blocked",
+                "reason": reason,
+                "draft_spec": None,
+                "release_persisted": False,
+            },
+            "after": {
+                "spec_vocabulary": "v2",
+                "spec_version": spec.get("spec_version"),
+                "operations": sorted(f"{op.get('method')} {name}" for name, op in ops.items()),
+                "auth_type": "body_fields",
+                "outcome": summary["outcome"],
+                "guest_name_joined": reservations[0].get("guest_name"),
+                "total_amount": str(total),
+                "money_type": "Decimal(2dp)",
+                "records_observed": summary.get("records_observed", {}),
+            },
+            "model_usage_ledger": {"calls": 0, "small_tokens": 0, "frontier_tokens": 0},
+            "resolved_rung": "v1 Blocked → v2 Complete",
+            "rung_attempts": [
+                {
+                    "rung": "v1",
+                    "action": "refuse",
+                    "reason": "vocabulary_guard: needs POST with JSON body and body-field auth",
+                },
+                {
+                    "rung": "v2",
+                    "action": "connect",
+                    "reason": "same docs compile to spec_version 2 and sync Complete",
+                },
+            ],
+            "why_escalated": "v1 cannot express POST with body auth (deterministic); v2 connects, 0 model calls either half",
+        },
+        calls,
+    )
+
+
 STEPS = (
     step1_reusable_artifact,
     step2_unfamiliar_api,
@@ -925,17 +1155,19 @@ STEPS = (
     step4_hard_semantic_failure,
     step5_head_to_head,
     step6_reproducibility,
+    step7_new_api_style,
 )
 
 
 def run_demo(seed: int = DEFAULT_SEED, control_url: str = DEFAULT_CONTROL_URL) -> dict[str, Any]:
-    """Run all six steps; returns the demo report (JSON-serializable)."""
+    """Run all seven steps; returns the demo report (JSON-serializable)."""
     live = _control_probe(control_url)
     steps: list[dict[str, Any]] = []
+    total = len(STEPS)
     for i, fn in enumerate(STEPS, start=1):
         try:
             step = fn(seed, live, control_url)
-            step["number"] = f"{i}/6"
+            step["number"] = f"{i}/{total}"
         except Exception as exc:  # demo never crashes mid-run; a step fails loudly
             step = {"number": f"{i}/6", "name": fn.__name__, "status": "failed", "error": str(exc)[:500], "control_calls": [], "mode": "in-process"}
         if "mode" not in step:
@@ -954,7 +1186,7 @@ def run_demo(seed: int = DEFAULT_SEED, control_url: str = DEFAULT_CONTROL_URL) -
 def render_text(report: dict[str, Any]) -> str:
     """Human-readable rendering — the same evidence the UI screens show."""
     out: list[str] = []
-    out.append(f"AutoBridge demo — 6 steps (mode: {report['mode']}, seed {report['seed']})")
+    out.append(f"AutoBridge demo — {len(report['steps'])} steps (mode: {report['mode']}, seed {report['seed']})")
     live_steps = [s.get("number") for s in report["steps"] if s.get("mode") == "live"]
     local_steps = [s.get("number") for s in report["steps"] if s.get("mode") != "live"]
     if report["mode"] == "live-control-api":
@@ -989,13 +1221,14 @@ def render_text(report: dict[str, Any]) -> str:
             out.append(f"    control {call.get('method')} {call.get('path')} -> {status}")
         out.append(f"    {rung_table_row(step)}")
     out.append(render_rung_summary(report))
-    out.append(f"demo {'complete' if report['failed'] == 0 else f'{report['failed']} step(s) FAILED'}: 6 steps via control API" if report["mode"] == "live-control-api" else f"demo {'complete' if report['failed'] == 0 else f'{report['failed']} step(s) FAILED'}: local evidence (control plane unreachable at {report['control_url']})")
+    total = len(report["steps"])
+    out.append(f"demo {'complete' if report['failed'] == 0 else f'{report['failed']} step(s) FAILED'}: {total} steps via control API" if report["mode"] == "live-control-api" else f"demo {'complete' if report['failed'] == 0 else f'{report['failed']} step(s) FAILED'}: local evidence (control plane unreachable at {report['control_url']})")
     return "\n".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for ``make demo``."""
-    parser = argparse.ArgumentParser(description="AutoBridge six-step demo (plan §6)")
+    parser = argparse.ArgumentParser(description="AutoBridge seven-step demo (plan §6)")
     parser.add_argument("--control-url", default=env_default("CONTROL_URL", DEFAULT_CONTROL_URL))
     parser.add_argument("--seed", type=int, default=int(env_default("DEMO_SEED", str(DEFAULT_SEED))))
     parser.add_argument("--json", action="store_true", help="Emit the report as JSON")

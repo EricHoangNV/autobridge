@@ -95,7 +95,7 @@ bench-heldout:
 	BENCH_VISIBILITY=heldout uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
 
 demo:
-	@echo ">> demo: six steps via control API (W10)"
+	@echo ">> demo: seven steps via control API (W10)"
 	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.demo
 
 demo-reset:

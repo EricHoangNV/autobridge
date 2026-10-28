@@ -1,4 +1,4 @@
-"""Unit tests for the six-step demo driver (P1.W10.2, plan §6).
+"""Unit tests for the seven-step demo driver (P1.W10.2, plan §6).
 
 The demo runs offline (local engine evidence) when the Compose stack is
 down and drives the control API when it is up. These tests cover both
@@ -9,6 +9,7 @@ helpers, never with real network.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 from decimal import Decimal
 from typing import Any
@@ -27,6 +28,7 @@ from autobridge.bench.demo import (
     step4_hard_semantic_failure,
     step5_head_to_head,
     step6_reproducibility,
+    step7_new_api_style,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -46,10 +48,10 @@ def test_run_demo_all_six_steps_ok_offline() -> None:
     report = run_demo(seed=0, control_url="http://localhost:9")
     assert report["mode"] == "local-evidence"
     assert report["seed"] == 0
-    assert len(report["steps"]) == 6
+    assert len(report["steps"]) == 7
     assert report["failed"] == 0
     for i, step in enumerate(report["steps"], start=1):
-        assert step["number"] == f"{i}/6", step
+        assert step["number"] == f"{i}/7", step
         assert step["status"] == "ok", step
         assert step["control_calls"] == [], step  # offline: no HTTP attempted
 
@@ -121,6 +123,40 @@ def test_step5_scorecard_shape() -> None:
     assert isinstance(ev["preview"], list)
 
 
+def test_step7_v1_refuses_v2_connects_offline(monkeypatch: Any) -> None:
+    """REQ-020 step 7: before (v1 Blocked, named reason, 0 calls) + after (v2 Complete)."""
+    monkeypatch.delenv("MERIDIAN_CLIENT_TOKEN", raising=False)
+    monkeypatch.delenv("MERIDIAN_ACCESS_TOKEN", raising=False)
+    step = step7_new_api_style(0, False, "http://localhost:9")
+    assert step["status"] == "ok", step
+    ev = step["evidence"]
+    assert ev["docs_ref"] == "simulators/docs/meridian-openapi.yaml"
+    before, after = ev["before"], ev["after"]
+    assert before["spec_vocabulary"] == "v1"
+    assert before["outcome"] == "Blocked"
+    assert "POST" in before["reason"] and "ConnectorSpec v1" in before["reason"]
+    assert before["draft_spec"] is None and before["release_persisted"] is False
+    assert after["spec_vocabulary"] == "v2" and after["spec_version"] == 2
+    assert after["auth_type"] == "body_fields"
+    assert after["outcome"] == "Complete"
+    assert after["guest_name_joined"] == "Ada Lovelace"
+    assert after["total_amount"] == "20.00" and after["money_type"] == "Decimal(2dp)"
+    ledger = ev["model_usage_ledger"]
+    assert (ledger["calls"], ledger["small_tokens"], ledger["frontier_tokens"]) == (0, 0, 0)
+    assert ev["resolved_rung"] == "v1 Blocked → v2 Complete"
+    # Demo placeholders must not leak into the real environment.
+    assert "MERIDIAN_CLIENT_TOKEN" not in os.environ
+    assert "MERIDIAN_ACCESS_TOKEN" not in os.environ
+
+
+def test_step7_rung_row_reports_zero_frontier() -> None:
+    from autobridge.bench.demo import rung_table_row
+
+    step = step7_new_api_style(0, False, "http://localhost:9")
+    row = rung_table_row(step)
+    assert "0 frontier" in row and "v1 Blocked" in row
+
+
 def test_step6_signatures_match_build_reports() -> None:
     step = step6_reproducibility(0, False, "http://localhost:9")
     ev = step["evidence"]
@@ -181,6 +217,7 @@ def test_render_text_lists_all_steps_and_ledger() -> None:
         "gross_to_net",
         "scorecards",
         "Reproducibility",
+        "Meridian",
         "frontier_tokens",
         "Decimal",
     ):
@@ -190,7 +227,7 @@ def test_render_text_lists_all_steps_and_ledger() -> None:
 def test_render_text_failed_step() -> None:
     text = render_text(
         {"mode": "local-evidence", "control_url": "http://x", "seed": 0, "failed": 1,
-         "steps": [{"number": "1/6", "name": "boom", "status": "failed", "error": "nope", "control_calls": []}]}
+         "steps": [{"number": "1/7", "name": "boom", "status": "failed", "error": "nope", "control_calls": []}]}
     )
     assert "FAILED" in text and "nope" in text
 
@@ -198,10 +235,10 @@ def test_render_text_failed_step() -> None:
 def test_main_text_and_json_modes(capsys: Any) -> None:
     assert main(["--control-url", "http://localhost:9", "--seed", "0"]) == 0
     out = capsys.readouterr().out
-    assert "Step 1/6" in out and "Step 6/6" in out
+    assert "Step 1/7" in out and "Step 7/7" in out
     assert main(["--control-url", "http://localhost:9", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert len(report["steps"]) == 6 and report["failed"] == 0
+    assert len(report["steps"]) == 7 and report["failed"] == 0
 
 
 def test_control_probe_and_call_with_stubbed_http(monkeypatch: Any) -> None:
@@ -286,9 +323,9 @@ def test_live_ensure_connector_creates_when_absent(monkeypatch: Any) -> None:
 def test_render_text_live_complete_line() -> None:
     text = render_text(
         {"mode": "live-control-api", "control_url": "http://c", "seed": 0, "failed": 0,
-         "steps": [{"number": "1/6", "name": "s", "status": "ok", "evidence": {"k": "v"}, "control_calls": [{"method": "GET", "path": "/healthz", "status": 200}]}]}
+         "steps": [{"number": "1/7", "name": "s", "status": "ok", "evidence": {"k": "v"}, "control_calls": [{"method": "GET", "path": "/healthz", "status": 200}]}]}
     )
-    assert "6 steps via control API" in text
+    assert "1 steps via control API" in text
 
 
 def test_harbor_reference_sync_complete_via_cursor_fake() -> None:
@@ -376,8 +413,8 @@ def test_demo_labels_live_vs_inprocess_steps(monkeypatch: Any) -> None:
     )
     report = run_demo(seed=0, control_url="http://control:8101")
     modes = {s["number"]: s["mode"] for s in report["steps"]}
-    assert modes["6/6"] == "in-process"  # step 6 never calls the control plane
-    assert modes["1/6"] == "live"
+    assert modes["6/7"] == "in-process"  # step 6 never calls the control plane
+    assert modes["1/7"] == "live"
     text = render_text(report)
     assert "live steps:" in text and "in-process steps:" in text
     assert "(live)" in text and "(in-process)" in text

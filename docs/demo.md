@@ -1,6 +1,6 @@
 # AutoBridge — demo (plan §6, 3–4 minutes, real traces)
 
-> `make demo` drives all six steps through the control API (P1.W10.2). This page is
+> `make demo` drives all seven steps through the control API (P1.W10.2). This page is
 > the script: what each step does, the calls it makes, and the evidence it renders —
 > the same evidence the UI screens show. Every step is reproducible from seeds and
 > release ids.
@@ -115,9 +115,38 @@ Every step above is reproducible:
 * Releases are immutable and content-addressed (`spec_signature` sha256 of the
   canonical JSON); `generated/connectors/<id>/<release>/` holds `spec.yaml` +
   `build-report.json` (connector id, release id, signature, `built_by`).
-* `make demo` replays steps 1–6 against the same seeds and prints the release ids it
-  created, so a reviewer can re-fetch any spec, sync, or verifier verdict.
+ * `make demo` replays steps 1–7 against the same seeds and prints the release ids it
+   created, so a reviewer can re-fetch any spec, sync, or verifier verdict.
 
 ```
-make demo    # six steps via the control API; output is the same evidence the UI renders
+make demo    # seven steps via the control API; output is the same evidence the UI renders
 ```
+
+## 7. New API style — Meridian refuses safely, then connects (REQ-020)
+
+The same Meridian docs (`simulators/docs/meridian-openapi.yaml`, Mews-style:
+every operation is `POST` with a JSON body, auth is `ClientToken` /
+`AccessToken` in the body, pages travel in a `Limitation: {Count, Cursor}`
+envelope) run through two vocabulary pins back to back:
+
+```
+# BEFORE — vocabulary v1 (the engine as it was)
+build Meridian docs, spec_vocabulary: v1 → BuildRun Blocked:
+  "operations need POST with a JSON body and body-field auth;
+   not expressible in ConnectorSpec v1"
+  (vocabulary_guard trace stage; no draft spec, no release, 0 model calls)
+
+# AFTER — vocabulary v2 (the extended vocabulary, same docs, no other input)
+build Meridian docs, spec_vocabulary: v2 → spec_version 2
+  (POST operations, body_fields auth, body_cursor pagination, joins)
+POST /connectors/{meridian_id}/sync → SyncRun outcome Complete:
+  guest names resolve through the customer join, reservation totals equal
+  the summed order-item gross, money Decimal throughout
+GET  /metrics/model-usage?run_id=…     → frontier_tokens 0, small_tokens 0, calls 0 (both halves)
+```
+
+Renders wherever builds surface, with the vocabulary each half used (`v1` /
+`v2`) beside the evidence. The refusal is deterministic — detecting "needs
+POST with body auth" costs nothing — so the demo never pretends the v2
+vocabulary does not exist: the before half stays repeatable forever after v2
+ships (REQ-021 item 2).

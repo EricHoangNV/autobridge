@@ -123,6 +123,17 @@ def test_engine_never_references_legacystay() -> None:
     assert not hits, "engine references LegacyStay outside comments (REQ-019.5):\n" + "\n".join(hits)
 
 
+# REQ-020 item 7: the demo's Meridian before/after step is harness scenario
+# data (the committed docs path, the connector id, display strings and an
+# inline POST-body fake mirroring the documented cursor contract). It calls
+# only generic discovery/runtime APIs — no spec, discovery or runtime branch
+# — so the ban below exempts these lines the same way.
+_DEMO_STEP7_ALLOWLIST = (
+    "MERIDIAN_",
+    "_meridian_",
+    "meridian-openapi.yaml",
+    "Meridian",
+)
 # REQ-020 item 6: demo target aliases are routing data, not engine logic.
 # The inject-fault target map, its admin-port map and the request schema's
 # target Literal must name every simulator, Meridian included — like
@@ -161,7 +172,9 @@ def test_engine_never_references_meridian() -> None:
 
     ``grep`` must find no "meridian" in ``src/autobridge`` outside tests
     and fixtures — the vocabulary extension lands as generic spec data.
-    The demo inject-fault target/port maps are exempt (routing data).
+    The demo inject-fault target/port maps are exempt (routing data), as is
+    the REQ-020 item 7 demo step's scenario data (docs path, connector id,
+    display strings, inline POST-body fake — generic APIs only).
     """
     hits: list[str] = []
     for path in sorted(ENGINE_ROOT.rglob("*.py")):
@@ -170,7 +183,9 @@ def test_engine_never_references_meridian() -> None:
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             code = line.split("#", 1)[0]
             if "meridian" in code.lower():
-                if path.name in ("demo.py", "schemas.py") and any(s in code for s in _DEMO_TARGET_ALLOWLIST):
+                if path.name in ("demo.py", "schemas.py") and any(
+                    s in code for s in _DEMO_TARGET_ALLOWLIST + _DEMO_STEP7_ALLOWLIST
+                ):
                     continue
                 hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
     assert not hits, "engine references Meridian outside comments (REQ-020.5):\n" + "\n".join(hits)
