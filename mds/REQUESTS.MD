@@ -214,8 +214,31 @@ Wanted:
    config, never in code) and `replay` (responses recorded from a live run, stored redacted under `tests/fixtures/` or
    `demo/recordings/`, replayed deterministically by prompt hash; a missing recording fails loudly). The UI and
    `make demo` label replayed responses as replayed. Default: `live` when a frontier key is configured, else `replay`.
-   Owner to choose the live provider (Anthropic key, or Meta Muse through an OpenAI-compatible provider); note the
-   choice in the build note and `.env.example`.
+   **Owner decision (2026-10-28): the frontier tier is Meta Muse** through its OpenAI-compatible chat completions API
+   (the same API the ralph loop uses: base URL `https://api.meta.ai/v1`), model Spark (`muse-spark-1.3`) or Wonder
+   (`muse-wonder-1.0`), chosen by config. New settings, read only from env, never logged or stored: `FRONTIER_API_KEY`
+   (the owner generates a dedicated Muse key), `FRONTIER_BASE_URL` (default `https://api.meta.ai/v1`), `FRONTIER_MODEL`
+   (default `muse-spark-1.3`). Implement the OpenAI-compatible provider behind the existing `LLMProvider` Protocol
+   (today a stub) with the same `Budget` and `ModelCall` ledger; Anthropic stays available as an alternative. Pass
+   these to the engine services in `compose.yaml` (today no LLM key reaches control or worker at all) and to local
+   mode (REQ-017); document them in `.env.example`; extend the SSE/evidence redaction to `FRONTIER_API_KEY`. The small
+   tier (L2) gets the same treatment (`SMALL_MODEL`, default the same provider and key) unless the plan says otherwise.
+   Cost: record estimated cost per call from the provider's published prices in config (Spark $1.25 / $0.15 cached /
+   $4.25 per M; Wonder $4 / $0.20 / $20), shown in the per-run table.
+6. **Show what the engine knows and what it has learned.** The demo must make learning visible, and keep two things
+   apart: the *vocabulary* (what the connector language can express; changes only when code ships, e.g. v1 → v2) and
+   *learned knowledge* (what the engine picked up from verified repairs and builds; grows at runtime, cleared by reset).
+   - `GET /capabilities` (and `autobridge capabilities` in the CLI): the vocabulary per version, i.e. HTTP methods,
+     auth types, pagination strategies, transforms, checks, L1 rules with what each one fixes, and the v1 → v2 diff.
+     Also exposed as a tool listing (MCP `tools/list` style: name, description, input schema) so an agent can ask
+     "what can you do".
+   - `GET /knowledge` (and `autobridge knowledge`): the learned entries, one per known fix: vendor, drift signature,
+     the JSON Patch, where it was learned (run id, rung, tokens it cost the first time), when, times reused, tokens saved
+     since. Plus each connector's learned profile (bootstrap hypotheses that were confirmed).
+   - A UI page "What AutoBridge knows" with both sections, linked from the top bar.
+   - Demo flow it must support, repeatably after `make demo-reset`: knowledge list empty → inject a drift → climb to
+     L1/L2/L3, approve → a new entry appears on the page → inject the same drift again → L0 hit, 0 model calls, the
+     entry's "times reused" goes up. Assert this sequence in an e2e test.
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
