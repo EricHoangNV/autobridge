@@ -24,7 +24,7 @@ Wanted:
 Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
 
 ### REQ-012 — Optional bearer token on the control API's write routes (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 04:35)
 The control API has no authentication; the only identity is the server-side `AUTOBRIDGE_OPERATOR` name (REQ-001).
 That is fine on localhost (REQ-011), but not if the stack is ever hosted for judges.
 Wanted:
