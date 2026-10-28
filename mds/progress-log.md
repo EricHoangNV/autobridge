@@ -2881,3 +2881,7 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). REQ-022 (FIAS PABX
 - `GET /demo/simulators` live verified (5 up, fault shows/clears); UI index at /simulators linked from System status; journey + isolation tests green.
 - Full gates: lint + typecheck + ui-typecheck + openapi (additive) green; `make test` green (2329+109+346 pytest, 158 Vitest, coverage ≥90%); local stack all readyz green; smoke ok; `make e2e` 157 pass/2 skip/1 documented flake (green alone); Playwright journey 7 pass/1 skip.
 - Merged to main. Next: REQ-026 (per-test timeout, slotted after REQ-022) → REQ-024 → REQ-025; REQ-021 remainder is owner steps (record-frontier capture + live step-4 check); P1.W10.3 owner video step.
+
+## 2026-10-29 00:10 UTC — REQ-022 owner check (daa5edcd) fixed on keyed stack (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Relay auth (operator + agent token paths) fixed; live fault teardowns wait for edge readyz link_up.
+Keyed local stack: `make e2e` 158 pass / 2 skip / 0 fail (s2 flake gone); demo 8/8 live; smoke ok; `make test` green. Merging to main.
