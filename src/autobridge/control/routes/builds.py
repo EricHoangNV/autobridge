@@ -12,11 +12,12 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Security
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autobridge.control.deps import get_db, get_session_factory, require_control_token
 from autobridge.control.jobs import JobRunner
-from autobridge.control.models import Connector, ConnectorRelease
+from autobridge.control.models import Approval, BuildRun, Connector, ConnectorRelease
 from autobridge.control.schemas import AUTH_401, BuildRequest, BuildResponse, SyncRequest, SyncResponse
 
 router = APIRouter(tags=["jobs"])
@@ -276,6 +277,39 @@ def trigger_sync(connector_id: str, body: SyncRequest, db: Session = Depends(get
         raise HTTPException(status_code=404, detail=f"Release {release_id!r} not found")
     if rel_obj.connector_id != connector_id:
         raise HTTPException(status_code=422, detail="release belongs to a different connector")
+    # REQ-013: an explicitly named release runs only when it is runnable —
+    # the active release or an operator-accepted (approved/rollback) one.
+    # Anything else (an unapproved candidate, a rejected release) is 422.
+    # Gate-blocked builds persist no release (gate-before-persist), so they
+    # can never be named here; a gate_blocked provenance flag is still
+    # refused explicitly (fail closed).
+    if rel_obj.provenance_build_run_id is not None:
+        brun = db.get(BuildRun, rel_obj.provenance_build_run_id)
+        if brun is not None and isinstance(brun.result, dict) and brun.result.get("gate_blocked"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Release {release_id!r} was blocked by the verifier gate and cannot sync",
+            )
+    if release_id != conn.active_release_id:
+        accepted = (
+            db.execute(
+                select(Approval).where(
+                    Approval.to_release_id == release_id,
+                    Approval.decision.in_(("approve", "rollback")),
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if accepted is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Release {release_id!r} is not active or approved for connector "
+                    f"{connector_id!r} (sync needs the active release or an approved one; "
+                    "activate a build candidate or approve a repair candidate first)"
+                ),
+            )
 
     runner = _get_runner(db)
     checkpoint = body.checkpoint or {}

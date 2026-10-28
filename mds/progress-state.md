@@ -2,7 +2,7 @@
 
 ## Current State
 
-AR-2-5 done (sbx1 2026-10-28): images digest-pinned + hash-locked requirements (engine/verifier/simulators locks via `make lockfiles`, ui `npm ci`), CI drift gate + twice-build freeze diff, 5 new tests. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+REQ-013 done (sbx1 2026-10-28): build → activate → sync — first build auto-activates, explicit activate endpoint, sync gated to active-or-approved. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - W1 Foundations: scaffold, compose, ConnectorSpec, schemas, DB models, jobs, evidence, LLMProvider, fakes, e2e harness base
@@ -15,28 +15,18 @@ AR-2-5 done (sbx1 2026-10-28): images digest-pinned + hash-locked requirements (
   - W8 Benchmark: harness, baselines, one-shot, scoring, make bench + heldout gate (test_07)
   - W9 E2E: full harness, make e2e, CI unit→smoke→e2e→demo chain; live/inprocess markers (35 live / 73 inprocess)
   - W10 Packaging: README/docs complete, make demo 6/6 live; P1.W10.3 codeable done (owner step below)
-  - REQ-001…REQ-012 all DONE (operator name, broadcast UI, trust wording, schemathesis, model-id literals, money float, heldout seeds codeable, bench host URLs, UI deps, live e2e, loopback ports, control write token)
+  - REQ-001…REQ-013 all DONE (incl. REQ-013 build→activate→sync)
   - P2.S1.1 … P2.S7.1 DONE (LegacyStay, Edge target, DiscoveryResult import, MCP Guardian, OpenAI provider, Richer UI, CLI)
-  - AR-2-1: capped vendor Retry-After + per-job delay budget, 5 new tests
-  - AR-1-1: SIM_ADMIN_TOKEN replaces published header as admin credential, 9 new tests
-  - AR-1-2: gate-before-persist on build path + no sync fallback to unapproved releases, 7 new tests
-  - AR-1-3: approval bound to repair run's candidate release (route 422 + engine ReleaseError), 3 new tests
-  - AR-2-2: docs_url allowlist + identifier-only docs_path (route + engine), userinfo redaction, 18 new tests
-  - AR-1-5: gate verdict bound to scenario/mode + spec signature recorded + fail-closed gate import, 5 new tests
-  - AR-2-3: L0 cache evict(vendor,delta) + evict_patch(); reject/rollback eviction, 4 new tests
-  - AR-2-6: readyz_response 503-on-degraded (control) + worker job-store check + smoke body assert, 6 new tests
-  - AR-1-4 residual: verifier :8104 + sim-admin :8109/:8110/:8112 pinned literal loopback, 1 new compose test
-  - AR-2-4: HMAC-keyed edge release signatures (EDGE_RELEASE_SECRET shared by control/worker/edge-worker; legacy checksum when unset), 9 new tests
-  - AR-2-5: digest-pinned bases + hash-locked requirements (3 pip locks + ui npm ci), CI drift gate + freeze-diff repro, 5 new tests
-- Tests: 2309 pass / 0 fail (autobridge 91.65%, verifier 93.76%, simulators 96.69%) + ui 143 pass; lint + typecheck green; images build + freeze-verified via sandbox docker
-- Stack: compose up with loopback-bound ports; all readyz green 2026-10-28
+  - AR-2-1 … AR-2-6 + AR-1-1 … AR-1-5 (residual) all code-fixed (Cycle 2 re-verification pending owner)
+- Tests: 2319 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 145 pass; lint + typecheck green
+- Stack: e2e test_s7_cli.py 4/4 incl. live step (sandbox docker brought stack up); readyz green
 
 ## Next tasks
-0. **REQ-013 → REQ-017 → REQ-014 → REQ-015 → REQ-016** — [ ] OPEN (owner priority 2026-10-28, in mds/REQUESTS.MD on main): build→sync activation, .env for host tools, e2e tokens, honest demo, Docker-free local run
+0. **REQ-018 → REQ-017 → REQ-014 → REQ-015 → REQ-016** — [ ] OPEN (owner priority 2026-10-28: REQ-018 UI-down first; arrived on main during REQ-013): browser bundle calls control:8000, healthz-link label
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS (codeable REQ-007 flow done 2026-10-27)
-3. Code Review Cycle 2 re-verification (all FAIL items code-fixed: AR-1-1, AR-1-2, AR-1-3, AR-1-4 residual, AR-1-5, AR-2-1, AR-2-2, AR-2-3, AR-2-4, AR-2-5, AR-2-6)
+3. Code Review Cycle 2 re-verification (all FAIL items code-fixed)
 4. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 … P2.S7.1 DONE — Phase 2 complete
 
 ## Open Requests
-REQ-013, REQ-014, REQ-015, REQ-016, REQ-017 OPEN (owner priority: REQ-013, REQ-017, REQ-014, REQ-015, REQ-016; arrived on main during AR-2-5).
+REQ-014, REQ-015, REQ-016, REQ-017, REQ-018 OPEN (owner priority: REQ-018, REQ-017, REQ-014, REQ-015, REQ-016).

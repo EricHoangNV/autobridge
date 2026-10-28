@@ -377,6 +377,20 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
             release_id = release.id
             result["release_id"] = release_id
             result["connector_id"] = conn.id
+            # REQ-013: first-build activation. A persisted candidate is
+            # either gate-passed (verifier_url set, gate-before-persist) or
+            # gate-skipped (no verifier configured: unit tests, fakes). When
+            # the connector has no active release yet, that candidate becomes
+            # runnable immediately so create → build → sync works; later
+            # builds stay candidates until the operator activates (or the
+            # repair flow approves) them. A gate-blocked build persists
+            # nothing, so it stays unrunnable.
+            if conn.active_release_id is None:
+                from autobridge.engine.releases import _activate  # noqa: PLC0415
+
+                _activate(ctx.session, conn.id, release.id, actor="system:first-build")
+                ctx.session.flush()
+                result["activated"] = True
             if verifier_url:
                 # Gate-before-persist passed: the persisted candidate is
                 # verifier-checked, even if the best-effort inline check

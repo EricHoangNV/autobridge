@@ -227,6 +227,18 @@ def cmd_build(client: httpx.Client, args: argparse.Namespace) -> int:
     _emit(payload, args.output)
     return 0
 
+def cmd_activate(client: httpx.Client, args: argparse.Namespace) -> int:
+    """Activate a build candidate (POST /connectors/{id}/releases/{rid}/activate)."""
+    try:
+        resp = client.post(f"/connectors/{args.connector_id}/releases/{args.release_id}/activate")
+    except httpx.HTTPError as exc:
+        return _fail(f"activate failed: {exc}")
+    payload = _check(resp, "activate")
+    if payload is None:
+        return 1
+    _emit(payload, args.output)
+    return 0
+
 
 def cmd_sync(client: httpx.Client, args: argparse.Namespace) -> int:
     body: dict[str, Any] = {}
@@ -400,12 +412,21 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--wait-timeout", type=float, default=120.0)
     b.set_defaults(func=cmd_build)
 
-    s = sub.add_parser("sync", help="Run a sync (POST /connectors/{id}/sync)")
+    s = sub.add_parser("sync", help="Run a sync (POST /connectors/{id}/sync; needs the active or an approved release)")
     s.add_argument("connector_id")
     s.add_argument("--release", default=None, help="Release id (default: active release)")
     s.add_argument("--wait", action="store_true", help="Poll the job until it succeeds or fails")
     s.add_argument("--wait-timeout", type=float, default=120.0)
     s.set_defaults(func=cmd_sync)
+
+    a = sub.add_parser(
+        "activate",
+        help="Activate a build candidate so it can sync "
+        "(POST /connectors/{id}/releases/{rid}/activate)",
+    )
+    a.add_argument("connector_id")
+    a.add_argument("release_id", help="Release id to activate (a build candidate, not a repair candidate)")
+    a.set_defaults(func=cmd_activate)
 
     r = sub.add_parser("runs", help="Inspect runs")
     rsub = r.add_subparsers(dest="runs_cmd", required=True)

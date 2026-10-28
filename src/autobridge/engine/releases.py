@@ -20,6 +20,7 @@ from sqlalchemy import func, select
 
 from autobridge.control.models import (
     Approval,
+    BuildRun,
     Connector,
     ConnectorRelease,
     RepairRun,
@@ -322,6 +323,70 @@ def approve_release(
     session.add(approval)
     session.flush()
     return approval
+
+
+def activate_release(
+    session: Session,
+    *,
+    connector_id: str,
+    release_id: str,
+    actor: str,
+) -> ConnectorRelease:
+    """Explicit operator activation of a build candidate (REQ-013).
+
+    A freshly built release is a *candidate*: it becomes runnable either via
+    first-build auto-activation (see ``run_build_handler``) or here, by the
+    operator naming it. A gate-blocked build persists no release, so there
+    is never anything unrunnable to activate.
+
+    Refusals (all :class:`ReleaseError`, surfaced as HTTP 422):
+
+    * release missing or belonging to another connector;
+    * human-rejected candidates (a ``reject`` approval names them);
+    * repair candidates (``provenance_repair_run_id`` set) — those activate
+      only via repair approval, which binds the audit cover to the run;
+    * gate-blocked provenance (a ``gate_blocked`` build result — defense in
+      depth; gate-before-persist normally persists nothing on block).
+
+    On success sets ``Connector.active_release_id`` (emits
+    ``release.activated`` + pauses dependents via :func:`_activate`) and
+    returns the release. Idempotent: activating the already-active release
+    succeeds.
+    """
+    if not actor or not actor.strip():
+        raise ReleaseError("actor must be a non-empty string")
+    _ensure_connector(session, connector_id)
+    rel = _ensure_release(session, release_id)
+    if rel.connector_id != connector_id:
+        raise ReleaseError("release belongs to a different connector")
+    rejected = (
+        session.execute(
+            select(Approval).where(
+                Approval.to_release_id == release_id,
+                Approval.decision == "reject",
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if rejected is not None:
+        raise ReleaseError("release was rejected and cannot be activated")
+    if rel.provenance_repair_run_id is not None:
+        raise ReleaseError(
+            "repair candidates activate via repair approval, not explicit activation"
+        )
+    if rel.provenance_build_run_id is not None:
+        brun = session.get(BuildRun, rel.provenance_build_run_id)
+        if (
+            brun is not None
+            and isinstance(brun.result, dict)
+            and brun.result.get("gate_blocked")
+        ):
+            raise ReleaseError(
+                f"release blocked by verifier gate: {brun.result.get('gate_blocked')}"
+            )
+    _activate(session, connector_id, release_id, actor=actor.strip())
+    return rel
 
 
 def reject_release(

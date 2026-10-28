@@ -60,4 +60,32 @@ describe("ReleaseHistory", () => {
     render(<ReleaseHistory releases={[r1]} activeReleaseId="rel-99" />);
     expect(screen.queryByTestId("release-active-rel-1")).not.toBeInTheDocument();
   });
+
+  it("shows Activate for build candidates when onActivate is wired", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const r1 = mkRelease({ id: "rel-1", version: 1, approved_by: null });
+    const r2 = mkRelease({ id: "rel-2", version: 2, approved_by: null });
+    let activated: string | null = null;
+    render(
+      <ReleaseHistory releases={[r1, r2]} activeReleaseId="rel-1" onActivate={(id) => { activated = id; }} />,
+    );
+    // Active release has no button; the non-active build candidate does.
+    expect(screen.queryByTestId("release-activate-rel-1")).not.toBeInTheDocument();
+    const btn = screen.getByTestId("release-activate-rel-2");
+    expect(btn).toHaveTextContent("Activate");
+    fireEvent.click(btn);
+    expect(activated).toBe("rel-2");
+  });
+
+  it("hides Activate for repair candidates (they need repair approval)", () => {
+    const r1 = mkRelease({ id: "rel-1", version: 1 });
+    const r2 = mkRelease({
+      id: "rel-2",
+      version: 2,
+      approved_by: null,
+      provenance_repair_run_id: "rep-1",
+    });
+    render(<ReleaseHistory releases={[r1, r2]} activeReleaseId="rel-1" onActivate={() => {}} />);
+    expect(screen.queryByTestId("release-activate-rel-2")).not.toBeInTheDocument();
+  });
 });

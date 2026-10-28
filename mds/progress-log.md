@@ -2282,3 +2282,37 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 - Remaining Cycle 2 FAIL items: none code-open (AR-1-1, AR-1-2, AR-1-3, AR-1-4 residual, AR-1-5, AR-2-1, AR-2-2, AR-2-3, AR-2-4, AR-2-6 fixed earlier; all pending reviewer re-verification)
 - Base-image digests float upstream over time by design; to refresh, re-pull and update the four FROM lines, then re-run `make lockfiles` only if pyproject/uv.lock changed
 - Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## REQ-013 — build → activate → sync
+**Date:** 2026-10-28
+**Ref:** mds/REQUESTS.MD REQ-013 (owner priority 2026-10-28)
+
+**What was done:**
+- First build auto-activates when the connector has no active release (`run_build_handler`, actor `system:first-build`); gate-blocked builds persist nothing and stay unrunnable
+- New `POST /connectors/{id}/releases/{release_id}/activate` (write-token protected, actor from `AUTOBRIDGE_OPERATOR`); refuses repair/rejected/gate-blocked/foreign candidates with 422
+- `trigger_sync` with explicit `release_id` now requires the active release or an approve/rollback approval plus no gate-blocked flag, else 422 with the reason
+- UI Activate button on build candidates (`ReleaseHistory` + connector detail page) and new `ab activate` CLI subcommand; e2e s7 journey names the activate step explicitly
+- Docs: new `docs/safety-model.md` §7.1; moved REQ-013 to Resolved with Resolution
+
+**Key decisions:**
+- Implemented both recommended options (auto-activate first + explicit endpoint) rather than one: restores the pre-AR-1-2 create→build→sync journey while keeping every later candidate operator-gated
+- Sync gate enforced at the route layer only; the worker trusts queued jobs (queued only via the gated route)
+- Repair candidates can never use the activate endpoint — approval stays the only audit cover for the repair path
+- Gate-skipped (no verifier configured: unit tests, fakes) releases are activatable; gate-failed can never exist (gate-before-persist), with a fail-closed provenance check as backstop
+
+**Files changed:**
+- `src/autobridge/engine/releases.py` — `activate_release()` (+`BuildRun` import)
+- `src/autobridge/engine/build_run.py` — first-build auto-activation
+- `src/autobridge/control/routes/connectors.py` — activate route
+- `src/autobridge/control/routes/builds.py` — sync active-or-approved gate
+- `src/autobridge/cli.py` — `activate` subcommand
+- `ui/components/ReleaseHistory.tsx`, `ui/app/connectors/[id]/page.tsx` — Activate button + handler
+- `ui/openapi.json`, `ui/lib/api/schema.d.ts` — regenerated (additive)
+- `docs/safety-model.md` — §7.1
+- `tests/unit/test_autobridge_activation.py` — new (9 tests)
+- `tests/unit/test_autobridge_control_api.py`, `tests/unit/test_autobridge_control_api_extended.py` — reworked for auto-activation
+- `tests/e2e/test_s7_cli.py` — journey follows the new flow
+- `mds/REQUESTS.MD`, `mds/progress-state.md`, `mds/progress-log.md`, `mds/BUILD-NOTES.md` — bookkeeping
+
+**Notes for next iteration:**
+- Next: REQ-017 (Docker-free local run), then REQ-014 → REQ-015 → REQ-016 per owner priority. `ab activate` output and the activate 422 text assume a reachable control plane; REQ-015 (token in e2e/CLI) will exercise the new route with tokens set — the route already uses `require_control_token` and the CLI already sends the bearer header.

@@ -5,6 +5,8 @@ import type { ReleaseOut } from "@/lib/api/client";
 type Props = {
   releases: ReleaseOut[];
   activeReleaseId?: string | null;
+  onActivate?: (releaseId: string) => void;
+  activatingId?: string | null;
 };
 
 function formatDate(iso: string): string {
@@ -22,7 +24,7 @@ function formatDate(iso: string): string {
   }
 }
 
-export function ReleaseHistory({ releases, activeReleaseId }: Props) {
+export function ReleaseHistory({ releases, activeReleaseId, onActivate, activatingId }: Props) {
   if (!releases.length) {
     return (
       <div data-testid="release-history-empty" className="border border-rule px-4 py-6 text-sm text-ink-2">
@@ -63,6 +65,19 @@ export function ReleaseHistory({ releases, activeReleaseId }: Props) {
                   <>
                     {" "}
                     <span data-testid={`release-active-${r.id}`}>active</span>
+                  </>
+                ) : !r.approved_by && !r.provenance_repair_run_id && onActivate ? (
+                  <>
+                    {" "}
+                    <button
+                      type="button"
+                      data-testid={`release-activate-${r.id}`}
+                      disabled={activatingId === r.id}
+                      onClick={() => onActivate(r.id)}
+                      className="btn quiet"
+                    >
+                      {activatingId === r.id ? "Activating…" : "Activate"}
+                    </button>
                   </>
                 ) : null}
               </span>

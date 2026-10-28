@@ -128,6 +128,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connectors/{connector_id}/releases/{release_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Activate Connector Release
+         * @description Activate a build candidate so it becomes runnable (REQ-013).
+         *
+         *     The first build's release is auto-activated (see ``run_build_handler``);
+         *     later build candidates need this explicit operator step. Repair
+         *     candidates cannot be activated here — they go through repair
+         *     approval — and gate-blocked or rejected releases stay unrunnable (422).
+         *     The actor is the server-configured operator (REQ-001), never a client
+         *     value.
+         */
+        post: operations["activate_connector_release_connectors__connector_id__releases__release_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connectors/{connector_id}/sync": {
         parameters: {
             query?: never;
@@ -1926,6 +1953,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_connector_release_connectors__connector_id__releases__release_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connector_id: string;
+                release_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
+                        detail: string;
+                    };
                 };
             };
         };

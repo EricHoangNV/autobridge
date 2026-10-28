@@ -241,12 +241,14 @@ def test_approve_rejects_foreign_to_release_id(tmp_path: pathlib.Path) -> None:
         # Foreign candidate: 422, nothing activated.
         r = client.post(f"/repairs/{rep_a_id}/approve", json={"to_release_id": cand_b_id, "connector_id": cid})
         assert r.status_code == 422, r.text
-        assert client.get(f"/connectors/{cid}").json()["active_release_id"] is None
+        # REQ-013: the first build auto-activates, so the failed approve
+        # leaves the build release active (it activates nothing new).
+        assert client.get(f"/connectors/{cid}").json()["active_release_id"] == base_id
 
         # Unlinked release (the base build candidate): 422 as well.
         r = client.post(f"/repairs/{rep_a_id}/approve", json={"to_release_id": base_id, "connector_id": cid})
         assert r.status_code == 422, r.text
-        assert client.get(f"/connectors/{cid}").json()["active_release_id"] is None
+        assert client.get(f"/connectors/{cid}").json()["active_release_id"] == base_id
 
         # Matching candidate: 200.
         r = client.post(f"/repairs/{rep_a_id}/approve", json={"to_release_id": cand_a_id, "connector_id": cid})

@@ -31,25 +31,6 @@ Wanted:
    "All services healthy" / "Control API unreachable"), and move it to a footer or style it as a quiet status detail
    next to LIVE. Update the e2e journey to find it by `data-testid`, not by its text.
 
-### REQ-013 — Build → sync is broken since AR-1-2; sync also runs unapproved releases (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 08:25)
-Found by a host regression on 207f7366 (stack up). AR-1-2 (76bbff43) removed the sync fallback to the latest release,
-but nothing activates a freshly built release: `Connector.active_release_id` is only set by `_activate` in
-`src/autobridge/engine/releases.py`, reached from repair approval. So after create → build, `POST
-/connectors/{id}/sync` answers `422 connector has no active release`. `tests/e2e/test_s7_cli.py::test_s7_cli_same_journey_as_ui_fake`
-fails on exactly this (with and without tokens); the UI's Sync button on a newly built connector will do the same.
-Second gap: `trigger_sync` in `src/autobridge/control/routes/builds.py` takes `body.release_id` and only checks that the
-release belongs to the connector, not that it passed the gate or was approved, so an unapproved candidate can still run.
-Wanted:
-1. Decide and document (docs/safety-model.md) how a first build becomes runnable. Recommended: a build whose candidate
-   passed the verifier gate is activated as the connector's first release, or the operator activates it explicitly
-   (e.g. `POST /connectors/{id}/releases/{release_id}/activate`, write-token protected, actor from AUTOBRIDGE_OPERATOR)
-   and the UI and CLI show that step. Either way, a gate-blocked build stays unrunnable.
-2. `sync` with an explicit `release_id` accepts only a release that passed the gate and is active or approved; anything
-   else is 422 with the reason. Unit tests for both.
-3. The demo journey works end to end: create → build → (activate) → sync, in the UI, in the CLI, and in `make demo`.
-   Fix `test_s7_cli_same_journey_as_ui_fake` by following the new flow, not by loosening the gate.
-
 ### REQ-014 — Host tools ignore `.env`, so tokens break smoke, e2e and demo (2026-10-28)
 Status: OPEN
 With `SIM_ADMIN_TOKEN`, `AUTOBRIDGE_CONTROL_TOKEN` and `EDGE_RELEASE_SECRET` set in `.env`, compose passes them to the
@@ -132,6 +113,26 @@ Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDO
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-013 — Build → sync is broken since AR-1-2; sync also runs unapproved releases (2026-10-28)
+Status: DONE (2026-10-28)
+Found by a host regression on 207f7366 (stack up). AR-1-2 (76bbff43) removed the sync fallback to the latest release,
+but nothing activates a freshly built release: `Connector.active_release_id` is only set by `_activate` in
+`src/autobridge/engine/releases.py`, reached from repair approval. So after create → build, `POST
+/connectors/{id}/sync` answers `422 connector has no active release`. `tests/e2e/test_s7_cli.py::test_s7_cli_same_journey_as_ui_fake`
+fails on exactly this (with and without tokens); the UI's Sync button on a newly built connector will do the same.
+Second gap: `trigger_sync` in `src/autobridge/control/routes/builds.py` takes `body.release_id` and only checks that the
+release belongs to the connector, not that it passed the gate or was approved, so an unapproved candidate can still run.
+Wanted:
+1. Decide and document (docs/safety-model.md) how a first build becomes runnable. Recommended: a build whose candidate
+   passed the verifier gate is activated as the connector's first release, or the operator activates it explicitly
+   (e.g. `POST /connectors/{id}/releases/{release_id}/activate`, write-token protected, actor from AUTOBRIDGE_OPERATOR)
+   and the UI and CLI show that step. Either way, a gate-blocked build stays unrunnable.
+2. `sync` with an explicit `release_id` accepts only a release that passed the gate and is active or approved; anything
+   else is 422 with the reason. Unit tests for both.
+3. The demo journey works end to end: create → build → (activate) → sync, in the UI, in the CLI, and in `make demo`.
+   Fix `test_s7_cli_same_journey_as_ui_fake` by following the new flow, not by loosening the gate.
+Resolution: first build auto-activates when the connector has no active release; later build candidates need POST /connectors/{id}/releases/{rid}/activate (write-token protected, actor=AUTOBRIDGE_OPERATOR; refuses repair/rejected/gate-blocked/foreign); sync with explicit release_id requires active-or-approved (+gate evidence) else 422; UI Activate button + `ab activate`; flow in docs/safety-model.md §7.1; tests: tests/unit/test_autobridge_activation.py (10), e2e s7 journey follows the new flow.
 
 ### REQ-012 — Optional bearer token on the control API's write routes (2026-10-28)
 Status: DONE (2026-10-28)

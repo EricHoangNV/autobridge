@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Security
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from autobridge.control.deps import approved_by_for_releases, get_db, require_control_token
+from autobridge.control.deps import approved_by_for_releases, get_db, get_operator_name, require_control_token
 from autobridge.control.models import (
     Connector,
     ConnectorRelease,
@@ -236,3 +236,40 @@ def list_dependencies(connector_id: str, db: Session = Depends(get_db)) -> list[
         raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
     rows = db.execute(select(DependencyRegistration).where(DependencyRegistration.connector_id == connector_id)).scalars().all()
     return [_dep_to_out(d) for d in rows]
+
+
+@router.post(
+    "/{connector_id}/releases/{release_id}/activate",
+    response_model=ConnectorOut,
+    responses={**DOMAIN_ERROR_422, **AUTH_401},
+)
+def activate_connector_release(
+    connector_id: str, release_id: str, db: Session = Depends(get_db), _: None = Security(require_control_token)
+) -> ConnectorOut:
+    """Activate a build candidate so it becomes runnable (REQ-013).
+
+    The first build's release is auto-activated (see ``run_build_handler``);
+    later build candidates need this explicit operator step. Repair
+    candidates cannot be activated here — they go through repair
+    approval — and gate-blocked or rejected releases stay unrunnable (422).
+    The actor is the server-configured operator (REQ-001), never a client
+    value.
+    """
+    conn = db.get(Connector, connector_id)
+    if conn is None:
+        raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
+    if db.get(ConnectorRelease, release_id) is None:
+        raise HTTPException(status_code=404, detail=f"Release {release_id!r} not found")
+    actor = get_operator_name()
+    try:
+        from autobridge.engine.releases import ReleaseError, activate_release  # noqa: PLC0415
+
+        activate_release(db, connector_id=connector_id, release_id=release_id, actor=actor)
+        db.commit()
+    except ReleaseError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    refreshed = db.get(Connector, connector_id)
+    if refreshed is None:  # pragma: no cover - connector cannot vanish mid-request
+        raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
+    return _connector_to_out(refreshed)

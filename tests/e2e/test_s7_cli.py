@@ -100,6 +100,15 @@ def test_s7_cli_same_journey_as_ui_fake(tmp_path: pathlib.Path, monkeypatch: Any
         assert rc == 0, out
         assert json.loads(out)["kind"] == "build"
 
+        # REQ-013: create → build → (activate) → sync. The first build
+        # auto-activates, so this is idempotent — but the journey names the
+        # step explicitly instead of relying on the fallback.
+        rc, out, _ = _run(["--output", "json", "connectors", "get", connector_id], capsys)
+        assert rc == 0, out
+        newest = max(json.loads(out)["releases"], key=lambda r: r["version"])
+        rc, out, _ = _run(["--output", "json", "activate", connector_id, newest["id"]], capsys)
+        assert rc == 0, out
+
         rc, out, _ = _run(["--output", "json", "sync", connector_id, "--wait",
                            "--wait-timeout", "60"], capsys)
         assert rc == 0, out

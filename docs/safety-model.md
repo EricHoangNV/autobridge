@@ -242,6 +242,34 @@ nothing to approve or sync. `compose.yaml` sets
 no verifier route). Sync additionally refuses to fall back to the latest
 unapproved release: with no active release it returns 422.
 
+### 7.1 How a first build becomes runnable (REQ-013)
+
+A freshly built release is a **candidate**, not a runnable artifact. It
+becomes runnable in exactly two ways:
+
+1. **First-build auto-activation** — when a build persists a release and
+   the connector has no active release yet, `run_build_handler` activates
+   it immediately (`actor="system:first-build"`, recorded in the
+   `release.activated` evidence). A persisted candidate is either
+   gate-passed (verifier configured, gate-before-persist) or gate-skipped
+   (no verifier configured: unit tests, fakes). A gate-blocked build
+   persists nothing, so it stays unrunnable: the draft spec sits on the
+   `BuildRun` with `gate_blocked`, and sync answers 422 (no active
+   release).
+2. **Explicit operator activation** — later build candidates need
+   `POST /connectors/{id}/releases/{rid}/activate` (write-token protected,
+   actor from `AUTOBRIDGE_OPERATOR`). It refuses with 422: repair
+   candidates (those activate only via repair approval, which binds the
+   audit cover to the repair run), human-rejected releases, releases of
+   another connector, and gate-blocked provenance (fail closed).
+
+Sync enforces the same boundary: an explicit `release_id` runs only when
+it is the active release or carries an `approve`/`rollback` approval;
+anything else is 422 naming the reason. The UI shows an **Activate**
+button on runnable build candidates (`ReleaseHistory`), the CLI has
+`ab activate <connector> <release>`, and the journey is
+create → build → (activate) → sync.
+
 ## 8. Five scenarios wired end to end (P1.W6.2)
 
 The safety net proves that semantic and transport drift are distinguished

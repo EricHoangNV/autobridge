@@ -634,13 +634,10 @@ def test_build_gate_blocked_persists_no_activatable_release(client: Any, monkeyp
 
 
 def test_sync_without_active_release_is_422(client: Any) -> None:  # type: ignore[no-untyped-def]
+    # No releases at all: sync needs an active release (REQ-013; the first
+    # build auto-activates, so a candidate always exists after a build —
+    # see test_autobridge_activation.py for the candidate cases).
     c = _create_connector(client, base_url="http://sim-harbor:8000")
-    docs = "# HarborPMS API\n\nBase URL: http://sim-harbor:8000\n\nGET /reservations\n\nGET /folios\n"
-    br = client.post(f"/connectors/{c['id']}/build", json={"docs_text": docs})
-    assert br.status_code == 200
-    rels = client.get(f"/releases?connector_id={c['id']}").json()
-    assert len(rels) >= 1  # candidate exists but was never approved/activated
-    # No fallback to the latest unapproved release: sync needs an active release
     r = client.post(f"/connectors/{c['id']}/sync", json={})
     assert r.status_code == 422
     assert "no active release" in r.text

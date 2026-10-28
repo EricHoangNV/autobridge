@@ -109,6 +109,8 @@ export default function ConnectorDetailPage({ params }: PageProps) {
 
   const [syncState, setSyncState] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
+  const [activateMsg, setActivateMsg] = useState<string | null>(null);
 
   async function handleSync() {
     setSyncState("sending");
@@ -136,9 +138,30 @@ export default function ConnectorDetailPage({ params }: PageProps) {
     }
   }
 
+  async function handleActivate(releaseId: string) {
+    setActivatingId(releaseId);
+    setActivateMsg(null);
+    try {
+      const base = getBaseUrl().replace(/\/$/, "");
+      const res = await fetch(
+        `${base}/connectors/${encodeURIComponent(connectorId)}/releases/${encodeURIComponent(releaseId)}/activate`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`Activate failed (${res.status}): ${body}`);
+      }
+      setActivateMsg(`Release ${releaseId.slice(0, 8)} is now active — sync can run.`);
+      mutateDetail();
+    } catch (err) {
+      setActivateMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActivatingId(null);
+    }
+  }
+
   // Derive active release spec for viewer
-  const activeRelease: ReleaseOut | null = (() => {
-    if (!detail?.releases?.length) return null;
+  const activeRelease: ReleaseOut | null = (() => {    if (!detail?.releases?.length) return null;
     if (detail.active_release_id) {
       const found = detail.releases.find((r) => r.id === detail.active_release_id);
       if (found) return found;
@@ -292,7 +315,17 @@ export default function ConnectorDetailPage({ params }: PageProps) {
         </div>
         <div>
           <h2 className="sec">Releases</h2>
-          <ReleaseHistory releases={detail.releases ?? []} activeReleaseId={detail.active_release_id} />
+          {activateMsg ? (
+            <div data-testid="activate-msg" className="mt-3 border border-rule bg-band px-4 py-2 text-sm">
+              {activateMsg}
+            </div>
+          ) : null}
+          <ReleaseHistory
+            releases={detail.releases ?? []}
+            activeReleaseId={detail.active_release_id}
+            onActivate={handleActivate}
+            activatingId={activatingId}
+          />
         </div>
       </section>
 
