@@ -119,7 +119,7 @@ references `/developers/source` and a rendering test (or Playwright check) that 
    sub-steps in the build note (4, 5a schema+runtime, 5b discovery, 5c joins, 6, 7) and merge each one green.
 
 ### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 13:00)
 Owner: every demo scenario must run the same way every time, including REQ-020's "before" refusal after the vocabulary
 has been extended, and the demo must show that the frontier model is called only when cheaper rungs cannot handle the
 error. Today: `POST /demo/reset` (`src/autobridge/control/routes/demo.py`) resets only sim-atlas and sim-harbor; the L0
