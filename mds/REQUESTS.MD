@@ -2,6 +2,57 @@
 
 ## Open Requests (read this section only)
 
+### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
+Status: OPEN
+Priority: do this first. `make bench-heldout` on Nov 3 has the same bug.
+Found by a clean-clone check of f516bc0. With the stack up (`make up`), `make bench` exits 0, but every number for
+both arms is zero: verified completion 0.0, 0 tool calls, 0 ms elapsed, 0 frontier tokens, "10 wins, 20 losses".
+Cause: the Makefile runs `uv run python -m autobridge.bench.harness` on the host, but `BenchConfig` defaults to the
+Docker-internal URLs (`DEFAULT_CONTROL_API_URL = "http://control:8000"`, `DEFAULT_VERIFIER_URL = "http://verifier:8000"`
+in `src/autobridge/bench/harness.py`). Those names do not resolve outside the compose network. The host constants
+`DEFAULT_CONTROL_API_URL_HOST` (8101) and `DEFAULT_VERIFIER_URL_HOST` (8104) are defined but never used. Every
+trial fails, is counted as "no verified completion", and the run still exits 0.
+Wanted:
+1. Running from the host reaches the stack. Either the harness picks the host URLs when it is not inside a container,
+   or the `bench` and `bench-heldout` targets pass `--control-api-url`/`--verifier-url` (or run inside the `bench`
+   container). Keep the in-container defaults working.
+2. Fail loudly. Before any scorecard is written, if the control API or the verifier is unreachable, or any arm
+   finishes with zero tool calls across all its trials, exit non-zero with a message that names the URL. An empty
+   scorecard must never be produced silently.
+3. Add a test for each: host URL selection, and the zero-trial or unreachable guard.
+4. With the stack up, run `make bench` once and record the real dev-split numbers in the build note (not zeros).
+Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
+
+### REQ-009 — Clean clone: `make test` and `make e2e-ui` fail without `ui/node_modules` (2026-10-28)
+Status: OPEN
+Found by a fresh GitHub clone of f516bc0, following the README (`cp .env.example .env`, then make targets).
+- `make test`: 1 failed, 1878 passed. `test_ui_client_compiles` runs `npm run typecheck` in `ui/`, and a fresh clone
+  has no `ui/node_modules`. The UI's Vitest run was skipped for the same reason.
+- `make e2e-ui`: `playwright: command not found`.
+CI installs these itself; the README and the Makefile do not. The README says a clean machine needs only Docker and uv.
+Wanted:
+1. `make test` and `make e2e-ui` work in a fresh clone. Either a `ui-deps` target (`cd ui && npm ci`, plus
+   `npx playwright install chromium` for e2e-ui) that they depend on when `ui/node_modules` is missing, or the
+   UI-dependent tests skip loudly with the command to run (as Vitest already does). Prefer installing.
+2. README quickstart lists Node and npm as a requirement and the `npm ci` step.
+3. Check: a fresh clone into a temp dir, then `make test` passes with 0 failures.
+This is what P1.W10.3 (clean-clone check) needs.
+
+### REQ-010 — e2e: run the demo's headline claims against the live stack (2026-10-28)
+Status: OPEN
+With Docker hidden (`DOCKER_HOST=unix:///nonexistent.sock`), 72 of the 104 tests in `tests/e2e` still pass: they run
+engine code in-process against fake HTTP transports. Only about 32 exercise the running stack. In particular
+`test_03` (known repairs spend 0 frontier tokens) passes 5/5 with no stack, and `test_05` passes 20 of 22. These are
+claims the demo shows on screen.
+Wanted:
+1. Live-stack versions of the `test_03` and `test_05` scenarios: drive them through the control API on the running
+   compose stack (as `make demo` does), and assert the same things: zero frontier tokens for known repairs; the
+   invalid patch rejected; semantic drift ends `Degraded`.
+2. Mark the in-process tests clearly (a `fake` or `inprocess` marker, or move them to `tests/integration`) so
+   `tests/e2e` means "against the stack". Do not delete the in-process tests.
+3. If the stack is not reachable, the live tests fail rather than skip when `AUTOBRIDGE_E2E_REQUIRE_STACK=1`, and the
+   `make e2e` target sets it.
+
 ---
 
 ## Resolved Requests (reference only)
