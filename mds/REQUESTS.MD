@@ -94,6 +94,10 @@ Wanted:
    if the plan's matched-budget rules allow; otherwise note it.
 7. Demo: add the before/after to `docs/demo.md` and `make demo` as one step ("unfamiliar API style: engine refuses
    safely → vocabulary extended once → same docs connect"), with the evidence each half shows.
+**Owner check of sub-step A (2026-10-28, fix first in the next sub-step):** the Meridian portal loads its guides but
+shows no Operations: `simulators/devportal/meridian.html` calls `fetch("source")`, which from `/developers` resolves
+to `/source` (404). Use the absolute `/developers/source` like the other portals, and add a unit test that the page
+references `/developers/source` and a rendering test (or Playwright check) that at least one operation page appears.
 8. Gates as REQ-019, README vendor table updated. This is the largest REQ in the queue: split it into claimable
    sub-steps in the build note (4, 5a schema+runtime, 5b discovery, 5c joins, 6, 7) and merge each one green.
 
