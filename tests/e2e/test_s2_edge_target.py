@@ -61,6 +61,11 @@ def control_client(tmp_path: Path, monkeypatch: Any) -> Any:
             s.close()
 
     control_app.dependency_overrides[get_db] = override_db
+    # Hermetic open mode: the in-process control app reads the ambient
+    # AUTOBRIDGE_CONTROL_TOKEN at request time, so a keyed developer shell
+    # would 401 these tests. They pin the open path; keyed auth is covered
+    # by the live tests against the real stack.
+    monkeypatch.delenv("AUTOBRIDGE_CONTROL_TOKEN", raising=False)
     monkeypatch.setenv("EDGE_RELAY_URL", "http://relay")
     c = TestClient(control_app)
     yield c

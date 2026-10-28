@@ -225,6 +225,7 @@ class OAuth2TokenManager:
         timeout_s: float = 30.0,
         client_factory: Callable[..., httpx.Client] | None = None,
         time_fn: Callable[[], float] | None = None,
+        trust_env: bool = False,
     ) -> None:
         if auth.type != "oauth2_client_credentials":
             raise AuthError(f"OAuth2TokenManager requires oauth2_client_credentials, got {auth.type!r}")
@@ -234,7 +235,9 @@ class OAuth2TokenManager:
             raise AuthError("oauth2_client_credentials auth requires username (client_id)")
         self.auth = auth
         self.timeout_s = timeout_s
-        self.client_factory = client_factory or httpx.Client
+        # Loopback/cluster traffic must never consult system proxy settings
+        # (agent-thread fork safety on macOS); custom factories own theirs.
+        self.client_factory = client_factory or (lambda **kw: httpx.Client(trust_env=trust_env, **kw))
         self.time_fn = time_fn
         self._token: OAuth2Token | None = None
 

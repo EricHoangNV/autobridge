@@ -163,6 +163,7 @@ class HttpClient:
         max_total_delay_s: float | None = None,
         sleep_fn: Callable[[float], None] = time.sleep,
         client_factory: Callable[..., httpx.Client] | None = None,
+        trust_env: bool = False,
     ) -> None:
         self.base_url = resolve_base_url(base_url)
         self.auth = auth
@@ -177,7 +178,10 @@ class HttpClient:
         #: Seconds slept so far against ``max_total_delay_s``.
         self.total_delay_s = 0.0
         self.sleep_fn = sleep_fn
-        self.client_factory = client_factory or httpx.Client
+        # Loopback/cluster traffic must never consult system proxy settings
+        # (agent-thread fork safety on macOS; REQ-012 loopback-only stack has
+        # no legitimate proxy hop). Custom factories own their client.
+        self.client_factory = client_factory or (lambda **kw: httpx.Client(trust_env=trust_env, **kw))
         self._oauth_token: OAuth2Token | None = None
         self._oauth_manager: OAuth2TokenManager | None = None
         if auth is not None and auth.type == "oauth2_client_credentials":

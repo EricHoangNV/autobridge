@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime
+import functools
 import logging
 import socket
 import threading
@@ -45,6 +46,31 @@ from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 log = logging.getLogger("autobridge.edge.fias")
+
+
+def _contain_thread_errors(fn: Any) -> Any:
+    """A link thread never raises: a session ending is a normal return.
+
+    Expected session ends surface as :class:`LinkDropped` (peer closed,
+    oversize/flood session close, resync, dead link) and are logged at
+    debug; anything else is logged with a traceback and contained. An
+    uncaught thread exception becomes a ``PytestUnhandledThreadException``
+    in the suite and poisons forked children on macOS (fork-safety crash),
+    so containment here is load-bearing, not cosmetic.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(self, *args, **kwargs)
+        except LinkDropped as exc:
+            log.debug("link session ended: %s", exc)
+            return None
+        except Exception:
+            log.exception("fias host thread error (contained)")
+            return None
+
+    return wrapper
 
 STX = 0x02
 ETX = 0x03
@@ -568,6 +594,7 @@ class FiasHost:
 
     # -- serve loop ------------------------------------------------------
 
+    @_contain_thread_errors
     def _serve(self, sock: socket.socket, splitter: FrameSplitter) -> None:
         last_out = time.monotonic()
         last_identical: tuple[str, tuple[tuple[str, str], ...]] | None = None

@@ -125,14 +125,16 @@ class RelayFeedReader:
         record_type = _feed_attr(feed, "record")
         if not record_type:
             raise FeedError(f"feed for operation {operation_name!r} names no record type")
+        # trust_env=False: relay traffic is loopback/cluster-local and must
+        # never consult system proxy settings (agent-thread fork safety).
         try:
-            resp = httpx.get(
-                f"{self.relay_url}/v1/postings",
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=10.0,
-            )
-            resp.raise_for_status()
-            payload = resp.json()
+            with httpx.Client(trust_env=False, timeout=10.0) as client:
+                resp = client.get(
+                    f"{self.relay_url}/v1/postings",
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
         except FeedError:
             raise
         except Exception as exc:

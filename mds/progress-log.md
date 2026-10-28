@@ -2688,3 +2688,16 @@ noted for REQ-026. Remaining: REQ-022 D (fault scenarios + verifier checks)
 then E (demo + docs + simulators index). REQ-020/REQ-021 REQUESTS.MD
 statuses are stale IN_PROGRESS (work merged on this branch); left
 untouched — owner to confirm before flipping to DONE.
+
+## 2026-10-28 19:05 UTC — REQ-022 owner check after sub-step B fixed (sbx1)
+
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+"Fix before sub-step C", so it lands with C. `make edge-sign` + preflight
+fail-fast wired into `make up` / `make local-up`, README quickstart
+updated; keyed local stack verified green live with the PABX link
+connected. Thread containment (`_serve` never raises, `PabxLink.stop`
+joins), `trust_env=False` on agent/relay/feed/vendor-default HTTP clients,
+strict unhandled-thread warnings, hermetic S2 fixture. Full gates green;
+simulators coverage flapped 89.78 once (re-run 90.36, pre-existing order
+flap). Next: REQ-022 D (fault scenarios) then E (demo + docs + index).

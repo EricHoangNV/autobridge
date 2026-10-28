@@ -1,11 +1,20 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles
+.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles edge-sign edge-check
 
 # ---- Docker ----
-up:
+up: edge-check
 	@if [ ! -f compose.yaml ]; then echo "compose.yaml not yet created (W1.2) — skipping"; else docker compose up -d --build --wait && ./scripts/wait_readyz.sh; fi
+
+# REQ-022 owner check B1: mint + pin the edge bundle signature into .env.
+# Required once EDGE_RELEASE_SECRET is set; harmless otherwise.
+edge-sign:
+	./scripts/edge-sign.sh
+
+# REQ-022 owner check B1: fail fast when a keyed deployment lacks the pin.
+edge-check:
+	./scripts/check-edge-key.sh
 
 # ---- Docker-free local mode (REQ-017) ----
 # Same host ports as compose, SQLite in ./.local/, logs in ./.local/logs/.

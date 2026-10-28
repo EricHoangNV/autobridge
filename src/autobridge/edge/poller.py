@@ -89,9 +89,14 @@ class RelayClient:
     def _client(self) -> Any:
         # Injected sessions (tests) are shared across calls and never
         # closed by us; plain httpx clients are per-call (pool hygiene).
+        # trust_env=False: relay traffic is loopback/cluster-local and must
+        # never consult system proxy settings (on macOS that touches the
+        # Objective-C runtime from agent threads and poisons forked
+        # children). Proxies are not used on this transport by design.
         if self._session is not None:
             return _SharedClient(self._session)
-        return httpx.Client(base_url=self._base, headers=self._headers(), timeout=self._timeout)
+        return httpx.Client(base_url=self._base, headers=self._headers(),
+                            timeout=self._timeout, trust_env=False)
 
     def next_command(self, agent_id: str) -> dict[str, Any] | None:
         try:

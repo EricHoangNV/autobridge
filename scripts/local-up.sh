@@ -40,6 +40,10 @@ fi
 
 command -v uv >/dev/null || { echo "local-up: 'uv' not found — install Python 3.12 + uv first (see README 'No Docker')" >&2; exit 1; }
 
+# REQ-022 owner check B1: a keyed .env without the bundle pin would leave
+# edge-worker at readyz 503 forever — fail fast with the fix, not a timeout.
+"$REPO_ROOT/scripts/check-edge-key.sh"
+
 # ---- Local-mode environment (after .env, so loopback always wins) ----
 export AUTOBRIDGE_RUNTIME=local
 export PYTHONPATH="$REPO_ROOT:$REPO_ROOT/src"

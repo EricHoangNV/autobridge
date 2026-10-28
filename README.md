@@ -13,6 +13,7 @@ ends `Complete | Degraded | Blocked` with the unmet criterion named.
 ```bash
 cp .env.example .env        # fill in provider keys; secrets stay in .env (git-ignored)
 make ui-deps                # one-time UI install (`cd ui && npm ci`; also auto-run by `make test`/`make e2e-ui`)
+make edge-sign               # pin the edge command bundle (required once you set EDGE_RELEASE_SECRET; harmless otherwise)
 make up                     # build images, start the stack, wait for every /readyz
 make smoke                  # healthz/readyz + trust-boundary network probes
 make test                   # unit, ≥90% coverage per Python package
@@ -45,6 +46,7 @@ UI 8107):
 
 ```bash
 cp .env.example .env        # fill in provider keys; secrets stay in .env (git-ignored)
+make edge-sign               # pin the edge command bundle (required once you set EDGE_RELEASE_SECRET; harmless otherwise)
 make local-up               # start every service locally, wait for every /readyz
 open http://localhost:8107  # the UI (same-origin /api rewrite → control :8101)
 make demo                   # six demo steps through the control API (plan §6)

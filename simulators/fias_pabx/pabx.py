@@ -255,6 +255,13 @@ class PabxLink(threading.Thread):
 
     def stop(self) -> None:
         self._halt.set()
+        # Join here (not just set the flag): a test that returns while the
+        # link thread is still connecting or serving leaks the thread, and
+        # any exception it raises afterwards surfaces as an unhandled
+        # thread exception — fatal for forked children on macOS. Never
+        # called from the link thread itself (only fixtures/tests/app).
+        if self.is_alive():
+            self.join(timeout=15.0)
 
     def run(self) -> None:  # noqa: D102
         while not self._halt.is_set():

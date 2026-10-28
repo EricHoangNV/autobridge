@@ -1548,3 +1548,48 @@ Decisions:
   mapped generically, no uniqueness check since statuses repeat).
 - Command `expect` only from unconditional answers ("always" or
   self-answer); conditional answers stay `ack` for the scenario to track.
+
+### REQ-022 owner check after sub-step B (fix before C): keyed local-up + thread safety
+
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+Two fixes, verified live in keyed local mode:
+1. **Keyed local-up dead without bundle signature.** `make edge-sign`
+   (`scripts/edge-sign.sh`) mints the HMAC over the agent bundle **with
+   the effective env** (sources `.env` first — an unkeyed mint is rejected
+   by a keyed worker as a mismatch, found live) and upserts
+   `EDGE_BUNDLE_SIGNATURE` into `.env` (creates it if missing; prints no
+   secret values, not even the minted one). `make up` and `make local-up`
+   run `scripts/check-edge-key.sh` first: keyed-but-unsigned fails fast
+   with the exact `make edge-sign` command instead of a readyz timeout.
+   README quickstart (both runtimes) + `.env.example` document the step.
+   Acceptance run live: keyed `.env` without pin → `make local-up` fails
+   in <1 s with the hint and starts nothing; `make edge-sign`; `make
+   local-up` → every readyz green and the PABX link `link_up: true`
+   (handshake accepted).
+2. **macOS fork crash from leaked threads + proxy use.** Link threads can
+   no longer raise: `FiasHost._serve` is wrapped (`LinkDropped` → normal
+   return, anything else → logged and contained); `PabxLink.stop()` now
+   joins the link thread. Loopback/cluster HTTP clients no longer consult
+   system proxy settings (`trust_env=False` on `RelayClient`,
+   `RelayFeedReader`, and the `HttpClient`/`OAuth2TokenManager` default
+   factories — the macOS SystemConfiguration touch from agent threads that
+   poisons forked children). `pyproject` now errors on
+   `PytestUnhandledThreadExceptionWarning` so Linux catches future leaks.
+   S2's in-process `control_client` fixture clears
+   `AUTOBRIDGE_CONTROL_TOKEN` (ambient keyed shells 401'd it before).
+- Tests: 13 new (`test_autobridge_edge_sign.py`: preflight matrix,
+  sign/upsert/no-leak, thread containment, join-on-stop, trust_env ×3);
+  full gates green (autobridge 2280 / 90.58%, verifier 99 / 93.62%,
+  simulators 90.36% on re-run — 89.78% once, pre-existing order/timing
+  flap documented at sub-step B — ui 156); lint + typecheck +
+  ui-typecheck green; e2e files green keyed-local (fias before/after, s2,
+  knowledge flow).
+- Bugs found while building: (1) edge-sign minted unkeyed while the worker
+  verified keyed — source `.env` before minting; covered by
+  `test_edge_sign_mints_with_the_effective_secret` (incl. negative: pin
+  fails under a different secret). (2) `FrameSplitter.feed(b"\\x00\\x00\\x00")`
+  yields no items — a bare-zeros test never resyncs; zeros must be followed
+  by a frame (as in the existing zeros test). (3) Empty explicit env does
+  not override `.env` (REQ-014) — the preflight test pins explicit-wins
+  with a non-empty value instead.

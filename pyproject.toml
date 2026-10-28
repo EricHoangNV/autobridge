@@ -91,6 +91,12 @@ markers = [
     "live: needs the running Compose stack (fails under AUTOBRIDGE_E2E_REQUIRE_STACK=1 when unreachable)",
     "inprocess: runs engine code in-process against fake transports; green without Docker",
 ]
+# A thread that raises is a leaked thread: fail loudly (also on Linux) so a
+# fork-safety hazard can never hide until macOS. Link/agent threads must
+# contain their errors instead of escaping (see fias_host._serve).
+filterwarnings = [
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
+]
 
 # --- coverage ---
 [tool.coverage.run]

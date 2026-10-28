@@ -428,14 +428,24 @@ def test_relay_feed_reader_filters_and_dedupes(monkeypatch: pytest.MonkeyPatch) 
         def json(self) -> dict[str, Any]:
             return self._payload
 
+    class _FakeClient:
+        def __init__(self, *_args: Any, **kwargs: Any) -> None:
+            assert kwargs.get("trust_env") is False, "feed reader must not consult system proxies"
+
+        def __enter__(self) -> _FakeClient:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+            assert url == "http://relay/v1/postings", url
+            assert kwargs["headers"] == {"Authorization": "Bearer op-token"}, kwargs["headers"]
+            return _FakeResponse({"postings": store.postings(None, None)})
+
     import httpx
 
-    def _fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-        assert url == "http://relay/v1/postings", url
-        assert kwargs["headers"] == {"Authorization": "Bearer op-token"}, kwargs["headers"]
-        return _FakeResponse({"postings": store.postings(None, None)})
-
-    monkeypatch.setattr(httpx, "get", _fake_get)
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
     monkeypatch.setenv("EDGE_RELAY_URL", "http://relay")
     monkeypatch.setenv("RELAY_OP_TOKEN", "op-token")
     reader = RelayFeedReader.from_env({"credential_ref": "RELAY_OP_TOKEN"})
