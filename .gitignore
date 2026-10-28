@@ -51,3 +51,6 @@ ui/tsconfig.tsbuildinfo
 # Scratch and design work (local only)
 tmp/
 .pnpm-store/
+
+# REQ-017 Docker-free local stack: SQLite, logs, PIDs, ACTIVE marker
+.local/

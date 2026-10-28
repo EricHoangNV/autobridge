@@ -253,6 +253,10 @@ def test_edge_negative_control_cannot_reach_edgepos_live(e2e_stack: str) -> None
     assert e2e_stack
     import shutil
 
+    from tests.e2e.conftest import is_local_mode  # noqa: PLC0415
+
+    if is_local_mode():
+        pytest.skip("local mode: no Docker network isolation to probe (REQ-017)")
     if shutil.which("docker") is None:
         from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
 
@@ -271,7 +275,10 @@ def test_edge_negative_control_cannot_reach_edgepos_live(e2e_stack: str) -> None
 def test_edge_execute_signed_release_live(e2e_stack: str) -> None:
     """Signed release executes on the live edge worker; tampered is refused."""
     assert e2e_stack
-    spec = _edge_spec("http://sim-edgepos:8000")
+    from tests.e2e.conftest import edge_pos_url  # noqa: PLC0415
+
+    pos_url = edge_pos_url()
+    spec = _edge_spec(pos_url)
     sig = release_signature(spec)
     try:
         r = httpx.post(
@@ -298,7 +305,7 @@ def test_edge_execute_signed_release_live(e2e_stack: str) -> None:
         "http://localhost:8101/connectors",
         json={
             "name": "EdgePOS-live",
-            "base_url": "http://sim-edgepos:8000",
+            "base_url": pos_url,
             "credential_ref": "EDGEPOS_API_KEY",
             "target_entities": ["Reservation"],
             "runtime_target": {"kind": "edge", "network_allowlist": ["sim-edgepos"]},

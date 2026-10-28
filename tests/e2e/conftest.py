@@ -47,6 +47,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import pathlib
 import shutil
 import subprocess
 import time
@@ -249,29 +250,65 @@ def _compose_down() -> None:
 # ---------------------------------------------------------------------------
 
 
+# REQ-017: Docker-free local mode. ``make local-up`` touches
+# ``.local/ACTIVE``; tests detect it so live assertions use loopback URLs
+# (``sim-*`` Docker DNS names do not resolve without containers) and skip
+# container-network probes instead of failing.
+REPO_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).resolve().parents[2]
+
+
+def is_local_mode() -> bool:
+    """Return True when the Docker-free local stack is active (REQ-017)."""
+    if os.getenv("AUTOBRIDGE_RUNTIME", "").strip().lower() == "local":
+        return True
+    try:
+        return (REPO_ROOT / ".local" / "ACTIVE").is_file()
+    except Exception:
+        return False
+
+
+def edge_pos_url() -> str:
+    """Public URL of the edge-only sim POS for the current mode (REQ-017).
+
+    Docker DNS (``sim-edgepos:8000``) inside Compose; loopback (``:8113``)
+    for ``make local-up``.
+    """
+    if is_local_mode():
+        return "http://localhost:8113"
+    return "http://sim-edgepos:8000"
+
+
 @pytest.fixture(scope="session")
 def e2e_stack() -> str:
-    """Ensure the Compose stack is up and readyz green.
+    """Ensure the Compose (or local, REQ-017) stack is up and readyz green.
 
-    Fails or skips the suite when Docker is not available: skips by default
+    Fails or skips the suite when no stack is available: skips by default
     so the suite is green on a laptop without Docker, fails when
     ``AUTOBRIDGE_E2E_REQUIRE_STACK=1`` (``make e2e`` sets it) so CI never
     passes vacuously (REQ-010). Respects:
       E2E_SKIP_STACK=1  — do not run ``compose up`` (CI already did ``make up``)
       E2E_KEEP_STACK=1  — do not run ``compose down`` on teardown
       E2E_TIMEOUT       — seconds to wait for readyz (default 120)
+
+    When every service is already readyz green — Compose or ``make
+    local-up`` — the fixture reuses it with no Docker involvement, so
+    ``make e2e`` runs the live tests against local mode too (REQ-017).
     """
     timeout = float(os.getenv("E2E_TIMEOUT", "120"))
 
-    if os.getenv("E2E_SKIP_STACK") == "1":
-        # Caller promises the stack is already up; skip if it is not reachable.
-        if not is_stack_up():
-            stack_unreachable("E2E_SKIP_STACK=1 but stack is not reachable")
-        yield "external"
+    # A green stack (Compose or local processes) is reused as-is: no Docker
+    # needed, nothing torn down (the owner started it).
+    if is_stack_up():
+        yield "already_up"
         return
 
+    if os.getenv("E2E_SKIP_STACK") == "1":
+        # Caller promises the stack is already up; skip if it is not reachable.
+        stack_unreachable("E2E_SKIP_STACK=1 but stack is not reachable")
+        raise AssertionError("unreachable")  # pragma: no cover - stack_unreachable never returns
+
     if not _docker_available():
-        stack_unreachable("docker not available (run `make up` on a Docker host)")
+        stack_unreachable("docker not available (run `make up` on a Docker host, or `make local-up`)")
 
     already_up = is_stack_up()
     brought_up = False

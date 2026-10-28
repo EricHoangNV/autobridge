@@ -36,7 +36,7 @@ def readyz(checks: dict[str, bool] | None = None) -> ReadyStatus:
     return {"status": "ok" if all_ok else "degraded", "checks": mapped}
 
 
-def readyz_response(checks: dict[str, bool] | None = None) -> JSONResponse:
+def readyz_response(checks: dict[str, bool] | None = None, info: dict[str, object] | None = None) -> JSONResponse:
     """Return the ``/readyz`` body with an honest HTTP status (AR-2-6).
 
     ``200`` when every check passes, ``503`` when any check fails, so an
@@ -44,9 +44,16 @@ def readyz_response(checks: dict[str, bool] | None = None) -> JSONResponse:
     degraded service (e.g. control with an unreachable verifier) is ready.
     Liveness (``/healthz``) stays ``200``; orchestration healthchecks must
     keep probing ``/healthz``, readiness gates poll ``/readyz``.
+
+    *info* carries informational fields that do not affect the status
+    (REQ-017: ``runtime_mode`` + ``network_isolation`` so local mode is
+    visible on ``/readyz`` without ever reporting ``ok`` dishonestly).
     """
     body = readyz(checks)
+    content: dict[str, object] = {"status": body["status"], "checks": body["checks"]}
+    if info:
+        content.update(info)
     return JSONResponse(
         status_code=200 if body["status"] == "ok" else 503,
-        content={"status": body["status"], "checks": body["checks"]},
+        content=content,
     )

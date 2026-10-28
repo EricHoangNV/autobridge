@@ -378,7 +378,38 @@ tests + live admin-oracle checks when the Compose stack is up. The suite is
 independent, random-order safe and requires no prior state beyond the reference
 specs under `generated/connectors/`.
 
-## 12. Where to go next
+## 12. Local mode (REQ-017): what Docker enforces that processes cannot
+
+`make local-up` runs every service as a local process on the same host ports
+compose publishes (control 8101 … UI 8107), with SQLite in `./.local/`. It is
+the same code, the same specs and the same seeded data — but one loopback,
+so Docker network separation does **not** exist here:
+
+* vendor-net / verifier-net / admin-net / edge-net are one network;
+  any local process *could* open any local port. `make smoke` reports its
+  container probes as `skipped: local mode` instead of pretending otherwise.
+* The runtime executes specs with `LocalProcessTarget` semantics even when a
+  spec declares `docker_sandbox` (`AUTOBRIDGE_RUNTIME=local` or Docker
+  unavailable; `active_target_kind()` in `src/autobridge/runtime/mode.py`).
+  Every `/readyz` carries `runtime_mode` + `network_isolation` fields saying
+  so, and the UI header shows a LOCAL badge (`TopBar` reads control
+  `/readyz` through the same-origin `/api` rewrite).
+
+What still holds in local mode (asserted in code, not by topology):
+
+* the engine never imports `verifier`/`simulators` (import-linter contract);
+* the verifier and simulator admin still run as separate processes;
+* simulator admin writes still need `SIM_ADMIN_TOKEN` when set
+  (header-only dev mode otherwise, exactly as in containers);
+* the in-process target allowlist (`DockerSandboxTarget`/`EdgeTarget`
+  host + `/admin` path guards, checked by runtime-sandbox `/readyz`)
+  still rejects blocked hosts — it just cannot stop a process from
+  opening a raw socket the way a missing network route can.
+
+Treat local mode as development and demo convenience: never expose it
+beyond localhost with real credentials (same rule as header-only dev mode).
+
+## 13. Where to go next
 
 W7 added the control plane (`/metrics/model-usage`, `POST /demo/inject-fault` with
 label) and the Next.js UI; W8 added the matched-budget benchmark; W10 completed

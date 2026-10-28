@@ -105,7 +105,18 @@ def get_readyz() -> JSONResponse:
         checks["verifier"] = False
 
     checks["default"] = all(checks.values())
-    return readyz_response(checks)
+    # REQ-017: report the runtime mode on /readyz (informational only —
+    # it never flips the status; local mode still reports ok/degraded
+    # honestly from the checks above).
+    from autobridge.runtime.mode import network_isolation_enforced, runtime_mode
+
+    return readyz_response(
+        checks,
+        info={
+            "runtime_mode": runtime_mode(),
+            "network_isolation": "enforced" if network_isolation_enforced() else "local mode: no network isolation",
+        },
+    )
 
 
 @app.get("/", tags=["health"])

@@ -38,6 +38,45 @@ describe("TopBar", () => {
     await waitFor(() => expect(screen.getByTestId("topbar-live")).toHaveTextContent("OFFLINE"));
   });
 
+  it("shows the LOCAL badge when control /readyz reports local runtime mode (REQ-017)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes("/api/readyz")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ status: "ok", runtime_mode: "local" }),
+          });
+        }
+        return Promise.resolve({ ok: true });
+      }) as unknown as typeof fetch,
+    );
+    render(<TopBar />);
+    await waitFor(() => expect(screen.getByTestId("topbar-local-mode")).toHaveTextContent("LOCAL"));
+    expect(screen.getByTestId("topbar-local-mode")).toHaveAttribute(
+      "title",
+      expect.stringContaining("no network isolation"),
+    );
+  });
+
+  it("hides the LOCAL badge when control reports docker mode (REQ-017)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes("/api/readyz")) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ status: "ok", runtime_mode: "docker" }),
+          });
+        }
+        return Promise.resolve({ ok: true });
+      }) as unknown as typeof fetch,
+    );
+    render(<TopBar />);
+    await waitFor(() => expect(screen.getByTestId("topbar-live")).toHaveTextContent("LIVE"));
+    expect(screen.queryByTestId("topbar-local-mode")).not.toBeInTheDocument();
+  });
+
   it("demo button opens the drawer toggle when the drawer is on the page", async () => {
     const onToggle = vi.fn();
     const drawer = document.createElement("div");

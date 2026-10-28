@@ -35,6 +35,39 @@ AutoBridge reads in `simulators/docs/`:
 CI (`.github/workflows/ci.yml`) runs the same order from a clean clone:
 `make test → make up → make smoke → make e2e → make e2e-ui → make demo`.
 
+## No Docker (plain laptop: Python 3.12 + `uv`, Node 22/`npm`)
+
+Someone who downloads the repo may have no Docker and no sandbox. The same
+stack runs as local processes on the same host ports (control 8101 …
+UI 8107):
+
+```bash
+cp .env.example .env        # fill in provider keys; secrets stay in .env (git-ignored)
+make local-up               # start every service locally, wait for every /readyz
+open http://localhost:8107  # the UI (same-origin /api rewrite → control :8101)
+make demo                   # six demo steps through the control API (plan §6)
+make smoke                  # healthz/readyz green; Docker network probes report "skipped: local mode"
+make e2e                    # live tests run against the local stack too
+make local-down             # stop everything (data kept in ./.local/autobridge.db)
+```
+
+Prerequisites: Python 3.12, [`uv`](https://docs.astral.sh/uv/),
+Node 22 + npm (UI only — the stack starts without it, with a warning).
+Works on macOS and Linux; on Windows use WSL2 (process control and
+loopback ports behave the same there; native `cmd`/PowerShell is not
+supported). SQLite lives in `./.local/autobridge.db`, logs in
+`./.local/logs/`, PIDs in `./.local/pids/` (all git-ignored).
+
+Local mode executes specs in-process (`LocalProcessTarget` even when a spec
+declares `docker_sandbox`) and says so: every `/readyz` carries
+`runtime_mode: local` + `network_isolation: "local mode: no network
+isolation"`, and the UI header shows a LOCAL badge. Docker network
+separation is the one thing local mode cannot enforce — see
+`docs/safety-model.md` §12. Never expose a local stack beyond localhost
+with real credentials. To force or forbid it explicitly:
+`AUTOBRIDGE_RUNTIME=local|docker` (default: local when Docker is
+unavailable, docker otherwise).
+
 ## How it works
 
 1. **Connect** — a vendor's docs become a declarative `ConnectorSpec` (YAML/JSON) via

@@ -109,8 +109,20 @@ def _check_interpreter() -> bool:
 
 @app.get("/readyz")
 def get_readyz() -> dict[str, object]:
+    from autobridge.runtime.mode import active_target_kind, network_isolation_enforced, runtime_mode
+
     checks = {
         "runtime_target": _check_runtime_target(),
         "interpreter": _check_interpreter(),
     }
-    return readyz(checks)  # type: ignore[return-value]
+    body = readyz(checks)
+    # REQ-017: say which target actually executes here. In local mode a
+    # declared docker_sandbox runs as local_process (no container, no
+    # network isolation) — never pretend the sandbox exists.
+    content: dict[str, object] = dict(body)
+    content["runtime_mode"] = runtime_mode()
+    content["active_target"] = active_target_kind("docker_sandbox")
+    content["network_isolation"] = (
+        "enforced" if network_isolation_enforced() else "local mode: no network isolation"
+    )
+    return content

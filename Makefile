@@ -1,11 +1,21 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down test smoke e2e e2e-ui bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles
+.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles
 
 # ---- Docker ----
 up:
 	@if [ ! -f compose.yaml ]; then echo "compose.yaml not yet created (W1.2) — skipping"; else docker compose up -d --build --wait && ./scripts/wait_readyz.sh; fi
+
+# ---- Docker-free local mode (REQ-017) ----
+# Same host ports as compose, SQLite in ./.local/, logs in ./.local/logs/.
+# Works on macOS and Linux with Python 3.12 + uv and Node 22/npm (UI);
+# on Windows use WSL2 (see README "No Docker").
+local-up:
+	./scripts/local-up.sh
+
+local-down:
+	./scripts/local-down.sh
 
 # AR-2-5: regenerate the hash-pinned requirements locks the images install
 # with `pip install --require-hashes`. Run after changing any pyproject.toml;

@@ -11,6 +11,7 @@ import { usePathname } from "next/navigation";
 export function TopBar() {
   const pathname = usePathname();
   const [alive, setAlive] = useState<boolean | null>(null);
+  const [localMode, setLocalMode] = useState<boolean>(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -20,6 +21,19 @@ export function TopBar() {
       })
       .catch(() => {
         if (!cancelled) setAlive(false);
+      });
+    // REQ-017: surface the runtime mode from the control plane (same-origin
+    // /api rewrite, server-only CONTROL_URL — never a browser secret). Local
+    // processes share one loopback, so Docker network isolation is absent.
+    fetch("/api/readyz", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data && typeof data === "object") {
+          setLocalMode((data as { runtime_mode?: unknown }).runtime_mode === "local");
+        }
+      })
+      .catch(() => {
+        /* offline — badge stays hidden */
       });
     return () => {
       cancelled = true;
@@ -80,9 +94,18 @@ export function TopBar() {
               alive === false ? "text-stop" : "text-ink"
             }`}
           >
-            <span aria-hidden="true" className={`live-dot ${alive === false ? "is-off" : ""}`} />
+            <span aria-hidden="true" className={`live-dot ${alive === false ? "is-off" : ""}`} /          >
             {alive === false ? "OFFLINE" : "LIVE"}
           </span>
+          {localMode && (
+            <span
+              data-testid="topbar-local-mode"
+              title="local mode: no network isolation (make local-up, no Docker)"
+              className="flex items-center gap-2 text-[13px] font-bold tracking-widest text-ink-2"
+            >
+              LOCAL
+            </span>
+          )}
           <button
             type="button"
             data-testid="topbar-demo-inject"

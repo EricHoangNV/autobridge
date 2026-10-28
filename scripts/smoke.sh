@@ -30,6 +30,18 @@ for entry in $SERVICES; do
   echo "  ok $name (:$port)"
 done
 
+# REQ-017: in local mode every service shares the host loopback, so Docker
+# network attachment cannot isolate anything. The container probes below
+# cannot run (no containers); the in-process allowlist checks still run
+# inside runtime-sandbox /readyz ("runtime_target" check).
+if [ "${AUTOBRIDGE_RUNTIME:-}" = "local" ] || [ -f .local/ACTIVE ]; then
+  echo ">> smoke: network probes skipped: local mode (no Docker network isolation)"
+  echo "  skipped: local mode — sandbox -/-> verifier/admin, ui -/-> sims, worker -/-> verifier, edge-net checks"
+  echo "  skipped: local mode — simulator admin authorization probe (admin still needs SIM_ADMIN_TOKEN when set)"
+  echo "smoke OK (local mode)"
+  exit 0
+fi
+
 # Probe helper: run an HTTP GET from inside a service container.
 # $1=service $2=url $3=want ("up" = must succeed, "down" = must fail)
 probe() {
