@@ -958,3 +958,6 @@ Decisions/gotchas:
 - Coverage: full-gate green; per-module % not re-measured (gate is the contract).
 
 Not in this sub-step (follow-ups): 5b discovery (classifiers/hypotheses/probes proposing v2 from docs + `auth_body_refs` wired into redaction callers), 5c joins, 6 (bootstrap-then-verify + ≥2 fault scenarios + bench note), 7 (demo step + docs/demo.md), `POST /demo/inject-fault` target map entry.
+
+### REQ-020 owner check — Meridian portal absolute source (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Fixed on top of sub-step 5a before merging: `simulators/devportal/meridian.html` used `fetch("source")`, which resolves to `/source` (404) from `/developers`, so no Operations rendered. Now `fetch("/developers/source", { cache: "no-store" })` like the Atlas/Harbor/LegacyStay portals. Pinned by `test_meridian_portal_fetches_absolute_source` and `test_meridian_portal_renders_at_least_one_operation` in `tests/unit/test_simulators_devportal.py`. Full `make test` green (autobridge 2046 / verifier 97 / simulators 290 + ui 148); lint green.
