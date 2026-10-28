@@ -50,8 +50,8 @@ test: ui-deps
 
 smoke:
 	@echo ">> smoke: unit health tests"
-	uv run --extra dev pytest tests/unit/test_*smoke*.py tests/unit/test_*health*.py -q
-	@if [ -f compose.yaml ]; then ./scripts/smoke.sh; else echo "no compose.yaml — skipping stack smoke"; fi
+	. ./scripts/load_dotenv.sh && uv run --extra dev pytest tests/unit/test_*smoke*.py tests/unit/test_*health*.py -q
+	@if [ -f compose.yaml ]; then . ./scripts/load_dotenv.sh && ./scripts/smoke.sh; else echo "no compose.yaml — skipping stack smoke"; fi
 	@echo "smoke OK"
 
 # Env: E2E_SKIP_STACK=1 (reuse the `make up` stack) · E2E_KEEP_STACK=1 (no
@@ -64,7 +64,7 @@ smoke:
 # AUTOBRIDGE_E2E_REQUIRE_STACK=1 (REQ-010): live-marked tests fail instead
 # of skipping when the stack is unreachable, so CI never passes vacuously.
 e2e:
-	@if [ ! -f compose.yaml ]; then echo "no compose.yaml — skipping e2e (W1.2 creates it)"; else AUTOBRIDGE_E2E_REQUIRE_STACK=1 uv run --extra dev pytest tests/e2e -q --tb=short -p randomly; fi
+	@if [ ! -f compose.yaml ]; then echo "no compose.yaml — skipping e2e (W1.2 creates it)"; else . ./scripts/load_dotenv.sh && AUTOBRIDGE_E2E_REQUIRE_STACK=1 uv run --extra dev pytest tests/e2e -q --tb=short -p randomly; fi
 
 # Playwright browsers for the UI journey (needs ui-deps first). `npx
 # playwright install` is a no-op when the browsers are already installed.
@@ -83,18 +83,20 @@ e2e-ui: ui-e2e-deps
 # (dev|heldout|all) · BENCH_NO_SCORE=1 (harness JSONL only). Dev runs skip
 # the heldout gate; heldout/all runs verify HELDOUT_DIR against the
 # committed manifest first (exit 2 on missing env, missing file, mismatch).
+# Host targets load repo .env first (REQ-014: scripts/load_dotenv.sh exports
+# only non-empty KEY=value lines; explicit environment always wins).
 bench:
 	@echo ">> bench: matched-budget run + scorecard (W8.5)"
-	uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
 
 bench-heldout:
 	@echo ">> bench (heldout split — private seeds from HELDOUT_DIR, Nov 3 run)"
-	@if [ -z "$(HELDOUT_DIR)" ]; then echo "heldout SHA check failed: HELDOUT_DIR not set" >&2; exit 2; fi
+	. ./scripts/load_dotenv.sh; if [ -z "$${HELDOUT_DIR:-}" ]; then echo "heldout SHA check failed: HELDOUT_DIR not set" >&2; exit 2; fi; \
 	BENCH_VISIBILITY=heldout uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
 
 demo:
 	@echo ">> demo: six steps via control API (W10)"
-	uv run python -m autobridge.bench.demo
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.demo
 
 # ---- Quality ----
 lint:

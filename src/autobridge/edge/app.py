@@ -38,7 +38,9 @@ app = FastAPI(title="AutoBridge Edge Worker")
 
 
 def _allowlist() -> list[str]:
-    raw = os.getenv("EDGE_ALLOWLIST", EDGE_POS_HOST)
+    # REQ-014: an empty/blank EDGE_ALLOWLIST counts as unset (falls back
+    # to the default host instead of yielding an empty allowlist).
+    raw = (os.getenv("EDGE_ALLOWLIST") or "").strip() or EDGE_POS_HOST
     return [h.strip() for h in raw.split(",") if h.strip()]
 
 
@@ -46,7 +48,8 @@ def _worker() -> EdgeTarget:
     return EdgeTarget(
         endpoint=os.getenv("EDGE_WORKER_ENDPOINT"),
         network_allowlist=_allowlist(),
-        timeout_s=int(os.getenv("EDGE_TIMEOUT_S", "60")),
+        # REQ-014: an empty EDGE_TIMEOUT_S counts as unset (default 60s).
+        timeout_s=int((os.getenv("EDGE_TIMEOUT_S") or "").strip() or "60"),
     )
 
 

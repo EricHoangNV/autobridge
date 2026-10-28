@@ -161,8 +161,12 @@ def spec_signature(spec: Mapping[str, Any], *, secret: str | None = None) -> str
 
 
 def default_database_url() -> str:
-    """Database URL from the environment, SQLite file by default."""
-    return os.environ.get(DATABASE_URL_ENV, DEFAULT_SQLITE_URL)
+    """Database URL from the environment, SQLite file by default.
+
+    An empty or blank DATABASE_URL counts as unset (REQ-014): an empty
+    value from `.env` must not override the default and break readyz.
+    """
+    return (os.environ.get(DATABASE_URL_ENV) or "").strip() or DEFAULT_SQLITE_URL
 
 
 def engine_from_url(url: str) -> Engine:

@@ -278,6 +278,16 @@ def edge_pos_url() -> str:
     return "http://sim-edgepos:8000"
 
 
+def e2e_timeout_seconds(default: float = 120.0) -> float:
+    """Readyz wait seconds for the e2e harness.
+
+    An empty or blank ``E2E_TIMEOUT`` counts as unset and yields the
+    default (REQ-014): an empty value from ``.env`` must not crash
+    ``float('')`` at collection.
+    """
+    return float((os.getenv("E2E_TIMEOUT") or "").strip() or str(default))
+
+
 @pytest.fixture(scope="session")
 def e2e_stack() -> str:
     """Ensure the Compose (or local, REQ-017) stack is up and readyz green.
@@ -294,7 +304,7 @@ def e2e_stack() -> str:
     local-up`` — the fixture reuses it with no Docker involvement, so
     ``make e2e`` runs the live tests against local mode too (REQ-017).
     """
-    timeout = float(os.getenv("E2E_TIMEOUT", "120"))
+    timeout = e2e_timeout_seconds()
 
     # A green stack (Compose or local processes) is reused as-is: no Docker
     # needed, nothing torn down (the owner started it).

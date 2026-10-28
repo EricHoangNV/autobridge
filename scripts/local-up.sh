@@ -23,14 +23,12 @@ LOCAL_DIR="$REPO_ROOT/.local"
 LOG_DIR="$LOCAL_DIR/logs"
 PID_DIR="$LOCAL_DIR/pids"
 
-# Load repo .env when present (tokens, model ids). Local overrides below
-# take precedence for service URLs so the stack talks over loopback.
-if [ -f "$REPO_ROOT/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "$REPO_ROOT/.env"
-  set +a
-fi
+# Load repo .env when present (tokens, model ids). Parsed as data, never
+# executed: only non-empty KEY=value lines are exported, comments and
+# inline `#` comments are ignored, and explicit environment wins (REQ-014).
+DOTENV_PATH="$REPO_ROOT/.env"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/load_dotenv.sh"
 
 mkdir -p "$LOCAL_DIR" "$LOG_DIR" "$PID_DIR"
 

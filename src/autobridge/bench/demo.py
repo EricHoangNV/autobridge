@@ -51,6 +51,16 @@ DEFAULT_SEED = 0
 CONTROL_TOKEN_ENV_VAR = "AUTOBRIDGE_CONTROL_TOKEN"
 
 
+def env_default(key: str, default: str) -> str:
+    """Env value with blank counting as unset (REQ-014).
+
+    An empty value from `.env` must not override the default (e.g. an
+    empty ``CONTROL_URL`` must not replace the localhost default, and an
+    empty ``DEMO_SEED`` must not crash ``int('')``).
+    """
+    return (os.environ.get(key) or "").strip() or default
+
+
 def control_headers() -> dict[str, str]:
     """Auth headers for control API calls (empty when no token is set)."""
     token = os.environ.get(CONTROL_TOKEN_ENV_VAR, "")
@@ -589,8 +599,8 @@ def render_text(report: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for ``make demo``."""
     parser = argparse.ArgumentParser(description="AutoBridge six-step demo (plan §6)")
-    parser.add_argument("--control-url", default=os.environ.get("CONTROL_URL", DEFAULT_CONTROL_URL))
-    parser.add_argument("--seed", type=int, default=int(os.environ.get("DEMO_SEED", str(DEFAULT_SEED))))
+    parser.add_argument("--control-url", default=env_default("CONTROL_URL", DEFAULT_CONTROL_URL))
+    parser.add_argument("--seed", type=int, default=int(env_default("DEMO_SEED", str(DEFAULT_SEED))))
     parser.add_argument("--json", action="store_true", help="Emit the report as JSON")
     args = parser.parse_args(argv)
     report = run_demo(seed=args.seed, control_url=args.control_url)
