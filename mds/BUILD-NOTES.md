@@ -821,3 +821,36 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 - `ui/app/readyz/route.ts` uses server-only `CONTROL_URL`; TopBar healthz link relabelled "System status" (href + `data-testid="topbar-healthz"` kept, tooltip reflects reachability).
 - Tests: `tests/unit/test_autobridge_ui_isolation.py` +2 (`test_ui_browser_bundle_hygiene`, compose CONTROL_URL build-arg/env assertions; banned direct-browser `:8101`/`control:8000` fetches). Playwright `test_06`: new live no-error-banner test, new served-chunk test (no `control:8000`, no `AUTOBRIDGE_CONTROL_TOKEN`), mocked approve click (`repair-action-success`), testid-based System-status assertion; de-flaked settled-state wait; live skips when stack unseeded (repairs/[id], s6 chart/graph need repairs); s6 `gotoRepair` prefers live repair id and no longer swallows `test.skip`.
 - Verified: `make up` + `make e2e-ui` 7 passed / 4 documented skips; mocked run (control down) 7 passed incl. approve; `make test` all green (1976+97+262 pytest, ui 145); lint + typecheck green.
+
+### REQ-017 — Docker-free local mode (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+Files: scripts/local-up.sh + local-down.sh (new), Makefile (local-up/down targets),
+src/autobridge/runtime/mode.py (new: AUTOBRIDGE_RUNTIME local|docker|auto,
+docker_available() honoring DOCKER_HOST, active_target_kind/resolve_target mapping
+docker_sandbox→local_process in local mode), src/autobridge/health.py
+(readyz_response info param, status codes unchanged), src/autobridge/control/app.py
++ runtime/app.py (/readyz carry runtime_mode + network_isolation; runtime also
+active_target), simulators/run.py (SIM_PUBLIC_PORT/SIM_ADMIN_PORT, 8000/8001
+defaults), scripts/smoke.sh ("skipped: local mode" when .local/ACTIVE or env),
+tests/e2e/conftest.py (e2e_stack reuses any readyz-green stack without Docker;
+is_local_mode()/edge_pos_url()), tests/e2e/test_s2_edge_target.py (local-aware
+execute URL, docker-exec negative test skipped in local mode),
+ui/components/TopBar.tsx (+test: LOCAL badge from /api/readyz, same-origin rewrite),
+README "No Docker" quickstart, docs/safety-model.md §12, .env.example
+AUTOBRIDGE_RUNTIME, .gitignore .local/.
+Decisions: execution was already in-process (isolation is the Docker network layer),
+so "uses LocalProcessTarget" = mode detection + resolve_target + honest readyz/UI
+reporting + docs; control readyz keeps 200/503 semantics (info never flips status);
+e2e_stack yield "already_up" for reused stacks (all callers only assert truthiness).
+Gotchas: ui/.next can exist empty (tmpfs mount) — build gate checks .next/BUILD_ID,
+not the dir; local-up sources .env then forces loopback URLs (ADMIN_NET_HOST unset
+so demo routes use localhost admin ports); local EDGE_ALLOWLIST adds localhost.
+Gates: make test 1993+97+266 pass (91.59/93.76/96.82%) + 147 UI; lint (import-linter
+KEPT), mypy 94 files, openapi-check green. Live (sandbox, no Docker): local-up 12/12
+readyz incl UI; smoke OK (local mode); demo 6/6 live; test_00 (8), test_02 (6),
+test_s2 (8+1 skip) live; DOCKER_HOST=unix:///nonexistent.sock acceptance cycle
+local-up && demo && local-down green, 0 stray processes. New unit tests:
+test_autobridge_runtime_mode.py (17), test_simulators_local_ports.py (4).
+Not run here: full make e2e suite + make e2e-ui (owner runs; journey spec is
+mode-agnostic, :8107 only). No heldout contact; field confirmed "no field"
+nowhere (N/A — this REQ adds no vendor surface).

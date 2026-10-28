@@ -2339,3 +2339,16 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Notes for next iteration:**
 - Next: REQ-017 (Docker-free local run) — note the rewrite build-time coupling: local mode uses dev-server runtime env, unaffected.
 - Live e2e-ui on a seeded stack (make demo) would additionally exercise repairs/[id] + s6 chart/graph; on an empty stack those 4 skip by design.
+
+## 2026-10-28 — REQ-017 done (sbx1, Docker-free local mode)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Claim 09:16, merged same day.
+What: `make local-up/down` (all 12 services as local processes, compose host ports,
+SQLite ./.local/, logs+PID files, readyz gate, startup isolation notice);
+`AUTOBRIDGE_RUNTIME` local|docker|auto with DOCKER_HOST-aware detection;
+docker_sandbox→local_process resolution in local mode; /readyz mode reporting on
+control + runtime-sandbox; UI LOCAL badge; smoke "skipped: local mode"; e2e reuses
+green stacks + local-aware edge test; README No-Docker, safety-model §12.
+Verified live in sandbox (no Docker): 12/12 readyz, smoke, demo 6/6, test_00/02/s2
+live, DOCKER_HOST=broken acceptance cycle green. Gates: 1993+97+266 unit
+(91.59/93.76/96.82%) + 147 UI; lint, mypy, openapi-check green.
+Next: REQ-014 → REQ-015 → REQ-016 (owner priority), then REQ-019 → REQ-020.
