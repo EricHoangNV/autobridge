@@ -156,3 +156,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Companion pattern that kept the rest of the suite honest: the shared compose health helper now asserts code↔body consistency (`200↔ok`, `503↔degraded`) instead of a fixed 200, so every app's readyz encodes the contract and a future regression (body says degraded, code says 200, or vice versa) fails in unit tests without a live stack.
 
 **Rule:** When an endpoint legitimately returns 5xx, scope the fuzzer's server-error exclusion to that operation and assert the degraded body explicitly; encode code↔body consistency in shared health helpers so the contract is checked for every service, not just the one you changed.
+
+## 16. A LAN-exposure switch must not cover trust-boundary ports
+
+**Context:** AR-1-4 residual (2026-10-28) — one `AUTOBRIDGE_BIND_HOST` variable governed all 15 published ports, so the LAN-demo switch also re-published the verifier and the simulator admin APIs to the whole local network.
+
+- Pin, don't parametrize, the ports that must never leave loopback: a second env var for "internal" ports would preserve the same one-variable-exposes-everything failure mode under a different name. The verifier and sim-admin mappings are now literal `127.0.0.1` with a comment citing the finding.
+- The existing loopback test accepted *either* the variable or a literal, so it could not catch the regression — the new test names the exact (service, port) pairs that must be literal, failing on any re-introduction of the variable there.
+- Scope the exception list to what the review named: vendor-facing sim ports, control and UI keep the override because a LAN demo legitimately needs them, and nothing in the stack needs the verifier/admin ports from off-host (bench uses verifier-net, smoke/e2e use localhost).
+
+**Rule:** When one environment switch widens exposure, enumerate the ports it must never cover and pin those literally with a named test — an "internal bind host" variable is just the same bug with an extra step.

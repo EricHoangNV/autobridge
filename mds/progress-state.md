@@ -2,7 +2,7 @@
 
 ## Current State
 
-AR-2-6 done (sbx1 2026-10-28): honest /readyz (503 when degraded) + worker job-store check, 6 new tests. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+AR-1-4 residual done (sbx1 2026-10-28): verifier + sim-admin ports ignore AUTOBRIDGE_BIND_HOST (literal 127.0.0.1), 1 new test. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - W1 Foundations: scaffold, compose, ConnectorSpec, schemas, DB models, jobs, evidence, LLMProvider, fakes, e2e harness base
@@ -25,13 +25,14 @@ AR-2-6 done (sbx1 2026-10-28): honest /readyz (503 when degraded) + worker job-s
   - AR-1-5: gate verdict bound to scenario/mode + spec signature recorded + fail-closed gate import, 5 new tests
   - AR-2-3: L0 cache evict(vendor,delta) + evict_patch(); reject/rollback eviction, 4 new tests
   - AR-2-6: readyz_response 503-on-degraded (control) + worker job-store check + smoke body assert, 6 new tests
-- Tests: 2295 pass / 0 fail (autobridge 92%, verifier 94%, simulators 97%) + ui 143 pass; lint + typecheck + ui-typecheck green; compose up live-verified AR-2-6 (green 200s, verifier-down 503 proof, smoke OK, test_00 8 pass), then down -v
+  - AR-1-4 residual: verifier :8104 + sim-admin :8109/:8110/:8112 pinned literal loopback, 1 new compose test
+- Tests: 2296 pass / 0 fail (autobridge 91.64%, verifier 93.76%, simulators 96.69%) + ui 143 pass; lint + typecheck + ui-typecheck green; no compose stack in sandbox (unit-covered only)
 - Stack: compose up with loopback-bound ports; all readyz green 2026-10-28
 
 ## Next tasks
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS (codeable REQ-007 flow done 2026-10-27)
-3. Code Review Cycle 2 FAIL items still open: AR-1-4 residual (bind-override exposure), AR-2-4, AR-2-5 (AR-1-1, AR-1-2, AR-1-3, AR-1-5, AR-2-1, AR-2-2, AR-2-3, AR-2-6 fixed, pending re-verification)
+3. Code Review Cycle 2 FAIL items still open: AR-2-4, AR-2-5 (AR-1-1, AR-1-2, AR-1-3, AR-1-4 residual, AR-1-5, AR-2-1, AR-2-2, AR-2-3, AR-2-6 fixed, pending re-verification)
 4. Phase 2 (owner decision 2026-10-27, PRD.MD): P2.S1.1 … P2.S7.1 DONE — Phase 2 complete
 
 ## Open Requests

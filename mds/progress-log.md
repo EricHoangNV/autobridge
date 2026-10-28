@@ -2209,3 +2209,24 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 - Remaining Cycle 2 items: AR-1-4 residual (bind-override exposure; REQ-012 done covers the token part), AR-2-4 (edge signature), AR-2-5 (floating image deps). Suggested next: AR-2-4 or AR-2-5 (both small, no compose needed).
 - FEEDBACKS.MD verdict left untouched for the reviewer to re-verify (precedent from earlier AR fixes).
 - Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+## AR-1-4 residual — verifier + sim-admin ports stay loopback-only
+**Date:** 2026-10-28
+**Ref:** Code Review Cycle 2 (FEEDBACKS.MD) — AR-1-4 residual: "bind override re-exposes verifier/sim-admin ports"
+
+**What was done:**
+- Pinned verifier :8104 and sim-admin :8109/:8110/:8112 to literal `127.0.0.1` in compose.yaml; they no longer follow AUTOBRIDGE_BIND_HOST
+- New compose unit test asserting the four (service, port) pairs bind literal loopback
+- Updated docs/architecture.md and .env.example to document the two exceptions
+
+**Key decisions:**
+- Hard pin, not a second env var: a second override would preserve the same one-variable-exposes-everything failure mode
+- Scoped to exactly the ports the review named (verifier + sim-admin); vendor-facing sim ports, control, UI keep the LAN override for demo use
+
+**Files changed:**
+- `compose.yaml` — 4 port mappings pinned to 127.0.0.1 with AR-1-4 comments
+- `tests/unit/test_autobridge_compose.py` — new `test_trust_boundary_ports_ignore_bind_override`
+- `docs/architecture.md`, `.env.example` — override-exception documentation
+
+**Notes for next iteration:**
+- Remaining Cycle 2 FAIL items: AR-2-4 (edge unkeyed signature), AR-2-5 (floating Docker deps)
+- No compose stack in sandbox: live re-verification (bind override + smoke) left to owner/CI
