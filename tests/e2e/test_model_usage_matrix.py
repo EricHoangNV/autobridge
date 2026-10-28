@@ -627,7 +627,7 @@ def _assert_semantic_climb(scenario: str, evidence_ids: list[str]) -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     SessionFactory = sessionmaker(bind=engine)
-    provider = ReplayProvider(recordings_dir=str(REPO_ROOT / "demo" / "recordings"))
+    provider = ReplayProvider(recordings_dir=str(REPO_ROOT / "tests" / "fixtures" / "replay"))
     with SessionFactory() as session:
         climb = run_frontier_climb(
             spec={"spec_version": 1, "connector": {"id": "matrix", "vendor": "harbor"}},
@@ -656,7 +656,7 @@ def _assert_semantic_climb(scenario: str, evidence_ids: list[str]) -> None:
         ]
         rows = session.query(ModelCall).order_by(ModelCall.created_at).all()
         assert len(rows) == 2
-        assert all(r.purpose.endswith("(replay)") for r in rows)
+        assert all(r.purpose.endswith("(replay test fixture)") for r in rows)
         assert sum(1 for r in rows if r.tier == "frontier") == 1
         # The verifier rejects the L3 proposal (in-process oracle, same
         # rule the live /verify enforces): invalid_patch_trap.

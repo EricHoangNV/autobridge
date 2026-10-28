@@ -303,6 +303,62 @@ def test_demo_reset_main_failure_prints_body(
 # ---------------------------------------------------------------------------
 
 
+def _drop_effects(url: str, *, after: str) -> None:
+    """Remove migration effects newer than *after* (simulates an old create_all).
+
+    ``after="0005_..."`` drops the 0006 column; ``after="0001_..."`` drops
+    everything newer (tables + columns). SQLite supports DROP COLUMN.
+    """
+    import sqlalchemy as sa
+
+    from autobridge.control.migrate import _REVISION_EFFECTS
+
+    drop_from = False
+    stmts: list[str] = []
+    for revision, effects in _REVISION_EFFECTS:
+        if revision == after:
+            drop_from = True
+            continue
+        if not drop_from:
+            continue
+        for table in effects["tables"]:
+            stmts.append(f"DROP TABLE IF EXISTS {table}")
+        for dotted in effects["columns"]:
+            table, _, column = dotted.partition(".")
+            stmts.append(f"ALTER TABLE {table} DROP COLUMN {column}")
+    with sa.create_engine(url).connect() as conn:
+        for stmt in stmts:
+            conn.exec_driver_sql(stmt)
+        conn.commit()
+
+
+def _assert_current_schema(url: str) -> None:
+    import sqlalchemy as sa
+
+    with sa.create_engine(url).connect() as conn:
+        insp = sa.inspect(conn)
+        assert "model_call_archive" in insp.get_table_names()
+        cols = [c["name"] for c in insp.get_columns("repair_runs")]
+        assert "ladder_trace" in cols
+        assert "escalation_bundle" in cols
+
+
+def _reset_and_serve_repairs(url: str) -> None:
+    client, _factory = _client_for_db_url(url)
+    try:
+        with patch("httpx.Client") as mock_c:
+            mock_c.return_value.__enter__.return_value.post.return_value = _ok_admin()
+            r = client.post("/demo/reset")
+            assert r.status_code == 200, r.text
+            assert r.json()["session_id"].startswith("demo-")
+        _assert_current_schema(url)
+        r = client.get("/repairs")
+        assert r.status_code == 200, r.text
+    finally:
+        app.dependency_overrides.clear()
+        reset_default_cache()
+
+
 def test_reset_upgrades_previous_schema_then_serves_repairs(tmp_path: pathlib.Path) -> None:
     """A database file kept across runs (pre-0005/0006) resets and serves.
 
@@ -310,11 +366,9 @@ def test_reset_upgrades_previous_schema_then_serves_repairs(tmp_path: pathlib.Pa
     migrates first, then the repair endpoints (which need ladder_trace)
     answer 200.
     """
-    import sqlalchemy as sa
     from alembic.config import Config
 
     from alembic import command
-    from autobridge.control.migrate import ensure_migrated
 
     db_file = tmp_path / "old_schema.db"
     url = f"sqlite:///{db_file}"
@@ -327,26 +381,48 @@ def test_reset_upgrades_previous_schema_then_serves_repairs(tmp_path: pathlib.Pa
     # Simulate the kept-across-runs database: back at 0004, before the
     # archive table and the repair ladder_trace column existed.
     command.downgrade(cfg, "0004_discovery_records")
+    import sqlalchemy as sa
+
     with sa.create_engine(url).connect() as conn:
         tables = sa.inspect(conn).get_table_names()
         assert "model_call_archive" not in tables
         cols = [c["name"] for c in sa.inspect(conn).get_columns("repair_runs")]
         assert "ladder_trace" not in cols
+    _reset_and_serve_repairs(url)
 
-    client, factory = _client_for_db_url(url)
-    try:
-        with patch("httpx.Client") as mock_c:
-            mock_c.return_value.__enter__.return_value.post.return_value = _ok_admin()
-            r = client.post("/demo/reset")
-            assert r.status_code == 200, r.text
-            assert r.json()["session_id"].startswith("demo-")
-        assert ensure_migrated(url) is not None
-        with sa.create_engine(url).connect() as conn:
-            assert "model_call_archive" in sa.inspect(conn).get_table_names()
-            cols = [c["name"] for c in sa.inspect(conn).get_columns("repair_runs")]
-            assert "ladder_trace" in cols
-        r = client.get("/repairs")
-        assert r.status_code == 200, r.text
-    finally:
-        app.dependency_overrides.clear()
-        reset_default_cache()
+
+def test_reset_upgrades_pre_alembic_schema(tmp_path: pathlib.Path) -> None:
+    """A create_all-built database with no version row is detected, not blind-stamped."""
+    from autobridge.control.models import Base as _Base
+
+    url = f"sqlite:///{tmp_path}/pre_alembic.db"
+    engine = create_engine(url)
+    _Base.metadata.create_all(engine)
+    engine.dispose()
+    # Simulate an older release's create_all: everything except the newest column.
+    _drop_effects(url, after="0005_model_call_archive")
+    import sqlalchemy as sa
+
+    with sa.create_engine(url).connect() as conn:
+        assert "alembic_version" not in sa.inspect(conn).get_table_names()
+    _reset_and_serve_repairs(url)
+
+
+def test_reset_repairs_lying_head_stamp(tmp_path: pathlib.Path) -> None:
+    """A database stamped at head without the columns is upgraded, not trusted."""
+    from alembic.config import Config
+
+    from alembic import command
+    from autobridge.control.models import Base as _Base
+
+    url = f"sqlite:///{tmp_path}/lying_stamp.db"
+    engine = create_engine(url)
+    _Base.metadata.create_all(engine)
+    engine.dispose()
+    _drop_effects(url, after="0005_model_call_archive")
+    root = pathlib.Path("alembic")
+    cfg = Config()
+    cfg.set_main_option("script_location", str(root.resolve()))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.stamp(cfg, "head")
+    _reset_and_serve_repairs(url)

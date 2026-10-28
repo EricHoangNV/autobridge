@@ -447,7 +447,9 @@ def rung_table_row(step: dict[str, Any]) -> str:
     frontier = int(usage.get("frontier_tokens", evidence.get("frontier_tokens", 0)) or 0)
     frontier_label = f"{frontier} frontier"
     if evidence.get("frontier_replayed"):
-        frontier_label += " (replay)"
+        frontier_label += f" ({evidence.get('replay_label') or 'replay'})"
+    if evidence.get("l3_skipped"):
+        frontier_label += "; L3 skipped, no recording"
     why = str(
         evidence.get("why_escalated")
         or evidence.get("escalation_question")
@@ -703,15 +705,18 @@ def _gross_net_hypotheses() -> list[dict[str, Any]]:
 
 
 def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[str, Any]:
-    """gross_to_net: the real L0 -> L1 -> L2 -> L3 climb, trap, escalation.
+    """gross_to_net: the real L0 -> L1 -> L2 -> L3 climb, check, escalation.
 
     The ladder consults knowledge (miss), tries deterministic rules (none
     match a semantic drift), ranks the gross/net readings with the small
     model (0.41 < 0.70: not confident), calls the frontier model — live when
-    FRONTIER_API_KEY is set, else the redacted replay — which proposes the
-    plausible-but-wrong net_amount -> total_amount patch. The proposal is
-    checked (live verifier verdict, else the documented trap predicate) and
-    rejected as invalid_patch_trap; the run escalates with one question.
+    FRONTIER_API_KEY is set, else the redacted replay — and shows whatever
+    it proposed. The proposal is checked (live verifier verdict, else the
+    documented trap predicate): the known decoy (net_amount -> total_amount)
+    is rejected as invalid_patch_trap; anything else still ends Degraded
+    with one operator question, because a semantic drift is never patched
+    without the operator. Nothing is released either way. When no provider
+    and no recording exist, L3 is labelled skipped instead of invented.
     """
     from autobridge.discovery.docs_reader import Provenance  # noqa: PLC0415
     from autobridge.discovery.hypotheses import Hypothesis  # noqa: PLC0415
@@ -743,20 +748,26 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         knowledge_cache=KnowledgeCache(),
         fingerprint_delta={"semantic": "gross_to_net"},
         vendor="harbor",
+        scenario="gross_to_net",
     )
     attempts = list(climb["attempts"])
     usage = dict(climb["usage"])
     proposal = climb["proposal"] or []
-    # The frontier's proposal must be the documented decoy: net_amount mapped
-    # to total_amount. Checked against the live verifier when reachable,
-    # else against the trap predicate (same rule the oracle encodes).
+    # Outcome assertions, not scripted answers: the climb is explicit about
+    # every rung (attempted or plainly skipped); never silent, never invented.
+    assert [a["rung"] for a in attempts[:2]] == [0, 1], f"demo climb must show L0+L1: {attempts}"
+    l3_attempts = [a for a in attempts if a["rung"] == 3]
+    l3_skipped = not l3_attempts or l3_attempts[0]["action"] != "frontier_generate"
+    assert l3_attempts or climb.get("replay_missing") or provider is None, (
+        f"demo climb must attempt or skip L3 explicitly: {attempts}"
+    )
     trapped = any(
         "net_amount" in str(op.get("value", "")) and "total_amount" in str(op.get("path", ""))
         for op in proposal
         if isinstance(op, dict)
     )
     checked_by = "trap predicate (documented oracle rule)"
-    if live:
+    if live and not l3_skipped:
         from autobridge.engine.verification import verify_spec  # noqa: PLC0415
 
         harbor_spec = _load_reference_spec("harborpms")
@@ -774,7 +785,17 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             # proves the trap; say exactly what happened instead of failing
             # the step on an environmental error.
             checked_by = f"live verifier unreachable ({exc}); trap predicate used"
-    assert trapped, f"demo decoy patch must exhibit the net_amount→total_amount trap (proposal={proposal})"
+    if l3_skipped:
+        rejection_reason = (
+            "no frontier call available (no FRONTIER_API_KEY, no replay recording); "
+            "L3 labelled skipped, semantic drift still needs the operator"
+        )
+    elif trapped:
+        rejection_reason = "total_amount must stay gross; net_amount is the decoy net"
+    else:
+        rejection_reason = (
+            f"frontier proposed {proposal or 'nothing usable'}; no verified fix, operator decides"
+        )
     bundle = escalation_for_no_fix(
         "gross_to_net: net is 10% below gross; no deterministic rule maps net_amount safely",
         evidence_ids=["sync-harbor-gross_to_net", "probe-harbor-amounts"],
@@ -784,7 +805,7 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         {
             "rung": 4,
             "action": "escalate",
-            "reason": "invalid_patch_trap: plausible-but-wrong proposal rejected; one operator question",
+            "reason": f"{'invalid_patch_trap' if trapped else 'unverified proposal'}: one operator question",
             "calls": [],
         }
     )
@@ -804,22 +825,33 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     small_cost = estimate_cost(
         "small", Usage(usage.get("small_input", 0), usage.get("small_output", 0)), model="muse-spark-1.3"
     )
+    replay_label = ""
+    if mode == "replay" and not l3_skipped:
+        captured = climb.get("replay_captured_at", "") or ""
+        if captured and not captured.startswith("synthetic"):
+            replay_label = f"replayed from a live Muse capture on {captured}"
+        else:
+            replay_label = "replayed (test capture)"
     return _finish_step(
         "Hard semantic failure — gross_to_net rejected, escalated",
         {
             "sync_outcome": "Degraded",
             "unmet_criteria": ["money_invariant"],
             "drift_class": "SEMANTIC_VALUE_DRIFT",
-            "decoy_patch_rejected": "invalid_patch_trap",
-            "rejection_reason": "total_amount must stay gross; net_amount is the decoy net",
+            "decoy_patch_rejected": "invalid_patch_trap" if trapped else "no decoy proposed",
+            "l3_proposal": proposal,
+            "rejection_reason": rejection_reason,
             "checked_by": checked_by,
             "frontier_mode": mode,
-            "frontier_replayed": mode == "replay",
+            "frontier_replayed": mode == "replay" and not l3_skipped,
+            "replay_label": replay_label,
+            "l3_skipped": l3_skipped,
             "escalation_question": bundle.question,
             "money_type": "Decimal(2dp)",
+            "release_persisted": False,
             "resolved_rung": "L4 (escalated)",
             "rung_attempts": attempts,
-            "why_escalated": "total_amount must stay gross; net_amount is the decoy net",
+            "why_escalated": rejection_reason,
             "model_usage_ledger": {
                 "calls": usage.get("calls", 0),
                 "small_tokens": usage.get("small_tokens", 0),

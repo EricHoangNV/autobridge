@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from autobridge.llm.provider import Budget, BudgetedProvider, BudgetExhausted
+from autobridge.llm.provider import Budget, BudgetedProvider, BudgetExhausted, ReplayMissing
 from autobridge.repair.context import RepairContext
 from autobridge.repair.escalation import (
     EscalationBundle,
@@ -1224,6 +1224,7 @@ def run_frontier_climb(
     extra: dict[str, Any] | None = None,
     vendor: str | None = None,
     l2_threshold: float = L2_CONFIDENCE_THRESHOLD,
+    scenario: str | None = None,
 ) -> dict[str, Any]:
     """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then stop (REQ-021).
 
@@ -1231,25 +1232,33 @@ def run_frontier_climb(
     the demonstration order the hard-semantic scenario needs: L0 consults
     learned knowledge, L1 tries deterministic rules, L2 ranks the competing
     hypotheses with the small model and continues only when the winner's
-    prior is below *l2_threshold*, L3 calls the frontier model for a novel
-    hypothesis. It returns the climb — attempts with one-line reasons, model
+    prior is below *l2_threshold*, L3 calls the frontier model for a patch
+    proposal. It returns the climb — attempts with one-line reasons, model
     usage, the L3 response text and any parsed patch proposal — and lets the
     caller validate the proposal (verifier verdict or scenario trap check)
     and escalate. No patch is ever applied here.
 
     *provider* ``None`` (``FRONTIER_MODE=off``) records an explicit skip at
-    L2/L3 instead of calling: the run says plainly that no provider was
-    configured, never silently. Every model call goes through
-    :class:`BudgetedProvider` (via the L2/L3 helpers), so ``BudgetExhausted``
-    propagates and ``ModelCall`` rows land when *session* + *run_id* are
-    given (linked to the rung by tier, see :func:`rung_ledger`).
+    L2/L3 instead of calling. A :class:`ReplayMissing` (replay mode without
+    a recording for the prompt hash) is also recorded as an explicit skip
+    naming the hash and the ``make record-frontier SCENARIO=...`` capture
+    command — never silent, never invented. Every model call goes through
+    :class:`BudgetedProvider`, so ``BudgetExhausted`` propagates and
+    ``ModelCall`` rows land when *session* + *run_id* are given (linked to
+    the rung by tier, see :func:`rung_ledger`).
     """
     from autobridge.repair.context import RepairContext  # noqa: PLC0415
     from autobridge.repair.registry import matching_rules  # noqa: PLC0415
 
+    def _record_hint() -> str:
+        name = scenario or "<scenario>"
+        return f"run make record-frontier SCENARIO={name} with FRONTIER_API_KEY to capture it"
+
     vendor_val = vendor or _extract_vendor(spec)
     attempts: list[dict[str, Any]] = []
     usage = _empty_model_usage()
+    replay_missing: list[str] = []
+    replay_captured_at = ""
 
     # --- L0: learned knowledge ---
     if knowledge_cache is not None and fingerprint_delta is not None:
@@ -1271,6 +1280,8 @@ def run_frontier_climb(
                 "proposal": None,
                 "ranked_ids": [],
                 "l2_confidence": None,
+                "replay_missing": replay_missing,
+                "replay_captured_at": replay_captured_at,
             }
         attempts.append(
             {
@@ -1331,6 +1342,8 @@ def run_frontier_climb(
             "proposal": None,
             "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
             "l2_confidence": None,
+            "replay_missing": replay_missing,
+            "replay_captured_at": replay_captured_at,
         }
     if len(ranked) >= 2:
         l2_entry: dict[str, Any] = {
@@ -1340,7 +1353,25 @@ def run_frontier_climb(
             "calls": [],
         }
         attempts.append(l2_entry)
-        ranked, delta = _call_small_model_rank(ranked, provider, budget, run_id=run_id, session=session)
+        try:
+            ranked, delta = _call_small_model_rank(ranked, provider, budget, run_id=run_id, session=session)
+        except ReplayMissing as exc:
+            replay_missing.append(exc.prompt_hash)
+            l2_entry["action"] = "l2_skipped"
+            l2_entry["reason"] = (
+                f"L2 skipped: no replay recording for prompt {exc.prompt_hash}; {_record_hint()}"
+            )
+            return {
+                "attempts": attempts,
+                "usage": usage,
+                "resolved_rung": 1,
+                "l3_text": "",
+                "proposal": None,
+                "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
+                "l2_confidence": None,
+                "replay_missing": replay_missing,
+                "replay_captured_at": replay_captured_at,
+            }
         usage = _merge_model_usage(usage, delta)
         l2_entry["ranked_ids"] = [getattr(h, "id", str(h)) for h in ranked[:5]]
         top_prior = float(getattr(ranked[0], "prior", 0.0)) if ranked else 0.0
@@ -1358,6 +1389,8 @@ def run_frontier_climb(
                 "proposal": None,
                 "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
                 "l2_confidence": l2_confidence,
+                "replay_missing": replay_missing,
+                "replay_captured_at": replay_captured_at,
             }
         l2_entry["reason"] = (
             f"L2 confidence {top_prior:.2f} < {l2_threshold:.2f}: ranking cannot decide; continuing to L3"
@@ -1394,6 +1427,8 @@ def run_frontier_climb(
             "proposal": None,
             "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
             "l2_confidence": l2_confidence,
+            "replay_missing": replay_missing,
+            "replay_captured_at": replay_captured_at,
         }
     l3_entry: dict[str, Any] = {
         "rung": 3,
@@ -1418,7 +1453,27 @@ def run_frontier_climb(
     effective: Any = provider
     if budget is not None:
         effective = BudgetedProvider(provider, budget, session=session, run_id=run_id)
-    l3_result = effective.complete(l3_messages, max_tokens=1024, tier="frontier", purpose="l3-generate-patch")
+    # Reasoning models spend most of a small max_tokens on thinking and then
+    # return an empty message (owner check): budget room for reasoning output.
+    try:
+        l3_result = effective.complete(l3_messages, max_tokens=4096, tier="frontier", purpose="l3-generate-patch")
+    except ReplayMissing as exc:
+        replay_missing.append(exc.prompt_hash)
+        l3_entry["action"] = "l3_skipped"
+        l3_entry["reason"] = (
+            f"L3 skipped: no replay recording for prompt {exc.prompt_hash}; {_record_hint()}"
+        )
+        return {
+            "attempts": attempts,
+            "usage": usage,
+            "resolved_rung": 2,
+            "l3_text": "",
+            "proposal": None,
+            "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
+            "l2_confidence": l2_confidence,
+            "replay_missing": replay_missing,
+            "replay_captured_at": replay_captured_at,
+        }
     l3_delta = {
         "frontier_tokens": l3_result.usage.total_tokens,
         "small_tokens": 0,
@@ -1443,8 +1498,16 @@ def run_frontier_climb(
         ):
             proposal = [dict(op) for op in parsed]
             l3_entry["proposal_ops"] = len(proposal)
+        elif l3_text.strip():
+            # Non-empty but unparseable: log a redacted preview so a silent
+            # empty/odd response can be diagnosed (prompts carry no secrets;
+            # truncate defense-in-depth).
+            l3_entry["raw_preview"] = l3_text.strip()[:300]
     except Exception:
         proposal = None
+        if l3_text.strip():
+            l3_entry["raw_preview"] = l3_text.strip()[:300]
+    replay_captured_at = str(getattr(provider, "last_captured_at", "") or "")
     return {
         "attempts": attempts,
         "usage": usage,
@@ -1453,4 +1516,6 @@ def run_frontier_climb(
         "proposal": proposal,
         "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
         "l2_confidence": l2_confidence,
+        "replay_missing": replay_missing,
+        "replay_captured_at": replay_captured_at,
     }

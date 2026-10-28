@@ -1,0 +1,19 @@
+{
+  "0c89d2a0aa218c117544d710e918f6f2f1c00d8ae1126c5f822eb19354f8923d": {
+    "captured_at": "synthetic-test-fixture",
+    "input_tokens": 1150,
+    "model": "muse-spark-1.3",
+    "output_tokens": 60,
+    "text": "[{\"op\": \"replace\", \"path\": \"/entities/Reservation/fields/total_amount/path\", \"value\": \"$.net_amount\"}]",
+    "tool_calls": []
+  },
+  "6048096586f540100d8b97cf0ab4a3e168f14a55878dbd7719c54f46f1a78bb4": {
+    "captured_at": "synthetic-test-fixture",
+    "input_tokens": 96,
+    "model": "muse-spark-1.3",
+    "output_tokens": 12,
+    "text": "[\"gross_is_canonical\", \"net_is_canonical\"]",
+    "tool_calls": []
+  },
+  "_note": "Synthetic test fixture for the gross_to_net climb (replay mechanics only). Mirrors the shape of a make record-frontier capture; never shown as a model capture (labelled test fixture everywhere)."
+}

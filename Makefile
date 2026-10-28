@@ -102,6 +102,11 @@ demo-reset:
 	@echo ">> demo-reset: full reset to a known first-run state (REQ-021 item 1)"
 	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.demo_reset
 
+record-frontier:
+	@echo ">> record-frontier: capture a live frontier climb (REQ-021 item 5; needs FRONTIER_API_KEY)"
+	@if [ -z "$${SCENARIO:-}" ]; then echo "record-frontier: SCENARIO is required (make record-frontier SCENARIO=gross_to_net)" >&2; exit 2; fi
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.record_frontier "$${SCENARIO}"
+
 # ---- Quality ----
 lint:
 	uv run --extra dev ruff check .

@@ -59,6 +59,10 @@ class Completion:
     #: model (REQ-021 item 5). The UI and ``make demo`` label these calls;
     #: :class:`BudgetedProvider` marks their ledger purpose accordingly.
     replayed: bool = False
+    #: Capture date of the replay recording (``YYYY-MM-DD``, or
+    #: ``"synthetic-test-fixture"``). Shown in replay labels so a stand-in is
+    #: never presented as a model capture.
+    captured_at: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -316,8 +320,14 @@ class BudgetedProvider:
         # Ledger side-effect (best-effort; budget violation still propagates).
         if self.session is not None and self.run_id is not None:
             ledger_purpose = purpose
-            if result.replayed and "(replay)" not in ledger_purpose:
-                ledger_purpose = f"{ledger_purpose} (replay)"
+            if result.replayed and "(replay" not in ledger_purpose:
+                captured = (result.captured_at or "").strip()
+                if captured.startswith("synthetic"):
+                    ledger_purpose = f"{ledger_purpose} (replay test fixture)"
+                elif captured:
+                    ledger_purpose = f"{ledger_purpose} (replay {captured})"
+                else:
+                    ledger_purpose = f"{ledger_purpose} (replay)"
             record_model_call(
                 self.session,
                 run_id=self.run_id,
@@ -696,7 +706,13 @@ def _recording_to_completion(entry: dict[str, Any]) -> Completion:
         input_tokens=int(entry.get("input_tokens", 0) or 0),
         output_tokens=int(entry.get("output_tokens", 0) or 0),
     )
-    return Completion(text=str(entry.get("text", "")), tool_calls=tool_calls, usage=usage, replayed=True)
+    return Completion(
+        text=str(entry.get("text", "")),
+        tool_calls=tool_calls,
+        usage=usage,
+        replayed=True,
+        captured_at=str(entry.get("captured_at", "") or ""),
+    )
 
 
 class ReplayProvider:
@@ -734,6 +750,10 @@ class ReplayProvider:
         self.frontier_model = frontier_model or default_frontier_model()
         self.small_model = small_model or default_small_model()
         self._recordings: dict[str, dict[str, Any]] | None = None
+        #: Capture date of the last served recording ("", a date, or
+        #: "synthetic-test-fixture"). Lets callers label replay output.
+        self.last_captured_at: str = ""
+        self.last_prompt_hash: str = ""
 
     def model_for_tier(self, tier: str) -> str:
         if tier == "frontier":
@@ -777,7 +797,10 @@ class ReplayProvider:
         entry = self._load().get(key)
         if entry is None:
             raise ReplayMissing(key, self.recordings_dir or "(no recordings dir)")
-        return _recording_to_completion(entry)
+        out = _recording_to_completion(entry)
+        self.last_captured_at = str(entry.get("captured_at", "") or "")
+        self.last_prompt_hash = key
+        return out
 
 
 def resolve_frontier_provider() -> tuple[Any, str]:

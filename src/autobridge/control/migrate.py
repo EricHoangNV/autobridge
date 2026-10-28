@@ -65,18 +65,76 @@ def _has_full_schema(url: str) -> bool:
         engine.dispose()
     expected = {t for t in Base.metadata.tables if t != "alembic_version"}
     return expected <= present
-    from sqlalchemy import create_engine, text  # noqa: PLC0415
+
+
+#: What each migration revision adds, oldest first (must mirror
+#: ``alembic/versions/``). Used to detect the schema an unversioned database
+#: actually has: stamp the newest satisfied prefix, then upgrade head.
+#: Never stamp head blindly — a create_all-built database from an older
+#: release has tables but lacks newer columns (owner check, REQ-021).
+_REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
+    (
+        "0001_core_data_model",
+        {
+            "tables": [
+                "connectors",
+                "build_runs",
+                "repair_runs",
+                "connector_releases",
+                "sync_runs",
+                "drift_events",
+                "approvals",
+                "evidence_records",
+                "model_calls",
+                "dependency_registrations",
+            ],
+            "columns": [],
+        },
+    ),
+    ("0002_job_queue", {"tables": ["jobs"], "columns": []}),
+    ("0003_escalation_bundle", {"tables": [], "columns": ["repair_runs.escalation_bundle"]}),
+    ("0004_discovery_records", {"tables": ["discovery_records"], "columns": []}),
+    ("0005_model_call_archive", {"tables": ["model_call_archive"], "columns": []}),
+    ("0006_repair_ladder_trace", {"tables": [], "columns": ["repair_runs.ladder_trace"]}),
+)
+
+
+def _detect_revision(url: str) -> str | None:
+    """Newest revision whose effects all exist in the database.
+
+    ``"base"`` when even 0001's tables are missing (empty database), ``None``
+    only when inspection itself fails.
+    """
+    from sqlalchemy import create_engine, inspect  # noqa: PLC0415
 
     engine = create_engine(url)
     try:
         with engine.connect() as conn:
-            try:
-                row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
-            except Exception:
-                return None  # no version table: pre-alembic or empty database
-            return str(row[0]) if row else None
+            insp = inspect(conn)
+            tables = set(insp.get_table_names())
+            columns: dict[str, set[str]] = {}
+            for table in tables:
+                try:
+                    columns[table] = {c["name"] for c in insp.get_columns(table)}
+                except Exception:
+                    columns[table] = set()
+    except Exception:
+        return None
     finally:
         engine.dispose()
+    detected: str | None = "base"
+    for revision, effects in _REVISION_EFFECTS:
+        tables_ok = all(t in tables for t in effects["tables"])
+        cols_ok = True
+        for dotted in effects["columns"]:
+            table, _, column = dotted.partition(".")
+            if column not in columns.get(table, set()):
+                cols_ok = False
+                break
+        if not (tables_ok and cols_ok):
+            break
+        detected = revision
+    return detected
 
 
 def ensure_migrated(engine_or_url: Any = None) -> str:
@@ -115,10 +173,19 @@ def ensure_migrated(engine_or_url: Any = None) -> str:
     if _ensured.get(url) == head and _current_version(url) == head:
         return head
     current = _current_version(url)
-    if current is None and _has_full_schema(url):
-        # Adopted database (create_all-built, no version row): stamp head
-        # instead of re-creating tables.
-        command.stamp(cfg, head)
+    if current == head and _detect_revision(url) != head:
+        # The version row lies (stamped head, schema older): fall through
+        # and repair by detection instead of trusting it.
+        current = None
+    if current is None:
+        # Unversioned database: detect the schema it actually has and stamp
+        # that revision — never head blindly (a create_all-built database
+        # from an older release lacks newer columns; stamping head would
+        # skip their migrations and 500 later). Then upgrade applies the rest.
+        detected = _detect_revision(url)
+        if detected is None:
+            raise RuntimeError(f"cannot inspect database schema at {url}")
+        command.stamp(cfg, detected)
         current = _current_version(url)
     if current != head:
         command.upgrade(cfg, "head")

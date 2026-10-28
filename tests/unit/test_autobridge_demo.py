@@ -9,8 +9,11 @@ helpers, never with real network.
 from __future__ import annotations
 
 import json
+import pathlib
 from decimal import Decimal
 from typing import Any
+
+import pytest
 
 from autobridge.bench import demo as demo_mod
 from autobridge.bench.demo import (
@@ -25,6 +28,18 @@ from autobridge.bench.demo import (
     step5_head_to_head,
     step6_reproducibility,
 )
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def _no_live_frontier(monkeypatch: Any, tmp_path: Any) -> None:
+    """Unit tests never spend a real frontier key: force replay with an
+    empty recordings dir (L3 skips plainly) unless a test opts into the
+    fixtures capture."""
+    monkeypatch.setenv("FRONTIER_MODE", "replay")
+    monkeypatch.setenv("REPLAY_DIR", str(tmp_path / "no-recordings"))
+    monkeypatch.delenv("FRONTIER_API_KEY", raising=False)
 
 
 def test_run_demo_all_six_steps_ok_offline() -> None:
@@ -69,7 +84,8 @@ def test_step3_l1_patch_frontier_zero() -> None:
     assert any(op["path"].endswith("/strategy") and op["value"] == "cursor" for op in ev["patch"])
 
 
-def test_step4_decoy_rejected_escalation_single_question() -> None:
+def test_step4_decoy_rejected_escalation_single_question(monkeypatch: Any) -> None:
+    monkeypatch.setenv("REPLAY_DIR", str(REPO_ROOT / "tests" / "fixtures" / "replay"))
     step = step4_hard_semantic_failure(0, False, "http://localhost:9")
     ev = step["evidence"]
     assert ev["sync_outcome"] == "Degraded"
@@ -77,6 +93,24 @@ def test_step4_decoy_rejected_escalation_single_question() -> None:
     assert ev["decoy_patch_rejected"] == "invalid_patch_trap"
     assert isinstance(ev["escalation_question"], str) and ev["escalation_question"]
     assert ev["money_type"] == "Decimal(2dp)"
+    assert ev["l3_skipped"] is False
+    assert [a["rung"] for a in ev["rung_attempts"]] == [0, 1, 2, 3, 4]
+
+
+def test_step4_without_recording_labels_l3_skipped(monkeypatch: Any, tmp_path: Any) -> None:
+    """No key + no recording: L3 is labelled skipped, never invented."""
+    monkeypatch.setenv("REPLAY_DIR", str(tmp_path / "empty"))
+    monkeypatch.delenv("FRONTIER_API_KEY", raising=False)
+    step = step4_hard_semantic_failure(0, False, "http://localhost:9")
+    assert step["status"] == "ok", step
+    ev = step["evidence"]
+    assert ev["l3_skipped"] is True
+    assert ev["l3_proposal"] == []
+    assert ev["frontier_replayed"] is False
+    assert ev["model_usage_ledger"]["frontier_tokens"] == 0
+    assert ev["resolved_rung"] == "L4 (escalated)"
+    assert isinstance(ev["escalation_question"], str) and ev["escalation_question"].endswith("?")
+    assert ev["release_persisted"] is False
 
 
 def test_step5_scorecard_shape() -> None:
@@ -367,13 +401,15 @@ def test_main_exits_nonzero_when_write_fails(monkeypatch: Any, capsys: Any) -> N
     assert "FAILED" in capsys.readouterr().out
 
 
-def test_only_hard_semantic_step_uses_frontier() -> None:
+def test_only_hard_semantic_step_uses_frontier(monkeypatch: Any) -> None:
     """REQ-021 item 4: the frontier fires only when cheaper rungs cannot.
 
-    Every main-script step except the hard semantic failure resolves with
-    0 frontier tokens; that step climbs L0 -> L1 -> L2 -> L3 (replayed) and
-    escalates after the trap rejects the L3 proposal.
+    With a replay capture present, the hard semantic step climbs
+    L0 -> L1 -> L2 -> L3 (replayed) and escalates after the trap rejects the
+    L3 proposal; every other main-script step resolves with 0 frontier
+    tokens. Without a capture the step labels L3 skipped and still uses 0.
     """
+    monkeypatch.setenv("REPLAY_DIR", str(REPO_ROOT / "tests" / "fixtures" / "replay"))
     report = run_demo(seed=0, control_url="http://localhost:9")
     assert report["failed"] == 0
     for step in report["steps"]:
@@ -383,8 +419,23 @@ def test_only_hard_semantic_step_uses_frontier() -> None:
         if "Hard semantic failure" in step["name"]:
             assert frontier > 0, step
             assert ev["frontier_replayed"] is True
-            assert ev["frontier_mode"] == "replay"
+            assert ev["replay_label"] == "replayed (test capture)"
+            assert ev["l3_skipped"] is False
             assert [a["rung"] for a in ev["rung_attempts"]] == [0, 1, 2, 3, 4]
             assert ev["resolved_rung"] == "L4 (escalated)"
         else:
             assert frontier == 0, step
+
+
+def test_demo_without_recording_skips_l3_with_zero_frontier(monkeypatch: Any, tmp_path: Any) -> None:
+    monkeypatch.setenv("REPLAY_DIR", str(tmp_path / "empty"))
+    monkeypatch.delenv("FRONTIER_API_KEY", raising=False)
+    report = run_demo(seed=0, control_url="http://localhost:9")
+    assert report["failed"] == 0
+    for step in report["steps"]:
+        ev = step["evidence"]
+        usage = ev.get("model_usage_ledger", {}) if isinstance(ev.get("model_usage_ledger"), dict) else {}
+        assert int(usage.get("frontier_tokens", 0) or 0) == 0, step
+        if "Hard semantic failure" in step["name"]:
+            assert ev["l3_skipped"] is True
+            assert "no replay recording" in ev["why_escalated"]

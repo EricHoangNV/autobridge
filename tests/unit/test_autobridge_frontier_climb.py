@@ -87,7 +87,7 @@ def test_prompt_hash_stable() -> None:
 
 
 def test_replay_hit_returns_replayed_completion() -> None:
-    p = ReplayProvider(recordings_dir=str(REPO_ROOT / "demo" / "recordings"))
+    p = ReplayProvider(recordings_dir=str(REPO_ROOT / "tests" / "fixtures" / "replay"))
     assert p.model_for_tier("frontier") == "muse-spark-1.3"
     l2 = [
         {"role": "system", "content": "You are a deterministic hypothesis ranker. Rank hypotheses by prior and evidence. Return JSON list of hypothesis ids in ranked order."},
@@ -111,17 +111,17 @@ def test_replay_purpose_labelled_in_ledger(tmp_path: pathlib.Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path}/replay.db")
     Base.metadata.create_all(engine)
     factory = session_factory(engine)
-    p = ReplayProvider(recordings_dir=str(REPO_ROOT / "demo" / "recordings"))
+    p = ReplayProvider(recordings_dir=str(REPO_ROOT / "tests" / "fixtures" / "replay"))
     l2 = [
         {"role": "system", "content": "You are a deterministic hypothesis ranker. Rank hypotheses by prior and evidence. Return JSON list of hypothesis ids in ranked order."},
         {"role": "user", "content": "hypotheses: ['gross_is_canonical', 'net_is_canonical']; priors: [0.41, 0.39]"},
     ]
     with factory() as s:
-        budgeted = BudgetedProvider(ReplayProvider(recordings_dir=str(REPO_ROOT / "demo" / "recordings")), Budget(), session=s, run_id="run-1")
+        budgeted = BudgetedProvider(ReplayProvider(recordings_dir=str(REPO_ROOT / "tests" / "fixtures" / "replay")), Budget(), session=s, run_id="run-1")
         budgeted.complete(l2, tier="small", purpose="l2-rank-hypotheses")
         s.commit()
         row = s.query(ModelCall).one()
-        assert row.purpose == "l2-rank-hypotheses (replay)"
+        assert row.purpose == "l2-rank-hypotheses (replay test fixture)"
         assert row.provider == "ReplayProvider"
         assert (row.input_tokens, row.output_tokens) == (96, 12)
         assert row.cost_estimate == estimate_cost("small", Usage(96, 12), model=row.model)
@@ -181,7 +181,7 @@ def test_climb_records_l0_to_l3_then_proposes_decoy(tmp_path: pathlib.Path) -> N
     engine = create_engine(f"sqlite:///{tmp_path}/climb.db")
     Base.metadata.create_all(engine)
     factory = session_factory(engine)
-    provider = ReplayProvider(recordings_dir=str(REPO_ROOT / "demo" / "recordings"))
+    provider = ReplayProvider(recordings_dir=str(REPO_ROOT / "tests" / "fixtures" / "replay"))
     with factory() as s:
         climb = run_frontier_climb(
             spec=_spec(),
@@ -210,8 +210,8 @@ def test_climb_records_l0_to_l3_then_proposes_decoy(tmp_path: pathlib.Path) -> N
         ]
         rows = s.query(ModelCall).order_by(ModelCall.created_at).all()
         assert len(rows) == 2
-        assert rows[0].purpose == "l2-rank-hypotheses (replay)"
-        assert rows[1].purpose == "l3-generate-patch (replay)"
+        assert rows[0].purpose == "l2-rank-hypotheses (replay test fixture)"
+        assert rows[1].purpose == "l3-generate-patch (replay test fixture)"
         assert rows[1].tier == "frontier"
         assert rows[1].cost_estimate == estimate_cost("frontier", Usage(1150, 60), model=rows[1].model)
         assert rows[1].cost_estimate > Decimal("0")
@@ -264,3 +264,39 @@ def test_climb_confident_l2_needs_no_frontier() -> None:
 
 def test_l2_threshold_default() -> None:
     assert L2_CONFIDENCE_THRESHOLD == 0.70
+
+
+# ---------------------------------------------------------------------------
+# record-frontier (capture script)
+# ---------------------------------------------------------------------------
+
+
+def test_record_frontier_requires_key(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    from autobridge.bench.record_frontier import record_scenario
+
+    monkeypatch.delenv("FRONTIER_API_KEY", raising=False)
+    with pytest.raises(SystemExit, match="FRONTIER_API_KEY"):
+        record_scenario("gross_to_net", tmp_path)
+
+
+def test_record_frontier_rejects_unknown_scenario(tmp_path: pathlib.Path) -> None:
+    from autobridge.bench.record_frontier import record_scenario
+
+    with pytest.raises(SystemExit, match="unknown SCENARIO"):
+        record_scenario("nope", tmp_path)
+
+
+def test_tapping_provider_records_shape() -> None:
+    from autobridge.bench.record_frontier import TappingProvider
+
+    fake = FakeProvider(
+        responses={"default": Completion(text='[{"op": "replace"}]', usage=Usage(10, 20))}
+    )
+    tap = TappingProvider(fake, model="muse-spark-1.3")
+    out = tap.complete([{"role": "user", "content": "hi"}], tier="frontier", purpose="p")
+    assert out.text == '[{"op": "replace"}]'
+    key = prompt_hash([{"role": "user", "content": "hi"}])
+    entry = tap.recordings[key]
+    assert entry["model"] == "muse-spark-1.3"
+    assert (entry["input_tokens"], entry["output_tokens"]) == (10, 20)
+    assert entry["captured_at"]
