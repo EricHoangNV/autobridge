@@ -20,12 +20,13 @@ REQ-020 sub-step 5b done (sbx1 2026-10-28): discovery proposes v2 from docs (rea
   - AR-2-1 … AR-2-6 + AR-1-1 … AR-1-5 (residual) all code-fixed (Cycle 2 re-verification pending owner)
   - REQ-020 sub-step A done (sbx1 2026-10-28): sim-meridian (POST/JSON, body auth, Limitation cursor, customers/orderItems/configuration) + meridian-openapi.yaml + guides-first portal + compose/local/smoke wiring + vocabulary_guard before-refusal (item 4, generally) + e2e before-pin (live green)
   - REQ-020 sub-step 5a done (sbx1 2026-10-28): spec v2 + runtime + live e2e proof (POST + body template, body_fields auth, body_cursor, short_page stop; v1 docs still validate)
-  - REQ-020 sub-step 5b done (sbx1 2026-10-28): discovery proposes v2 (this entry)
-- Tests: 2458 pass / 0 fail (autobridge 2071, verifier 97, simulators 290) + ui 148 pass; 90% gates green (91.55 / 93.78 / 96.08); lint + typecheck green; e2e test_04 (15) + meridian_before (2) green in-process
+  - REQ-020 sub-step 5b done (sbx1 2026-10-28): discovery proposes v2
+  - REQ-020 sub-step 5c done (sbx1 2026-10-28): declarative joins (this entry)
+- Tests: 2482 pass / 0 fail (autobridge 2095, verifier 97, simulators 290) + ui 148 pass; 90% gates green (91 / 94 / 96); lint + typecheck green; e2e test_04 (15) + meridian_before (2) green in-process
 - Stack: Docker available in this sandbox: sim-meridian live verified (before-refusal + v2 cursor walk + Decimal money + 403-no-leak)
 
 ## Next tasks
-0. **REQ-020** — [>] IN PROGRESS sbx1 (sub-steps A + 5a + 5b merged; remaining: 5c joins, 6 faults+after, 7 demo)
+0. **REQ-020** — [>] IN PROGRESS sbx1 (sub-steps A + 5a + 5b + 5c merged; remaining: 6 faults+after, 7 demo)
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS (codeable REQ-007 flow done 2026-10-27)
 3. Code Review Cycle 2 re-verification (all FAIL items code-fixed)

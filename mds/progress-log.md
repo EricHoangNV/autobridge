@@ -2479,3 +2479,6 @@ Did: docs_reader requestBody/allOf + body_fields auth + body-cursor/items signal
 Result: same Meridian docs refuse under v1 (pinned) and compile under v2 with 0 model calls (spec_version 2, 4 POST ops, guards green, validates). Joins + v2 repair rules + bootstrap-gate deferred to 5c/6 (fallbacks validate honestly).
 Checks: targeted 342 pass; e2e test_04 (15) + meridian_before (2) in-process green; `make test` green (2071/91.55%, 97/93.78%, 290/96.08%, ui 148); lint + typecheck green; no-meridian-in-engine green.
 Next: 5c joins (customer name, order-item money sums, UTC→enterprise-tz business dates) + verifier oracle/canonical mapping.
+
+### 2026-10-28 REQ-020 sub-step 5c — joins done (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Declarative joins shipped: spec models (v2-gated) + runtime/joins.py + sync/monitor wiring + discovery proposal from docs + schema regen + §12 docs. Discovered Meridian spec now syncs Complete live (names via customers, totals via summed order items, Decimal end to end). Full make test green (2095/91% + 97/94% + 290/96% + ui 148); lint + typecheck green. Remaining for REQ-020: 6 (bootstrap-then-verify gate + ≥2 fault scenarios + bench note), 7 (demo step + docs/demo.md).
