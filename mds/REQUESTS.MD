@@ -24,7 +24,7 @@ Wanted:
 Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
 
 ### REQ-009 — Clean clone: `make test` and `make e2e-ui` fail without `ui/node_modules` (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 03:21)
 Found by a fresh GitHub clone of f516bc0, following the README (`cp .env.example .env`, then make targets).
 - `make test`: 1 failed, 1878 passed. `test_ui_client_compiles` runs `npm run typecheck` in `ui/`, and a fresh clone
   has no `ui/node_modules`. The UI's Vitest run was skipped for the same reason.
