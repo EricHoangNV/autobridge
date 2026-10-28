@@ -231,6 +231,17 @@ unreachable handling, `regression_suite` forwarding, `create_release` and
 `oracle_verdict` check that the trap spec is rejected and a wrong pagination
 spec fails `pagination_shape`.
 
+Build path, same rule (AR-1-2): `run_build_handler` passes its
+`verifier_url`/`scenario_id` into `create_release`, so a build candidate is
+also verified before persisting. A blocked or unreachable verifier raises
+`GateBlockedError` and **no release is persisted** — the draft spec stays on
+the `BuildRun` (`verified: false`, `gate_blocked` reason) but there is
+nothing to approve or sync. `compose.yaml` sets
+`VERIFIER_URL=http://verifier:8000` on `control` (which has a
+`verifier-net` route); the `worker` deliberately has none (engine-net only,
+no verifier route). Sync additionally refuses to fall back to the latest
+unapproved release: with no active release it returns 422.
+
 ## 8. Five scenarios wired end to end (P1.W6.2)
 
 The safety net proves that semantic and transport drift are distinguished

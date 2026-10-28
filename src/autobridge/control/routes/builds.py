@@ -174,15 +174,10 @@ def trigger_sync(connector_id: str, body: SyncRequest, db: Session = Depends(get
 
     release_id = body.release_id or conn.active_release_id
     if not release_id:
-        # Fallback: latest release for connector
-        from sqlalchemy import select as _select
-
-        rel = db.execute(
-            _select(ConnectorRelease).where(ConnectorRelease.connector_id == connector_id).order_by(ConnectorRelease.version.desc()).limit(1)
-        ).scalars().first()
-        if rel is None:
-            raise HTTPException(status_code=422, detail="connector has no releases to sync")
-        release_id = rel.id
+        # AR-1-2: no fallback to the latest release. The latest release may
+        # be an unapproved (or gate-blocked) candidate that must never
+        # execute. Sync requires an explicitly chosen or activated release.
+        raise HTTPException(status_code=422, detail="connector has no active release to sync (sync requires an approved, active release)")
 
     # Validate release exists and belongs to connector
     rel_obj = db.get(ConnectorRelease, release_id)

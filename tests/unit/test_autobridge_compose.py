@@ -280,3 +280,16 @@ def test_makefile_up_waits_on_readyz() -> None:
 def test_makefile_smoke_runs_stack_smoke() -> None:
     text = (ROOT / "Makefile").read_text(encoding="utf-8")
     assert "smoke.sh" in text
+
+
+def test_control_has_default_verifier_url(compose: dict) -> None:
+    """AR-1-2: control verifies builds before persisting (has verifier-net route)."""
+    env = compose["services"]["control"].get("environment") or {}
+    assert env.get("VERIFIER_URL") == "${VERIFIER_URL:-http://verifier:8000}"
+
+
+def test_worker_has_no_verifier_url(compose: dict) -> None:
+    """AR-1-2: worker is engine-net only with no verifier route, so it must
+    not be configured with a verifier URL that could never resolve."""
+    env = compose["services"]["worker"].get("environment") or {}
+    assert "VERIFIER_URL" not in env

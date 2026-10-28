@@ -576,3 +576,70 @@ def test_bench_scorecards_structure(client: Any) -> None:  # type: ignore[no-unt
     assert "scorecards" in data
     assert "total" in data
     assert isinstance(data["scorecards"], list)
+
+
+# ---------------------------------------------------------------------------
+# AR-1-2: unverified candidates persist nothing activatable; sync has no
+# fallback to unapproved releases.
+# ---------------------------------------------------------------------------
+
+
+def _mock_verifier_fail(monkeypatch: Any) -> None:  # type: ignore[no-untyped-def]
+    """Fail every verifier HTTP call (visible check + gate) with a fail verdict."""
+    import httpx
+
+    real_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        return httpx.Response(
+            200,
+            json={
+                "verdict": "fail",
+                "score": 0.0,
+                "failed_checks": [{"name": "field_missing", "count": 1}],
+                "regression": "pass",
+                "scenario_id": "baseline",
+                "mode": "visible",
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    class FakeClient:
+        def __init__(self, *a: Any, **kw: Any) -> None:  # noqa: ARG001, ARG002
+            self._client = real_client(transport=transport)
+
+        def __enter__(self) -> Any:  # type: ignore[no-untyped-def]
+            return self._client
+
+        def __exit__(self, *a: Any) -> None:  # noqa: ARG001, ARG002
+            self._client.close()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+
+
+def test_build_gate_blocked_persists_no_activatable_release(client: Any, monkeypatch: Any) -> None:  # type: ignore[no-untyped-def]
+    c = _create_connector(client, base_url="http://sim-harbor:8000")
+    _mock_verifier_fail(monkeypatch)
+    docs = "# HarborPMS API\n\nBase URL: http://sim-harbor:8000\n\nGET /reservations\nQuery: offset, limit\n\nGET /folios\nQuery: offset, limit\n"
+    r = client.post(f"/connectors/{c['id']}/build", json={"docs_text": docs, "verifier_url": "http://verifier:8000", "scenario_id": "baseline"})
+    assert r.status_code == 200, r.text
+    # Gate blocked: no release persisted, so nothing exists to approve or sync
+    rels = client.get(f"/releases?connector_id={c['id']}").json()
+    assert rels == []
+    r2 = client.post(f"/connectors/{c['id']}/sync", json={})
+    assert r2.status_code == 422
+    assert "no active release" in r2.text
+
+
+def test_sync_without_active_release_is_422(client: Any) -> None:  # type: ignore[no-untyped-def]
+    c = _create_connector(client, base_url="http://sim-harbor:8000")
+    docs = "# HarborPMS API\n\nBase URL: http://sim-harbor:8000\n\nGET /reservations\n\nGET /folios\n"
+    br = client.post(f"/connectors/{c['id']}/build", json={"docs_text": docs})
+    assert br.status_code == 200
+    rels = client.get(f"/releases?connector_id={c['id']}").json()
+    assert len(rels) >= 1  # candidate exists but was never approved/activated
+    # No fallback to the latest unapproved release: sync needs an active release
+    r = client.post(f"/connectors/{c['id']}/sync", json={})
+    assert r.status_code == 422
+    assert "no active release" in r.text

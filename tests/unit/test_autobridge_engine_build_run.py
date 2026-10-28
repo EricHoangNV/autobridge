@@ -255,3 +255,106 @@ def test_execute_build_guard_reference_source() -> None:
     out = execute_build(HARBOR_MD, source="generated/connectors/harborpms/reference/spec.yaml")
     # Guard should make it fail gracefully, not crash
     assert isinstance(out, dict)
+
+
+# ---------------------------------------------------------------------------
+# AR-1-2: gate-before-persist on the build path
+# ---------------------------------------------------------------------------
+
+
+def _mock_gate(monkeypatch: pytest.MonkeyPatch, *, blocked: bool, capture: dict | None = None) -> None:  # type: ignore[no-untyped-def]
+    """Fake the verifier gate at verify_spec level (no HTTP).
+
+    When blocked, the gate raises GateBlockedError exactly as an
+    unreachable verifier or a fail verdict would through ensure_gate_passes.
+    """
+    import autobridge.engine.verification as v
+
+    def fake_pass(spec: dict, scenario_id: str, verifier_url: str | None, **kw: object) -> object:  # noqa: ARG001  # type: ignore[no-untyped-def]
+        if capture is not None:
+            capture["scenario_id"] = scenario_id
+            capture["verifier_url"] = verifier_url
+        return v.GateOutcome(
+            verdict="pass",
+            regression="pass",
+            score=1.0,
+            failed_checks=[],
+            regression_failures=None,
+            scenario_id=scenario_id,
+            raw={},
+            allowed=True,
+        )
+
+    def fake_blocked(spec: dict, scenario_id: str, verifier_url: str | None, **kw: object) -> object:  # noqa: ARG001  # type: ignore[no-untyped-def]
+        raise v.GateBlockedError(f"verifier blocked for {scenario_id}")
+
+    monkeypatch.setattr(v, "verify_spec", fake_blocked if blocked else fake_pass)
+
+
+def test_run_build_handler_gate_blocked_persists_no_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """Failing verifier: build succeeds (draft kept) but NO release persists."""
+    _mock_gate(monkeypatch, blocked=True)
+    SessionLocal, engine = _sessions(tmp_path)
+    cid = _connector_id(SessionLocal)
+    runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
+    runner.submit_build(
+        cid,
+        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "verifier_url": "http://verifier:8000", "scenario_id": "baseline"},
+    )
+    runner.run_until_empty()
+    with SessionLocal() as s:
+        br = s.query(BuildRun).first()
+        assert br is not None
+        assert br.state == "succeeded"
+        assert br.result["success"] is True  # draft spec produced
+        assert br.result["verified"] is False
+        assert "gate_blocked" in br.result
+        assert br.result.get("release_id") is None
+        assert s.query(ConnectorRelease).count() == 0
+    engine.dispose()
+
+
+def test_run_build_handler_gate_unreachable_persists_no_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """Unreachable verifier (no mock HTTP at all): same quarantine as a fail."""
+    _mock_gate(monkeypatch, blocked=True)
+    SessionLocal, engine = _sessions(tmp_path)
+    cid = _connector_id(SessionLocal)
+    runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
+    runner.submit_build(
+        cid,
+        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "verifier_url": "http://verifier-down:9999", "scenario_id": "baseline"},
+    )
+    runner.run_until_empty()
+    with SessionLocal() as s:
+        br = s.query(BuildRun).first()
+        assert br is not None
+        assert br.result["success"] is True
+        assert br.result["verified"] is False
+        assert br.result.get("release_id") is None
+        assert s.query(ConnectorRelease).count() == 0
+    engine.dispose()
+
+
+def test_run_build_handler_gate_pass_persists_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """Passing gate: release persists and the gate saw the build scenario."""
+    capture: dict = {}
+    _mock_gate(monkeypatch, blocked=False, capture=capture)
+    SessionLocal, engine = _sessions(tmp_path)
+    cid = _connector_id(SessionLocal)
+    runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
+    runner.submit_build(
+        cid,
+        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "verifier_url": "http://verifier:8000", "scenario_id": "baseline"},
+    )
+    runner.run_until_empty()
+    with SessionLocal() as s:
+        br = s.query(BuildRun).first()
+        assert br is not None
+        assert br.result["verified"] is True
+        assert br.result["release_id"]
+        rel = s.get(ConnectorRelease, br.result["release_id"])
+        assert rel is not None
+    # Gate-before-persist was actually invoked with the build's scenario
+    assert capture.get("scenario_id") == "baseline"
+    assert capture.get("verifier_url") == "http://verifier:8000"
+    engine.dispose()

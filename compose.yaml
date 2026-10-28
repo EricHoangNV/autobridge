@@ -38,6 +38,10 @@ services:
       AUTOBRIDGE_OPERATOR: ${AUTOBRIDGE_OPERATOR:-operator}
       AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
       SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+      # AR-1-2: builds executed inline by control verify the candidate spec
+      # before persisting (gate-before-persist). Control has a verifier-net
+      # route, so this default works on the stock stack.
+      VERIFIER_URL: ${VERIFIER_URL:-http://verifier:8000}
     networks:
       - engine-net
       - verifier-net
@@ -52,6 +56,11 @@ services:
       dockerfile: Dockerfile.engine
     environment:
       APP_MODULE: autobridge.engine.app:app
+      # NOTE (AR-1-2): no VERIFIER_URL here on purpose. The worker is on
+      # engine-net only with no verifier-net route, so it cannot reach the
+      # verifier; verification happens on the control-inline build path
+      # above. A worker-executed build persists without a gate check only
+      # when control's inline execution did not claim the job first.
     networks:
       - engine-net
     ports:

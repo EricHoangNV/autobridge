@@ -1,6 +1,9 @@
 """BuildRun — docs → draft spec → compile → visible tests → verify (P1.W5.6, plan §4 W5).
 
-Executes a BuildRun job (docs → draft spec) and creates a verified ConnectorRelease.
+Executes a BuildRun job (docs → draft spec) and creates a ConnectorRelease.
+When a verifier URL is configured, the candidate spec is verified before
+persisting (gate-before-persist, AR-1-2): a blocked or unreachable verifier
+means no release is persisted, so there is nothing to approve or sync.
 Trust boundary: never imports verifier or simulators. Verification is either
 local visible-tests or an optional HTTP call to the verifier service (caller
 provides the URL). For unit tests without Docker, local validation suffices.
@@ -341,20 +344,44 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
         if conn is None:
             # Fallback: create from spec
             conn = _ensure_connector(ctx.session, run.connector_id, spec_conn)
-        # Create release
+        # Create release — gate-before-persist (AR-1-2): when a verifier URL
+        # is configured, the candidate spec is verified before persisting.
+        # A blocked/unreachable verifier raises GateBlockedError and NO
+        # release is persisted, so there is nothing to approve or sync.
+        # Without a verifier URL (unit tests, worker without verifier-net
+        # route) the gate is skipped, preserving backward compatibility.
         try:
             from autobridge.engine.releases import create_release  # noqa: PLC0415
+            from autobridge.engine.verification import GateBlockedError  # noqa: PLC0415
 
             release = create_release(
                 ctx.session,
                 connector_id=conn.id,
                 spec=build_out["draft_spec"],
                 provenance_build_run_id=run.id,
+                verifier_url=verifier_url,
+                scenario_id=scenario_id,
             )
             ctx.session.flush()
             release_id = release.id
             result["release_id"] = release_id
             result["connector_id"] = conn.id
+            if verifier_url:
+                # Gate-before-persist passed: the persisted candidate is
+                # verifier-checked, even if the best-effort inline check
+                # above failed spuriously.
+                result["verified"] = True
+                run.ladder_trace = [
+                    *list(run.ladder_trace or []),
+                    _now_trace_entry("verifier", verdict="pass", scenario=scenario_id, gate="before_persist"),
+                ]
+        except GateBlockedError as gate_exc:
+            # Gate blocked (fail verdict, regression fail, or verifier
+            # unreachable): quarantine by not persisting. The draft spec
+            # stays on the BuildRun, but no activatable release exists.
+            result["verified"] = False
+            result["gate_blocked"] = str(gate_exc)
+            result["release_id"] = None
         except Exception as exc:
             # Release creation failed (invalid spec)
             result["release_error"] = str(exc)
