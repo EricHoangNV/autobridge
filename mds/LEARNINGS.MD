@@ -221,3 +221,12 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The row filter excluded only `("-", "—", "–")`, so `""` passed and every command inherited every field (KR/KD/KZ all looked identical). The bug was invisible in single-record tables — only the multi-record ✓ tables exposed it — and a manual replication of the loop passed because it bypassed the header condition the real code evaluates.
 - Fix: add `""` to the exclusion set; regression test pins per-record field sets (KR full, KD without K#/GA/GD, KZ minimal).
 - **Rule:** When filtering table cells by marker, exclude the empty cell explicitly — `"" not in ("-", "—")` is True, and an empty applicability cell is the common case, not the exception.
+---
+
+## 23. A per-test timeout turns a hanging socket test from a mystery into a stack trace
+
+**Context:** REQ-026 (2026-10-28), after a hanging FIAS socket test cost ~15 minutes of blind reruns in REQ-022 sub-step A.
+
+- The hang was located only by rerunning with faulthandler; `--timeout=30` failed because `pytest-timeout` was never installed.
+- Fix: `pytest-timeout` in dev deps, `timeout = 30` + `timeout_method = "thread"` in `[tool.pytest.ini_options]` (thread method dumps every thread's stack and works on macOS and Linux), 180 s per `tests/e2e` item via `pytest_collection_modifyitems` (stack startup must fit inside it).
+- **Rule:** Run single tests with `-x` and rely on the 30 s limit; never wrap pytest in long shell timeouts to find a hang.

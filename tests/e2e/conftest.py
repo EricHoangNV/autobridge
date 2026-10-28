@@ -131,8 +131,14 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     fake transports → ``inprocess``. Explicit ``@pytest.mark.live`` /
     ``@pytest.mark.inprocess`` decorators on individual tests agree with
     this rule and serve as documentation.
+
+    Every item also gets a 180 s per-test timeout (REQ-026): the unit
+    default of 30 s is wrong here because stack startup in fixtures must
+    fit inside the limit. Applied here, not per file, so no test file
+    needs its own mark.
     """
     for item in items:
+        item.add_marker(pytest.mark.timeout(180))
         names = getattr(item, "fixturenames", None)
         if not names and hasattr(item, "func"):
             code = getattr(item.func, "__code__", None)

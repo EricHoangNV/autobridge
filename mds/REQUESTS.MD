@@ -529,8 +529,13 @@ simulators/verifier side; the engine never imports, reads or reaches them.
    known fault types).
 Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make bench-heldout` keeps working.
 
+---
+
+## Resolved Requests (reference only)
+
 ### REQ-026 — Per-test timeout so a hanging test fails fast with a stack trace (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 18:35)
+Status: DONE (2026-10-28)
+Resolution: pytest-timeout 2.4.0 added (unit default 30 s thread-method; e2e items 180 s via conftest mark), mechanism + mark tests green, LEARNINGS #23; make test green (2283/99/325 pytest + 156 UI), no timeouts hit.
 Priority: small; do it right after the REQ-022 sub-step in progress, before the next sub-step (the edge agent and
 PABX tests are socket code that can hang).
 Why: in REQ-022 sub-step A a hanging FIAS socket test cost ~15 of 78 minutes. The first full run waited for the
@@ -555,10 +560,6 @@ unchanged within noise.
 Owner note (not for this REQ, just context): on the host, 6 unit tests once failed with returncode -11 (bash/npm
 subprocess segfault under load: dotenv loader, ui typecheck, export_openapi --check); they pass alone. If the
 timeout work shows them again, note it in BUILD-NOTES; do not raise limits to hide it.
-
----
-
-## Resolved Requests (reference only)
 
 ### REQ-017 — Run the demo without Docker (2026-10-28)
 Status: DONE (2026-10-28) — make local-up/down (same host ports, ./local db/logs/pids), LocalProcessTarget in local mode via runtime_mode() honoring DOCKER_HOST, /readyz runtime_mode+network_isolation, UI LOCAL badge, smoke skips w/ note, e2e reuses green stack + local-aware edge test, README No-Docker + safety-model §12; verified live incl. DOCKER_HOST=broken acceptance cycle.

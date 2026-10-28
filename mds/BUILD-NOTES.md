@@ -1593,3 +1593,12 @@ Two fixes, verified live in keyed local mode:
   by a frame (as in the existing zeros test). (3) Empty explicit env does
   not override `.env` (REQ-014) — the preflight test pins explicit-wins
   with a non-empty value instead.
+### REQ-026 — Per-test timeout (30 s unit, 180 s e2e)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Claim: `Claim REQ-026 (sbx1)` on main, then implemented.
+- `pyproject.toml`: `pytest-timeout>=2.4` in `[project.optional-dependencies] dev`; `[tool.pytest.ini_options]` gains `timeout = 30`, `timeout_method = "thread"` (thread method dumps every thread's stack on timeout; works on macOS and Linux). `uv.lock` regenerated (`uv lock`; pytest-timeout v2.4.0).
+- `tests/e2e/conftest.py`: `pytest_collection_modifyitems` now adds `pytest.mark.timeout(180)` to every collected e2e item (the 30 s unit default is wrong for e2e because stack startup in fixtures must fit inside it). Verified on real collection: all 19 items of `test_model_usage_matrix.py` carry `(180,)`.
+- New `tests/unit/test_autobridge_pytest_timeout.py` (runs in the autobridge `make test` gate): pins the ini default (30 s, thread), proves a deliberately sleeping test fails fast in a subprocess with a 2 s override (`Timeout` + hung `time.sleep` frame in output, elapsed < 20 s), and proves every e2e item gets the 180 s mark (stub items through the real hook, incl. live/inprocess marks intact).
+- No existing test raises its own pytest limit (grep: only httpx client timeouts, unrelated). No test needed a measured-reason override.
+- Gates: `make test` green — 2283 (autobridge, 90.62%) / 99 (verifier, 93.62%) / 325 (simulators, 90.36%) pytest + 156 Vitest; `make lint` (ruff + import-linter) green. `tests/e2e/test_model_usage_matrix.py`: 18 passed, 1 failed — pre-existing REQ-022-B fallout, NOT a timeout (verified via `git stash`: fails identically without this change): `/demo/reset` now returns 6 entries (`sim-fias-pabx`, `sim-fias-pabx:fias`) but the test expects 4, and the fias admin entries error in Docker mode because control is not on edge-net (by design; negative smoke probes assert it). Left for the REQ-022 D/E loop, which owns the reset contract and the demo step. No `Timeout` in any e2e output.
+- Owner-note watch: no returncode -11 segfaults seen in this sandbox run.
+- LEARNINGS #23 appended.

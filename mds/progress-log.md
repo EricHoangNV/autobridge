@@ -2701,3 +2701,31 @@ joins), `trust_env=False` on agent/relay/feed/vendor-default HTTP clients,
 strict unhandled-thread warnings, hermetic S2 fixture. Full gates green;
 simulators coverage flapped 89.78 once (re-run 90.36, pre-existing order
 flap). Next: REQ-022 D (fault scenarios) then E (demo + docs + index).
+## REQ-026 — Per-test timeout so a hanging test fails fast
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-026 (slotted right after the REQ-022 sub-step in progress)
+
+**What was done:**
+- Added `pytest-timeout>=2.4` to dev deps (`uv lock` → v2.4.0); set `timeout = 30`, `timeout_method = "thread"` in `[tool.pytest.ini_options]`
+- `tests/e2e/conftest.py` marks every collected e2e item `timeout(180)`; verified on real collection (19/19 items)
+- New `tests/unit/test_autobridge_pytest_timeout.py`: ini pin test, subprocess hang test (2 s override, asserts `Timeout` + stack + fast fail), e2e-mark test
+- `make test` green (2283/99/325 pytest, coverages 90.62/93.62/90.36, + 156 UI); `make lint` green
+- Moved REQ-026 to Resolved in REQUESTS.MD; LEARNINGS #23 appended
+
+**Key decisions:**
+- Thread method over signal: dumps all thread stacks (the point of the REQ) and works on macOS + Linux
+- E2E mark applied in one place (`pytest_collection_modifyitems`), not per file — no test file needs its own mark
+- Subprocess test uses a 2 s override instead of the real 30 s so it stays fast; the ini pin test covers the real default
+- Left `test_matrix_live_reset_repeatability` failing as found (pre-existing REQ-022-B fallout: reset returns 6 entries incl. fias, control can't reach edge-net in Docker by design); reverted my exploratory expectation edit to keep this diff pure — the REQ-022 D/E loop owns the reset contract
+
+**Files changed:**
+- `pyproject.toml` — dep + timeout ini options
+- `uv.lock` — regenerated
+- `tests/e2e/conftest.py` — 180 s mark for every e2e item
+- `tests/unit/test_autobridge_pytest_timeout.py` — new (3 tests)
+- `mds/REQUESTS.MD` — REQ-026 IN_PROGRESS → DONE, moved to Resolved top
+- `mds/LEARNINGS.MD` — entry #23
+
+**Notes for next iteration:**
+- REQ-022 sub-step D (fault scenarios) is next per progress-state; it must also resolve the `/demo/reset` vs `test_matrix_live_reset_repeatability` mismatch (fias entries unreachable from control-in-Docker by edge-net design)
+- No returncode -11 segfaults observed in this sandbox run

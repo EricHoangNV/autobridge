@@ -31,6 +31,7 @@ dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "pytest-asyncio>=0.24",
+    "pytest-timeout>=2.4",
     "httpx>=0.28",
     "ruff>=0.9",
     "mypy>=1.15",
@@ -87,6 +88,14 @@ ignore_errors = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src", "verifier", "simulators"]
+# REQ-026: per-test timeout so a hanging test fails fast with a stack
+# trace. Unit default 30 s (slowest unit test ~4 s, suite ~54 s); the
+# thread method dumps every thread's stack on timeout and works on macOS
+# and Linux. tests/e2e items get 180 s via conftest (stack startup must
+# fit inside it); no test may raise above these without a measured reason
+# in a one-line comment.
+timeout = 30
+timeout_method = "thread"
 markers = [
     "live: needs the running Compose stack (fails under AUTOBRIDGE_E2E_REQUIRE_STACK=1 when unreachable)",
     "inprocess: runs engine code in-process against fake transports; green without Docker",
