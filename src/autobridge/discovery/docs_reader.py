@@ -102,6 +102,22 @@ class BodyField:
 
 
 @dataclass
+class LinkDescription:
+    """Framed-transport contract parsed from docs (spec v3 ``link`` data).
+
+    ``announced_records`` are the record codes the host's ``LR`` lines in
+    the documented handshake announce interest in; ``listen_port`` is the
+    port the docs say the integration host listens on.
+    """
+
+    ack_mode: bool = True
+    max_frame_bytes: int = 65536
+    announced_records: tuple[str, ...] = ()
+    listen_port: int | None = None
+    provenance: Provenance | None = None
+
+
+@dataclass
 class OperationDescription:
     operation_id: str
     method: str
@@ -141,6 +157,7 @@ class InterfaceDescription:
 
     source: str
     doc_type: str  # openapi | markdown
+    protocol: str = "http"  # http (polled vendor API) | fias_tcp (framed, event-driven)
     title: str = ""
     version: str = ""
     base_url: str = ""
@@ -148,6 +165,13 @@ class InterfaceDescription:
     auth: AuthDescription | None = None
     operations: list[OperationDescription] = field(default_factory=list)
     schemas: list[SchemaDescription] = field(default_factory=list)
+    link: LinkDescription | None = None
+    # This installation's site facts (framed-protocol docs): the property
+    # code (e.g. prop-001) and property currency (e.g. USD) the docs state
+    # as site settings, each with provenance.
+    property_code: str | None = None
+    currency_code: str | None = None
+    site_provenance: Provenance | None = None
     # Free-form notes with provenance (status vocab, date semantics, etc.)
     status_notes: list[tuple[str, Provenance]] = field(default_factory=list)
     date_notes: list[tuple[str, Provenance]] = field(default_factory=list)
@@ -901,7 +925,277 @@ def parse_markdown(text: str, source: str) -> InterfaceDescription:
                     except (json.JSONDecodeError, ValueError):
                         pass
 
+    # Framed, record-oriented protocol docs (FIAS): record tables, link
+    # contract and site facts become EVENT operations + link data.
+    _parse_framed_protocol(lines, iface)
+
     return iface
+
+
+# ---------------------------------------------------------------------------
+# Framed, record-oriented protocols (FIAS — spec v3 event feeds)
+# ---------------------------------------------------------------------------
+
+_FIAS_MARKER_RE = re.compile(r"\bFIAS\b", re.IGNORECASE)
+_FIAS_SECTION_RE = re.compile(r"^##\s+(\d+)\.\s*(.*)")
+_FIAS_RECORD_HEADING_RE = re.compile(r"^###\s+(.*)")
+_FIAS_CODE_RE = re.compile(r"`([A-Z]{2})`")
+_FIAS_LR_RE = re.compile(r"LR\|RI([A-Z]{2})")
+_FIAS_ACK_RE = re.compile(r"ACK.?mode.?is (on|off)", re.IGNORECASE)
+_FIAS_MAXFRAME_RE = re.compile(r"[Mm]aximum frame[^0-9]*(\d+)\s*KB")
+_FIAS_PORT_RE = re.compile(r"listens.{0,8}?on port `?(\d{1,5})`?")
+_FIAS_CURRENCY_RE = re.compile(r"property currency \((\w{3})", re.IGNORECASE)
+_FIAS_PROPERTY_LINE_RE = re.compile(r"property|hotel|installation|site setting", re.IGNORECASE)
+_FIAS_PROPCODE_RE = re.compile(r"`([A-Za-z][A-Za-z0-9_-]{0,30}\d)`?")
+_FIAS_ANSWERED_RE = re.compile(r"answered with (?:an? )?`([A-Z]{2})`")
+
+
+def _is_framed_protocol_doc(text: str) -> bool:
+    """Detect a framed, record-oriented interface doc (FIAS family).
+
+    Signal: the doc names FIAS and shows framed bytes (STX … ETX). This is
+    the record-protocol analog of OpenAPI auto-detection above — it keys on
+    the framing contract both this PABX and any FIAS-speaking peer document,
+    not on any vendor name.
+    """
+    return bool(_FIAS_MARKER_RE.search(text)) and "STX" in text
+
+
+def _parse_md_table_row(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or stripped.count("|") < 2:
+        return None
+    cells = [c.strip() for c in stripped.strip("|").split("|")]
+    # Separator rows are all dashes/colons.
+    if cells and all(re.fullmatch(r":?-{1,}:?", c or "---") for c in cells):
+        return None
+    return cells
+
+
+def _parse_framed_protocol(lines: list[str], iface: InterfaceDescription) -> None:
+    """Parse FIAS-family docs into EVENT operations + link/site data.
+
+    Sets ``iface.protocol = "fias_tcp"``; PABX→host business records become
+    EVENT operations (feed candidates), host→PABX business records become
+    command candidates, answers/resync/link records are marked as such and
+    skipped by the compiler. Framing facts (ACK mode, max frame, the host's
+    ``LR`` announcements, listen port) become ``iface.link``; the stated
+    property code and currency become site facts. Every value carries the
+    doc line it came from.
+    """
+    text = "\n".join(lines)
+    if not _is_framed_protocol_doc(text):
+        return
+    source = iface.source
+    iface.protocol = "fias_tcp"
+
+    def _prov(lineno: int) -> Provenance:
+        snippet = lines[lineno - 1].strip()[:200] if 1 <= lineno <= len(lines) else ""
+        return Provenance(source=source, line=lineno, snippet=snippet)
+
+    # Link contract + site facts (first signal wins, each with provenance).
+    # Property codes live in front matter ("at **Grand Plaza** (`prop-001`)")
+    # or beside a property/hotel/installation mention — check both, in order.
+    ack_mode = True
+    max_frame_bytes = 65536
+    listen_port: int | None = None
+    link_prov: Provenance | None = None
+
+    def _propcode_from(line: str, lineno: int) -> bool:
+        for cand in _FIAS_PROPCODE_RE.findall(line):
+            if any(ch.isdigit() for ch in cand) and any(ch.isalpha() for ch in cand):
+                if iface.property_code is None:
+                    iface.property_code = cand
+                    iface.site_provenance = _prov(lineno)
+                return True
+        return False
+
+    for i, line in enumerate(lines[:8]):
+        _propcode_from(line, i + 1)
+    for i, line in enumerate(lines):
+        plain = line.replace("*", "").replace("`", "")
+        if link_prov is None:
+            m = _FIAS_ACK_RE.search(plain)
+            if m:
+                ack_mode = m.group(1).lower() == "on"
+                link_prov = _prov(i + 1)
+        m = _FIAS_MAXFRAME_RE.search(line)
+        if m:
+            max_frame_bytes = int(m.group(1)) * 1024
+            link_prov = link_prov or _prov(i + 1)
+        m = _FIAS_PORT_RE.search(line)
+        if m and listen_port is None:
+            listen_port = int(m.group(1))
+            link_prov = link_prov or _prov(i + 1)
+        if _FIAS_PROPERTY_LINE_RE.search(line):
+            _propcode_from(line, i + 1)
+        m = _FIAS_CURRENCY_RE.search(line)
+        if m and iface.currency_code is None:
+            iface.currency_code = m.group(1).upper()
+            iface.site_provenance = iface.site_provenance or _prov(i + 1)
+
+    announced: list[str] = []
+    for m in _FIAS_LR_RE.finditer(text):
+        if m.group(1) not in announced:
+            announced.append(m.group(1))
+    iface.link = LinkDescription(
+        ack_mode=ack_mode,
+        max_frame_bytes=max_frame_bytes,
+        announced_records=tuple(announced),
+        listen_port=listen_port,
+        provenance=link_prov,
+    )
+
+    # Record sections: track the ## N direction, parse ### `XX` tables.
+    section: int | None = None
+    direction: str | None = None
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        sm = _FIAS_SECTION_RE.match(line)
+        if sm:
+            section = int(sm.group(1))
+            rest = sm.group(2).lower()
+            if "from the pabx" in rest or "(to the host)" in rest:
+                direction = "pabx_to_host"
+            elif "from the host" in rest or "(to the pabx)" in rest:
+                direction = "host_to_pabx"
+            else:
+                direction = None
+            i += 1
+            continue
+        hm = _FIAS_RECORD_HEADING_RE.match(line)
+        if hm and section in (3, 4) and direction:
+            codes = [c for c in _FIAS_CODE_RE.findall(hm.group(1)) if len(c) == 2]
+            codes = list(dict.fromkeys(codes))
+            name = hm.group(1).strip()[:200]
+            if codes:
+                low_name = name.lower()
+                if "answer" in low_name:
+                    kind = "answer"
+                elif "resync" in low_name:
+                    kind = "control"
+                elif section == 3:
+                    kind = "feed"
+                else:
+                    kind = "command"
+                fields_per_code: dict[str, dict[str, str]] = {c: {} for c in codes}
+                formats_per_code: dict[str, dict[str, str]] = {c: {} for c in codes}
+                answers: dict[str, str] = {}
+                prose: list[str] = []
+                j = i + 1
+                header: list[str] | None = None
+                record_cols: list[str] = []
+                while j < n and not lines[j].startswith("#"):
+                    cells = _parse_md_table_row(lines[j])
+                    if cells is None:
+                        if lines[j].strip():
+                            prose.append(lines[j].strip())
+                        j += 1
+                        continue
+                    if header is None:
+                        if len(cells) >= 2 and cells[0].lower().lstrip("`").rstrip("`") == "field" and "meaning" in cells[1].lower():
+                            header = cells
+                            # Multi-record tables (host commands): each extra
+                            # column names the record codes it applies to.
+                            for hcell in cells[2:]:
+                                found = _FIAS_CODE_RE.findall(hcell)
+                                record_cols.append(found[0] if found else "")
+                        j += 1
+                        continue
+                    if len(cells) >= 2:
+                        fid_cell = cells[0].strip().strip("`")
+                        meaning = cells[1].strip()[:300]
+                        # Combined ids ("DA, TI") name one field each.
+                        fids = [
+                            f.strip().strip("`").strip()
+                            for f in re.split(r"\s*,\s*", fid_cell)
+                        ]
+                        fmt = cells[2].strip()[:200] if len(header or []) == 3 and len(cells) >= 3 else ""
+                        # A combined field row ("DA, TI") usually pairs with a
+                        # combined format ("YYMMDD, HHMMSS"): align parts.
+                        fmt_parts = [p.strip().strip("`").strip() for p in re.split(r"\s*,\s*", fmt)] if fmt else []
+                        if len(codes) == 1 or not record_cols:
+                            # Shared table: the field set holds for every
+                            # record in the heading (e.g. WR and WC).
+                            for idx, fid in enumerate(fids):
+                                if len(fid) == 2 and meaning:
+                                    for code in codes:
+                                        fields_per_code[code][fid] = meaning
+                                        if idx < len(fmt_parts) and fmt_parts[idx]:
+                                            formats_per_code[code][fid] = fmt_parts[idx]
+                        else:
+                            for col_code, cell in zip(record_cols, cells[2:], strict=False):
+                                if col_code in fields_per_code and cell.strip() not in ("", "-", "—", "–"):
+                                    for fid in fids:
+                                        if len(fid) == 2 and meaning:
+                                            fields_per_code[col_code][fid] = meaning
+                    j += 1
+                # Answer correlation ("always answered with `KA`"): scan the
+                # section prose sentence by sentence. A code named before
+                # "answered with `XX`" in the same sentence takes XX as its
+                # expected answer — but only for unconditional answers:
+                # "always", or a self-answer (a `KZ` read answered by a
+                # `KZ`). Conditional answers (a past-dated `WR` answered
+                # with `WA`) stay `ack`; the scenario tracks them.
+                for sentence in re.split(r"\.\s+", " ".join(prose)):
+                    am = _FIAS_ANSWERED_RE.search(sentence)
+                    if not am:
+                        continue
+                    if "always" not in sentence.lower() and am.group(1) not in codes:
+                        continue
+                    before = sentence[: am.start()]
+                    for c in _FIAS_CODE_RE.findall(before):
+                        if c in fields_per_code:
+                            answers[c] = am.group(1)
+                for code in codes:
+                    prov = _prov(i + 1)
+                    response_fields = [
+                        ResponseField(name=fid, description=meaning)
+                        for fid, meaning in fields_per_code[code].items()
+                    ]
+                    raw: dict[str, Any] = {
+                        "record": code,
+                        "direction": direction,
+                        "kind": kind,
+                        "fields": dict(fields_per_code[code]),
+                        "formats": dict(formats_per_code[code]),
+                    }
+                    if code in answers:
+                        raw["answer"] = answers[code]
+                    iface.operations.append(
+                        OperationDescription(
+                            operation_id=f"fias_{code.lower()}",
+                            method="EVENT",
+                            path="",
+                            summary=f"{code} — {name}",
+                            response_fields=response_fields,
+                            pagination_hint="none",
+                            provenance=prov,
+                            raw=raw,
+                        )
+                    )
+                    iface.provenances.append(prov)
+                i = j
+                continue
+        i += 1
+
+    # Wire posting instant for the date classifier: without a date-like
+    # field the generic fallback would invent an ambiguous `date` note, so
+    # name the derived instant explicitly (non-blocking either way).
+    if any(op.method == "EVENT" for op in iface.operations):
+        line_no = next(
+            (idx + 1 for idx, ln in enumerate(lines) if "property-local" in ln.lower()),
+            1,
+        )
+        iface.date_notes.append(
+            (
+                "wire `posted_at`: property-local `DA` YYMMDD plus `TI` HHMMSS; "
+                "UTC instant derived in the source timezone",
+                _prov(line_no),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

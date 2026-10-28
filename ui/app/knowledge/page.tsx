@@ -18,8 +18,11 @@ type Capabilities = {
       methods: string[];
       auth_types: string[];
       pagination_strategies: string[];
+      protocols: string[];
       joins: boolean;
       body_templates: boolean;
+      event_feeds: boolean;
+      command_templates: boolean;
     }
   >;
   transforms: string[];
@@ -27,6 +30,7 @@ type Capabilities = {
   stop_conditions: string[];
   rules: { id: string; fixes: string; confidence: number; verification_level: string }[];
   v1_v2_diff: string[];
+  v2_v3_diff: string[];
 };
 
 type KnowledgeEntry = {
@@ -92,16 +96,22 @@ export default function KnowledgePage() {
           </p>
         ) : (
           <div data-testid="knowledge-vocabulary">
-            {(["v1", "v2"] as const).map((v) => {
+            {(["v1", "v2", "v3"] as const).map((v) => {
               const ver = capabilities.versions[v];
               if (!ver) return null;
+              const plus =
+                v === "v2" ? "everything in v1, plus:" : v === "v3" ? "everything in v2, plus:" : null;
               return (
                 <div key={v} data-testid={`knowledge-vocabulary-${v}`} className="mb-4">
                   <h3 className="font-mono text-sm font-bold">vocabulary {v}</h3>
+                  {plus ? <p className="mt-1 font-mono text-xs text-ink-2">{plus}</p> : null}
                   <p className="mt-1 font-mono text-xs text-ink-2">
                     methods: {ver.methods.join(", ") || "—"} · auth: {ver.auth_types.join(", ") || "—"} ·
-                    pagination: {ver.pagination_strategies.join(", ") || "—"} · joins:{" "}
-                    {ver.joins ? "yes" : "no"} · body templates: {ver.body_templates ? "yes" : "no"}
+                    pagination: {ver.pagination_strategies.join(", ") || "—"} · protocols:{" "}
+                    {(ver.protocols || []).join(", ") || "—"} · joins: {ver.joins ? "yes" : "no"} ·
+                    body templates: {ver.body_templates ? "yes" : "no"} · event feeds:{" "}
+                    {ver.event_feeds ? "yes" : "no"} · command templates:{" "}
+                    {ver.command_templates ? "yes" : "no"}
                   </p>
                 </div>
               );

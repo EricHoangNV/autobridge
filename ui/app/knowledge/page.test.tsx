@@ -12,14 +12,16 @@ const mockedUseSWR = useSWR as unknown as ReturnType<typeof vi.fn>;
 
 const CAPABILITIES = {
   versions: {
-    v1: { methods: ["GET"], auth_types: ["bearer"], pagination_strategies: ["page"], joins: false, body_templates: false },
-    v2: { methods: ["GET", "POST"], auth_types: ["bearer", "body_fields"], pagination_strategies: ["page", "body_cursor"], joins: true, body_templates: true },
+    v1: { methods: ["GET"], auth_types: ["bearer"], pagination_strategies: ["page"], protocols: ["http"], joins: false, body_templates: false, event_feeds: false, command_templates: false },
+    v2: { methods: ["POST"], auth_types: ["body_fields"], pagination_strategies: ["body_cursor"], protocols: [], joins: true, body_templates: true, event_feeds: false, command_templates: false },
+    v3: { methods: ["EVENT"], auth_types: ["edge_relay"], pagination_strategies: [], protocols: ["fias_tcp"], joins: true, body_templates: true, event_feeds: true, command_templates: true },
   },
   transforms: ["money"],
   checks: ["money_invariant"],
   stop_conditions: ["null_cursor"],
   rules: [{ id: "page_to_cursor", fixes: "flip page to cursor", confidence: 0.94, verification_level: "visible", produces_patch: true }],
   v1_v2_diff: ["POST ops"],
+  v2_v3_diff: ["EVENT ops"],
   tools: [{ name: "reset_demo", description: "reset", inputSchema: { type: "object" } }],
 };
 
@@ -58,6 +60,9 @@ describe("KnowledgePage", () => {
     render(<KnowledgePage />);
     expect(screen.getByTestId("knowledge-vocabulary-v1").textContent).toContain("methods: GET");
     expect(screen.getByTestId("knowledge-vocabulary-v2").textContent).toContain("POST");
+    expect(screen.getByTestId("knowledge-vocabulary-v2").textContent).toContain("everything in v1, plus:");
+    expect(screen.getByTestId("knowledge-vocabulary-v3").textContent).toContain("EVENT");
+    expect(screen.getByTestId("knowledge-vocabulary-v3").textContent).toContain("everything in v2, plus:");
     expect(screen.getByTestId("knowledge-rule-page_to_cursor").textContent).toContain("flip page to cursor");
     expect(screen.getByTestId("knowledge-entry-0").textContent).toContain("AtlasPMS / PAGINATION_CHANGE");
     expect(screen.getByTestId("knowledge-entry-0").textContent).toContain("reused 1x");

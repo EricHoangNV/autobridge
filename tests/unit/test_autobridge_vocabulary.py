@@ -76,18 +76,18 @@ def test_spec_vocabulary_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_spec_vocabulary_env_invalid_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SPEC_VOCABULARY", "v3")
+    monkeypatch.setenv("SPEC_VOCABULARY", "v4")
     with pytest.raises(ValueError, match="SPEC_VOCABULARY"):
         config_mod.spec_vocabulary_default()
 
 
 def test_runtime_max_vocabulary() -> None:
-    assert config_mod.runtime_max_vocabulary() == "v2"
+    assert config_mod.runtime_max_vocabulary() == "v3"
 
 
 def test_build_rejects_unknown_vocabulary_value() -> None:
     with pytest.raises(ValueError, match="spec_vocabulary"):
-        build_draft_spec("docs", source="x.md", spec_vocabulary="v3")
+        build_draft_spec("docs", source="x.md", spec_vocabulary="v4")
 
 
 def test_none_resolves_to_env_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,8 +147,9 @@ def test_resolve_sync_vocabulary_prefers_request(tmp_path: pathlib.Path) -> None
     with factory() as s:
         assert resolve_sync_vocabulary(s, release=None, requested="v1") == "v1"
         assert resolve_sync_vocabulary(s, release=None, requested="v2") == "v2"
+        assert resolve_sync_vocabulary(s, release=None, requested="v3") == "v3"
         # No provenance: the runtime default constrains nothing.
-        assert resolve_sync_vocabulary(s, release=None, requested=None) == "v2"
+        assert resolve_sync_vocabulary(s, release=None, requested=None) == "v3"
 
 
 def test_resolve_sync_vocabulary_prefers_provenance(tmp_path: pathlib.Path) -> None:
@@ -372,7 +373,7 @@ def test_build_api_rejects_bad_vocabulary(tmp_path: pathlib.Path) -> None:
         connector_id = _create_connector(client)
         r = client.post(
             f"/connectors/{connector_id}/build",
-            json={"docs_text": "docs", "spec_vocabulary": "v3"},
+            json={"docs_text": "docs", "spec_vocabulary": "v4"},
         )
         assert r.status_code == 422, r.text
     finally:

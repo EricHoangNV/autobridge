@@ -1046,6 +1046,299 @@ class BootstrapResult:
     trace: list[dict[str, Any]] = field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Framed-protocol compile (spec v3 event feeds — REQ-022 sub-step C)
+# ---------------------------------------------------------------------------
+
+#: Meaning-text signals (word-boundary matched) driving the doc-driven
+#: record-role proposal. A record with an amount-like field is a charge
+#: feed (→ FolioCharge); a record with room + status-like fields and no
+#: amount is a status feed (→ RoomStatus). Anything else cannot be mapped
+#: to a canonical entity, so compilation fails closed instead of emitting
+#: a half-working spec.
+_FRAMED_AMOUNT_HINTS = ("amount", "total", "charge", "price", "minor", "cent", "gross", "net")
+_FRAMED_STATUS_HINTS = ("status", "state")
+_FRAMED_ROOM_HINTS = ("room",)
+_FRAMED_SEQ_HINTS = ("sequence",)
+_FRAMED_DATE_HINTS = ("date",)
+_FRAMED_TIME_HINTS = ("time",)
+_FRAMED_DESC_HINTS = ("outlet", "type", "description", "memo", "note")
+
+#: Default property timezone for framed-protocol sources (same default as
+#: the HTTP compile and the edge bundle; the docs name no IANA zone).
+_FRAMED_PROPERTY_TZ = "America/New_York"
+
+
+def _framed_hint_re(hint: str) -> re.Pattern[str]:
+    return re.compile(rf"\b{re.escape(hint)}\b", re.IGNORECASE)
+
+
+def _framed_field(fields: dict[str, str], hints: tuple[str, ...], *, exclude: tuple[str, ...] = ()) -> str | None:
+    """First wire field (doc order) whose meaning matches a hint word."""
+    for fid, meaning in fields.items():
+        low = meaning.lower()
+        if exclude and any(x in low for x in exclude):
+            continue
+        if any(_framed_hint_re(h).search(meaning) for h in hints):
+            return fid
+    return None
+
+
+def _framed_jsonpath(fid: str) -> str:
+    """Wire field id → JSONPath subset (bracket form survives ``#`` ids)."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", fid):
+        return f"$.{fid}"
+    escaped = fid.replace("'", "\\'")
+    return f"$['{escaped}']"
+
+
+def _framed_param_name(meaning: str, taken: set[str]) -> str:
+    """Mechanical command-param name from a Meaning cell (lossless, stable).
+
+    Lowercase snake_case of the full meaning; on collision within one
+    command (e.g. two fields both meaning "Time of the change") a numeric
+    suffix keeps names unique. Never invents semantics — the executor
+    substitutes these names verbatim.
+    """
+    base = re.sub(r"[^a-z0-9]+", "_", meaning.lower()).strip("_") or "param"
+    name, n = base, 2
+    while name in taken:
+        name = f"{base}_{n}"
+        n += 1
+    taken.add(name)
+    return name
+
+
+def _compile_framed_spec(
+    iface: InterfaceDescription,
+    *,
+    connector_id: str | None = None,
+    vendor: str | None = None,
+    credential_ref: str | None = None,
+    base_url_override: str | None = None,
+    spec_version: int = 3,
+) -> dict[str, Any]:
+    """Compile framed-protocol docs (``iface.protocol != "http"``) to spec v3.
+
+    Deterministic from the parsed docs: feed operations for business-data
+    records, a charge entity for the amount-role record, a status entity
+    for the room+status record, command templates for host records, link
+    settings from the framing contract. Missing site facts (property code,
+    currency, listen port) or an unmappable record fail closed with a
+    named reason — never a half-working spec.
+    """
+    if spec_version < 3:
+        raise ValueError(f"framed {iface.protocol} sources require spec_version 3")
+    protocol = iface.protocol or "fias_tcp"
+    link = iface.link
+    if link is None or not link.announced_records:
+        raise ValueError("framed docs name no announced link records (LR): cannot compile feeds")
+    port = link.listen_port
+    if port is None:
+        raise ValueError("framed docs name no listen port: cannot compile a fias:// base_url")
+    if not iface.property_code:
+        raise ValueError("framed docs state no property code: refusing a spec without property identity")
+    if not iface.currency_code:
+        raise ValueError("framed docs state no property currency: refusing a spec without currency")
+
+    cid = connector_id or _slugify(iface.title or iface.source or "framed")
+    cid = re.sub(r"[^a-z0-9_-]", "-", cid.lower()).strip("-") or "connector"
+    ven = vendor or _derive_vendor(iface)
+    cred_ref = _derive_credential_ref(cid, credential_ref)
+    base = base_url_override or f"fias://listen:{port}"
+    tz_value = _FRAMED_PROPERTY_TZ
+
+    feed_ops = [op for op in iface.operations if op.method == "EVENT" and (op.raw.get("kind") == "feed")]
+    command_ops = [op for op in iface.operations if op.method == "EVENT" and (op.raw.get("kind") == "command")]
+
+    def _op_fields(op: Any) -> dict[str, str]:
+        raw_fields = (op.raw.get("fields") or {}) if isinstance(op.raw, dict) else {}
+        return {str(fid): str(meaning) for fid, meaning in raw_fields.items()}
+
+    def _op_formats(op: Any) -> dict[str, str]:
+        raw_formats = (op.raw.get("formats") or {}) if isinstance(op.raw, dict) else {}
+        return {str(fid): str(fmt) for fid, fmt in raw_formats.items()}
+
+    def _framed_wire_text(fields: dict[str, str], formats: dict[str, str], fid: str | None) -> str:
+        """Meaning plus documented wire format for one field (both doc data)."""
+        if not fid:
+            return ""
+        return f"{fields.get(fid, '')} [{formats.get(fid, '')}]"
+
+    def _framed_dt_field(
+        fields: dict[str, str], formats: dict[str, str], which: str
+    ) -> str | None:
+        """Date/time field by meaning, else by the documented wire format.
+
+        Some tables state the shape (``YYMMDD``/``HHMMSS``) in a Format
+        column instead of naming it in Meaning — the format is doc data,
+        so falling back to it is reading, not guessing.
+        """
+        hints = _FRAMED_DATE_HINTS if which == "date" else _FRAMED_TIME_HINTS
+        found = _framed_field(fields, hints)
+        if found:
+            return found
+        shape = "YYMMDD" if which == "date" else "HHMMSS"
+        for fid in fields:
+            if shape in (formats.get(fid) or "").upper():
+                return fid
+        return None
+
+    operations: dict[str, Any] = {}
+    entities: dict[str, Any] = {}
+    postings_op: str | None = None
+
+    for op in feed_ops:
+        code = str(op.raw.get("record", ""))
+        fields = _op_fields(op)
+        formats = _op_formats(op)
+        amount_fid = _framed_field(fields, _FRAMED_AMOUNT_HINTS)
+        room_fid = _framed_field(fields, _FRAMED_ROOM_HINTS, exclude=("old",))
+        seq_fid = _framed_field(fields, _FRAMED_SEQ_HINTS)
+        date_fid = _framed_dt_field(fields, formats, "date")
+        time_fid = _framed_dt_field(fields, formats, "time")
+        status_fid = _framed_field(fields, _FRAMED_STATUS_HINTS)
+        desc_fid = _framed_field(fields, _FRAMED_DESC_HINTS)
+        op_name = f"feed_{code.lower()}"
+        if amount_fid and room_fid:
+            if not (seq_fid and date_fid and time_fid):
+                raise ValueError(
+                    f"charge record {code}: needs sequence, date and time fields for the charge key"
+                )
+            minor = bool(
+                re.search(r"minor|cent", _framed_wire_text(fields, formats, amount_fid), re.IGNORECASE)
+            )
+            dedupe = [room_fid, seq_fid, date_fid, time_fid]
+            operations[op_name] = {
+                "method": "EVENT",
+                "feed": {"record": code, "via": "edge_relay", "dedupe_keys": dedupe},
+            }
+            charge_id_paths = [_framed_jsonpath(f) for f in (room_fid, seq_fid, date_fid, time_fid)]
+            dt_paths = [_framed_jsonpath(date_fid), _framed_jsonpath(time_fid)]
+            folio_fields: dict[str, Any] = {
+                "charge_id": {
+                    "paths": charge_id_paths,
+                    "transform": [{"name": "concat", "args": {"separator": "-"}}],
+                },
+                # The framed peer names rooms, not reservations: the room is
+                # the correlation key the PMS side resolves.
+                "reservation_id": {"path": _framed_jsonpath(room_fid)},
+                "property_id": {"transform": [{"name": "const", "args": {"value": iface.property_code}}]},
+                "amount": {
+                    "path": _framed_jsonpath(amount_fid),
+                    "transform": [{"name": "money", "args": {"scale": 2, "minor_units": minor}}],
+                },
+                "currency": {"transform": [{"name": "const", "args": {"value": iface.currency_code}}]},
+                "posted_at": {
+                    "paths": dt_paths,
+                    "transform": [
+                        {"name": "concat", "args": {"separator": " "}},
+                        {"name": "datetime_utc", "args": {"tz": "source", "naive_as": "source"}},
+                    ],
+                },
+                "business_date": {
+                    "paths": dt_paths,
+                    "transform": [
+                        {"name": "concat", "args": {"separator": " "}},
+                        {"name": "business_date", "args": {"tz": "source", "naive_as": "source"}},
+                    ],
+                },
+            }
+            if desc_fid:
+                folio_fields["description"] = {"path": _framed_jsonpath(desc_fid)}
+            entities["FolioCharge"] = {
+                "from": op_name,
+                "key": _framed_jsonpath(seq_fid),
+                "fields": folio_fields,
+                "checks": [{"kind": "unique_key"}],
+            }
+            postings_op = postings_op or op_name
+        elif room_fid and status_fid:
+            if not (date_fid and time_fid):
+                raise ValueError(f"status record {code}: needs date and time fields for the observation instant")
+            dt_paths = [_framed_jsonpath(date_fid), _framed_jsonpath(time_fid)]
+            operations[op_name] = {
+                "method": "EVENT",
+                "feed": {
+                    "record": code,
+                    "via": "edge_relay",
+                    "dedupe_keys": [room_fid, status_fid, date_fid, time_fid],
+                },
+            }
+            entities["RoomStatus"] = {
+                "from": op_name,
+                "key": _framed_jsonpath(room_fid),
+                "fields": {
+                    "room_number": {"path": _framed_jsonpath(room_fid)},
+                    "status_code": {"path": _framed_jsonpath(status_fid)},
+                    "observed_at": {
+                        "paths": dt_paths,
+                        "transform": [
+                            {"name": "concat", "args": {"separator": " "}},
+                            {"name": "datetime_utc", "args": {"tz": "source", "naive_as": "source"}},
+                        ],
+                    },
+                },
+                # Statuses repeat over time by design: no uniqueness check.
+                "checks": [],
+            }
+        else:
+            raise ValueError(
+                f"record {code}: no amount field (charge feed) and no room+status fields "
+                "(status feed) — cannot map to a canonical entity"
+            )
+
+    if "FolioCharge" not in entities:
+        raise ValueError("framed docs describe no charge record: refusing a spec with no postings entity")
+
+    # Command templates for host-originated records (doc tables, verbatim).
+    commands: dict[str, Any] = {}
+    for op in command_ops:
+        code = str(op.raw.get("record", ""))
+        fields = _op_fields(op)
+        if not fields:
+            continue
+        taken: set[str] = set()
+        templates: dict[str, str] = {}
+        for fid, meaning in fields.items():
+            param = _framed_param_name(meaning, taken)
+            templates[fid] = f"{{{param}}}"
+        kind = code.lower()
+        answer = op.raw.get("answer") if isinstance(op.raw, dict) else None
+        commands[kind] = {
+            "record": code,
+            "fields": templates,
+            "expect": answer if isinstance(answer, str) and re.fullmatch(r"[A-Z]{2}", answer) else "ack",
+        }
+
+    canary_op = postings_op or next(iter(operations))
+    spec: dict[str, Any] = {
+        "spec_version": 3,
+        "connector": {"id": cid, "vendor": ven, "runtime_target": "edge"},
+        "source": {
+            "base_url": base,
+            "protocol": protocol,
+            "auth": {"type": "edge_relay", "credential_ref": cred_ref},
+            "rate_limit": {"max_rps": 5.0, "retry": {"statuses": [429, 503], "backoff": "exponential", "max_attempts": 5}},
+            "timezone_source": {"kind": "static", "value": tz_value},
+            "link": {
+                "ack_mode": link.ack_mode,
+                "max_frame_bytes": link.max_frame_bytes,
+                "announced_records": list(link.announced_records),
+            },
+        },
+        "operations": operations,
+        "entities": entities,
+        "capabilities": {"read": list(entities.keys()), "action": sorted(commands.keys())},
+        "health": {
+            "canary": {"every": "60s", "operation": canary_op, "max_pages": 1},
+            "fingerprint": {"keys": True, "types": True, "pagination_shape": True},
+        },
+        "commands": commands,
+    }
+    return spec
+
+
 def _compile_spec(
     iface: InterfaceDescription,
     classification: Any,
@@ -1333,8 +1626,11 @@ def build_draft_spec(
         http_client_factory: Unused, reserved for probe HTTP factory.
         spec_vocabulary: ConnectorSpec vocabulary the build may use: ``"v1"``
             (GET + header auth; the default, so the v1 refusal stays
-            demonstrable) or ``"v2"`` (additionally POST with a JSON body
-            template, ``body_fields`` auth and ``body_cursor`` pagination).
+            demonstrable), ``"v2"`` (additionally POST with a JSON body
+            template, ``body_fields`` auth and ``body_cursor`` pagination)
+            or ``"v3"`` (additionally the event-driven transport: framed
+            protocols with event feeds, multi-path mapping and command
+            templates).
 
     Returns:
         BootstrapResult with draft_spec, validation, degradation if ambiguous.
@@ -1343,8 +1639,8 @@ def build_draft_spec(
         from autobridge.config import spec_vocabulary_default  # noqa: PLC0415
 
         spec_vocabulary = spec_vocabulary_default()
-    if spec_vocabulary not in ("v1", "v2"):
-        raise ValueError(f"spec_vocabulary must be 'v1' or 'v2', got {spec_vocabulary!r}")
+    if spec_vocabulary not in ("v1", "v2", "v3"):
+        raise ValueError(f"spec_vocabulary must be 'v1', 'v2' or 'v3', got {spec_vocabulary!r}")
     trace: list[dict[str, Any]] = []
     model_usage: dict[str, Any] = {"frontier_tokens": 0, "small_tokens": 0, "calls": 0, "frontier_calls": 0, "small_calls": 0}
     evidence_payloads: list[dict[str, Any]] = []
@@ -1381,7 +1677,27 @@ def build_draft_spec(
     except Exception as exc:
         return BootstrapResult(success=False, degradation_reason=f"classification failed: {exc}", iface=iface, trace=trace + [{"stage": "classify", "error": str(exc)}])
 
-    # Stage 1b: vocabulary guard (general, vendor-neutral). ConnectorSpec v1
+    # Stage 1b: event-driven vocabulary guard (generic, any framed protocol).
+    # ConnectorSpec v1 and v2 are HTTP-only: docs describing event-driven
+    # record feeds (e.g. a FIAS PABX interface) compile to nothing older
+    # than v3, so the pinned build refuses cleanly with 0 model calls.
+    # REQ-022 item C: this is the demonstrable "before" refusal for FIAS.
+    # (Checked before the POST guard: framed docs have no GET operations,
+    # so the POST wording would misname the refusal.)
+    protocol = getattr(iface, "protocol", "http") or "http"
+    if protocol != "http" and spec_vocabulary in ("v1", "v2"):
+        return BootstrapResult(
+            success=False,
+            degradation_reason=(
+                f"event-driven {protocol} record feeds are not expressible "
+                f"in ConnectorSpec {spec_vocabulary}"
+            ),
+            iface=iface,
+            classification=classification,
+            trace=trace + [{"stage": "vocabulary_guard", "protocol": protocol, "reason": f"no event feeds in vocabulary {spec_vocabulary}"}],
+        )
+
+    # Stage 1c: POST vocabulary guard (general, vendor-neutral). ConnectorSpec v1
     # can only express GET operations with header auth. When the docs describe
     # no GET operation at all (e.g. a POST-with-JSON-body API with body-field
     # auth), there is nothing in the v1 vocabulary to compile: refuse cleanly
@@ -1523,15 +1839,25 @@ def build_draft_spec(
 
     # Stage 5: compile spec
     try:
-        draft_spec = _compile_spec(
-            iface,
-            classification,
-            connector_id=connector_id,
-            vendor=vendor,
-            credential_ref=credential_ref,
-            base_url_override=base_url_override,
-            spec_version=2 if spec_vocabulary == "v2" else 1,
-        )
+        if protocol != "http":
+            draft_spec = _compile_framed_spec(
+                iface,
+                connector_id=connector_id,
+                vendor=vendor,
+                credential_ref=credential_ref,
+                base_url_override=base_url_override,
+                spec_version={"v1": 1, "v2": 2, "v3": 3}[spec_vocabulary],
+            )
+        else:
+            draft_spec = _compile_spec(
+                iface,
+                classification,
+                connector_id=connector_id,
+                vendor=vendor,
+                credential_ref=credential_ref,
+                base_url_override=base_url_override,
+                spec_version=2 if spec_vocabulary == "v2" else 1,
+            )
         trace.append({"stage": "compile", "connector_id": draft_spec["connector"]["id"], "operations": list(draft_spec["operations"].keys()), "entities": list(draft_spec["entities"].keys())})
     except Exception as exc:
         return BootstrapResult(

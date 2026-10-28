@@ -301,13 +301,15 @@ def cmd_capabilities(client: httpx.Client, args: argparse.Namespace) -> int:
         _emit(payload, args.output)
         return 0
     versions = payload.get("versions", {})
-    for version in ("v1", "v2"):
+    for version in ("v1", "v2", "v3"):
         v = versions.get(version, {})
         print(f"vocabulary {version}:")
         print(f"  methods: {', '.join(v.get('methods', []))}")
         print(f"  auth: {', '.join(v.get('auth_types', []))}")
         print(f"  pagination: {', '.join(v.get('pagination_strategies', []))}")
+        print(f"  protocols: {', '.join(v.get('protocols', []))}")
         print(f"  joins: {v.get('joins')}, body templates: {v.get('body_templates')}")
+        print(f"  event feeds: {v.get('event_feeds')}, command templates: {v.get('command_templates')}")
     print(f"transforms ({len(payload.get('transforms', []))}): {', '.join(payload.get('transforms', []))}")
     print(f"checks: {', '.join(payload.get('checks', []))}")
     print("L1 rules:")
@@ -315,6 +317,9 @@ def cmd_capabilities(client: httpx.Client, args: argparse.Namespace) -> int:
         print(f"  {rule.get('id')}: {rule.get('fixes', '')} [confidence {rule.get('confidence')}]")
     print("v1 -> v2:")
     for diff in payload.get("v1_v2_diff", []):
+        print(f"  - {diff}")
+    print("v2 -> v3:")
+    for diff in payload.get("v2_v3_diff", []):
         print(f"  - {diff}")
     print("agent tools (MCP tools/list style):")
     for tool in payload.get("tools", []):

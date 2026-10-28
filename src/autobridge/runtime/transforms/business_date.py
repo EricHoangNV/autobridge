@@ -11,7 +11,12 @@ import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from autobridge.runtime.transforms.base import _parse_iso_datetime, _resolve_tz
+from autobridge.runtime.transforms.base import (
+    _parse_iso_datetime,
+    _resolve_tz,
+    apply_naive_tz,
+    parse_wire_datetime,
+)
 
 
 def transform_business_date(
@@ -25,19 +30,20 @@ def transform_business_date(
     Args:
       tz: IANA zone or "source" (uses spec timezone_source)
       cutoff: hour int (0-23) default 4
+      naive_as: 'utc' (default, legacy) or 'source' for naive inputs
 
     - None → None
     - date string YYYY-MM-DD → returned as-is (already business date)
     - datetime string → parse, convert to tz, apply cutoff
+    - framed-protocol wire date/time (``YYMMDD[ HHMMSS]``) → property-local
+      wall time (requires ``naive_as: source``), then cutoff
     """
     if value is None:
         return None
     if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
         return value.isoformat()
     if isinstance(value, datetime.datetime):
-        dt = value
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=datetime.UTC)
+        dt = apply_naive_tz(value, args, context_tz)
         tz_name = _resolve_tz(args.get("tz"), context_tz)
         cutoff = args.get("cutoff", args.get("cutoff_hour", 4))
         try:
@@ -63,13 +69,16 @@ def transform_business_date(
         except ValueError:
             pass
 
-    try:
-        dt2 = _parse_iso_datetime(s)
-    except Exception:
-        return s
+    wire = parse_wire_datetime(s)
+    if wire is not None:
+        dt2 = apply_naive_tz(wire, args, context_tz)
+    else:
+        try:
+            dt2 = _parse_iso_datetime(s)
+        except Exception:
+            return s
+        dt2 = apply_naive_tz(dt2, args, context_tz)
 
-    if dt2.tzinfo is None:
-        dt2 = dt2.replace(tzinfo=datetime.UTC)
     tz_name2 = _resolve_tz(args.get("tz"), context_tz)
     cutoff2 = args.get("cutoff", args.get("cutoff_hour", 4))
     try:

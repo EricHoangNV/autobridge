@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from autobridge.runtime.auth import build_auth_body
+from autobridge.runtime.feeds import FeedError, FeedReader, fold_resends
 from autobridge.runtime.http import HttpClient  # noqa: TC001
 from autobridge.runtime.pagination import (
     advance_state,
@@ -201,19 +202,34 @@ class OperationResult:
 
 
 class Interpreter:
-    """Executes a :class:`ConnectorSpec`'s operations via an :class:`HttpClient`."""
+    """Executes a :class:`ConnectorSpec`'s operations via an :class:`HttpClient`.
 
-    def __init__(self, spec: ConnectorSpec, http_client: HttpClient | None = None) -> None:
+    ``feed_reader`` serves EVENT operations (spec v3 event feeds): records
+    pushed to the on-premise agent and drained through the edge relay. HTTP
+    operations always use ``http``; feed operations always use the reader.
+    """
+
+    def __init__(
+        self,
+        spec: ConnectorSpec,
+        http_client: HttpClient | None = None,
+        feed_reader: FeedReader | None = None,
+    ) -> None:
         self.spec = spec
+        self.feed_reader = feed_reader
         if http_client is not None:
             self.http = http_client
-        else:
+        elif spec.source.protocol == "http":
             # Build client from spec.source
             self.http = HttpClient(
                 base_url=spec.source.base_url,
                 auth=spec.source.auth,
                 retry=spec.source.rate_limit.retry,
             )
+        else:
+            # Event-driven transports never build a vendor HTTP client; HTTP
+            # operations on such a spec fail loudly at execution time.
+            self.http = None  # type: ignore[assignment]
 
     def execute_operation(
         self,
@@ -231,6 +247,15 @@ class Interpreter:
         op = self.spec.operations.get(operation_name)
         if op is None:
             raise KeyError(f"unknown operation {operation_name!r}")
+
+        if op.feed is not None:
+            return self._fetch_feed(op, operation_name)
+
+        if self.http is None:
+            raise FeedError(
+                f"operation {operation_name!r} needs HTTP but spec "
+                f"protocol {self.spec.source.protocol!r} builds no HTTP client"
+            )
 
         params_template = op.params or {}
         resolved_params = resolve_checkpoint_templates(params_template, checkpoint)
@@ -273,6 +298,32 @@ class Interpreter:
             )
 
         return self._paginated_fetch(op, operation_name, resolved_params, max_pages, limit_override)
+
+    def _fetch_feed(self, op: OperationSpec, operation_name: str) -> OperationResult:
+        """Drain one event feed: pushed records, folded resends, no paging.
+
+        Delivery is at-least-once (the peer resends until answered), so the
+        feed's ``dedupe_keys`` identify one instance and repeats are folded
+        before mapping — the same record arriving twice never becomes two
+        canonical records. ``stop_reason`` is ``event_feed``: there is no
+        cursor to advance and no page to stop on.
+        """
+        if op.feed is None:  # pragma: no cover - guarded by caller
+            raise FeedError(f"operation {operation_name!r} has no feed declaration")
+        if self.feed_reader is None:
+            raise FeedError(
+                f"no feed reader configured for event operation {operation_name!r} "
+                f"(feed {op.feed.record}); sync under a feed-capable runner"
+            )
+        records = self.feed_reader.read(op.feed, operation_name)
+        folded = fold_resends(records, list(op.feed.dedupe_keys or []))
+        return OperationResult(
+            operation=operation_name,
+            records=folded,
+            pages_fetched=1,
+            raw_pages=[{"feed": op.feed.record, "via": op.feed.via, "count": len(folded)}],
+            stop_reason="event_feed",
+        )
 
     def _paginated_fetch(
         self,
@@ -482,14 +533,15 @@ class Interpreter:
 def execute_spec_dict(
     spec_dict: dict[str, Any],
     operation: str,
-    http_client: HttpClient,
+    http_client: HttpClient | None = None,
     *,
     checkpoint: dict[str, Any] | None = None,
     max_pages: int = 1000,
+    feed_reader: FeedReader | None = None,
 ) -> OperationResult:
     """Execute *operation* from a raw spec dict (validates first)."""
     from autobridge.spec.models import load_spec_from_dict
 
     spec = load_spec_from_dict(spec_dict)
-    interp = Interpreter(spec, http_client=http_client)
+    interp = Interpreter(spec, http_client=http_client, feed_reader=feed_reader)
     return interp.execute_operation(operation, checkpoint=checkpoint, max_pages=max_pages)

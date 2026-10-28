@@ -417,7 +417,7 @@ def test_spec_vocabulary_rejects_unknown_value() -> None:
     import pytest as _pytest
 
     with _pytest.raises(ValueError, match="spec_vocabulary"):
-        build_draft_spec(HARBOR_MD, source=HARBOR_MD_PATH, spec_vocabulary="v3")
+        build_draft_spec(HARBOR_MD, source=HARBOR_MD_PATH, spec_vocabulary="v4")
 
 
 def test_v2_vocabulary_builds_post_connector_from_same_docs() -> None:

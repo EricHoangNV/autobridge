@@ -86,21 +86,42 @@ def map_record_to_entity(
 
     for field_name, fm in fields.items():
         path: str | None = None
+        paths: list[str] | None = None
         transform: list[Any] | None = None
         if isinstance(fm, dict):
             path = fm.get("path")
+            paths = fm.get("paths")
             transform = fm.get("transform")
         elif hasattr(fm, "path"):
-            path = fm.path
+            path = getattr(fm, "path", None)
+            paths = getattr(fm, "paths", None)
             transform = getattr(fm, "transform", None)
         else:
             continue
 
-        if path is None:
-            continue
-
-        # Extract raw value
-        raw_val = _jsonpath_extract_one(raw, path)
+        if path is None and not paths:
+            # No input path: only a const-led pipeline can produce a value
+            # (site facts stated outright); anything else maps nothing.
+            first_step = None
+            if transform:
+                first_step = transform[0]
+                if isinstance(first_step, dict):
+                    first_step = first_step.get("name")
+                elif hasattr(first_step, "name"):
+                    first_step = first_step.name
+            if first_step != "const":
+                continue
+            raw_val = None
+        # Extract raw value: one path → scalar; paths (spec v3) → the
+        # list of per-path values fed into the pipeline (e.g. concat).
+        # All paths missing counts as a missing value (field skipped,
+        # unless a const/default step provides one — same as scalar).
+        elif paths:
+            extracted = [_jsonpath_extract_one(raw, p) for p in paths]
+            raw_val = None if all(v is None for v in extracted) else extracted
+        else:
+            assert path is not None
+            raw_val = _jsonpath_extract_one(raw, path)
 
         # Normalize transform steps to list[dict]
         steps: list[dict[str, Any]] = []

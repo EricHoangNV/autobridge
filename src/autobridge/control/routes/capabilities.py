@@ -31,11 +31,25 @@ V2_ONLY_METHODS = frozenset({"POST"})
 V2_ONLY_AUTH_TYPES = frozenset({"body_fields"})
 V2_ONLY_PAGINATION = frozenset({"body_cursor"})
 
+#: Spec v3-only vocabulary (REQ-022 sub-step C): the event-driven
+#: transport. v3 is everything in v2, plus these.
+V3_ONLY_METHODS = frozenset({"EVENT"})
+V3_ONLY_AUTH_TYPES = frozenset({"edge_relay"})
+V3_ONLY_PROTOCOLS = frozenset({"fias_tcp"})
+
 V1_V2_DIFF = [
     "operations gain method POST with a JSON body template (v1 is GET-only)",
     "auth gains body_fields: credential refs placed into named JSON body fields (values never stored)",
     "pagination gains body_cursor: cursor and page size in named body paths, stop on null cursor or short page",
     "entities gain declarative joins: enrich one entity from another operation by key",
+]
+
+V2_V3_DIFF = [
+    "source gains protocol fias_tcp with link settings as data (framing, ACK mode, announced link records)",
+    "operations gain method EVENT over event feeds: records pushed to the agent, drained via the edge relay",
+    "auth gains edge_relay: the relay operator token by credential_ref (never a vendor credential)",
+    "fields gain multi-path mapping: one value per path fed as a list into the transform pipeline",
+    "entities gain command templates: host-originated record templates (field id -> {param}) as data",
 ]
 
 
@@ -55,17 +69,46 @@ def capabilities_payload() -> dict[str, Any]:
     auth_hints = get_type_hints(spec_models.AuthSpec)
     pag_hints = get_type_hints(spec_models.Pagination)
     op_hints = get_type_hints(spec_models.OperationSpec)
+    src_hints = get_type_hints(spec_models.SourceSpec)
     methods = sorted(get_args(op_hints["method"]))
     auth_types = sorted(get_args(auth_hints["type"]))
     pagination = sorted(get_args(pag_hints["strategy"]))
+    protocols = sorted(get_args(src_hints["protocol"]))
 
-    def _version(only: bool) -> dict[str, Any]:
+    def _version(which: str) -> dict[str, Any]:
+        if which == "v1":
+            only_v2 = False
+            only_v3 = False
+        elif which == "v2":
+            only_v2 = True
+            only_v3 = False
+        else:
+            only_v2 = False
+            only_v3 = True
         return {
-            "methods": sorted(m for m in methods if (m in V2_ONLY_METHODS) == only),
-            "auth_types": sorted(a for a in auth_types if (a in V2_ONLY_AUTH_TYPES) == only),
-            "pagination_strategies": sorted(p for p in pagination if (p in V2_ONLY_PAGINATION) == only),
-            "joins": only,
-            "body_templates": only,
+            "methods": sorted(
+                m
+                for m in methods
+                if (m in V3_ONLY_METHODS) == only_v3 and (m in V2_ONLY_METHODS) == (only_v2 and not only_v3)
+            ),
+            "auth_types": sorted(
+                a
+                for a in auth_types
+                if (a in V3_ONLY_AUTH_TYPES) == only_v3 and (a in V2_ONLY_AUTH_TYPES) == (only_v2 and not only_v3)
+            ),
+            "pagination_strategies": sorted(
+                p for p in pagination if (p in V2_ONLY_PAGINATION) == (only_v2 and not only_v3)
+            ),
+            "protocols": sorted(
+                p
+                for p in protocols
+                if (p in V3_ONLY_PROTOCOLS) == only_v3 and not (only_v2 and not only_v3)
+            ),
+            "joins": only_v2 or only_v3,
+            "body_templates": only_v2 or only_v3,
+            "event_feeds": only_v3,
+            "command_templates": only_v3,
+            "multi_path_mapping": only_v3,
         }
 
     rules = [
@@ -79,12 +122,13 @@ def capabilities_payload() -> dict[str, Any]:
         for entry in RULE_REGISTRY.values()
     ]
     return {
-        "versions": {"v1": _version(False), "v2": _version(True)},
+        "versions": {"v1": _version("v1"), "v2": _version("v2"), "v3": _version("v3")},
         "transforms": list(TRANSFORMS),
         "checks": sorted(get_args(spec_models.CheckKind)),
         "stop_conditions": sorted(get_args(spec_models.StopCondition)),
         "rules": rules,
         "v1_v2_diff": list(V1_V2_DIFF),
+        "v2_v3_diff": list(V2_V3_DIFF),
         "tools": [dict(t) for t in AGENT_TOOLS],
     }
 
@@ -94,13 +138,13 @@ def capabilities_payload() -> dict[str, Any]:
 AGENT_TOOLS: tuple[dict[str, Any], ...] = (
     {
         "name": "build_connector",
-        "description": "Build a ConnectorSpec draft from vendor docs (POST /connectors/{id}/build). Pin spec_vocabulary v1|v2.",
+        "description": "Build a ConnectorSpec draft from vendor docs (POST /connectors/{id}/build). Pin spec_vocabulary v1|v2|v3.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "connector_id": {"type": "string"},
                 "docs_text": {"type": "string"},
-                "spec_vocabulary": {"type": "string", "enum": ["v1", "v2"]},
+                "spec_vocabulary": {"type": "string", "enum": ["v1", "v2", "v3"]},
             },
             "required": ["connector_id"],
         },
@@ -113,7 +157,7 @@ AGENT_TOOLS: tuple[dict[str, Any], ...] = (
             "properties": {
                 "connector_id": {"type": "string"},
                 "release_id": {"type": "string"},
-                "spec_vocabulary": {"type": "string", "enum": ["v1", "v2"]},
+                "spec_vocabulary": {"type": "string", "enum": ["v1", "v2", "v3"]},
             },
             "required": ["connector_id"],
         },
@@ -167,6 +211,7 @@ def get_capabilities() -> CapabilitiesOut:
         stop_conditions=list(payload["stop_conditions"]),
         rules=[CapabilityRuleOut(**r) for r in payload["rules"]],
         v1_v2_diff=list(payload["v1_v2_diff"]),
+        v2_v3_diff=list(payload["v2_v3_diff"]),
         tools=[CapabilityToolOut(**t) for t in payload["tools"]],
     )
 

@@ -1,13 +1,18 @@
-"""ConnectorSpec v1/v2 pydantic models (P1.W1.3, P1.W3.1, REQ-020.5a).
+"""ConnectorSpec v1/v2/v3 pydantic models (P1.W1.3, P1.W3.1, REQ-020.5a, REQ-022.C).
 
 A connector is a declarative document the runtime interprets — never code.
-Every spec validates against ``schemas/connector-spec.v2.json`` before it is
+Every spec validates against ``schemas/connector-spec.v3.json`` before it is
 stored, executed or patched; invalid specs are rejected with path-level
 errors. Repairs are JSON Patches on the spec (see :mod:`autobridge.spec.patch`).
 
 Version 2 adds POST operations with a JSON body template, ``body_fields``
-auth and ``body_cursor`` pagination. Version 1 documents still validate
-and behave exactly as before.
+auth and ``body_cursor`` pagination. Version 3 adds the event-driven
+transport: ``protocol: fias_tcp`` sources (framing/ACK/link records as data),
+event feeds (records pushed to the agent instead of polled), multi-path
+field mapping, and command templates for host-originated records. Every
+version 1 document still validates and behaves exactly as before, and every
+version 2 document validates and behaves exactly as before (the v2
+vocabulary gate rejects every v3-only construct).
 
 Secrets policy: auth carries ``credential_ref`` (an env key name) only —
 inline secret values are rejected, as are credentials embedded in URLs.
@@ -90,7 +95,24 @@ INTERVAL_RE = re.compile(r"^\d+[smh]$")
 #: inside the outgoing JSON body template.
 BODY_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
-SCHEMA_FILENAME = "connector-spec.v2.json"
+#: Source transport protocol. ``http`` is the polled vendor-API transport;
+#: ``fias_tcp`` is the event-driven on-premise transport (framing, ACK mode
+#: and link records carried as data in ``SourceSpec.link``; records arrive
+#: as event feeds instead of paginated HTTP responses). New transports are
+#: a vocabulary change (spec v3), never a per-vendor branch.
+ProtocolName = Literal["http", "fias_tcp"]
+
+#: Two-letter record code of a framed protocol (e.g. ``PS``, ``RE``).
+RECORD_CODE_RE = re.compile(r"^[A-Z]{2}$")
+#: Two-character wire field id (letters, digits, ``#`` — e.g. ``RN``, ``P#``).
+WIRE_FIELD_ID_RE = re.compile(r"^[A-Za-z0-9#]{2}$")
+#: Command template kind: bundle-style dotted names (e.g. ``wakeup.set``).
+COMMAND_NAME_RE = re.compile(r"^[a-z][a-z0-9_.]{0,63}$")
+#: ``{name}`` placeholders inside command field templates (same shape the
+#: edge bundle executor substitutes; ``#`` never appears in a name).
+PLACEHOLDER_RE = re.compile(r"\{([A-Za-z0-9_]+)\}")
+
+SCHEMA_FILENAME = "connector-spec.v3.json"
 
 
 def check_jsonpath(value: str, what: str = "path") -> str:
@@ -193,15 +215,33 @@ def normalize_transform(value: Any) -> list[dict[str, Any]]:
 
 
 class FieldMapping(_Strict):
-    """One canonical field: source JSONPath plus transform pipeline."""
+    """One canonical field: JSONPath subset plus transform pipeline.
 
-    path: JsonPath
+    Exactly one of ``path``/``paths`` — unless the pipeline starts with
+    ``const``, which needs no input (site facts like the property code or
+    currency the docs state outright). ``paths`` (spec v3) extracts one
+    value per listed path and feeds the list into the pipeline — e.g.
+    ``paths: [$.DA, $.TI]`` plus ``concat`` with a space separator turns a
+    wire date and time into one datetime string for the date transforms.
+    """
+
+    path: JsonPath | None = None
+    paths: list[JsonPath] | None = None
     transform: list[TransformStep] = Field(default_factory=list)
 
     @field_validator("path")
     @classmethod
-    def _path_subset(cls, v: str) -> str:
-        return check_jsonpath(v, "field path")
+    def _path_subset(cls, v: str | None) -> str | None:
+        return check_jsonpath(v, "field path") if v is not None else v
+
+    @field_validator("paths")
+    @classmethod
+    def _paths_subset(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        if not v:
+            raise ValueError("field 'paths' must list at least one path")
+        return [check_jsonpath(p, "field path") for p in v]
 
     @field_validator("transform", mode="before")
     @classmethod
@@ -209,6 +249,19 @@ class FieldMapping(_Strict):
         if isinstance(v, list) and v and all(isinstance(s, TransformStep) for s in v):
             return v
         return normalize_transform(v)
+
+    @model_validator(mode="after")
+    def _one_of_path_or_paths(self) -> FieldMapping:
+        has_path = self.path is not None
+        has_paths = self.paths is not None
+        if has_path and has_paths:
+            raise ValueError("field mapping needs exactly one of 'path' or 'paths'")
+        if not has_path and not has_paths:
+            # const-led pipelines need no input (site facts stated outright).
+            if self.transform and self.transform[0].name == "const":
+                return self
+            raise ValueError("field mapping needs exactly one of 'path' or 'paths'")
+        return self
 
 
 class EntityCheck(_Strict):
@@ -444,9 +497,16 @@ class AuthSpec(_Strict):
     ``body_fields`` (spec v2): ``{body field path: credential_ref}``. Each
     value is an env key name holding the secret; at runtime the secret is
     read from the environment and placed into the named JSON body field.
+
+    ``edge_relay`` (spec v3): the connector is served by the on-premise
+    edge relay queue instead of a vendor API. ``credential_ref`` names the
+    env key holding the relay operator token (read at runtime, never
+    stored); no vendor credential exists on this transport.
     """
 
-    type: Literal["bearer", "api_key_header", "basic", "oauth2_client_credentials", "body_fields"]
+    type: Literal[
+        "bearer", "api_key_header", "basic", "oauth2_client_credentials", "body_fields", "edge_relay"
+    ]
     credential_ref: str | None = Field(
         default=None, description="Env key name holding the secret, never the value"
     )
@@ -522,16 +582,89 @@ class TimezoneSource(_Strict):
         return self
 
 
+class LinkSpec(_Strict):
+    """Framed-transport settings as data (spec v3, ``fias_tcp`` only).
+
+    ``announced_records`` are the two-letter record codes the host tells
+    the peer it wants to exchange (the ``LR`` announcement); the peer only
+    sends those types, in the announced field order. ``ack_mode`` and
+    ``max_frame_bytes`` are the installation's framing contract.
+    """
+
+    ack_mode: bool = True
+    max_frame_bytes: int = Field(default=65536, ge=1)
+    announced_records: list[str] = Field(
+        min_length=1, description="Record codes the host announces interest in"
+    )
+
+    @field_validator("announced_records")
+    @classmethod
+    def _record_codes(cls, v: list[str]) -> list[str]:
+        for code in v:
+            if not RECORD_CODE_RE.match(code):
+                raise ValueError(f"announced record {code!r} must be a two-letter code like PS")
+        return v
+
+
+class FeedSpec(_Strict):
+    """An event-driven source (spec v3): records pushed to the agent.
+
+    ``record`` names the framed record type consumed (e.g. ``PS``);
+    ``via`` names the queue the control plane drains (the edge relay);
+    ``dedupe_keys`` are wire field ids identifying one posting instance,
+    so a resent record (same keys) is folded instead of doubled.
+    """
+
+    record: str = Field(description="Framed record type consumed, e.g. PS")
+    via: Literal["edge_relay"] = Field(
+        default="edge_relay", description="Queue the control plane drains for this feed"
+    )
+    dedupe_keys: list[str] = Field(
+        default_factory=list, description="Wire field ids forming the idempotency key"
+    )
+
+    @field_validator("record")
+    @classmethod
+    def _record_code(cls, v: str) -> str:
+        if not RECORD_CODE_RE.match(v):
+            raise ValueError(f"feed record {v!r} must be a two-letter code like PS")
+        return v
+
+    @field_validator("dedupe_keys")
+    @classmethod
+    def _dedupe_ids(cls, v: list[str]) -> list[str]:
+        for fid in v:
+            if not WIRE_FIELD_ID_RE.match(fid):
+                raise ValueError(f"feed dedupe key {fid!r} must be a two-character wire field id")
+        return v
+
+
 class SourceSpec(_Strict):
     base_url: str
+    protocol: ProtocolName = Field(
+        default="http",
+        description="Transport: http (polled vendor API) or fias_tcp (event-driven framed protocol, spec v3)",
+    )
     auth: AuthSpec
     rate_limit: RateLimit = Field(default_factory=RateLimit)
     timezone_source: TimezoneSource
+    link: LinkSpec | None = Field(
+        default=None,
+        description="Framed-transport settings as data (spec v3, fias_tcp only)",
+    )
 
     @field_validator("base_url")
     @classmethod
     def _url(cls, v: str) -> str:
-        if not v or not v.startswith(("http://", "https://", "${")):
+        if not v:
+            raise ValueError("base_url must not be empty")
+        if v.startswith("fias://"):
+            # Scheme checked against protocol below; shape-checked here.
+            bare = v[len("fias://") :]
+            if not bare or " " in v or "$" in v:
+                raise ValueError("fias:// base_url must look like fias://listen:5010")
+            return v
+        if not v.startswith(("http://", "https://", "${")):
             raise ValueError("base_url must be an http(s) URL or start with a ${ENV} placeholder")
         if EMBEDDED_CREDS_RE.search(v):
             raise ValueError("base_url must not embed credentials; use credential_ref")
@@ -542,6 +675,20 @@ class SourceSpec(_Strict):
         if "$" in bare:
             raise ValueError("base_url may only use ${ENV_KEY} placeholders, no bare $")
         return v
+
+    @model_validator(mode="after")
+    def _protocol_link(self) -> SourceSpec:
+        if self.protocol == "fias_tcp":
+            if not self.base_url.startswith("fias://"):
+                raise ValueError("fias_tcp sources use a fias:// base_url (e.g. fias://listen:5010)")
+            if self.link is None:
+                raise ValueError("fias_tcp sources require link settings (framing, ACK mode, announced records)")
+        else:
+            if self.base_url.startswith("fias://"):
+                raise ValueError("fias:// base_url requires protocol fias_tcp")
+            if self.link is not None:
+                raise ValueError("link settings require protocol fias_tcp")
+        return self
 
 
 class Pagination(_Strict):
@@ -621,8 +768,8 @@ class Checkpoint(_Strict):
 
 
 class OperationSpec(_Strict):
-    method: Literal["GET", "POST"] = "GET"
-    path: str
+    method: Literal["GET", "POST", "EVENT"] = "GET"
+    path: str = ""
     params: dict[str, str] = Field(default_factory=dict)
     # POST body template (spec v2): static JSON data sent as the request
     # body. Pagination (body_cursor) and body_fields auth inject their
@@ -631,10 +778,19 @@ class OperationSpec(_Strict):
     body: dict[str, Any] | None = None
     pagination: Pagination | None = None
     checkpoint: Checkpoint | None = None
+    # Event feed (spec v3): records pushed to the agent instead of polled.
+    # An EVENT operation names no path, body, pagination, checkpoint or
+    # params — the feed declaration is the whole request surface.
+    feed: FeedSpec | None = Field(
+        default=None, description="Event-driven source (spec v3, EVENT method only)"
+    )
 
     @field_validator("path")
     @classmethod
     def _relative(cls, v: str) -> str:
+        if not v:
+            # Empty only for EVENT feed operations (checked below).
+            return v
         if not v.startswith("/") or " " in v or "$" in v:
             raise ValueError(f"operation path {v!r} must be a relative path like /v2/bookings")
         return v
@@ -643,7 +799,78 @@ class OperationSpec(_Strict):
     def _method_body(self) -> OperationSpec:
         if self.method == "GET" and self.body is not None:
             raise ValueError("GET operations must not set body (POST only)")
+        if self.feed is not None:
+            if self.method != "EVENT":
+                raise ValueError("feed operations use method EVENT")
+            if self.path:
+                raise ValueError("feed operations must not set path (the feed is the request surface)")
+            if self.params:
+                raise ValueError("feed operations must not set params")
+            if self.body is not None:
+                raise ValueError("feed operations must not set body")
+            if self.pagination is not None:
+                raise ValueError("feed operations must not set pagination (pushed records are not paged)")
+            if self.checkpoint is not None:
+                raise ValueError("feed operations must not set checkpoint (delivery is idempotent, not positional)")
+        elif self.method == "EVENT":
+            raise ValueError("method EVENT requires a feed declaration")
+        elif not self.path:
+            raise ValueError("HTTP operations require a relative path")
         return self
+
+
+class CommandTemplate(_Strict):
+    """One host-originated record template (spec v3): declarative command data.
+
+    Mirrors the edge bundle's command shape so a spec can carry what the
+    agent executes: ``record`` names the framed record type, ``fields``
+    maps wire field ids to ``{param}`` templates, ``defaults`` fill
+    missing params, ``now`` names params filled with the current
+    property-local wire date (``date`` → ``YYMMDD``) or time (anything
+    else → ``HHMMSS``), and ``expect`` is the answer waited for (``ack``
+    or a two-letter record). Placeholders substitute strictly — a missing
+    param rejects the command before anything reaches the link.
+    """
+
+    record: str = Field(description="Framed record type sent, e.g. WR")
+    fields: dict[str, str] = Field(min_length=1, description="Wire field id -> {param} template")
+    defaults: dict[str, str] = Field(default_factory=dict)
+    now: list[str] = Field(default_factory=list)
+    expect: str = Field(default="ack", description="ack or the two-letter answer record")
+
+    @field_validator("record")
+    @classmethod
+    def _record_code(cls, v: str) -> str:
+        if not RECORD_CODE_RE.match(v):
+            raise ValueError(f"command record {v!r} must be a two-letter code like WR")
+        return v
+
+    @field_validator("fields")
+    @classmethod
+    def _field_templates(cls, v: dict[str, str]) -> dict[str, str]:
+        for fid, template in v.items():
+            if not WIRE_FIELD_ID_RE.match(fid):
+                raise ValueError(f"command field id {fid!r} must be a two-character wire id")
+            if not isinstance(template, str) or not template:
+                raise ValueError(f"command field {fid!r} template must be a non-empty string")
+            if "|" in template or "\x02" in template or "\x03" in template:
+                raise ValueError(f"command field {fid!r} template must not carry framing characters")
+            names = PLACEHOLDER_RE.findall(template)
+            if not names:
+                raise ValueError(
+                    f"command field {fid!r} template must name at least one {{param}}"
+                )
+            stripped = PLACEHOLDER_RE.sub("", template)
+            if "{" in stripped or "}" in stripped:
+                raise ValueError(f"command field {fid!r} template has a malformed placeholder")
+        return v
+
+    @field_validator("expect")
+    @classmethod
+    def _expect_shape(cls, v: str) -> str:
+        if v != "ack" and not RECORD_CODE_RE.match(v):
+            raise ValueError(f"command expect {v!r} must be 'ack' or a two-letter record code")
+        return v
 
 
 class ConnectorMeta(_Strict):
@@ -689,20 +916,28 @@ class HealthSpec(_Strict):
 
 
 class ConnectorSpec(_Strict):
-    """The declarative connector document (spec_version 1 | 2).
+    """The declarative connector document (spec_version 1 | 2 | 3).
 
     Version 2 adds POST operations with a JSON body template, ``body_fields``
-    auth, and ``body_cursor`` pagination. Every version 1 document still
-    validates and behaves exactly as before.
+    auth, and ``body_cursor`` pagination. Version 3 adds the event-driven
+    transport: ``protocol: fias_tcp`` sources with ``link`` settings, EVENT
+    operations over event feeds, multi-path field mapping, and ``commands``
+    templates. Every version 1 document still validates and behaves exactly
+    as before, and every version 2 document still validates and behaves
+    exactly as before.
     """
 
-    spec_version: Literal[1, 2]
+    spec_version: Literal[1, 2, 3]
     connector: ConnectorMeta
     source: SourceSpec
     operations: dict[str, OperationSpec] = Field(min_length=1)
     entities: dict[str, EntitySpec] = Field(min_length=1)
     capabilities: Capabilities
     health: HealthSpec
+    commands: dict[str, CommandTemplate] = Field(
+        default_factory=dict,
+        description="Host-originated record templates, keyed by command kind (spec v3)",
+    )
 
     @field_validator("operations")
     @classmethod
@@ -710,6 +945,14 @@ class ConnectorSpec(_Strict):
         for name in v:
             if not OPERATION_NAME_RE.match(name):
                 raise ValueError(f"operation name {name!r} must match [a-z][a-z0-9_]*")
+        return v
+
+    @field_validator("commands")
+    @classmethod
+    def _command_names(cls, v: dict[str, CommandTemplate]) -> dict[str, CommandTemplate]:
+        for name in v:
+            if not COMMAND_NAME_RE.match(name):
+                raise ValueError(f"command kind {name!r} must match [a-z][a-z0-9_.]*")
         return v
 
     @field_validator("entities")
@@ -722,8 +965,26 @@ class ConnectorSpec(_Strict):
 
     @model_validator(mode="after")
     def _v1_vocabulary(self) -> ConnectorSpec:
-        """Version 1 cannot express POST, body templates, body_fields auth, body_cursor or joins."""
+        """Version 1 cannot express POST, body templates, body_fields auth, body_cursor, joins or v3."""
         if self.spec_version == 1:
+            self._reject_newer_than(1)
+        return self
+
+    @model_validator(mode="after")
+    def _v2_vocabulary(self) -> ConnectorSpec:
+        """Version 2 is HTTP-only: it cannot express the v3 event-driven transport."""
+        if self.spec_version == 2:
+            self._reject_newer_than(2)
+        return self
+
+    def _reject_newer_than(self, version: int) -> None:
+        """Reject constructs newer than *version* (keeps old vocabularies frozen)."""
+        for op_name, op in self.operations.items():
+            if op.method == "EVENT" or op.feed is not None:
+                raise ValueError(
+                    f"operations.{op_name}: event feeds require spec_version 3"
+                )
+        if version < 2:
             if self.source.auth.type == "body_fields":
                 raise ValueError("body_fields auth requires spec_version 2")
             for op_name, op in self.operations.items():
@@ -742,7 +1003,29 @@ class ConnectorSpec(_Strict):
                     raise ValueError(
                         f"entities.{entity_name}: joins require spec_version 2"
                     )
-        return self
+        if version < 3:
+            if self.source.protocol != "http":
+                raise ValueError(
+                    f"protocol {self.source.protocol!r} requires spec_version 3"
+                )
+            if self.source.link is not None:
+                raise ValueError("link settings require spec_version 3")
+            if self.source.auth.type == "edge_relay":
+                raise ValueError("edge_relay auth requires spec_version 3")
+            for op_name, op in self.operations.items():
+                if op.feed is not None:
+                    raise ValueError(
+                        f"operations.{op_name}: event feeds require spec_version 3"
+                    )
+            for entity_name, entity in self.entities.items():
+                for field_name, field in entity.fields.items():
+                    if field.paths is not None:
+                        raise ValueError(
+                            f"entities.{entity_name}.fields.{field_name}: "
+                            "multi-path mapping requires spec_version 3"
+                        )
+            if self.commands:
+                raise ValueError("command templates require spec_version 3")
 
     @model_validator(mode="after")
     def _cross_refs(self) -> ConnectorSpec:
@@ -787,6 +1070,13 @@ class ConnectorSpec(_Strict):
         for name in self.capabilities.read:
             if name not in self.entities:
                 raise ValueError(f"capabilities.read: unknown entity {name!r}")
+        if self.commands:
+            for name in self.capabilities.action:
+                if name not in self.commands:
+                    raise ValueError(
+                        f"capabilities.action: unknown command {name!r} "
+                        "(action names must be keys of commands)"
+                    )
         if self.health.canary.operation not in self.operations:
             raise ValueError(
                 f"health.canary.operation: unknown operation "
@@ -821,17 +1111,21 @@ def spec_to_json_data(spec: ConnectorSpec) -> dict[str, Any]:
 
 
 def signature_canonical_data(data: Mapping[str, Any]) -> dict[str, Any]:
-    """Strip spec-v2-only fields at their defaults for signature hashing.
+    """Strip spec-v2/v3-only fields at their defaults for signature hashing.
 
     REQ-020 sub-steps 5a/5c added ``operations.*.body``, ``body_fields``
     auth, ``body_cursor`` pagination paths (``cursor_path``/``count_path``/
-    ``count_value``) and ``entities.*.joins``. A v1 spec always carries
-    them at their defaults — the v1 vocabulary gate (``_v1_vocabulary``)
-    rejects anything else — but ``model_dump`` emits them, so hashing the
-    raw dump changed every v1 signature (REQ-020 owner check 2026-10-28:
-    committed reference releases stopped verifying). Dropping defaulted
-    v2-only keys restores the exact pre-v2 canonical bytes; a v2 spec that
-    actually sets one of them still changes the signature.
+    ``count_value``) and ``entities.*.joins``. REQ-022 sub-step C adds the
+    v3 vocabulary: ``source.protocol``/``source.link``, ``edge_relay``
+    auth, EVENT ``operations.*.feed``, ``entities.*.fields.*.paths`` and
+    ``commands``. A v1 spec always carries them at their defaults — the
+    vocabulary gates (``_v1_vocabulary``/``_v2_vocabulary``) reject anything
+    else — but ``model_dump`` emits them, so hashing the raw dump changed
+    every v1 signature (REQ-020 owner check 2026-10-28: committed reference
+    releases stopped verifying). Dropping defaulted newer-version keys
+    restores the exact pre-v2 canonical bytes; a spec that actually sets
+    one of them still changes the signature. The same holds for v2 specs
+    and v3-only keys.
     """
     import copy
 
@@ -843,6 +1137,10 @@ def signature_canonical_data(data: Mapping[str, Any]) -> dict[str, Any]:
                 continue
             if op.get("body") is None and "body" in op:
                 del op["body"]
+            if op.get("feed") is None and "feed" in op:
+                del op["feed"]
+            if not op.get("path") and "path" in op:
+                del op["path"]
             pagination = op.get("pagination")
             if isinstance(pagination, dict):
                 for key in ("cursor_path", "count_path", "count_value"):
@@ -850,14 +1148,31 @@ def signature_canonical_data(data: Mapping[str, Any]) -> dict[str, Any]:
                         del pagination[key]
     source = snap.get("source")
     if isinstance(source, dict):
+        if source.get("protocol", "http") == "http" and "protocol" in source:
+            del source["protocol"]
+        if source.get("link") is None and "link" in source:
+            del source["link"]
         auth = source.get("auth")
         if isinstance(auth, dict) and auth.get("body_fields") is None and "body_fields" in auth:
             del auth["body_fields"]
     entities = snap.get("entities")
     if isinstance(entities, dict):
         for entity in entities.values():
-            if isinstance(entity, dict) and not entity.get("joins") and "joins" in entity:
+            if not isinstance(entity, dict):
+                continue
+            if not entity.get("joins") and "joins" in entity:
                 del entity["joins"]
+            fields = entity.get("fields")
+            if isinstance(fields, dict):
+                for field in fields.values():
+                    if not isinstance(field, dict):
+                        continue
+                    if field.get("path") is None and "path" in field:
+                        del field["path"]
+                    if field.get("paths") is None and "paths" in field:
+                        del field["paths"]
+    if not snap.get("commands") and "commands" in snap:
+        del snap["commands"]
     return snap
 
 
@@ -871,7 +1186,7 @@ def format_validation_errors(error: Any) -> list[str]:
 
 
 def default_schema_path() -> Path:
-    """Repo ``schemas/connector-spec.v2.json`` resolved from this file."""
+    """Repo ``schemas/connector-spec.v3.json`` resolved from this file."""
     return Path(__file__).resolve().parents[3] / "schemas" / SCHEMA_FILENAME
 
 

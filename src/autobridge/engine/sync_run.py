@@ -55,7 +55,7 @@ def resolve_sync_vocabulary(
     a sync never narrows an existing release below what it was built with
     unless the operator pins it explicitly.
     """
-    if requested in ("v1", "v2"):
+    if requested in ("v1", "v2", "v3"):
         return requested
     build_vocab: str | None = None
     try:
@@ -66,7 +66,7 @@ def resolve_sync_vocabulary(
             build = session.get(BuildRun, provenance_id)
             if build is not None and isinstance(build.inputs, dict):
                 candidate = build.inputs.get("spec_vocabulary")
-                if candidate in ("v1", "v2"):
+                if candidate in ("v1", "v2", "v3"):
                     build_vocab = candidate
     except Exception:
         build_vocab = None
@@ -183,11 +183,13 @@ def execute_sync(
     *,
     checkpoint: dict[str, Any] | None = None,
     max_pages: int = 1000,
+    feed_reader: Any | None = None,
 ) -> dict[str, Any]:
-    """Execute *spec_dict* via the interpreter and return sync summary.
+    """Execute *spec_dict* via the interpreter and return a sync summary.
 
     Steps:
-      1. Fetch raw pages per operation via :class:`Interpreter`.
+      1. Fetch raw pages per operation via :class:`Interpreter` (HTTP ops
+         via *http_client*, EVENT feed ops via *feed_reader*).
       2. Map raw records to canonical entities via transforms (may Block on unknown enum).
       3. Run entity checks (unique_key, no_loss, date_order).
       4. Determine outcome (Complete | Degraded | Blocked) and data_readiness.
@@ -198,12 +200,30 @@ def execute_sync(
 
     Does not touch the DB — callers create the SyncRun row from this.
     """
+    from autobridge.runtime.feeds import FeedError
     from autobridge.spec.models import load_spec_from_dict
 
     spec = load_spec_from_dict(spec_dict)
-    interp = Interpreter(spec, http_client=http_client)
+    interp = Interpreter(spec, http_client=http_client, feed_reader=feed_reader)
     try:
         results = interp.execute_all(checkpoint=checkpoint, max_pages=max_pages)
+    except FeedError as exc:
+        # Event-feed transport failure (no reader, relay unreachable, token
+        # missing): Blocked with the feed criterion named, never guessed.
+        return {
+            "outcome": "Blocked",
+            "unmet_criteria": ["feed_unavailable"],
+            "data_readiness": {"freshness": "stale", "completeness": "incomplete"},
+            "fingerprint_id": _fp.compute_fingerprint_id(spec_dict, {}, {}),
+            "operation_results": {},
+            "records_observed": {},
+            "checkpoint_values": {},
+            "canonical_records": {},
+            "blocked_records": {},
+            "invariant_results": [{"check": "feed_unavailable", "status": "failed"}],
+            "error": str(exc),
+            "http_status": None,
+        }
     except Exception as exc:
         # Transport / HTTP failure (404 endpoint_removed, 403 token_revoked, etc.)
         # → Blocked with named criterion for classifier.
@@ -519,8 +539,18 @@ def run_sync_handler(
         }
 
     # Resolve http client
+    feed_reader = None
     if http_client_factory is not None:
         http_client = http_client_factory(spec_dict)
+    elif isinstance(spec_dict, dict) and isinstance(spec_dict.get("source"), dict) and spec_dict["source"].get("protocol") == "fias_tcp":
+        # Event-driven transport: no vendor HTTP client exists. The control
+        # plane drains pushed records through the edge relay outbox with
+        # the relay operator token the spec's edge_relay auth names.
+        from autobridge.runtime.feeds import RelayFeedReader  # noqa: PLC0415
+        from autobridge.spec.models import load_spec_from_dict as _load
+
+        http_client = None
+        feed_reader = RelayFeedReader.from_env(_load(spec_dict).source.auth)
     else:
         # Build from spec.source, with a cumulative vendor-delay budget so a
         # hostile Retry-After cannot stall this (inline) job (AR-2-1).
@@ -536,7 +566,7 @@ def run_sync_handler(
         )
 
     checkpoint = payload.get("checkpoint", {}) or {}
-    summary = execute_sync(spec_dict, http_client, checkpoint=checkpoint)
+    summary = execute_sync(spec_dict, http_client, checkpoint=checkpoint, feed_reader=feed_reader)
 
     run = create_sync_run_row(
         session=ctx.session,

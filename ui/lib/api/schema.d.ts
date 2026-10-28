@@ -928,9 +928,9 @@ export interface components {
             scenario_id: string;
             /**
              * Spec Vocabulary
-             * @description ConnectorSpec vocabulary the build may use (REQ-021 item 2). Resolves to SPEC_VOCABULARY env, else v1: v1 refuses POST/body-auth docs deterministically at 0 model calls; v2 compiles them.
+             * @description ConnectorSpec vocabulary the build may use (REQ-021 item 2, REQ-022 C). Resolves to SPEC_VOCABULARY env, else v1: older vocabularies refuse newer docs deterministically at 0 model calls; pin v3 for event-driven (framed) docs.
              */
-            spec_vocabulary?: ("v1" | "v2") | null;
+            spec_vocabulary?: ("v1" | "v2" | "v3") | null;
             /** Vendor */
             vendor?: string | null;
             /** Verifier Url */
@@ -963,6 +963,8 @@ export interface components {
             transforms?: string[];
             /** V1 V2 Diff */
             v1_v2_diff?: string[];
+            /** V2 V3 Diff */
+            v2_v3_diff?: string[];
             /** Versions */
             versions?: {
                 [key: string]: components["schemas"]["CapabilityVersionOut"];
@@ -1017,14 +1019,31 @@ export interface components {
              */
             body_templates: boolean;
             /**
+             * Command Templates
+             * @default false
+             */
+            command_templates: boolean;
+            /**
+             * Event Feeds
+             * @default false
+             */
+            event_feeds: boolean;
+            /**
              * Joins
              * @default false
              */
             joins: boolean;
             /** Methods */
             methods?: string[];
+            /**
+             * Multi Path Mapping
+             * @default false
+             */
+            multi_path_mapping: boolean;
             /** Pagination Strategies */
             pagination_strategies?: string[];
+            /** Protocols */
+            protocols?: string[];
         };
         /** ConnectorCreate */
         ConnectorCreate: {
@@ -1880,9 +1899,9 @@ export interface components {
             release_id?: string | null;
             /**
              * Spec Vocabulary
-             * @description Cap the runtime vocabulary for this sync (REQ-021 item 2). A v2 release synced under a v1 pin ends Blocked with a named reason. Defaults to the release's build vocabulary, else the runtime default.
+             * @description Cap the runtime vocabulary for this sync (REQ-021 item 2, REQ-022 C). A newer release synced under an older pin ends Blocked with a named reason. Defaults to the release's build vocabulary, else the runtime default.
              */
-            spec_vocabulary?: ("v1" | "v2") | null;
+            spec_vocabulary?: ("v1" | "v2" | "v3") | null;
         };
         /** SyncResponse */
         SyncResponse: {

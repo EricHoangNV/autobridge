@@ -30,6 +30,11 @@ def transform_money(
     - float → rejected (money is Decimal end to end, never float; a float
       has already lost precision upstream, so it is never laundered via str).
       Vendor JSON must be parsed with parse_float=Decimal.
+    - ``minor_units: true`` → the parsed value counts minor currency units
+      (cents) and is divided by 100 before quantizing — e.g. the FIAS
+      ``TA`` wire field ``"1250"`` becomes ``Decimal("12.50")``. Applies to
+      Decimal/int/str inputs alike (after Decimal coercion, before
+      quantize); never to float (still rejected).
     - Returns Decimal quantized to scale (default 2).
     - On invalid, raises TransformError (not Blocked).
     """
@@ -41,6 +46,10 @@ def transform_money(
     scale = args.get("scale", 2)
     if not isinstance(scale, int) or isinstance(scale, bool) or not 0 <= scale <= 6:
         raise TransformError(f"money: scale must be int 0..6, got {scale!r}")
+
+    minor_units = args.get("minor_units", False)
+    if not isinstance(minor_units, bool):
+        raise TransformError(f"money: minor_units must be bool, got {minor_units!r}")
 
     dec: Decimal
     if isinstance(value, Decimal):
@@ -76,6 +85,9 @@ def transform_money(
 
     if not dec.is_finite():
         raise TransformError(f"money: non-finite {value!r}")
+
+    if minor_units:
+        dec = dec / 100
 
     quant_str = "1." + "0" * scale if scale > 0 else "1"
     quant = Decimal("1") if scale == 0 else Decimal(quant_str)  # noqa: SIM108

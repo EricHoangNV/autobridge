@@ -62,6 +62,48 @@ def load_bundle(path: pathlib.Path | str | None = None) -> dict[str, Any]:
         raise BundleError(f"command bundle is not valid JSON: {exc}") from exc
 
 
+def bundle_from_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Convert a ConnectorSpec v3 ``commands`` section to bundle data.
+
+    The spec carries command templates as data; the agent executes the
+    same ``{param}`` substitution it runs for the file bundle. The
+    conversion validates shape (record codes, wire field ids, strict
+    placeholders — the same rules as the bundle renderer) and fills the
+    property timezone from the spec's ``timezone_source``. A release's own
+    signature covers a spec-carried bundle, so no separate bundle
+    signature is minted here — verify the release, not the fragment.
+    """
+    from autobridge.spec.models import load_spec_from_dict, spec_to_json_data  # noqa: PLC0415
+
+    model = load_spec_from_dict(spec)
+    if model.spec_version < 3 or not model.commands:
+        raise BundleError("spec carries no v3 command templates (commands is empty)")
+    data = spec_to_json_data(model)
+    tz = ((data["source"].get("timezone_source") or {}).get("value")) or "UTC"
+    commands: dict[str, Any] = {}
+    for kind, template in data["commands"].items():
+        entry: dict[str, Any] = {
+            "record": template["record"],
+            "fields": dict(template["fields"]),
+            "expect": template.get("expect", "ack"),
+        }
+        if template.get("defaults"):
+            entry["defaults"] = dict(template["defaults"])
+        if template.get("now"):
+            entry["now"] = list(template["now"])
+        commands[kind] = entry
+    bundle = {"version": model.spec_version, "property_timezone": tz, "commands": commands}
+    # Same strictness as the file bundle: every kind must render with
+    # sample-free shape checks (record codes, field ids, placeholders).
+    for kind, entry in commands.items():
+        if not isinstance(entry["record"], str) or len(entry["record"]) != 2:
+            raise BundleError(f"spec command {kind!r} names a bad record {entry['record']!r}")
+        for fid, template in entry["fields"].items():
+            if not isinstance(fid, str) or len(fid) != 2 or not isinstance(template, str):
+                raise BundleError(f"spec command {kind!r} has a bad field template {fid!r}")
+    return bundle
+
+
 def mint(bundle: dict[str, Any] | None = None) -> str:
     """Compute the signature to pin in ``EDGE_BUNDLE_SIGNATURE``."""
     return release_signature(bundle if bundle is not None else load_bundle())

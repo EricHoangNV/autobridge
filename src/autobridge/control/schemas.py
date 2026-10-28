@@ -265,11 +265,11 @@ class BuildRequest(BaseModel):
     credential_ref: str | None = None
     scenario_id: str = Field(default="baseline")
     verifier_url: str | None = None
-    spec_vocabulary: Literal["v1", "v2"] | None = Field(
+    spec_vocabulary: Literal["v1", "v2", "v3"] | None = Field(
         default=None,
-        description="ConnectorSpec vocabulary the build may use (REQ-021 item 2). "
-        "Resolves to SPEC_VOCABULARY env, else v1: v1 refuses POST/body-auth docs "
-        "deterministically at 0 model calls; v2 compiles them.",
+        description="ConnectorSpec vocabulary the build may use (REQ-021 item 2, REQ-022 C). "
+        "Resolves to SPEC_VOCABULARY env, else v1: older vocabularies refuse newer docs "
+        "deterministically at 0 model calls; pin v3 for event-driven (framed) docs.",
     )
 
     model_config = {"extra": "allow"}
@@ -285,10 +285,10 @@ class BuildResponse(BaseModel):
 class SyncRequest(BaseModel):
     release_id: str | None = Field(default=None, description="Release to sync; defaults to active")
     checkpoint: dict[str, Any] | None = None
-    spec_vocabulary: Literal["v1", "v2"] | None = Field(
+    spec_vocabulary: Literal["v1", "v2", "v3"] | None = Field(
         default=None,
-        description="Cap the runtime vocabulary for this sync (REQ-021 item 2). "
-        "A v2 release synced under a v1 pin ends Blocked with a named reason. "
+        description="Cap the runtime vocabulary for this sync (REQ-021 item 2, REQ-022 C). "
+        "A newer release synced under an older pin ends Blocked with a named reason. "
         "Defaults to the release's build vocabulary, else the runtime default.",
     )
 
@@ -399,8 +399,12 @@ class CapabilityVersionOut(BaseModel):
     methods: list[str] = Field(default_factory=list)
     auth_types: list[str] = Field(default_factory=list)
     pagination_strategies: list[str] = Field(default_factory=list)
+    protocols: list[str] = Field(default_factory=list)
     joins: bool = False
     body_templates: bool = False
+    event_feeds: bool = False
+    command_templates: bool = False
+    multi_path_mapping: bool = False
 
 
 class CapabilityRuleOut(BaseModel):
@@ -424,6 +428,7 @@ class CapabilitiesOut(BaseModel):
     stop_conditions: list[str] = Field(default_factory=list)
     rules: list[CapabilityRuleOut] = Field(default_factory=list)
     v1_v2_diff: list[str] = Field(default_factory=list)
+    v2_v3_diff: list[str] = Field(default_factory=list)
     tools: list[CapabilityToolOut] = Field(default_factory=list)
 
 

@@ -92,8 +92,8 @@ def model_price_per_million(model: str) -> tuple[str, str] | None:
     return MODEL_PRICES_PER_MILLION.get((model or "").strip())
 
 
-#: ConnectorSpec vocabulary versions the engine understands (REQ-021 item 2).
-SPEC_VOCABULARIES = ("v1", "v2")
+#: ConnectorSpec vocabulary versions the engine understands (REQ-021 item 2, REQ-022 C).
+SPEC_VOCABULARIES = ("v1", "v2", "v3")
 
 
 #: Frontier provider modes (REQ-021 item 5).
@@ -127,11 +127,11 @@ def runtime_max_vocabulary() -> str:
 def spec_vocabulary_default() -> str:
     """Default build vocabulary (env ``SPEC_VOCABULARY``, else ``"v1"``).
 
-    ``"v1"`` keeps the safe refusal: docs that need POST/body-auth (or any
-    other v2-only construct) stop at the deterministic vocabulary guard
-    with 0 model calls instead of compiling a half-working spec. Builds and
-    syncs pin ``"v2"`` explicitly when the docs need it; the UI and
-    ``make demo`` show which vocabulary each build used.
+    ``"v1"`` keeps the safe refusal: docs that need POST/body-auth, event
+    feeds (or any other newer construct) stop at the deterministic
+    vocabulary guard with 0 model calls instead of compiling a half-working
+    spec. Builds pin ``"v2"``/``"v3"`` explicitly when the docs need them;
+    the UI and ``make demo`` show which vocabulary each build used.
     """
     raw = (os.environ.get("SPEC_VOCABULARY", "") or "").strip() or "v1"
     if raw not in SPEC_VOCABULARIES:

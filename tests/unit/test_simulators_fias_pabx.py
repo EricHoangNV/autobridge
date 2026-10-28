@@ -761,7 +761,7 @@ def test_send_and_wait_ack_survives_idle_poll_tick() -> None:
     import threading
 
     from simulators.fias_pabx.pabx import PabxConfig, PabxLink
-    from simulators.fias_pabx.protocol import ACK, encode_frame
+    from simulators.fias_pabx.protocol import ACK
 
     link = PabxLink(PabxConfig())
     a, b = _socket.socketpair()

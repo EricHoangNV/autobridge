@@ -1,4 +1,4 @@
-# AutoBridge — ConnectorSpec v1/v2
+# AutoBridge — ConnectorSpec v1/v2/v3
 
 > Reference for the declarative connector document the runtime interprets.
 > Every spec validates against `schemas/connector-spec.v2.json` before it is
@@ -511,3 +511,92 @@ JSON-Patchable like everything else, interpreted — never code.
   (`sync_run` for full syncs; the canary probe resolves with partial data —
   known-but-unfetched joins attach `None`). Money stays `Decimal` end to
   end; a float aggregate input raises instead of laundering precision.
+
+## 13. Spec v3 — event-driven transport (REQ-022.C)
+
+Version 3 extends the vocabulary once, generally: a framed on-premise
+protocol (FIAS over TCP) joins the HTTP transports, with no vendor branch
+anywhere in the engine (`grep` finds no vendor name in `src/autobridge`
+outside tests and fixtures). `spec_version: 1` and `spec_version: 2`
+documents validate and behave exactly as before; every v3-only construct
+with an older version is rejected with a `requires spec_version 3` error,
+which is what the REQ-022 item-C "before" refusal pins (v1 *and* v2 refuse
+a FIAS source, deterministically, at 0 model calls).
+
+* `source.protocol: fias_tcp` (default `http`) with `source.link` as data:
+  `ack_mode`, `max_frame_bytes`, `announced_records` (the host's `LR`
+  interest set). A `fias://` base URL names the site's listen contract
+  (e.g. `fias://listen:5010`); `http` sources keep `http(s)` URLs.
+* `operations.<feed>.method: EVENT` with `feed: {record, via: edge_relay,
+  dedupe_keys}`. Feeds name no path, body, pagination, checkpoint or
+  params — pushed records are not paged or positioned; delivery is
+  at-least-once and the reader folds resends on `dedupe_keys` before
+  mapping. The control plane drains feeds through the edge relay outbox
+  with the relay operator token the spec's auth names.
+* `auth.type: edge_relay` with `credential_ref` naming the env key of the
+  relay operator token (read at runtime, never stored). No vendor
+  credential exists on this transport.
+* `entities.<Name>.fields.<f>.paths: [...]` (v3 only): one value per path,
+  fed as a list into the pipeline — e.g. `paths: [$.DA, $.TI]` plus
+  `concat` turns a wire date and time into one datetime string. A field
+  with no path at all is allowed only when the pipeline starts with
+  `const` (site facts stated outright, needing no input).
+* `commands:` templates (v3 only): host-originated record data keyed by
+  command kind — `{record, fields: {<wire id>: {param}}, defaults, now,
+  expect}`. Placeholders substitute strictly (a missing param rejects the
+  command before anything reaches the link); `expect` is `ack` or the
+  answer record the agent waits for.
+* Discovery: framed-protocol docs (record tables, framing contract, site
+  facts) parse into EVENT feed candidates, a charge/status role proposal,
+  and command templates; a FIAS source builds only under `spec_vocabulary:
+  "v3"`. Capabilities (`GET /capabilities`, `autobridge capabilities`,
+  the knowledge page) list v3 as "everything in v2, plus" the event
+  transport.
+
+Example (shape, from the FIAS interface document):
+
+```yaml
+spec_version: 3
+connector: { id: fiaspabx, vendor: Grand, runtime_target: edge }
+source:
+  base_url: fias://listen:5010
+  protocol: fias_tcp
+  auth: { type: edge_relay, credential_ref: FIAS_API_KEY }
+  timezone_source: { kind: static, value: America/New_York }
+  link: { ack_mode: true, max_frame_bytes: 65536, announced_records: [PS, RE] }
+operations:
+  feed_ps:
+    method: EVENT
+    feed: { record: PS, via: edge_relay, dedupe_keys: [RN, P#, DA, TI] }
+entities:
+  FolioCharge:
+    from: feed_ps
+    key: $['P#']
+    fields:
+      charge_id:
+        paths: [$.RN, $['P#'], $.DA, $.TI]
+        transform: [{ name: concat, args: { separator: "-" } }]
+      amount:
+        path: $['TA']
+        transform: [{ name: money, args: { scale: 2, minor_units: true } }]
+      business_date:
+        paths: [$.DA, $.TI]
+        transform:
+          - { name: concat, args: { separator: " " } }
+          - { name: business_date, args: { tz: source, naive_as: source } }
+    checks: [{ kind: unique_key }]
+capabilities: { read: [FolioCharge, RoomStatus], action: [gi, wr, kr] }
+commands:
+  wr:
+    record: WR
+    fields: { RN: "{room_number}", DA: "{wake_up_date_yymmdd}", TI: "{wake_up_time_hhmm00}" }
+    expect: ack
+```
+
+Wire notes (closed-set extensions, not new transforms): `money` accepts
+`minor_units: true` (value counts minor currency units, divided by 100
+before quantizing — exact `Decimal`, never float); the date transforms
+parse framed wire `YYMMDD[ HHMMSS]` wall time (years 2000+YY) and take
+`naive_as: source` for property-local wall timestamps (`date_local` and
+`business_date` still assume UTC by default; `datetime_utc` still assumes
+the source timezone by default — legacy behavior preserved).

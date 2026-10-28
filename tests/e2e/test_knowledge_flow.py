@@ -157,9 +157,11 @@ def test_knowledge_endpoints_live_shape(e2e_stack: str) -> None:
             return _json.loads(resp.read().decode())
 
     capabilities = _get("/capabilities")
-    assert set(capabilities["versions"]) == {"v1", "v2"}
+    assert set(capabilities["versions"]) == {"v1", "v2", "v3"}
     assert "POST" in capabilities["versions"]["v2"]["methods"]
     assert "POST" not in capabilities["versions"]["v1"]["methods"]
+    assert "EVENT" in capabilities["versions"]["v3"]["methods"]
+    assert "EVENT" not in capabilities["versions"]["v2"]["methods"]
     assert any(t["name"] == "reset_demo" for t in capabilities["tools"])
     knowledge = _get("/knowledge")
     assert set(knowledge) == {"entries", "connectors", "counts"}

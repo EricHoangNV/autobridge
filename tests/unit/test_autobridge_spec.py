@@ -40,7 +40,8 @@ from autobridge.spec.registry import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_FILE = ROOT / "schemas" / "connector-spec.v2.json"
+SCHEMA_FILE = ROOT / "schemas" / "connector-spec.v3.json"
+SCHEMA_FILE_V2 = ROOT / "schemas" / "connector-spec.v2.json"
 SCHEMA_FILE_V1 = ROOT / "schemas" / "connector-spec.v1.json"
 
 HARBOR_YAML = """
@@ -136,6 +137,16 @@ def test_dump_validates_against_schema_file() -> None:
 def test_schema_file_matches_models() -> None:
     on_disk = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))
     assert on_disk == ConnectorSpec.model_json_schema()
+
+
+def test_frozen_schema_files_unchanged() -> None:
+    """v1/v2 schema files stay frozen: v1 pins const 1, v2 pins enum [1, 2]."""
+    assert SCHEMA_FILE_V1.is_file()
+    v1_disk = json.loads(SCHEMA_FILE_V1.read_text(encoding="utf-8"))
+    assert v1_disk["properties"]["spec_version"].get("const") == 1
+    assert SCHEMA_FILE_V2.is_file()
+    v2_disk = json.loads(SCHEMA_FILE_V2.read_text(encoding="utf-8"))
+    assert v2_disk["properties"]["spec_version"]["enum"] == [1, 2]
 
 
 def test_load_spec_from_yaml_file(tmp_path: Path) -> None:
@@ -341,11 +352,12 @@ def test_missing_required_field_reports_path() -> None:
     assert ("entities", "Reservation", "key") in [e["loc"] for e in exc.value.errors()]
 
 
-def test_spec_version_accepts_1_and_2_only() -> None:
+def test_spec_version_accepts_1_2_and_3() -> None:
     assert load_spec_from_dict(harbor_data()).spec_version == 1
     assert load_spec_from_dict(harbor_data(spec_version=2)).spec_version == 2
+    assert load_spec_from_dict(harbor_data(spec_version=3)).spec_version == 3
     with pytest.raises(ValidationError):
-        load_spec_from_dict(harbor_data(spec_version=3))
+        load_spec_from_dict(harbor_data(spec_version=4))
 
 
 def test_v1_rejects_v2_features() -> None:
@@ -383,7 +395,7 @@ def test_v1_rejects_v2_features() -> None:
             load_spec_from_dict(bad)
 
 
-def test_v1_spec_file_stays_valid_under_v2_schema() -> None:
+def test_v1_spec_file_stays_valid_under_current_schema() -> None:
     assert SCHEMA_FILE_V1.is_file()
     validate_against_schema_file(spec_to_json_data(harbor_spec()))
 

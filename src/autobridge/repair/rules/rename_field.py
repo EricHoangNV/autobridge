@@ -87,12 +87,30 @@ def _extra_rename_info(ctx: RepairContext) -> tuple[str, str, str] | None:
     return None
 
 
-def _spec_has_field(ctx: RepairContext, entity: str, field: str) -> bool:
+def _spec_field_paths(ctx: RepairContext, entity: str, field: str) -> list[str]:
+    """Current source paths of one canonical field (``path`` or ``paths``)."""
     ent = ctx.spec.get("entities", {}).get(entity)
     if not isinstance(ent, dict):
-        return False
-    fields = ent.get("fields", {})
-    return isinstance(fields, dict) and field in fields
+        return []
+    fm = ent.get("fields", {}).get(field)
+    if not isinstance(fm, dict):
+        return []
+    if fm.get("path") is not None:
+        return [str(fm["path"])]
+    if isinstance(fm.get("paths"), list):
+        return [str(p) for p in fm["paths"]]
+    return []
+
+
+def _explicit_new_path(ctx: RepairContext) -> str | None:
+    """An explicitly supplied full new path, if any (wire renames)."""
+    ex = ctx.extra
+    if isinstance(ex.get("new_path"), str) and ex["new_path"]:
+        return ex["new_path"]
+    rename = ex.get("rename")
+    if isinstance(rename, dict) and isinstance(rename.get("new_path"), str) and rename["new_path"]:
+        return rename["new_path"]
+    return None
 
 
 def precondition(ctx: RepairContext) -> bool:
@@ -107,12 +125,18 @@ def precondition(ctx: RepairContext) -> bool:
         return False
     entity, old_field, new_field = info
     # Spec must contain the old field mapping (so we can patch its path)
-    if not _spec_has_field(ctx, entity, old_field):
+    if not _spec_field_paths(ctx, entity, old_field):
         return False
     # New field should not already be a canonical field name in that entity
     # (otherwise it's not a rename of source path but a different kind)
-    # We allow it — but require old != new
-    return old_field != new_field
+    # We allow it — but require old != new, unless the caller names an
+    # explicit new path that differs from the current one: a framed record
+    # can rename a wire id (``TA`` → ``TX``) while the canonical field
+    # (``amount``) keeps its name, and that is a real change, not a no-op.
+    if old_field != new_field:
+        return True
+    wanted = _explicit_new_path(ctx)
+    return wanted is not None and wanted not in _spec_field_paths(ctx, entity, old_field)
 
 
 def generate_patch(ctx: RepairContext) -> list[dict[str, Any]]:
