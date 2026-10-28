@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from autobridge.control.models import DriftEvent, RepairRun
 from autobridge.drift.classifier import DriftClassification, classify
+from autobridge.repair.escalation import escalation_for_no_fix
 from autobridge.repair.knowledge import KnowledgeCache, delta_signature, get_default_cache
 
 if TYPE_CHECKING:
@@ -39,6 +40,24 @@ def _spec_vendor(spec: dict[str, Any]) -> str:
     except Exception:
         pass
     return "unknown"
+
+
+def _signal_evidence_ids(signals_list: list[Any]) -> list[str]:
+    """Collect evidence ids from signals (same rule as the ladder)."""
+    evidence_ids: list[str] = []
+    seen: set[str] = set()
+    for sig in signals_list:
+        eids: list[str] | None = None
+        if isinstance(sig, dict):
+            eids = sig.get("evidence_ids")
+        elif hasattr(sig, "evidence_ids"):
+            eids = getattr(sig, "evidence_ids", None)
+        if eids:
+            for eid in eids:
+                if isinstance(eid, str) and eid not in seen:
+                    seen.add(eid)
+                    evidence_ids.append(eid)
+    return evidence_ids
 
 
 class RepairController:
@@ -62,6 +81,21 @@ class RepairController:
         vendor: str | None = None,
         drift_event_ids: list[str] | None = None,
         session: Session | None = None,
+        # REQ-021 semantic climb: when *provider* is wired, a semantic drift
+        # climbs L0 -> L1 -> L2 -> L3 via run_frontier_climb and then stops.
+        # The controller never releases an L3 proposal: SEMANTIC_VALUE_DRIFT
+        # without independent evidence escalates (plan §1.1), so the climb
+        # always ends here with decision "escalate" and one operator
+        # question; the verifier/trap verdict on the proposal is the
+        # caller's job (demo, bench, matrix test). Without a provider the
+        # deterministic run_ladder path below is used unchanged.
+        hypotheses: list[Any] | None = None,
+        enumerator_yield_count: int | None = None,
+        provider: Any | None = None,
+        budget: Any | None = None,
+        scenario: str | None = None,
+        validate_against: dict[str, Any] | None = None,
+        run_id: str | None = None,
     ) -> LadderResult:
         """Run ladder for given drift context and optionally persist RepairRun.
 
@@ -75,6 +109,25 @@ class RepairController:
         vendor_val = vendor or _spec_vendor(spec)
         signals_list: list[Any] = list(signals or [])
         extra_dict: dict[str, Any] = dict(extra or {})
+
+        if provider is not None:
+            return self._handle_semantic_climb(
+                spec=spec,
+                drift_class=drift_class,
+                signals_list=signals_list,
+                fingerprint_delta=fingerprint_delta,
+                extra_dict=extra_dict,
+                vendor_val=vendor_val,
+                drift_event_ids=drift_event_ids,
+                session=session,
+                hypotheses=hypotheses,
+                enumerator_yield_count=enumerator_yield_count,
+                provider=provider,
+                budget=budget,
+                scenario=scenario,
+                validate_against=validate_against,
+                run_id=run_id,
+            )
 
         result = run_ladder(
             spec=spec,
@@ -119,6 +172,148 @@ class RepairController:
                         confidence=result.confidence or 0.0,
                     )
 
+        return result
+
+    def _handle_semantic_climb(
+        self,
+        *,
+        spec: dict[str, Any],
+        drift_class: str,
+        signals_list: list[Any],
+        fingerprint_delta: FingerprintDelta | dict[str, Any] | None,
+        extra_dict: dict[str, Any],
+        vendor_val: str,
+        drift_event_ids: list[str] | None,
+        session: Session | None,
+        hypotheses: list[Any] | None,
+        enumerator_yield_count: int | None,
+        provider: Any,
+        budget: Any | None,
+        scenario: str | None,
+        validate_against: dict[str, Any] | None,
+        run_id: str | None,
+    ) -> LadderResult:
+        """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then escalate.
+
+        Wraps :func:`run_frontier_climb` so the controller path records the
+        same full climb the demo and the matrix pin ([0, 1, 2, 3, 4]): every
+        rung tried with its one-line reason, the L3 frontier call in the
+        usage ledger, and an L4 escalation with one operator question. An
+        L3 proposal is never released here — it is recorded on the rung and
+        left for the caller (verifier/trap check), never placed in
+        ``candidate_patch``.
+        """
+        import uuid as _uuid  # noqa: PLC0415 - keep module import cost down
+
+        from autobridge.repair.ladder import run_frontier_climb  # noqa: PLC0415
+
+        active_run_id = run_id or f"repair-{_uuid.uuid4().hex[:12]}"
+        climb = run_frontier_climb(
+            spec=spec,
+            drift_class=drift_class,
+            hypotheses=list(hypotheses or []),
+            enumerator_yield_count=1 if enumerator_yield_count is None else enumerator_yield_count,
+            provider=provider,
+            budget=budget,
+            session=session,
+            run_id=active_run_id,
+            knowledge_cache=self.knowledge_cache,
+            fingerprint_delta=fingerprint_delta,
+            extra=extra_dict,
+            vendor=vendor_val,
+            scenario=scenario,
+            validate_against=validate_against,
+        )
+        if climb.get("resolved_rung") == 0:
+            # L0 knew this drift: fall back to the deterministic path, which
+            # replays the cached patch as a normal L0 propose.
+            return self.handle(
+                spec=spec,
+                drift_class=drift_class,
+                signals=signals_list,
+                fingerprint_delta=fingerprint_delta,
+                extra=extra_dict,
+                vendor=vendor_val,
+                drift_event_ids=drift_event_ids,
+                session=session,
+            )
+
+        # Normalize rung-keyed climb attempts to level-keyed ladder trace
+        # entries (what rung_ledger and the repairs UI read).
+        trace: list[dict[str, Any]] = []
+        for attempt in climb.get("attempts", []):
+            if not isinstance(attempt, dict):
+                continue
+            entry = dict(attempt)
+            rung = entry.pop("rung", None)
+            if isinstance(rung, int) and not isinstance(rung, bool):
+                entry["level"] = rung
+            trace.append(entry)
+        l3_entry = next((e for e in trace if e.get("level") == 3), None)
+        if l3_entry is not None and climb.get("proposal") is not None:
+            # Record the actual L3 proposal on its rung (JSON-safe list):
+            # callers (matrix, demo) check the verifier/trap verdict on it.
+            # It is never placed in candidate_patch: nothing here is released.
+            l3_entry["proposal"] = list(climb["proposal"])
+        scenario_name = scenario or drift_class
+        if l3_entry is not None and l3_entry.get("action") == "proposal_rejected":
+            l4_reason = (
+                f"L3 proposal rejected: {l3_entry.get('reason', 'does not apply')} "
+                f"({scenario_name}); no patch released — one operator question"
+            )
+        elif l3_entry is not None and (climb.get("proposal") or l3_entry.get("proposal_ops")):
+            l4_reason = (
+                f"L3 proposed a patch for {scenario_name} with no independent "
+                "evidence; semantic drift is never auto-patched — one operator question"
+            )
+        elif l3_entry is not None and l3_entry.get("action") == "l3_skipped":
+            l4_reason = f"{l3_entry.get('reason', 'L3 skipped')} ({scenario_name}); escalate"
+        else:
+            l4_reason = (
+                f"No verified fix for {scenario_name} below L4 "
+                "(semantic drift needs the operator)"
+            )
+        trace.append(
+            {"level": 4, "action": "escalate", "reason": l4_reason, "drift_class": drift_class}
+        )
+        bundle = escalation_for_no_fix(
+            f"{scenario_name}: semantic drift, no verified fix",
+            evidence_ids=_signal_evidence_ids(signals_list),
+            question=f"{scenario_name}: no verified fix for this semantic drift — which mapping is correct?",
+        )
+        model_usage = dict(climb.get("usage", {}))
+        result = LadderResult(
+            decision="escalate",
+            ladder_level_reached=4,
+            candidate_patch=None,
+            rule_id=None,
+            verification_level=None,
+            model_usage=model_usage,
+            evidence_ids=_signal_evidence_ids(signals_list),
+            ladder_trace=trace,
+            backoff_only=False,
+            escalation_reason=l4_reason,
+            escalation_bundle=bundle,
+            requires_release=False,
+        )
+        if session is not None:
+            run = RepairRun(
+                drift_event_ids=list(drift_event_ids or []),
+                ladder_level_reached=result.ladder_level_reached,
+                vendor=vendor_val,
+                drift_signature=delta_signature(fingerprint_delta),
+                candidate_patch=result.candidate_patch,
+                rule_id=result.rule_id,
+                hypothesis_ids=[],
+                visible_test_results=[],
+                verifier_report_id=None,
+                decision=result.decision,
+                model_usage=dict(result.model_usage),
+                ladder_trace=list(result.ladder_trace),
+                escalation_bundle=bundle.to_dict(),
+            )
+            session.add(run)
+            session.flush()
         return result
 
     def handle_classified(

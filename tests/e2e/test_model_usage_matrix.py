@@ -172,8 +172,11 @@ def _meridian_spec() -> dict[str, Any]:
 # expected_levels pins the exact ladder trace levels: a row fails when its
 # scenario resolves above its rung, calls the frontier, or skips a rung it
 # should have tried (a missing level) or climbs one it should not (extra).
-# max_frontier_tokens / max_small_tokens are 0 on every row: no row wires
-# an LLM provider, so any model call is a failure.
+# Zero-call rows wire no LLM provider, so any model call is a failure.
+# Rows with "semantic_climb" wire the replay provider instead: they must
+# record an L3 frontier call (frontier_tokens > 0) whose proposal the
+# verifier rejects, ending at L4 with no patch. Every other row must stay
+# at 0 frontier calls.
 # ---------------------------------------------------------------------------
 
 MATRIX: list[dict[str, Any]] = [
@@ -301,16 +304,33 @@ MATRIX: list[dict[str, Any]] = [
     },
     {
         "scenario": "gross_to_net",
-        "spec": "atlaspms",
+        "spec": "harborpms",
         "drift_class": "SEMANTIC_VALUE_DRIFT",
         "delta": "generic",
         "extra": {},
         "expected_rung": 4,
-        "expected_levels": [0, 4],
+        "expected_levels": [0, 1, 2, 3, 4],
         "expected_decision": "escalate",
         "expected_rule": None,
         "patch": False,
-        "covers": "test_05 (must not be fixed below L3: no patch at any rung here, escalates)",
+        "semantic_climb": True,
+        "expected_check": "money_mismatch",
+        "covers": "test_05 (must not be fixed below L3: L3 frontier call recorded, proposal rejected, L4)",
+    },
+    {
+        "scenario": "invalid_patch_trap",
+        "spec": "harborpms",
+        "drift_class": "SEMANTIC_VALUE_DRIFT",
+        "delta": "generic",
+        "extra": {},
+        "expected_rung": 4,
+        "expected_levels": [0, 1, 2, 3, 4],
+        "expected_decision": "escalate",
+        "expected_rule": None,
+        "patch": False,
+        "semantic_climb": True,
+        "expected_check": "invalid_patch_trap",
+        "covers": "test_05 (plausible-but-wrong L3 proposal rejected by the verifier, L4)",
     },
     {
         "scenario": "status_vocab_change",
@@ -418,6 +438,8 @@ def _spec_for(row: dict[str, Any]) -> dict[str, Any]:
     name = row["spec"]
     if name == "atlaspms":
         return _load_reference_spec("atlaspms")
+    if name == "harborpms":
+        return _load_reference_spec("harborpms")
     if name == "offset_atlas":
         return _offset_spec()
     if name == "meridianpms":
@@ -437,6 +459,100 @@ def _row_id(row: dict[str, Any]) -> str:
     return str(row["scenario"])
 
 
+def _run_semantic_climb_row(ctrl: RepairController, session: Any, row: dict[str, Any]) -> None:
+    """Full L0 -> L1 -> L2 -> L3 -> verifier-rejection -> L4 climb for one row.
+
+    Wires the replay provider (no live calls, no network): the L3 frontier
+    call is recorded in the usage ledger and as a ModelCall row, the L3
+    proposal is checked against the verifier oracle (must fail), and the run
+    ends at L4 with no patch. Every other matrix row must stay at 0
+    frontier calls; only these rows may spend frontier tokens.
+    """
+    from autobridge.llm.provider import Budget, ReplayProvider  # noqa: PLC0415
+
+    scenario = str(row["scenario"])
+    result = ctrl.handle(
+        spec=_spec_for(row),
+        drift_class=row["drift_class"],
+        signals=[],
+        fingerprint_delta=_DELTAS[row["delta"]](),
+        extra=_extra_for(row),
+        session=session,
+        hypotheses=_gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=ReplayProvider(recordings_dir=str(REPO_ROOT / "tests" / "fixtures" / "replay")),
+        budget=Budget(),
+        scenario=scenario,
+        validate_against=_load_reference_spec("harborpms"),
+        run_id=f"matrix-{scenario}",
+    )
+    session.commit()
+    repair = session.query(RepairRun).order_by(RepairRun.created_at.desc()).first()
+    assert repair is not None
+
+    # The rung: exact match — above is a failure, below means a skipped rung.
+    assert result.ladder_level_reached == row["expected_rung"], (
+        f"{scenario}: rung {result.ladder_level_reached} != {row['expected_rung']} "
+        f"trace {result.ladder_trace}"
+    )
+    assert result.decision == row["expected_decision"], (
+        f"{scenario}: decision {result.decision} trace {result.ladder_trace}"
+    )
+    assert result.rule_id == row["expected_rule"], (
+        f"{scenario}: rule {result.rule_id} trace {result.ladder_trace}"
+    )
+    assert not result.candidate_patch, f"{scenario}: expected no patch"
+
+    # The L3 frontier call was recorded and paid for (replay-labelled).
+    assert result.model_usage.get("frontier_tokens", 0) > 0, scenario
+    assert result.model_usage.get("small_tokens", 0) > 0, scenario
+    assert result.model_usage.get("calls", 0) == 2, scenario
+    calls = session.query(ModelCall).order_by(ModelCall.created_at).all()
+    assert len(calls) == 2, scenario
+    assert sum(1 for c in calls if c.tier == "frontier") == 1, scenario
+    assert sum(1 for c in calls if c.tier == "small") == 1, scenario
+    assert all(c.purpose.endswith("(replay test fixture)") for c in calls), scenario
+
+    # No skipped or extra rungs: the full climb, exactly.
+    levels = [
+        t.get("level")
+        for t in result.ladder_trace
+        if isinstance(t, dict) and isinstance(t.get("level"), int)
+    ]
+    assert levels == row["expected_levels"], (
+        f"{scenario}: levels {levels} != {row['expected_levels']} trace {result.ladder_trace}"
+    )
+
+    # The rung ledger agrees: attempts match the trace, frontier is nonzero.
+    attempts = rung_ledger(list(result.ladder_trace), list(calls))
+    assert [a["rung"] for a in attempts] == row["expected_levels"], scenario
+    totals = ledger_totals(attempts)
+    assert totals["calls"] == 2 and totals["frontier_tokens"] > 0, scenario
+
+    # The L3 proposal is recorded on its rung; the verifier rejects it.
+    l3 = next(t for t in result.ladder_trace if isinstance(t, dict) and t.get("level") == 3)
+    assert l3.get("action") == "frontier_generate", f"{scenario}: {l3}"
+    proposal = l3.get("proposal")
+    assert isinstance(proposal, list) and proposal, f"{scenario}: no L3 proposal recorded"
+    from autobridge.spec.patch import apply_patch  # noqa: PLC0415
+    from verifier.oracle import oracle_verdict  # noqa: PLC0415
+
+    harbor_ref = _load_reference_spec("harborpms")
+    patched = apply_patch(harbor_ref, proposal)
+    verdict, _, failed = oracle_verdict(scenario, patched)
+    assert verdict == "fail", f"{scenario}: verifier passed the L3 proposal"
+    names = [f.get("name", "") for f in failed]
+    assert row["expected_check"] in names, f"{scenario}: {names}"
+
+    # L4 ends with one operator question; the stored bundle asks it.
+    bundle = repair.escalation_bundle or {}
+    assert str(bundle.get("question", "")).endswith("?"), f"{scenario}: {bundle}"
+
+    # Every reason is a one-line, non-empty string.
+    for attempt in attempts:
+        assert attempt["reason"] and "\n" not in attempt["reason"], scenario
+
+
 @pytest.mark.parametrize("row", MATRIX, ids=_row_id)
 def test_matrix_in_process(row: dict[str, Any]) -> None:
     """Pin the rung, decision, rule, calls and trace levels for one scenario."""
@@ -444,6 +560,9 @@ def test_matrix_in_process(row: dict[str, Any]) -> None:
     SessionFactory = _mem_session()
     ctrl = RepairController(knowledge_cache=KnowledgeCache())
     with SessionFactory() as session:
+        if row.get("semantic_climb"):
+            _run_semantic_climb_row(ctrl, session, row)
+            return
         result = ctrl.handle(
             spec=_spec_for(row),
             drift_class=row["drift_class"],
