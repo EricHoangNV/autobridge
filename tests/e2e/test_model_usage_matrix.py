@@ -3,11 +3,12 @@
 For every fault scenario this file declares the expected highest rung and
 asserts it: scenarios that must resolve at L0/L1 finish with 0 model calls;
 ``rate_limit_429`` / ``transient_503`` produce no patch and 0 calls;
-``gross_to_net`` and the other semantic/data-quality drifts must not be
-fixed below L3 (they escalate with no patch); the v1 refusal of Meridian
-docs costs 0 calls. A row fails if its scenario calls the frontier when it
-should not, resolves above its rung, or skips a rung it should have tried
-(exact trace levels are pinned per row).
+``gross_to_net`` and ``invalid_patch_trap`` climb the full L0 -> L1 -> L2 ->
+L3 -> verifier-rejection -> L4 path (an L3 frontier call is required; the
+other semantic/data-quality drifts escalate with no patch and 0 calls); the
+v1 refusal of Meridian docs costs 0 calls. A row fails if its scenario calls
+the frontier when it should not, resolves above its rung, or skips a rung
+it should have tried (exact trace levels are pinned per row).
 
 Runs in-process always (ladder + fakes, green without Docker) and against
 the live stack (``live`` mark, REQ-010 style): the live test cycles
@@ -312,19 +313,6 @@ MATRIX: list[dict[str, Any]] = [
         "covers": "test_05 (must not be fixed below L3: no patch at any rung here, escalates)",
     },
     {
-        "scenario": "invalid_patch_trap",
-        "spec": "atlaspms",
-        "drift_class": "SEMANTIC_VALUE_DRIFT",
-        "delta": "generic",
-        "extra": {},
-        "expected_rung": 4,
-        "expected_levels": [0, 4],
-        "expected_decision": "escalate",
-        "expected_rule": None,
-        "patch": False,
-        "covers": "test_05 (decoy patch rejected by the oracle; ladder never proposes it)",
-    },
-    {
         "scenario": "status_vocab_change",
         "spec": "atlaspms",
         "drift_class": "STATUS_VOCAB",
@@ -615,13 +603,22 @@ def _gross_net_hypotheses() -> list[Any]:
 
 
 def test_matrix_gross_to_net_climbs_through_l3() -> None:
-    """gross_to_net must attempt L3 (and only it may use the frontier).
+    """gross_to_net must climb L0 -> L1 -> L2 -> L3 -> trap -> L4 (owner check).
 
     The deterministic ladder alone would stop at L4 with no calls; the
     semantic climb goes L0 miss -> L1 no rule -> L2 below threshold ->
-    L3 frontier proposal (replay) -> trap rejection -> L4. Every other
+    L3 frontier proposal (replay) -> verifier rejection -> L4. Every other
     matrix row resolves with 0 frontier calls.
     """
+    _assert_semantic_climb("gross_to_net", ["sync-harbor-gross_to_net", "probe-harbor-amounts"])
+
+
+def test_matrix_invalid_patch_trap_climbs_through_l3() -> None:
+    """invalid_patch_trap: same full climb; the verifier rejects the L3 proposal."""
+    _assert_semantic_climb("invalid_patch_trap", ["matrix-invalid_patch_trap"])
+
+
+def _assert_semantic_climb(scenario: str, evidence_ids: list[str]) -> None:
     from autobridge.llm.provider import Budget, ReplayProvider  # noqa: PLC0415
     from autobridge.repair.escalation import escalation_for_no_fix  # noqa: PLC0415
     from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
@@ -640,9 +637,9 @@ def test_matrix_gross_to_net_climbs_through_l3() -> None:
             provider=provider,
             budget=Budget(),
             session=session,
-            run_id="matrix-gross_to_net",
+            run_id=f"matrix-{scenario}",
             knowledge_cache=KnowledgeCache(),
-            fingerprint_delta={"semantic": "gross_to_net"},
+            fingerprint_delta={"semantic": scenario},
             vendor="harbor",
         )
         session.commit()
@@ -661,9 +658,31 @@ def test_matrix_gross_to_net_climbs_through_l3() -> None:
         assert len(rows) == 2
         assert all(r.purpose.endswith("(replay)") for r in rows)
         assert sum(1 for r in rows if r.tier == "frontier") == 1
+        # The verifier rejects the L3 proposal (in-process oracle, same
+        # rule the live /verify enforces): invalid_patch_trap.
+        from autobridge.spec.patch import apply_patch  # noqa: PLC0415
+        from verifier.oracle import oracle_verdict  # noqa: PLC0415
+
+        harbor_ref = _load_reference_spec("harborpms")
+        patched = apply_patch(harbor_ref, climb["proposal"])
+        verdict, _, failed = oracle_verdict(scenario, patched)
+        assert verdict == "fail", f"{scenario}: verifier passed the decoy proposal"
+        names = [f.get("name", "") for f in failed]
+        expected_check = "money_mismatch" if scenario == "gross_to_net" else "invalid_patch_trap"
+        assert expected_check in names, f"{scenario}: {names}"
+        # L4: one operator question; the full climb is [0, 1, 2, 3, 4].
+        attempts = list(climb["attempts"]) + [
+            {
+                "rung": 4,
+                "action": "escalate",
+                "reason": "invalid_patch_trap: plausible-but-wrong proposal rejected; one operator question",
+                "calls": [],
+            }
+        ]
+        assert [a["rung"] for a in attempts] == [0, 1, 2, 3, 4]
         bundle = escalation_for_no_fix(
-            "gross_to_net: trap rejected",
-            evidence_ids=["matrix-gross_to_net"],
+            f"{scenario}: trap rejected",
+            evidence_ids=evidence_ids,
             question="Harbor totals now read net instead of gross — gross or new field?",
         )
         assert bundle.question.endswith("?")
