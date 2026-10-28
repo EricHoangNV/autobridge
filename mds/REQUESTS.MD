@@ -42,7 +42,7 @@ Wanted:
 3. Tests: a 401 and a 500 on a step's write make that step fail.
 
 ### REQ-017 — Run the demo without Docker (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 09:16)
 Today the only way to run AutoBridge is `make up` (Docker Compose). Someone who downloads the repo may have no Docker
 and no sandbox. The demo must run on a plain machine with Python + `uv` and Node/npm.
 Wanted:
