@@ -43,8 +43,10 @@ smoke:
 # excluding the one-off image build (SUITE_RUNTIME_BUDGET_SECONDS in
 # tests/e2e/conftest.py). The Playwright UI journey (test_06, .spec.ts) is
 # not collected by pytest by design — run `make e2e-ui` for it; CI runs both.
+# AUTOBRIDGE_E2E_REQUIRE_STACK=1 (REQ-010): live-marked tests fail instead
+# of skipping when the stack is unreachable, so CI never passes vacuously.
 e2e:
-	@if [ ! -f compose.yaml ]; then echo "no compose.yaml — skipping e2e (W1.2 creates it)"; else uv run --extra dev pytest tests/e2e -q --tb=short -p randomly; fi
+	@if [ ! -f compose.yaml ]; then echo "no compose.yaml — skipping e2e (W1.2 creates it)"; else AUTOBRIDGE_E2E_REQUIRE_STACK=1 uv run --extra dev pytest tests/e2e -q --tb=short -p randomly; fi
 
 # Playwright browsers for the UI journey (needs ui-deps first). `npx
 # playwright install` is a no-op when the browsers are already installed.

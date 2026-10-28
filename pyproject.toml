@@ -87,6 +87,10 @@ ignore_errors = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src", "verifier", "simulators"]
+markers = [
+    "live: needs the running Compose stack (fails under AUTOBRIDGE_E2E_REQUIRE_STACK=1 when unreachable)",
+    "inprocess: runs engine code in-process against fake transports; green without Docker",
+]
 
 # --- coverage ---
 [tool.coverage.run]

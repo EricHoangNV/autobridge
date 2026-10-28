@@ -9,6 +9,13 @@ Usage:
   E2E_KEEP_STACK=1 make e2e         # keep containers after the run
   E2E_TIMEOUT=180 make e2e           # longer wait for slow CI
 
+Markers (REQ-010): every test in this directory is auto-marked at
+collection — ``live`` if it takes the ``e2e_stack`` fixture (runs against
+the Compose stack), ``inprocess`` otherwise (engine code in-process
+against fake transports, green without Docker). ``make e2e`` sets
+``AUTOBRIDGE_E2E_REQUIRE_STACK=1`` so live tests fail, not skip, when
+the stack is unreachable.
+
 Design (complete):
   - Session fixture ``e2e_stack`` is the single place that touches Docker.
     If Docker is not available the fixture skips, so the suite is green
@@ -45,7 +52,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from typing import Final
+from typing import Final, NoReturn
 
 import pytest
 
@@ -93,6 +100,41 @@ def service_url(service: str, path: str = "/readyz") -> str:
     if not path.startswith("/"):
         path = "/" + path
     return f"http://localhost:{port}{path}"
+
+
+def stack_unreachable(reason: str) -> NoReturn:
+    """Skip, or fail when the stack is required (REQ-010).
+
+    Live-marked tests call this whenever the Compose stack (or one of its
+    services) is not reachable. Without ``AUTOBRIDGE_E2E_REQUIRE_STACK=1``
+    the test skips so the suite stays green on a laptop without Docker;
+    with it (``make e2e`` sets it, CI runs ``make up`` first) the test
+    fails loudly instead of passing vacuously. Never returns.
+    """
+    if os.getenv("AUTOBRIDGE_E2E_REQUIRE_STACK") == "1":
+        pytest.fail(f"stack required but unreachable: {reason}", pytrace=False)
+    pytest.skip(f"{reason} — skipping live test")
+    raise AssertionError("unreachable")  # pragma: no cover - skip/fail above always raises
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Auto-mark every ``tests/e2e`` test as ``live`` or ``inprocess`` (REQ-010).
+
+    A test that takes the ``e2e_stack`` fixture runs against the live Compose
+    stack → ``live``. Every other test runs engine code in-process against
+    fake transports → ``inprocess``. Explicit ``@pytest.mark.live`` /
+    ``@pytest.mark.inprocess`` decorators on individual tests agree with
+    this rule and serve as documentation.
+    """
+    for item in items:
+        names = getattr(item, "fixturenames", None)
+        if not names and hasattr(item, "func"):
+            code = getattr(item.func, "__code__", None)
+            names = code.co_varnames[: code.co_argcount] if code is not None else ()
+        if "e2e_stack" in (names or ()):
+            item.add_marker(pytest.mark.live)
+        else:
+            item.add_marker(pytest.mark.inprocess)
 
 
 def _http_get_json(url: str, timeout: float = 3.0) -> dict | None:
@@ -193,7 +235,10 @@ def _compose_down() -> None:
 def e2e_stack() -> str:
     """Ensure the Compose stack is up and readyz green.
 
-    Skips the suite when Docker is not available. Respects:
+    Fails or skips the suite when Docker is not available: skips by default
+    so the suite is green on a laptop without Docker, fails when
+    ``AUTOBRIDGE_E2E_REQUIRE_STACK=1`` (``make e2e`` sets it) so CI never
+    passes vacuously (REQ-010). Respects:
       E2E_SKIP_STACK=1  — do not run ``compose up`` (CI already did ``make up``)
       E2E_KEEP_STACK=1  — do not run ``compose down`` on teardown
       E2E_TIMEOUT       — seconds to wait for readyz (default 120)
@@ -203,12 +248,12 @@ def e2e_stack() -> str:
     if os.getenv("E2E_SKIP_STACK") == "1":
         # Caller promises the stack is already up; skip if it is not reachable.
         if not is_stack_up():
-            pytest.skip("E2E_SKIP_STACK=1 but stack is not reachable — skipping e2e")
+            stack_unreachable("E2E_SKIP_STACK=1 but stack is not reachable")
         yield "external"
         return
 
     if not _docker_available():
-        pytest.skip("docker not available — skipping e2e (run `make up` on a Docker host)")
+        stack_unreachable("docker not available (run `make up` on a Docker host)")
 
     already_up = is_stack_up()
     brought_up = False
@@ -216,7 +261,7 @@ def e2e_stack() -> str:
         try:
             _compose_up(timeout=timeout)
         except Exception as exc:  # pragma: no cover - sandbox docker compose may fail even when version check passes
-            pytest.skip(f"docker compose up failed — skipping e2e (run `make up` on a Docker host): {exc}")
+            stack_unreachable(f"docker compose up failed (run `make up` on a Docker host): {exc}")
         brought_up = True
 
     # Wait for every service to report readyz ok (covers UI start_period).
@@ -226,7 +271,7 @@ def e2e_stack() -> str:
         if brought_up:
             with contextlib.suppress(Exception):
                 _compose_down()
-        pytest.skip(f"stack not readyz within {timeout}s — skipping e2e: {exc}")
+        stack_unreachable(f"stack not readyz within {timeout}s: {exc}")
 
     yield "managed" if brought_up else "already_up"
 

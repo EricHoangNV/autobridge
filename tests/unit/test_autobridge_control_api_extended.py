@@ -389,6 +389,89 @@ def test_demo_inject_with_env_override(tmp_path: pathlib.Path, monkeypatch) -> N
     monkeypatch.delenv("SIMULATOR_ADMIN_URL", raising=False)
 
 
+def test_demo_inject_sends_admin_net_header(tmp_path: pathlib.Path, monkeypatch) -> None:
+    """REQ-010: the control proxy must prove admin-net membership (else 403, fault never lands)."""
+    from unittest.mock import Mock, patch
+
+    from autobridge.control.models import Base
+
+    monkeypatch.setenv("SIMULATOR_ADMIN_URL", "http://mocked:9999")
+    engine = create_engine(f"sqlite:///{tmp_path}/demo_hdr.db")
+    Base.metadata.create_all(engine)
+    factory = session_factory(engine)
+
+    def override_db():  # type: ignore[no-untyped-def]
+        s = factory()
+        try:
+            yield s
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app)
+
+    mock_resp = Mock()
+    mock_resp.status_code = 200
+    mock_resp.content = b'{"scenario_id": "offset_to_cursor", "seed": 42, "request_count": 0}'
+    mock_resp.json.return_value = {"scenario_id": "offset_to_cursor", "seed": 42, "request_count": 0}
+    mock_resp.text = '{"scenario_id": "offset_to_cursor", "seed": 42, "request_count": 0}'
+    with patch("httpx.Client") as mock_c:
+        mock_c.return_value.__enter__.return_value.post.return_value = mock_resp
+        r = client.post("/demo/inject-fault", json={"target": "sim-atlas", "scenario_id": "offset_to_cursor", "seed": 42})
+        assert r.status_code == 200
+        _, kwargs = mock_c.return_value.__enter__.return_value.post.call_args
+        assert kwargs.get("headers", {}).get("X-Admin-Network") == "admin-net"
+        assert r.json()["admin_response"]["_http_status"] == 200
+
+    app.dependency_overrides.clear()
+    monkeypatch.delenv("SIMULATOR_ADMIN_URL", raising=False)
+
+
+def test_demo_reset_sends_admin_net_header(tmp_path: pathlib.Path, monkeypatch) -> None:
+    """REQ-010: reset must carry the admin-net header on both simulator resets."""
+    from unittest.mock import Mock, patch
+
+    from autobridge.control.models import Base
+
+    monkeypatch.setenv("SIMULATOR_ADMIN_URL", "http://mocked:9999")
+    engine = create_engine(f"sqlite:///{tmp_path}/demo_reset_hdr.db")
+    Base.metadata.create_all(engine)
+    factory = session_factory(engine)
+
+    def override_db():  # type: ignore[no-untyped-def]
+        s = factory()
+        try:
+            yield s
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app)
+
+    mock_resp = Mock()
+    mock_resp.status_code = 200
+    with patch("httpx.Client") as mock_c:
+        mock_c.return_value.__enter__.return_value.post.return_value = mock_resp
+        r = client.post("/demo/reset")
+        assert r.status_code == 200
+        calls = mock_c.return_value.__enter__.return_value.post.call_args_list
+        assert len(calls) == 2
+        for _, kwargs in calls:
+            assert kwargs.get("headers", {}).get("X-Admin-Network") == "admin-net"
+        assert all(entry["status"] == 200 for entry in r.json()["resets"])
+
+    app.dependency_overrides.clear()
+    monkeypatch.delenv("SIMULATOR_ADMIN_URL", raising=False)
+
+
 def test_evidence_redaction_in_sse(tmp_path: pathlib.Path, monkeypatch) -> None:
     secret = "supersecret999"
     monkeypatch.setenv("REDACT_TEST_KEY", secret)

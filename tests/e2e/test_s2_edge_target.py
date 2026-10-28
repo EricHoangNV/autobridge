@@ -254,7 +254,9 @@ def test_edge_negative_control_cannot_reach_edgepos_live(e2e_stack: str) -> None
     import shutil
 
     if shutil.which("docker") is None:
-        pytest.skip("docker not available — cannot probe container networks")
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable("docker not available — cannot probe container networks")
     assert _compose_exec("edge-worker", "http://sim-edgepos:8000/healthz"), (
         "edge-worker must reach sim-edgepos on edge-net"
     )
@@ -278,8 +280,9 @@ def test_edge_execute_signed_release_live(e2e_stack: str) -> None:
             timeout=30.0,
         )
     except httpx.ConnectError as exc:
-        pytest.skip(f"edge-worker unreachable live: {exc}")
-        return
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"edge-worker unreachable live: {exc}")
     assert r.status_code == 200, r.text
     records = r.json()["records"]
     assert [rec["reservation_id"] for rec in records] == ["EDGE-1001", "EDGE-1002"]

@@ -1899,3 +1899,30 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 
 **Notes for next iteration:**
 - None — task is self-contained. REQ-010 (live-stack e2e) is still open and explicitly out of scope here.
+
+## REQ-010 — live-stack headline claims, markers, REQUIRE_STACK
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-010 (plan §4 W9 e2e suite)
+
+**What was done:**
+- Registered `live`/`inprocess` pytest markers; conftest auto-marks every tests/e2e test (live iff it takes `e2e_stack`).
+- Added `stack_unreachable()` (fail under AUTOBRIDGE_E2E_REQUIRE_STACK=1, else skip); converted all live-test unreachable-skips (conftest fixture + test_02/04/05/s1/s2/s3/s4); s5/s7 opt-in gates untouched.
+- Added 3 live tests driven through the control API: offset_to_cursor zero-frontier repair (test_03), gross_to_net Degraded + escalation and invalid_patch_trap rejection via stack verifier (test_05).
+- Fixed control proxy missing `X-Admin-Network: admin-net` header (inject/reset 403'd silently) + 2 unit tests; reset honors SIM_*_ADMIN_URL overrides.
+- `make e2e` sets AUTOBRIDGE_E2E_REQUIRE_STACK=1; docs/architecture.md §7 updated.
+
+**Key decisions:**
+- No new API surface: sync/repair run in-process against live sim HTTP (demo's local-evidence split); only fault injection, reset and ledger reads go through the control API. A full repair-via-API journey would need a release-seed endpoint that does not exist.
+- Auto-marking in conftest over per-test decorators: codifies the existing convention (takes e2e_stack = live), future-proof, verified via --collect-only.
+- Control helpers forward AUTOBRIDGE_CONTROL_TOKEN when set so REQ-012 needs no rework here.
+
+**Files changed:**
+- `pyproject.toml`, `Makefile`, `docs/architecture.md`
+- `src/autobridge/control/routes/demo.py`
+- `tests/e2e/conftest.py`, `tests/e2e/test_02_reference_sync.py`, `tests/e2e/test_03_known_repairs_zero_frontier.py`, `tests/e2e/test_04_bootstrap_unfamiliar_api.py`, `tests/e2e/test_05_safety_and_semantic.py`, `tests/e2e/test_s1_legacystay.py`, `tests/e2e/test_s2_edge_target.py`, `tests/e2e/test_s3_discovery_import.py`, `tests/e2e/test_s4_mcp_gateway.py`
+- `tests/unit/test_autobridge_control_api_extended.py`
+- `mds/REQUESTS.MD` (REQ-010 → DONE), `mds/LEARNINGS.MD` (#7)
+
+**Notes for next iteration:**
+- REQ-011 (localhost-only ports) and REQ-012 (control token) still OPEN; REQ-012 item 3 (e2e helpers send token) is already satisfied by the helpers added here.
+- P1.W10.3 / P1.W2.8 owner steps unchanged.

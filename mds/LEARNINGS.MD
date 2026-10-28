@@ -59,3 +59,15 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed in the `e2e-ui` recipe (`NODE_PATH="$$PWD/node_modules"` after `cd ui`), keeping the npm script as the single flag definition; added a Makefile-contract test so the env var cannot silently drop out.
 
 **Rule:** When a tool loads a config file outside the package dir, set the module path (NODE_PATH) at the invocation site — cwd does not affect module resolution — and cover the invocation, not just the install, with a test.
+
+---
+
+## 7. A proxy that swallows upstream 403s makes "labelled" fault injection silently do nothing
+
+**Context:** REQ-010 (2026-10-28) — `POST /demo/inject-fault` proxied to the simulator admin API without the `X-Admin-Network: admin-net` header that `simulators/common/admin.py` requires on every write, so the admin answered 403 and the fault never landed. The endpoint still returned 200 (`labelled: true`) with the 403 buried in `admin_response._http_status`, so `make demo` steps 3–4 and every consumer looked green while injecting nothing.
+
+- The admin module's own docstring said "real callers (control proxy, e2e harness) send the header" — the harness did, the proxy didn't; the doc described intent, not code.
+- The new live test caught it only because it asserts the injection *landed* (`admin_response._http_status == 200`) instead of trusting the 200 envelope — the same class of mistake as asserting on the demo's local-evidence output alone.
+- Fixed by sending the header in `inject-fault` and `reset` (plus env-override parity for reset), with unit tests asserting the header on the mocked `httpx.Client` call.
+
+**Rule:** Any proxy endpoint that returns success while delegating the real work must assert the upstream status in at least one test — a 200 envelope around a failed delegation is a silent lie.

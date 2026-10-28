@@ -23,21 +23,6 @@ Wanted:
 4. With the stack up, run `make bench` once and record the real dev-split numbers in the build note (not zeros).
 Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDOUT_DIR`.
 
-### REQ-010 — e2e: run the demo's headline claims against the live stack (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 12:10 UTC)
-With Docker hidden (`DOCKER_HOST=unix:///nonexistent.sock`), 72 of the 104 tests in `tests/e2e` still pass: they run
-engine code in-process against fake HTTP transports. Only about 32 exercise the running stack. In particular
-`test_03` (known repairs spend 0 frontier tokens) passes 5/5 with no stack, and `test_05` passes 20 of 22. These are
-claims the demo shows on screen.
-Wanted:
-1. Live-stack versions of the `test_03` and `test_05` scenarios: drive them through the control API on the running
-   compose stack (as `make demo` does), and assert the same things: zero frontier tokens for known repairs; the
-   invalid patch rejected; semantic drift ends `Degraded`.
-2. Mark the in-process tests clearly (a `fake` or `inprocess` marker, or move them to `tests/integration`) so
-   `tests/e2e` means "against the stack". Do not delete the in-process tests.
-3. If the stack is not reachable, the live tests fail rather than skip when `AUTOBRIDGE_E2E_REQUIRE_STACK=1`, and the
-   `make e2e` target sets it.
-
 ### REQ-011 — Publish compose ports on localhost only (2026-10-28)
 Status: OPEN
 Every port in `compose.yaml` is published as `"81xx:8000"` with no host IP, so Docker listens on all interfaces. While
@@ -77,6 +62,23 @@ Wanted:
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-010 — e2e: run the demo's headline claims against the live stack (2026-10-28)
+Status: DONE (2026-10-28)
+With Docker hidden (`DOCKER_HOST=unix:///nonexistent.sock`), 72 of the 104 tests in `tests/e2e` still pass: they run
+engine code in-process against fake HTTP transports. Only about 32 exercise the running stack. In particular
+`test_03` (known repairs spend 0 frontier tokens) passes 5/5 with no stack, and `test_05` passes 20 of 22. These are
+claims the demo shows on screen.
+Wanted:
+1. Live-stack versions of the `test_03` and `test_05` scenarios: drive them through the control API on the running
+   compose stack (as `make demo` does), and assert the same things: zero frontier tokens for known repairs; the
+   invalid patch rejected; semantic drift ends `Degraded`.
+2. Mark the in-process tests clearly (a `fake` or `inprocess` marker, or move them to `tests/integration`) so
+   `tests/e2e` means "against the stack". Do not delete the in-process tests.
+3. If the stack is not reachable, the live tests fail rather than skip when `AUTOBRIDGE_E2E_REQUIRE_STACK=1`, and the
+   `make e2e` target sets it.
+Resolution: live/inprocess pytest markers (auto-marked in conftest) + 3 live tests via control API (offset_to_cursor frontier 0, gross_to_net Degraded, invalid_patch_trap rejected) + AUTOBRIDGE_E2E_REQUIRE_STACK=1 set by make e2e (live tests fail, not skip, when unreachable) + fixed control proxy missing X-Admin-Network header (inject/reset 403'd, fault never landed).
+
 
 ### REQ-009 — Clean clone: `make test` and `make e2e-ui` fail without `ui/node_modules` (2026-10-28)
 Status: DONE (2026-10-28)

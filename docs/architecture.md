@@ -217,7 +217,10 @@ API response.
   --build --wait`), waits for every `/readyz` to be `ok`, yields, and tears
   down (`docker compose down -v`) unless `E2E_KEEP_STACK=1`. When Docker is
   not available the fixture **skips** the suite so `make test` stays green
-  on a laptop. `E2E_SKIP_STACK=1` assumes `make up` already ran.
+  on a laptop — unless `AUTOBRIDGE_E2E_REQUIRE_STACK=1` is set (`make e2e`
+  sets it), in which case live tests **fail** instead of skipping so CI
+  never passes vacuously (REQ-010). `E2E_SKIP_STACK=1` assumes `make up`
+  already ran.
 - `reset_simulator_state` (function scope, autouse) resets both simulators
   via `POST /admin/reset` before and after every test. Tests that run
   against the live stack get a *verified* reset (a failed reset fails the
@@ -255,6 +258,24 @@ the one-off image build, `WARM_TEST00_BUDGET_SECONDS = 30` for `test_00`
 alone. Measured in the sandbox: 66 tests in ~5s warm, cold
 `compose up --build --wait` + `test_00` in ~20s. The harness documents this
 in its module docstring.
+
+Markers (REQ-010): every test in `tests/e2e` is auto-marked at collection —
+`live` if it takes the `e2e_stack` fixture (runs against the Compose
+stack), `inprocess` otherwise (engine code in-process against fake
+transports, green without Docker). `pytest -m live` runs the stack journey;
+`pytest -m inprocess` runs the offline journey. The live-stack versions of
+the headline claims live next to the tests they mirror:
+`test_offset_to_cursor_live_zero_frontier_via_control_api` in
+`test_03_known_repairs_zero_frontier.py` (fault injection and reset through
+the control API, ladder + oracle local, frontier 0, patched spec syncs
+`Complete` against the still-drifted sim) and
+`test_semantic_drift_live_gross_to_net_degraded_via_control_api` /
+`test_invalid_patch_live_rejected_via_stack_verifier` in
+`test_05_safety_and_semantic.py` (semantic drift ends `Degraded` via
+escalation; the trapped patch is rejected by the stack verifier).
+`POST /demo/inject-fault` and `POST /demo/reset` send the
+`X-Admin-Network: admin-net` header the simulator admin API requires —
+without it the fault never lands (403).
 
 ## 8. Verification ladder (plan §8)
 

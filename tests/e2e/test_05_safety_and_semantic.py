@@ -1317,7 +1317,9 @@ def test_safety_scenarios_live_via_admin_api_when_stack_up(e2e_stack: str) -> No
         svc_url("verifier", "/verify"), {"scenario_id": "baseline", "mode": "visible"}
     )
     if v_status != 200:
-        pytest.skip(f"verifier not reachable live: {v_status} {v_body}")
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"verifier not reachable live: {v_status} {v_body}")
 
     # Scenarios to verify via admin+verifier live
     scenarios = [
@@ -1460,7 +1462,9 @@ def test_verifier_regression_gate_live(e2e_stack: str) -> None:  # noqa: ARG001
     # Baseline passes
     st, body = post_verify({"scenario_id": "baseline", "mode": "visible"})
     if st != 200:
-        pytest.skip(f"verifier not reachable live for regression gate: {st}")
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"verifier not reachable live for regression gate: {st}")
     assert body is not None
     assert body.get("verdict") == "pass"
     assert body.get("regression") == "pass"
@@ -1472,8 +1476,238 @@ def test_verifier_regression_gate_live(e2e_stack: str) -> None:  # noqa: ARG001
         {"scenario_id": "invalid_patch_trap", "mode": "visible", "regression_suite": ["baseline"]}
     )
     if st2 != 200:
-        pytest.skip(f"verifier regression gate not reachable: {st2} {body2}")
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"verifier regression gate not reachable: {st2} {body2}")
     assert body2 is not None
     # Trap scenario must fail (invalid_patch_trap)
     assert body2.get("verdict") == "fail"
     assert any(f["name"] == "invalid_patch_trap" for f in body2.get("failed_checks", []))
+
+
+# ---------------------------------------------------------------------------
+# Live-stack versions of the headline claims (REQ-010)
+# ---------------------------------------------------------------------------
+
+_CONTROL_API_URL = "http://localhost:8101"
+_VERIFIER_URL = "http://localhost:8104"
+_LIVE_SEED = 42
+
+
+def _control_headers() -> dict[str, Any]:
+    """JSON headers for control API calls, forwarding REQ-012's token when set."""
+    import os as _os
+
+    headers: dict[str, Any] = {"Content-Type": "application/json"}
+    token = _os.environ.get("AUTOBRIDGE_CONTROL_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _control_live(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call the control API; fail/skip when the stack is unreachable (REQ-010)."""
+    from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            if method == "POST":
+                resp = client.post(f"{_CONTROL_API_URL}{path}", json=payload or {}, headers=_control_headers())
+            else:
+                resp = client.get(f"{_CONTROL_API_URL}{path}", headers=_control_headers())
+    except Exception as exc:
+        stack_unreachable(f"control API unreachable live: {exc}")
+    if resp.status_code != 200:
+        stack_unreachable(f"control API {path} live -> {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
+
+def _inject_live(target: str, scenario_id: str, seed: int = _LIVE_SEED) -> None:
+    """Inject a labelled fault through the control API and verify it landed."""
+    from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+    body = _control_live("POST", "/demo/inject-fault", {"target": target, "scenario_id": scenario_id, "seed": seed})
+    admin = body.get("admin_response") or {}
+    assert body.get("labelled") is True and body.get("demo") is True
+    if admin.get("_http_status") != 200:
+        stack_unreachable(f"fault {scenario_id} did not land on {target} live: {admin}")
+
+
+def _reset_live() -> None:
+    """Reset both simulators to baseline through the control API (best-effort)."""
+    try:
+        body = _control_live("POST", "/demo/reset", {})
+    except Exception:
+        return
+    for entry in body.get("resets", []):
+        assert entry.get("status") == 200, f"live reset failed: {entry}"
+
+
+def _live_atlas_client(spec: dict[str, Any]) -> Any:
+    """HttpClient for the live sim-atlas, resolving env placeholders to host ports."""
+    import os as _os
+
+    from autobridge.runtime.http import HttpClient
+    from autobridge.spec.models import load_spec_from_dict as _load
+
+    _os.environ["ATLAS_BASE_URL"] = "http://localhost:8105"
+    _os.environ["ATLAS_API_KEY"] = "test-token-live"
+    parsed = _load(spec)
+    return HttpClient(base_url=parsed.source.base_url, auth=parsed.source.auth, retry=parsed.source.rate_limit.retry)
+
+
+@pytest.mark.live
+def test_semantic_drift_live_gross_to_net_degraded_via_control_api(e2e_stack: str) -> None:
+    """Live-stack version of the semantic-drift headline claim (REQ-010).
+
+    The fault is injected through the control API (``POST
+    /demo/inject-fault`` — the same call ``make demo`` step 4 makes); the
+    sync runs the real engine against the live sim HTTP; the ladder runs
+    locally (demo's local-evidence mode).
+
+    Asserts the same things as the in-process test: the drifted live sync
+    ends ``Degraded`` with ``money_invariant`` named; the classifier says
+    ``SEMANTIC_VALUE_DRIFT``; the ladder escalates to L4 with no patch and a
+    valid escalation bundle carrying the single open question.
+    """
+    assert e2e_stack
+    spec = _load_spec("atlaspms")
+    _inject_live("sim-atlas", "gross_to_net")
+    try:
+        summary = execute_sync(spec, _live_atlas_client(spec))
+        assert summary["outcome"] == "Degraded", (
+            f"live gross_to_net must end Degraded, got {summary['outcome']} unmet {summary['unmet_criteria']}"
+        )
+        assert "money_invariant" in summary["unmet_criteria"], (
+            f"live unmet criteria must name money_invariant, got {summary['unmet_criteria']}"
+        )
+        cls = classify_sync(summary)
+        assert cls.drift_class == "SEMANTIC_VALUE_DRIFT"
+
+        ctrl = RepairController(knowledge_cache=KnowledgeCache())
+        SessionFactory, _ = _mem_session()
+        with SessionFactory() as session:
+            from autobridge.control.models import Connector
+
+            session.add(
+                Connector(
+                    id="c1",
+                    name="c1",
+                    base_url="http://example.com",
+                    credential_ref="TEST_TOKEN",
+                    target_entities=["Reservation"],
+                    runtime_target={},
+                )
+            )
+            session.commit()
+            res = ctrl.handle(
+                spec=spec,
+                drift_class=cls.drift_class,
+                signals=signals_from_sync(summary),
+                fingerprint_delta=None,
+                vendor="AtlasPMS",
+                session=session,
+            )
+            assert res.decision == "escalate", f"live semantic drift must escalate, got {res.decision}"
+            assert res.candidate_patch is None
+            assert res.ladder_level_reached == 4
+            assert res.escalation_bundle is not None
+            _assert_bundle_valid(res.escalation_bundle)
+            session.commit()
+            runs = session.query(RepairRun).all()
+            assert len(runs) == 1
+            assert runs[0].decision == "escalate"
+    finally:
+        _reset_live()
+
+
+def _trapped_spec() -> dict[str, Any]:
+    """The plausible-but-wrong patch (net→total_amount after gross→net), as posted live."""
+    return {
+        "spec_version": 1,
+        "connector": {"id": "test", "vendor": "Test", "runtime_target": "cloud"},
+        "source": {
+            "base_url": "https://example.com",
+            "auth": {"type": "bearer", "credential_ref": "TEST_TOKEN"},
+            "timezone_source": {"kind": "static", "value": "UTC"},
+        },
+        "operations": {
+            "list_folios": {
+                "method": "GET",
+                "path": "/folios",
+                "params": {},
+                "pagination": {
+                    "strategy": "cursor",
+                    "cursor_param": "cursor",
+                    "next_path": "$.meta.next_cursor",
+                    "items_path": "$.data",
+                    "stop_when": ["null_cursor"],
+                },
+            }
+        },
+        "entities": {
+            "FolioCharge": {
+                "from": "list_folios",
+                "key": "$.charge_id",
+                "fields": {
+                    "charge_id": {"path": "$.charge_id"},
+                    "amount": {
+                        "path": "$.amount",
+                        "transform": [{"name": "money", "args": {"currency": "USD"}}],
+                    },
+                    "total_amount": {
+                        "path": "$.total_amount",
+                        "transform": [{"name": "money", "args": {"currency": "USD"}}],
+                    },
+                },
+            }
+        },
+        "capabilities": {"read": ["FolioCharge"]},
+        "health": {"canary": {"every": "60s", "operation": "list_folios"}, "fingerprint": {}},
+    }
+
+
+def _verifier_live(payload: dict[str, Any]) -> tuple[int, dict[str, Any] | None]:
+    """POST to the stack verifier over HTTP; fail/skip when unreachable (REQ-010)."""
+    from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(f"{_VERIFIER_URL}/verify", json=payload)
+    except Exception as exc:
+        stack_unreachable(f"verifier unreachable live: {exc}")
+    if resp.status_code != 200:
+        stack_unreachable(f"verifier /verify live -> {resp.status_code}: {resp.text[:200]}")
+    try:
+        body = resp.json()
+    except Exception as exc:
+        stack_unreachable(f"verifier /verify live returned non-JSON: {exc}")
+    return resp.status_code, body if isinstance(body, dict) else None
+
+
+@pytest.mark.live
+def test_invalid_patch_live_rejected_via_stack_verifier(e2e_stack: str) -> None:
+    """Live-stack version of the invalid-patch headline claim (REQ-010).
+
+    The same trapped spec the in-process test feeds the oracle is POSTed to
+    the stack verifier over HTTP (the verifier is part of the running
+    Compose stack; the control plane reaches it the same way). Asserts:
+    verdict ``fail`` with ``invalid_patch_trap`` named, and hidden mode
+    never leaks fixture rows.
+    """
+    assert e2e_stack
+    from verifier.invalid_patches import apply_trap_to_spec
+
+    trapped = apply_trap_to_spec(_trapped_spec(), "gross_to_net_net_to_total_amount")
+    assert trapped["entities"]["FolioCharge"]["fields"]["total_amount"]["path"] == "$.net_amount"
+
+    _, body = _verifier_live({"scenario_id": "invalid_patch_trap", "mode": "visible", "spec": trapped})
+    assert body is not None
+    assert body.get("verdict") == "fail", f"live verifier must reject the trapped patch, got {body}"
+    assert any(f["name"] == "invalid_patch_trap" for f in body.get("failed_checks", [])), body
+
+    _, hidden = _verifier_live({"scenario_id": "invalid_patch_trap", "mode": "hidden", "spec": trapped})
+    assert hidden is not None
+    assert hidden.get("mode") == "hidden"
+    for leak in ("reservations", "folios", "properties", "records"):
+        assert leak not in hidden, f"live hidden mode leaks {leak}"

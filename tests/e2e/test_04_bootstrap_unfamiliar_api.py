@@ -771,8 +771,10 @@ def test_bootstrap_date_ambiguity_live_probe_if_stack(e2e_stack: str) -> None:
         with urllib.request.urlopen(req, timeout=5) as resp:
             body = json.loads(resp.read())
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError) as exc:
-        pytest.skip(f"Harbor simulator not reachable live: {exc}")
-        return
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"Harbor simulator not reachable live: {exc}")
+        return  # pragma: no cover - stack_unreachable never returns
     data = body.get("data", [])
     assert data, "Harbor /reservations should return data"
     sample = data[0]

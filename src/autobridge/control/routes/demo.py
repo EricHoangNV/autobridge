@@ -74,7 +74,10 @@ def inject_fault(body: InjectFaultRequest) -> InjectFaultResponse:
 
     try:
         with httpx.Client(timeout=5) as client:
-            r = client.post(url, json=payload)
+            # The simulator admin API requires proof of admin-net membership
+            # (simulators/common/admin.py); without this header every write
+            # gets 403 and the labelled fault never lands (REQ-010).
+            r = client.post(url, json=payload, headers={"X-Admin-Network": "admin-net"})
             try:
                 admin_response = r.json() if r.content else {"status_code": r.status_code}
             except Exception:
@@ -104,10 +107,17 @@ def demo_reset() -> dict[str, Any]:
     results: dict[str, Any] = {"labelled": True, "demo": True, "resets": []}
     for target in ("sim-atlas", "sim-harbor"):
         base = _admin_url_for_target(target)
+        # Same env overrides as inject-fault (tests point these at scratch sims).
+        env_key = f"{target.upper().replace('-', '_')}_ADMIN_URL"
+        if os.environ.get(env_key):
+            base = os.environ[env_key]
+        if os.environ.get("SIMULATOR_ADMIN_URL"):
+            base = os.environ["SIMULATOR_ADMIN_URL"]
         url = f"{base.rstrip('/')}/admin/reset"
         try:
             with httpx.Client(timeout=5) as client:
-                r = client.post(url, json={})
+                # Admin writes require the admin-net header (see inject-fault).
+                r = client.post(url, json={}, headers={"X-Admin-Network": "admin-net"})
                 results["resets"].append({"target": target, "status": r.status_code})
         except Exception as exc:
             results["resets"].append({"target": target, "error": str(exc)})

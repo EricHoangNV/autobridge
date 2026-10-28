@@ -24,7 +24,6 @@ from contextlib import contextmanager
 from typing import Any
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
@@ -164,8 +163,9 @@ def test_s3_import_and_list_live(e2e_stack: str) -> None:
     try:
         r = httpx.post(f"{CONTROL_URL}/discovery/import", json=payload, timeout=15.0)
     except httpx.ConnectError as exc:
-        pytest.skip(f"control plane unreachable live: {exc}")
-        return
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"control plane unreachable live: {exc}")
     assert r.status_code == 201, r.text
     assert r.json()["total"] == 5
     listed = httpx.get(f"{CONTROL_URL}/discovery", timeout=15.0)
@@ -192,8 +192,9 @@ def test_s3_lifecycle_live(e2e_stack: str) -> None:
             f"{CONTROL_URL}/discovery/import", json={"records": [rec]}, timeout=15.0
         )
     except httpx.ConnectError as exc:
-        pytest.skip(f"control plane unreachable live: {exc}")
-        return
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"control plane unreachable live: {exc}")
     assert created.status_code == 201, created.text
     # Illegal skip is rejected live too.
     bad = httpx.post(f"{CONTROL_URL}/discovery/{did}/connect", timeout=15.0)

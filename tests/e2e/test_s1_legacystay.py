@@ -28,7 +28,6 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
-import pytest
 from sqlalchemy import create_engine
 
 from autobridge.control.models import (
@@ -565,8 +564,9 @@ def test_legacystay_live_throttle_recovered_with_retry(e2e_stack: str) -> None:
     try:
         _set_livestay_scenario("baseline", 0)
     except Exception as exc:
-        pytest.skip(f"sim-legacystay admin unreachable: {exc}")
-        return
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"sim-legacystay admin unreachable: {exc}")
     # Fresh count: the 8th request must be 429 with Retry-After
     seen_429 = False
     for _ in range(12):
@@ -581,8 +581,9 @@ def test_legacystay_live_throttle_recovered_with_retry(e2e_stack: str) -> None:
                 assert exc.headers.get("Retry-After") == "1"
                 break
         except (urllib.error.URLError, OSError) as exc:
-            pytest.skip(f"sim-legacystay unreachable live: {exc}")
-            return
+            from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+            stack_unreachable(f"sim-legacystay unreachable live: {exc}")
     assert seen_429, "expected the baseline throttle (429) within 12 live requests"
     # Full sync still Completes — retry absorbs the throttle
     result = _legacy_bootstrap()

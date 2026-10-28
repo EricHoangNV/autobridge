@@ -21,7 +21,6 @@ import uuid
 from typing import Any
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 MCP_URL = "http://localhost:8115"
@@ -121,8 +120,9 @@ def test_s4_catalog_diff_live(e2e_stack: str) -> None:
     try:
         r = httpx.get(f"{MCP_URL}/readyz", timeout=10.0)
     except httpx.ConnectError as exc:
-        pytest.skip(f"mcp-hotel unreachable live: {exc}")
-        return
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"mcp-hotel unreachable live: {exc}")
     assert r.status_code == 200, r.text
     assert r.json()["ready"] is True
     d = httpx.get(f"{MCP_URL}/catalog/diff", timeout=10.0).json()
@@ -136,8 +136,9 @@ def test_s4_gateway_replay_live(e2e_stack: str) -> None:
     try:
         _live_reset()
     except httpx.ConnectError as exc:
-        pytest.skip(f"mcp-hotel unreachable live: {exc}")
-        return
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"mcp-hotel unreachable live: {exc}")
     compared = httpx.post(f"{MCP_URL}/replay/compare", timeout=15.0)
     assert compared.status_code == 200, compared.text
     body: dict[str, Any] = compared.json()

@@ -26,7 +26,6 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
-import pytest
 import yaml
 
 from autobridge.control.models import Base, ModelCall
@@ -330,8 +329,10 @@ def _try_live_sync(connector_id: str) -> dict[str, Any] | None:
         http = _live_client_from_spec(spec)
         return execute_sync(spec, http)
     except Exception as e:
-        pytest.skip(f"live {connector_id} sync not reachable: {e}")
-        return None
+        from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+        stack_unreachable(f"live {connector_id} sync not reachable: {e}")
+        return None  # pragma: no cover - stack_unreachable never returns
 
 
 def test_atlas_reference_sync_complete_live(e2e_stack: str) -> None:

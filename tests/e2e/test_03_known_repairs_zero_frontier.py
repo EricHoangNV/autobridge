@@ -30,6 +30,7 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
+import pytest
 import yaml
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -710,3 +711,207 @@ def test_nested_path_shift_synthetic_oracle() -> None:
     session.close()
     engine.dispose()
 
+
+
+# ---------------------------------------------------------------------------
+# Live-stack version of the headline claim (REQ-010)
+# ---------------------------------------------------------------------------
+
+CONTROL_API_URL = "http://localhost:8101"
+_LIVE_SEED = 42  # generate_dataset(42): 30 reservations, 77 folios (page size 50)
+
+
+def _control_headers() -> dict[str, str]:
+    """JSON headers for control API calls, forwarding REQ-012's token when set."""
+    headers = {"Content-Type": "application/json"}
+    token = os.environ.get("AUTOBRIDGE_CONTROL_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _control_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """POST to the control API; fail/skip when the stack is unreachable (REQ-010)."""
+    from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(f"{CONTROL_API_URL}{path}", json=payload, headers=_control_headers())
+    except Exception as exc:
+        stack_unreachable(f"control API unreachable live: {exc}")
+    if resp.status_code != 200:
+        stack_unreachable(f"control API {path} live -> {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
+
+def _control_get(path: str) -> dict[str, Any]:
+    """GET from the control API; fail/skip when the stack is unreachable (REQ-010)."""
+    from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(f"{CONTROL_API_URL}{path}", headers=_control_headers())
+    except Exception as exc:
+        stack_unreachable(f"control API unreachable live: {exc}")
+    if resp.status_code != 200:
+        stack_unreachable(f"control API {path} live -> {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
+
+def _inject_live(target: str, scenario_id: str, seed: int = _LIVE_SEED) -> None:
+    """Inject a labelled fault through the control API and verify it landed.
+
+    ``POST /demo/inject-fault`` always answers 200 (labelled demo action), so
+    the landing is verified via ``admin_response._http_status`` instead.
+    """
+    from tests.e2e.conftest import stack_unreachable  # noqa: PLC0415
+
+    body = _control_post("/demo/inject-fault", {"target": target, "scenario_id": scenario_id, "seed": seed})
+    admin = body.get("admin_response") or {}
+    assert body.get("labelled") is True and body.get("demo") is True
+    if admin.get("_http_status") != 200:
+        stack_unreachable(f"fault {scenario_id} did not land on {target} live: {admin}")
+
+
+def _reset_live() -> None:
+    """Reset both simulators to baseline through the control API (best-effort)."""
+    try:
+        body = _control_post("/demo/reset", {})
+    except Exception:
+        return
+    for entry in body.get("resets", []):
+        assert entry.get("status") == 200, f"live reset failed: {entry}"
+
+
+def _live_client_from_reference_spec(spec_dict: dict[str, Any]) -> HttpClient:
+    """HttpClient for the live sim, resolving env placeholders to host ports."""
+    parsed = load_spec_from_dict(spec_dict)
+    return HttpClient(base_url=parsed.source.base_url, auth=parsed.source.auth, retry=parsed.source.rate_limit.retry)
+
+
+@pytest.mark.live
+def test_offset_to_cursor_live_zero_frontier_via_control_api(e2e_stack: str) -> None:
+    """Live-stack version of the test_03 headline claim (REQ-010).
+
+    Fault injection and reset go through the control API (``POST
+    /demo/inject-fault``, ``POST /demo/reset`` — the same calls ``make demo``
+    step 3 makes); the sync runs the real engine against the live sim HTTP;
+    the ladder + oracle run locally (demo's local-evidence mode).
+
+    Asserts the same things as the in-process test: the labelled drift lands;
+    the drifted live sync is truncated (50 of 77 folios — the old offset spec
+    stops at the missing ``next_offset``); the ladder proposes the
+    ``offset_to_cursor`` rule with ``frontier_tokens == 0`` and no ModelCall
+    rows; the patched spec passes the oracle and syncs ``Complete`` against
+    the still-drifted live sim; the control model-usage ledger shows no
+    frontier tokens.
+    """
+    assert e2e_stack
+    os.environ["ATLAS_BASE_URL"] = "http://localhost:8105"
+    os.environ["ATLAS_API_KEY"] = "test-token-live"
+    spec = _load_reference_spec("atlaspms")
+
+    _inject_live("sim-atlas", "baseline")
+    baseline_summary = execute_sync(spec, _live_client_from_reference_spec(spec))
+    assert baseline_summary["outcome"] == "Complete", (
+        f"live baseline should be Complete, got {baseline_summary['outcome']} {baseline_summary['unmet_criteria']}"
+    )
+    base_folios = baseline_summary["canonical_records"].get("FolioCharge", [])
+    assert len(base_folios) == 77, f"live baseline seed 42 must serve 77 folios, got {len(base_folios)}"
+
+    try:
+        _inject_live("sim-atlas", "offset_to_cursor")
+        drifted_summary = execute_sync(spec, _live_client_from_reference_spec(spec))
+        drift_folios = drifted_summary["canonical_records"].get("FolioCharge", [])
+        # Old offset spec stops at the missing next_offset: first page only.
+        assert len(drift_folios) == 50, (
+            f"drifted live sync must truncate to 50 folios, got {len(drift_folios)} "
+            f"(outcome {drifted_summary['outcome']})"
+        )
+        assert drifted_summary["outcome"] != "Complete" or drifted_summary["fingerprint_id"] != baseline_summary["fingerprint_id"], (
+            "drift must manifest live: truncated sync must not look like baseline"
+        )
+
+        # Deterministic ladder on the labelled drift (same construction the
+        # in-process test uses when the auto-delta is inconclusive).
+        effective_delta = FingerprintDelta(
+            fingerprint_changed=True,
+            pagination_changed=True,
+            keys_changed=False,
+            types_changed=False,
+            changed_entities=[],
+            pagination_details={
+                "list_reservations": {"previous": {"strategy": "offset"}, "current": {"strategy": "cursor"}},
+                "list_folios": {"previous": {"strategy": "offset"}, "current": {"strategy": "cursor"}},
+            },
+            keys_details={},
+            types_details={},
+        )
+        engine, SessionLocal = _make_db()
+        try:
+            connector_db_id, release_id = _create_connector_and_release(spec, "atlaspms", SessionLocal)
+            ctrl = RepairController(knowledge_cache=KnowledgeCache())
+            session = SessionLocal()
+            result = ctrl.handle(
+                spec=spec,
+                drift_class="PAGINATION_CHANGE",
+                signals=signals_from_sync(
+                    drifted_summary,
+                    spec=spec,
+                    previous_fingerprint=compute_fingerprint(spec, baseline_summary.get("operation_results", {}), baseline_summary.get("canonical_records", {})),
+                    current_fingerprint=compute_fingerprint(spec, drifted_summary.get("operation_results", {}), drifted_summary.get("canonical_records", {})),
+                ),
+                fingerprint_delta=effective_delta,
+                extra={"target_strategy": "cursor"},
+                vendor="AtlasPMS",
+                session=session,
+            )
+            session.commit()
+            assert result.decision == "propose", f"live repair decision was {result.decision} trace {result.ladder_trace}"
+            assert result.rule_id == "offset_to_cursor", f"live rule {result.rule_id} trace {result.ladder_trace}"
+            assert result.candidate_patch, "live patch empty"
+            assert result.model_usage["frontier_tokens"] == 0, f"live frontier_tokens {result.model_usage}"
+            assert result.ladder_level_reached in (0, 1)
+            new_spec = apply_patch(spec, result.candidate_patch)
+            load_spec_from_dict(new_spec)
+            assert session.query(ModelCall).count() == 0, "deterministic live repair must not write ModelCall rows"
+            session.close()
+
+            # Verified release + oracle (local evidence, demo mode).
+            session3 = SessionLocal()
+            from autobridge.engine.releases import create_release_from_patch
+
+            new_release = create_release_from_patch(
+                session3,
+                connector_id=connector_db_id,
+                base_release_id=release_id,
+                patch=result.candidate_patch,
+                provenance_repair_run_id=session3.query(RepairRun).order_by(RepairRun.created_at.desc()).first().id,
+            )
+            session3.commit()
+            assert new_release.parent_release_id == release_id
+            session3.close()
+            _verify_oracle_pass(new_spec, "offset_to_cursor")
+            from verifier.oracle import oracle_verdict as _ov
+
+            old_verdict, _, _ = _ov("offset_to_cursor", spec)
+            assert old_verdict == "fail", "old spec must fail the live scenario oracle"
+            _verify_oracle_pass(new_spec, "baseline")
+
+            # Patched spec syncs Complete against the still-drifted live sim.
+            fixed_summary = execute_sync(new_spec, _live_client_from_reference_spec(new_spec))
+            assert fixed_summary["outcome"] == "Complete", (
+                f"patched spec must sync Complete live, got {fixed_summary['outcome']} {fixed_summary['unmet_criteria']}"
+            )
+            fixed_folios = fixed_summary["canonical_records"].get("FolioCharge", [])
+            assert len(fixed_folios) == 77, f"patched live sync must recover all 77 folios, got {len(fixed_folios)}"
+            rec0 = fixed_summary["canonical_records"]["Reservation"][0]
+            assert isinstance(rec0["total_amount"], Decimal), "money stays Decimal on the live path"
+        finally:
+            engine.dispose()
+
+        # Control model-usage ledger: deterministic path leaves no frontier tokens.
+        usage = _control_get("/metrics/model-usage")
+        assert usage["frontier_tokens"] == 0, f"control ledger shows frontier tokens live: {usage}"
+    finally:
+        _reset_live()
