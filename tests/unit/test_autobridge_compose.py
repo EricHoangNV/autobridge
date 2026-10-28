@@ -185,6 +185,33 @@ def test_published_ports_bind_loopback(compose: dict) -> None:
                 )
 
 
+def test_trust_boundary_ports_ignore_bind_override(compose: dict) -> None:
+    """AR-1-4 residual: verifier + simulator admin ports never follow the
+    AUTOBRIDGE_BIND_HOST override — they stay literal loopback even when
+    the rest of the stack is LAN-exposed (e.g. AUTOBRIDGE_BIND_HOST=0.0.0.0).
+
+    The verifier is the root of every acceptance decision and the admin
+    APIs mutate simulator state: neither may be re-published to the LAN by
+    the same switch that exposes the control API/UI for a demo.
+    """
+    pinned = {
+        ("verifier", "8104"),
+        ("sim-atlas", "8109"),
+        ("sim-harbor", "8110"),
+        ("sim-legacystay", "8112"),
+    }
+    for svc, port in sorted(pinned):
+        mappings = [str(m) for m in compose["services"][svc].get("ports", [])]
+        match = [m for m in mappings if _split_published_port(m)[1] == port]
+        assert match, f"{svc} missing host port {port}"
+        for m in match:
+            bind, _, _ = _split_published_port(m)
+            assert bind in ("127.0.0.1", "localhost"), (
+                f"{svc}: port {m!r} must stay literal loopback and never use "
+                f"{BIND_HOST_VAR}"
+            )
+
+
 def test_every_service_has_healthcheck(compose: dict) -> None:
     for svc, cfg in compose["services"].items():
         assert "healthcheck" in cfg, f"{svc} has no healthcheck"

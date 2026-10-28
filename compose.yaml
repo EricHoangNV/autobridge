@@ -87,7 +87,10 @@ services:
     networks:
       - verifier-net
     ports:
-      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8104:8000"
+      # AR-1-4 residual: the verifier is the root of every acceptance
+      # decision, so it never follows AUTOBRIDGE_BIND_HOST — it stays
+      # loopback-only even when the rest of the stack is LAN-exposed.
+      - "127.0.0.1:8104:8000"
     volumes:
       # Hidden fixtures are mounted read-only here; no other service mounts
       # this volume and worker / runtime-sandbox have no route to this net.
@@ -132,7 +135,9 @@ services:
       - admin-net
     ports:
       - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8105:8000"
-      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8109:8001"
+      # AR-1-4 residual: simulator admin APIs never follow
+      # AUTOBRIDGE_BIND_HOST — loopback-only even on a LAN-exposed stack.
+      - "127.0.0.1:8109:8001"
     healthcheck: *healthcheck-py
 
   sim-harbor:
@@ -147,7 +152,9 @@ services:
       - admin-net
     ports:
       - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8106:8000"
-      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8110:8001"
+      # AR-1-4 residual: simulator admin APIs never follow
+      # AUTOBRIDGE_BIND_HOST — loopback-only even on a LAN-exposed stack.
+      - "127.0.0.1:8110:8001"
     healthcheck: *healthcheck-py
 
   sim-legacystay:
@@ -162,7 +169,9 @@ services:
       - admin-net
     ports:
       - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8111:8000"
-      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8112:8001"
+      # AR-1-4 residual: simulator admin APIs never follow
+      # AUTOBRIDGE_BIND_HOST — loopback-only even on a LAN-exposed stack.
+      - "127.0.0.1:8112:8001"
     healthcheck: *healthcheck-py
 
   # P2.S4.1 MCP Guardian: mock HotelTools V1/V2 + compatibility gateway
