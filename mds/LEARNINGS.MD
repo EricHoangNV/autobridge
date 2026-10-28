@@ -166,3 +166,12 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Scope the exception list to what the review named: vendor-facing sim ports, control and UI keep the override because a LAN demo legitimately needs them, and nothing in the stack needs the verifier/admin ports from off-host (bench uses verifier-net, smoke/e2e use localhost).
 
 **Rule:** When one environment switch widens exposure, enumerate the ports it must never cover and pin those literally with a named test — an "internal bind host" variable is just the same bug with an extra step.
+
+## 17. An unkeyed hash is an integrity checksum, not a signature — key it or rename it
+
+**Context:** AR-2-4 (2026-10-28) — the edge worker's "signed release" gate recomputed a plain sha256 anyone holding the spec could reproduce, so the check proved the spec matched its checksum, not that an authorized release process approved it.
+
+- Keying (HMAC with a server-side env secret) beats renaming when the gate is load-bearing: renaming to "checksum" would have documented away the only thing stopping an arbitrary spec from executing on the edge worker. The review offered both; the gate's refusal of unsigned releases made it authorization, so it got a key.
+- Keep the unkeyed function for content-addressing, key only the authorization path — but here they were the same function (`spec_signature` feeds both drift fingerprints and the edge gate). The resolution: one function with two modes (HMAC when `EDGE_RELEASE_SECRET` is set, legacy sha256 otherwise), with the integrity-only consumers (fingerprint, registry) explicitly documented as non-authorization uses.
+- Fail closed on key mismatch, not on key absence: with the secret set, a legacy hash is rejected (that is the whole test — "a self-signed foreign spec is rejected"); with it unset, legacy mode keeps dev/e2e green. Absence-as-legacy is acceptable only because the compose default is loopback-only and `.env.example` says to set a key before exposure.
+- **Rule:** When a hash gates execution, HMAC it with an env secret shared by signer and verifier, compare with `compare_digest`, and add the test that matters: the attacker's self-computed unkeyed hash must be rejected while the keyed one passes.

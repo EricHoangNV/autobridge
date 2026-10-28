@@ -2230,3 +2230,30 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 **Notes for next iteration:**
 - Remaining Cycle 2 FAIL items: AR-2-4 (edge unkeyed signature), AR-2-5 (floating Docker deps)
 - No compose stack in sandbox: live re-verification (bind override + smoke) left to owner/CI
+## AR-2-4 — HMAC-keyed edge release signatures
+**Date:** 2026-10-28
+**Ref:** Code Review Cycle 2 (FEEDBACKS.MD) — AR-2-4: "Edge signed release signature is an unkeyed hash anyone can compute"
+
+**What was done:**
+- `spec_signature` (control/models) and `release_signature`/`verify_release_signature` (runtime/targets) now emit/verify HMAC-SHA256 when `EDGE_RELEASE_SECRET` is set, legacy unkeyed sha256 otherwise; constant-time compare, fail-closed on key mismatch
+- Wired `EDGE_RELEASE_SECRET: ${EDGE_RELEASE_SECRET:-}` into control, worker (signers) and edge-worker (verifier) in compose.yaml; documented in .env.example
+- Updated edge app copy, releases docstring, docs/connector-spec.md and docs/architecture.md to name the HMAC key and the integrity-only fallback
+- 9 new tests: 5 keyed signature cases + autouse env hermeticity, 3 parametrized compose wiring tests; e2e s2 untouched
+
+**Key decisions:**
+- HMAC over rename: the edge gate refuses unsigned execution, so it is authorization, not corruption detection — it needed a key, not a new name
+- One function, two modes (not two functions): signer and verifier must derive the same digest from the same env var; agreement tests pin that, including explicit-secret-overrides-env
+- Left fingerprint/registry content-addressing unkeyed deliberately (change detection, not auth); left FEEDBACKS.MD verdict for the reviewer to re-verify
+
+**Files changed:**
+- `src/autobridge/control/models.py` — EDGE_RELEASE_SECRET_ENV, _signing_key, keyed spec_signature
+- `src/autobridge/runtime/targets.py` — keyed release_signature, compare_digest verify with HMAC mismatch error
+- `src/autobridge/edge/app.py`, `src/autobridge/runtime/app.py` — wording only
+- `src/autobridge/engine/releases.py` — docstring only (create path already calls spec_signature)
+- `compose.yaml`, `.env.example`, `docs/connector-spec.md`, `docs/architecture.md`
+- `tests/unit/test_autobridge_edge_target.py`, `tests/unit/test_autobridge_compose.py`
+
+**Notes for next iteration:**
+- Remaining Cycle 2 FAIL item: AR-2-5 (floating Docker deps — pin images to lockfile digests)
+- No compose stack in sandbox: live HMAC round-trip (set secret, sign via build, execute on edge-worker) left to owner/CI
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation).
