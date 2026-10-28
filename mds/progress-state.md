@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-022 reset-target owner check DONE (sbx1 2026-10-28). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+REQ-022 registry-out-of-engine owner check DONE (sbx1 2026-10-28). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
@@ -14,11 +14,12 @@ REQ-022 reset-target owner check DONE (sbx1 2026-10-28). Agent: opencode meta/mu
   - AR-2-1 … AR-2-6 + AR-1-1 … AR-1-5 code-fixed (re-verification pending owner)
   - REQ-022 sub-steps A + B + C merged + B owner check fixed (edge-sign + fail-fast, thread containment, trust_env=False, strict thread warnings)
   - REQ-022 reset-target owner check DONE: RESET_TARGETS + EXTRA_RESETS registry, endpoint + 3 tests derive from it
+  - REQ-022 registry-out-of-engine owner check DONE: demo targets in config/demo_targets.yaml loaded at startup, runtime validation, OpenAPI ids from file, guard green
   - REQ-026 DONE: pytest-timeout 2.4.0 (unit 30 s thread-method, e2e 180 s via conftest mark) + 3 mechanism/mark tests + LEARNINGS #23
-- Tests: 2715 pass / 0 fail (autobridge 2291, verifier 99, simulators 325) + ui 156 pass;
-  90% gates green; lint (incl. import-linter) + typecheck + openapi-check green
-- Stack: local stack all readyz green (incl. sim-fias-pabx + edge-worker); full make e2e 143-144 pass / 2 skip, 1 pre-existing unrelated fail (legacystay guard, fails on main) + 1 flaky edge timing fail (passes in isolation)
-- Known red (pre-existing, not this task): `test_no_legacystay_specific_rule_or_engine_code` (guard vs schemas.py demo enum since REQ-021-B; needs owner scoping decision); edge-agent live test flaky under full-suite random order
+- Tests: 2729 pass / 0 fail (autobridge 2305, verifier 99, simulators 325) + ui 156 pass;
+  90% gates green (simulators 89.8–90.4 run-to-run random-order noise, pre-existing); lint (incl. import-linter) + typecheck + openapi-check + ui-typecheck green
+- Stack: local stack all readyz green (incl. sim-fias-pabx + edge-worker); full make e2e on local stack 145 pass / 2 skip / 0 fail (legacystay guard fixed by this task)
+- Known notes (pre-existing, not this task): compose-stack /demo/reset cannot reach sim-fias-pabx (by design: control has no edge-net route; matrix live test is local-stack-only); edge-agent live test flaky under full-suite random order
 
 ## Next tasks
 0. **REQ-021 remaining (owner step)** — owner runs `make record-frontier SCENARIO=gross_to_net` and commits the capture; live step-4 check on the owner's host

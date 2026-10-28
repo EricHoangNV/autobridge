@@ -2805,3 +2805,34 @@ flap). Next: REQ-022 D (fault scenarios) then E (demo + docs + index).
 - Pre-existing e2e red to surface to owner: `test_no_legacystay_specific_rule_or_engine_code` fails on main (guard from P2.S1.1 vs `legacystay` in `control/schemas.py` demo target enum since REQ-021 sub-step B).
 - Flaky under full-suite random order: `test_s2_edge_target.py::test_agent_live_command_and_postings` (passes in isolation); likely link re-handshake timing after FIAS resets.
 - Always run pytest as `uv run --extra dev pytest` (bare `uv run` misses pytest-timeout and warns on timeout config).
+
+## REQ-022 owner check: demo target registry out of engine source
+**Date:** 2026-10-28
+**Ref:** REQ-022 owner check 2026-10-29 (on e2823f4c) — `test_no_legacystay_specific_rule_or_engine_code` failed: demo-reset registry named LegacyStay inside engine source
+
+**What was done:**
+- New single registry `config/demo_targets.yaml`: 5 canonical ids, aliases, host admin ports, FIAS extra reset; control loads it at startup via new `src/autobridge/control/demo_targets.py` (stdlib+yaml only, names no simulator)
+- `routes/demo.py` derives TARGET_MAP / RESET_TARGETS / EXTRA_RESETS / host port map from the file; `_resolve_target` 422 message lists known ids from the file; `schemas.py` InjectFaultRequest.target is now `str` with runtime validation, OpenAPI description built from the file
+- `Dockerfile.engine` ships `config/`; `ui/openapi.json` + `schema.d.ts` regenerated (target: string), ui-typecheck green
+- New `tests/unit/test_autobridge_demo_targets.py` (14 tests): synthetic-registry loader, fail-closed invalid files, DEMO_TARGETS_FILE override, compose.yaml + local-up.sh port cross-checks, unit-level generalization guard
+- Verified: full `make test` green (autobridge 2305 incl. 14 new, verifier 99, simulators 325, ui 156); local stack readyz green; full `make e2e` on local stack 145 pass / 2 skip / 0 fail
+
+**Key decisions:**
+- Data file at repo root (owner's `config/demo_targets.yaml` suggestion) rather than package data, so local/compose/Docker share one path scheme; loader resolves via `parents[3]` which holds in both checkout and image (`/srv`)
+- Kept historical import names (TARGET_MAP, expected_reset_targets, …) so e2e/unit callers are untouched; runtime values carry vendor names, source literals do not
+- compose.yaml / local-up.sh keep their own port bindings (infra publish/start, not engine); one-registry enforced by a unit cross-check test instead of shell parsing at runtime
+- Schemas degrades the description (not the import) if the file is missing; the endpoint itself fails closed at import
+
+**Files changed:**
+- `config/demo_targets.yaml` — new single registry (new file)
+- `src/autobridge/control/demo_targets.py` — loader + validation (new file)
+- `src/autobridge/control/routes/demo.py` — registry derived from file, literals scrubbed
+- `src/autobridge/control/schemas.py` — target: str + file-derived OpenAPI description
+- `Dockerfile.engine` — COPY config/
+- `tests/unit/test_autobridge_demo_targets.py` — 14 new tests (new file)
+- `ui/openapi.json`, `ui/lib/api/schema.d.ts` — regenerated
+
+**Notes for next iteration:**
+- Compose-stack `/demo/reset` can never reach sim-fias-pabx (control has no edge-net route by design); the matrix live-reset test asserting all-200 is local-stack-only — run e2e on `make local-up` for REQ-022 work
+- Simulators coverage gate flutters 89.8–90.4 run to run (random order, pre-existing, unrelated); make test still exits green
+- Next per owner: macOS DNS-hermetic fix, then REQ-022 sub-step D
