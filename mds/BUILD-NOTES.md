@@ -1285,3 +1285,18 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
   `make lint` (incl. import-linter) + `make typecheck` + `make ui-typecheck` green; e2e knowledge +
   matrix live files green against local stack (up/down clean).
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-021 owner check (2026-10-28 22:45) — recorded rejection, never a crash (sbx1)
+- **Did:** `run_frontier_climb` takes `validate_against` and apply-checks the L3 proposal mechanically
+  (shape + applies + schema-valid; semantics stay with the verifier/trap check). Rejections record
+  `proposal_rejected` with the reason, the proposal, its tokens and a truncated raw preview — the
+  exception never escapes; the run continues to L4. Same guard on the demo's verify-path apply.
+  L3 `max_tokens` 1024 → 4096 (reasoning eats the budget; log the preview on parse failure).
+  New unit tests: non-applying patch, malformed JSON, out-of-spec path (all recorded, none raised);
+  valid decoy still passes validation. Build path pinned: v1 Meridian build via `run_build_handler`
+  records `success False` + vocabulary-guard trace with no release and no raise. Matrix climb passes
+  `validate_against` (harbor ref); the decoy applies cleanly so the trap assertions stand.
+- **Tests:** `make test` all green (autobridge 2192 / 91.20%, verifier 99, simulators 294, ui 156);
+  lint + typecheck + ui-typecheck green; `make demo` green (L3 skipped plainly without a recording).
+  Live step-4 + `make record-frontier` capture remain owner steps (key + host stack).
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).

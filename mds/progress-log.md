@@ -2584,3 +2584,9 @@ REQ-021 (all 6 items + 4 owner checks) moved to Resolved. **Gates:** `make test`
 ui 156); lint + typecheck + ui-typecheck green.
 **Next:** REQ-020 step 7 (demo before/after) → REQ-022 → REQ-024 → REQ-025 (owner order); REQ-023 demo
 plan as steps land; owner live steps (record-frontier capture). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-021 owner-check (22:45) merged (sbx1)
+**Recorded rejection:** L3/L2 proposals that do not apply/parse/validate record and continue to L4;
+build refusal pinned. Gates green (2192/99/294 + ui 156).
+**Next:** REQ-020 step 7 (demo before/after) — owner order — unless a new owner check lands first.
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).
