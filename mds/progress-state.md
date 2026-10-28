@@ -11,6 +11,7 @@ REQ-022 sub-step D DONE (sbx1 2026-10-28). Agent: opencode meta/muse-spark-1.3-c
   - AR-2-1 … AR-2-6 + AR-1-1 … AR-1-5 code-fixed (re-verification pending owner)
   - REQ-022 sub-steps A + B + C merged, all owner checks fixed (edge-sign, fail-fast, reset-target, registry-out-of-engine, DNS-hermetic)
   - REQ-022 sub-step D DONE: 10 fault YAMLs + fias_checks + test_fias_faults.py (13 tests, live green); layout repair [0,1] 0 frontier tokens; zeros-resync + inflight-fail host fixes
+  - REQ-022 owner check 2026-10-29 DONE: PABX PS/PA race (pre-register unacked); forced-order test; flaky test 20/20 green
 - Tests: 2771 pass / 0 fail (autobridge 2317/90.36%, verifier 109/93.78%, simulators 345/90.43%) + ui 156 pass;
   lint (incl. import-linter) + typecheck + openapi-check green
 - Stack: local stack 2026-10-28, all readyz green; `make e2e` 157 pass / 2 skip / 1 fail (documented edge-agent random-order flake, green alone)

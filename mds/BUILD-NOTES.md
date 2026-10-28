@@ -1663,3 +1663,9 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 - Bench list_scenarios skips fias_tcp (HTTP arms only). Docs: safety-model catalog 27 rows + FIAS note, architecture 15->27 YAMLs. test_01 allowlist + transport-aware pagination check.
 - Gates: make test green (autobridge 2317/90.36, verifier 109/93.78, simulators 345/90.43, ui 156); lint (import-linter) + typecheck + openapi green; local-stack make e2e 157 pass / 2 skip / 1 fail (documented edge-agent random-order flake, green alone; +13 vs the 144 baseline = the new D tests).
 - Gotchas: ruff autofix can eat a def line when oldString spans it — always re-grep the def after an edit (hit 3x this task). encode_frame refuses oversize by design — craft probe bytes by hand. Fake Host never closes on flood (real-host behavior) — sim tests prove queueing, FiasHost behavior proved in e2e.
+
+### REQ-022 owner check 2026-10-29 — PS/PA race (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD REQ-022 owner check on 3e566c85.
+- Fix in simulators/fias_pabx/pabx.py `_serve` pending branch: P# pre-registered in `_unacked` before the frame goes out; dropped again only if the send raises; record stays queued for the next link. Other answer-expected records (WR/KR/KA/WA) correlate inline in their ACK wait — PS is the only registry-tracked send, so no change needed there.
+- Test `test_pa_before_link_ack_confirms_posting` forces the order (no_ack holds the link-ACK, PA delivered first): fails without the fix (duplicate + never confirmed), passes with it. Verified `test_link_postings_flow_to_sink` 20/20 green alone.
+- Gates re-run after the fix: sim unit file 42 pass; fias D e2e in-process 10 pass; lint + typecheck green.
