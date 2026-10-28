@@ -29,50 +29,6 @@ Wanted:
 6. Check: in a fresh clone with Docker unavailable (`DOCKER_HOST=unix:///nonexistent.sock`), `make local-up && make
    demo && make local-down` passes.
 
-### REQ-019 — Reshape the Atlas simulator after the Cloudbeds PMS API (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 10:02)
-Owner wants the simulated vendors to look like real hotel PMS APIs. Atlas (the "clean, documented" vendor) follows the
-**Cloudbeds API** shape. Keep the fictional name Atlas/AtlasPMS everywhere (simulator, docs site, UI): copy the API
-*shape*, never Cloudbeds' name, logo, branding or doc text. Read the reference before coding and match names exactly:
-https://developers.cloudbeds.com/reference/get_getreservations-2.md, `get_getreservation-2.md`, `get_getguest-2.md`,
-https://developers.cloudbeds.com/reference/tech-specs.md, and the docs index https://developers.cloudbeds.com/llms.txt
-(find the hotels/property and transactions endpoints there; if a field cannot be confirmed, say so in the build note).
-What the research already confirmed (2026-10-28):
-- Methods are named endpoints under a versioned prefix: `GET /api/v1.3/getReservations`, `GET /api/v1.3/getReservation`
-  (`reservationID`), plus the property list (getHotels) and transactions/folio endpoint from the index.
-- Auth: `x-api-key: <key>` header (also accept `Authorization: Bearer <token>` as OAuth2). Missing → 401.
-- Envelope: `{"success": true, "data": [...], "count": <items on this page>, "total": <all>}`.
-- Pagination: page based, `pageNumber` (default 1) and `pageSize` (default 100, max 100). Filters include
-  `propertyID`, `status`, `modifiedFrom`/`modifiedTo`, `checkInFrom`/`checkInTo`, `resultsFrom`/`resultsTo`.
-- Reservation fields (camelCase): `propertyID`, `reservationID`, `dateCreated`, `dateModified`, `status`, `guestID`,
-  `guestName`, `startDate`, `endDate`, `adults`, `children`, `balance` (a JSON **number**), `sourceName`.
-  Status enum: `not_confirmed`, `confirmed`, `canceled`, `checked_in`, `checked_out`, `no_show`.
-- Dates `YYYY-MM-DD`; date-times `YYYY-MM-DD HH:MM:SS` (no zone; document the zone you choose and keep it a real trap).
-- Rate limit 10 req/s per key (the simulator may model it).
-Wanted:
-1. `simulators/atlaspms/app.py` serves the Cloudbeds-style surface above (old routes removed, not aliased), backed by the
-   same seeded generator, with the fault switchboard still working on it. Money arrives as JSON numbers: the engine must
-   parse them to `Decimal` without float rounding (DIRECTIVES §4) and the verifier must check that.
-2. Replace `simulators/docs/atlas-openapi.yaml` and `.json` (and the `atlaspms-*` aliases) with an OpenAPI 3.1 document
-   of the new surface; the `/developers` page re-renders it automatically. Update `simulators/devportal/openapi.js`
-   only if the new spec needs it (e.g. the curl example must send `x-api-key`).
-3. Update everything that encodes the old Atlas shape: the reference connector (`generated/connectors/`), runtime and
-   discovery (page pagination, status mapping, `canceled` → canonical `cancelled`, `not_confirmed` mapping decided and
-   documented), verifier oracle, the 14 fault scenarios where they touch Atlas, bench, `make demo`, UI copy, e2e and
-   unit tests. Atlas pagination becomes `page`, so demo step 3 (offset → cursor on Atlas) needs a new L1 rule
-   `page_to_cursor` (mirroring `offset_to_cursor`, zero frontier tokens, same tests). Keep `offset_to_cursor` covered by
-   its existing rule tests and fixtures (not by switching the demo or its tests onto another vendor).
-4. Heldout: never touch `verifier/hidden_cases/heldout/SHA256SUMS` or `HELDOUT_DIR`. The heldout scenarios must still
-   run against the new Atlas (`make bench-heldout` dry run with the SHA check passing).
-5. **LegacyStay stays unseen** (owner, 2026-10-28; plan S1: "unseen generalization vendor, heldout only … no
-   vendor-specific rule added"). No L1 rule, hypothesis enumerator, classifier, prompt or knowledge entry may
-   reference LegacyStay or be developed or tuned against it; no new tests target it by name except the existing S1
-   bootstrap/repair test. Add a guard test that greps `src/autobridge` for `legacystay` (case-insensitive) outside
-   comments and fails on a hit. Showing LegacyStay in the demo (its docs page, a run against it) is fine; tuning on it
-   is not. Meridian and the FIAS PABX are dev/demo vendors: no heldout cases for them, and the heldout manifest is not
-   re-frozen.
-6. Gates: `make test`, `make up && make smoke && make e2e && make demo` green; README vendor table updated.
-
 ### REQ-020 — Add a fifth simulator after the Mews Connector API (2026-10-28)
 Status: OPEN
 Depends on REQ-019 (do it after). A new vendor, fictional name **MeridianPMS** (`sim-meridian`), copies the **Mews
@@ -479,6 +435,52 @@ Do not touch `verifier/hidden_cases/heldout/SHA256SUMS` or anything under `HELDO
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-019 — Reshape the Atlas simulator after the Cloudbeds PMS API (2026-10-28)
+Status: DONE (2026-10-28) — Atlas serves the method-style hotel PMS surface (REQ-019 gates green).
+Owner wants the simulated vendors to look like real hotel PMS APIs. Atlas (the "clean, documented" vendor) follows the
+**Cloudbeds API** shape. Keep the fictional name Atlas/AtlasPMS everywhere (simulator, docs site, UI): copy the API
+*shape*, never Cloudbeds' name, logo, branding or doc text. Read the reference before coding and match names exactly:
+https://developers.cloudbeds.com/reference/get_getreservations-2.md, `get_getreservation-2.md`, `get_getguest-2.md`,
+https://developers.cloudbeds.com/reference/tech-specs.md, and the docs index https://developers.cloudbeds.com/llms.txt
+(find the hotels/property and transactions endpoints there; if a field cannot be confirmed, say so in the build note).
+What the research already confirmed (2026-10-28):
+- Methods are named endpoints under a versioned prefix: `GET /api/v1.3/getReservations`, `GET /api/v1.3/getReservation`
+  (`reservationID`), plus the property list (getHotels) and transactions/folio endpoint from the index.
+- Auth: `x-api-key: <key>` header (also accept `Authorization: Bearer <token>` as OAuth2). Missing → 401.
+- Envelope: `{"success": true, "data": [...], "count": <items on this page>, "total": <all>}`.
+- Pagination: page based, `pageNumber` (default 1) and `pageSize` (default 100, max 100). Filters include
+  `propertyID`, `status`, `modifiedFrom`/`modifiedTo`, `checkInFrom`/`checkInTo`, `resultsFrom`/`resultsTo`.
+- Reservation fields (camelCase): `propertyID`, `reservationID`, `dateCreated`, `dateModified`, `status`, `guestID`,
+  `guestName`, `startDate`, `endDate`, `adults`, `children`, `balance` (a JSON **number**), `sourceName`.
+  Status enum: `not_confirmed`, `confirmed`, `canceled`, `checked_in`, `checked_out`, `no_show`.
+- Dates `YYYY-MM-DD`; date-times `YYYY-MM-DD HH:MM:SS` (no zone; document the zone you choose and keep it a real trap).
+- Rate limit 10 req/s per key (the simulator may model it).
+Wanted:
+1. `simulators/atlaspms/app.py` serves the Cloudbeds-style surface above (old routes removed, not aliased), backed by the
+   same seeded generator, with the fault switchboard still working on it. Money arrives as JSON numbers: the engine must
+   parse them to `Decimal` without float rounding (DIRECTIVES §4) and the verifier must check that.
+2. Replace `simulators/docs/atlas-openapi.yaml` and `.json` (and the `atlaspms-*` aliases) with an OpenAPI 3.1 document
+   of the new surface; the `/developers` page re-renders it automatically. Update `simulators/devportal/openapi.js`
+   only if the new spec needs it (e.g. the curl example must send `x-api-key`).
+3. Update everything that encodes the old Atlas shape: the reference connector (`generated/connectors/`), runtime and
+   discovery (page pagination, status mapping, `canceled` → canonical `cancelled`, `not_confirmed` mapping decided and
+   documented), verifier oracle, the 14 fault scenarios where they touch Atlas, bench, `make demo`, UI copy, e2e and
+   unit tests. Atlas pagination becomes `page`, so demo step 3 (offset → cursor on Atlas) needs a new L1 rule
+   `page_to_cursor` (mirroring `offset_to_cursor`, zero frontier tokens, same tests). Keep `offset_to_cursor` covered by
+   its existing rule tests and fixtures (not by switching the demo or its tests onto another vendor).
+4. Heldout: never touch `verifier/hidden_cases/heldout/SHA256SUMS` or `HELDOUT_DIR`. The heldout scenarios must still
+   run against the new Atlas (`make bench-heldout` dry run with the SHA check passing).
+5. **LegacyStay stays unseen** (owner, 2026-10-28; plan S1: "unseen generalization vendor, heldout only … no
+   vendor-specific rule added"). No L1 rule, hypothesis enumerator, classifier, prompt or knowledge entry may
+   reference LegacyStay or be developed or tuned against it; no new tests target it by name except the existing S1
+   bootstrap/repair test. Add a guard test that greps `src/autobridge` for `legacystay` (case-insensitive) outside
+   comments and fails on a hit. Showing LegacyStay in the demo (its docs page, a run against it) is fine; tuning on it
+   is not. Meridian and the FIAS PABX are dev/demo vendors: no heldout cases for them, and the heldout manifest is not
+   re-frozen.
+6. Gates: `make test`, `make up && make smoke && make e2e && make demo` green; README vendor table updated.
+
+Resolution: simulator serves GET /api/v1.3/getReservations/getReservation/getGuest/getHotels/getTransactions (envelope success/data/count/total, pageNumber/pageSize, x-api-key or Bearer, canceled spelling, JSON-number money, NY zone-less datetimes); old routes removed; OpenAPI yaml/json + aliases + devportal curl regenerated; reference spec maps the new wire (page+total_path, canceled->cancelled, not_confirmed blocked, propertyID currency enum_map); L1 rule page_to_cursor added (offset_to_cursor kept via fixture tests); runtime tokenless-page (total_path/total_reached); discovery learns page params/wire names/auth; oracle+checks handle page_to_cursor; LegacyStay guard test added (no legacystay refs in src/autobridge); gates: make test green (autobridge 91.43%, verifier 93.78%, simulators 96.21%, ui 148 pass), local-up+smoke+e2e+demo green (no Docker in sandbox), README table updated. Classic getTransactions reference page is retired, so its item fields follow v1.3 camelCase conventions (documented unconfirmed); no Cloudbeds name in code/docs/UI (shape only). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 ### REQ-016 — `make demo` reports [ok] when its writes fail (2026-10-28)
 Status: DONE (2026-10-28) — fail-loud writes (non-2xx fails step, exit non-zero), per-step live/in-process labels; 401+500 unit tests.

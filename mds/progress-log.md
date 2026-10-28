@@ -2432,3 +2432,22 @@ Next: REQ-014 → REQ-015 → REQ-016 (owner priority), then REQ-019 → REQ-020
 
 **Notes for next iteration:**
 - REQ-019 next per owner order (Atlas → Cloudbeds shape); live stack verification needs Docker/CI.
+
+## REQ-019 — Atlas reshaped after the method-style hotel PMS API
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-019 (owner priority: Atlas shape first, then REQ-020)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Reference docs read first (getReservations/getReservation/getGuest/getHotels + tech-specs confirmed: versioned method prefix, x-api-key or Bearer, success/data/count/total, pageNumber/pageSize, camelCase fields, 6-status enum with 1-L canceled, YYYY-MM-DD + zone-less datetimes, 10 rps). Classic getTransactions page retired -> fields follow v1.3 conventions, marked simulator-confirmed. No vendor name/branding/text in repo.
+- Simulator rewritten to the new surface (old routes removed, not aliased); exact-Decimal JSON encoder (no float on the wire); fault switchboard intact + new page_to_cursor scenario (15 YAMLs); fault cursor mode omits total.
+- Reference spec maps the new wire (page+total_path, canceled->cancelled, not_confirmed blocked, propertyID currency enum_map, datetime_utc for zone-less fields); runtime gained Pagination.total_path + total_reached stop; discovery learns page params/total/next paths, wire names, canceled mapping, api_key_header from the OpenAPI; oracle+checks handle page_to_cursor + camelCase paths.
+- New L1 rule page_to_cursor (mirrors offset_to_cursor, zero frontier tokens); offset_to_cursor kept via fixture-backed rule tests. LegacyStay guard test added (fails on any non-comment legacystay ref in src/autobridge).
+- Demo step 3 -> page_to_cursor; step 1 live ensure-then-get fixes fresh-DB 404 (pre-existing REQ-016 interaction).
+
+**Key decisions:**
+- Zone-less datetimes rendered in America/New_York for every property (documented quirk; engine static-NY round-trips exactly; UTC assumption is the trap).
+- gross_to_net now syncs Complete self-consistently (no gross_sum on the documented wire); verifier flags money_mismatch -> escalate L4, never patched (DIRECTIVES escalation rule).
+- Currency via propertyID enum_map (only v1-declarative per-property source); unknown property Blocks.
+- Rate limit 10 rps modeled only by the fault scenario (real enforcement would flake tests).
+- Gates: make test green (autobridge 91.43%, verifier 93.78%, simulators 96.21%, ui 148 pass); local-up+smoke+demo 6/6+e2e green (no Docker in sandbox); heldout manifest byte-identical.
