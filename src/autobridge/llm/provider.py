@@ -55,6 +55,10 @@ class Completion:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
+    #: True when the text came from a redacted replay recording, not a live
+    #: model (REQ-021 item 5). The UI and ``make demo`` label these calls;
+    #: :class:`BudgetedProvider` marks their ledger purpose accordingly.
+    replayed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +315,9 @@ class BudgetedProvider:
         self.budget.record(tier, result.usage)
         # Ledger side-effect (best-effort; budget violation still propagates).
         if self.session is not None and self.run_id is not None:
+            ledger_purpose = purpose
+            if result.replayed and "(replay)" not in ledger_purpose:
+                ledger_purpose = f"{ledger_purpose} (replay)"
             record_model_call(
                 self.session,
                 run_id=self.run_id,
@@ -318,7 +325,7 @@ class BudgetedProvider:
                 model=self._model_for_tier(tier),
                 tier=tier,
                 usage=result.usage,
-                purpose=purpose,
+                purpose=ledger_purpose,
                 latency_ms=elapsed_ms,
             )
         return result
@@ -647,6 +654,154 @@ class MuseProvider:
             kwargs["tools"] = [_to_openai_tool(t) for t in tools]
         resp = client.chat.completions.create(**kwargs)
         return _parse_openai_chat_response(resp)
+
+
+# ---------------------------------------------------------------------------
+# Replay provider (REQ-021 item 5 — deterministic stand-in for live calls)
+# ---------------------------------------------------------------------------
+
+
+class ReplayMissing(RuntimeError):
+    """No recording exists for a prompt hash: fail loudly, never invent one."""
+
+    def __init__(self, prompt_hash: str, recordings_dir: str) -> None:
+        super().__init__(
+            f"no replay recording for prompt {prompt_hash} in {recordings_dir} "
+            "(record one from a live run, or run with a frontier key)"
+        )
+        self.prompt_hash = prompt_hash
+        self.recordings_dir = recordings_dir
+
+
+def prompt_hash(messages: list[dict[str, Any]]) -> str:
+    """Stable sha256 over the canonical prompt JSON (replay lookup key)."""
+    import hashlib  # noqa: PLC0415
+    import json as _json  # noqa: PLC0415
+
+    canonical = _json.dumps(messages, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _recording_to_completion(entry: dict[str, Any]) -> Completion:
+    tool_calls = [
+        ToolCall(
+            id=str(tc.get("id", "")),
+            name=str(tc.get("name", "")),
+            arguments=dict(tc.get("arguments", {}) or {}),
+        )
+        for tc in entry.get("tool_calls", [])
+        if isinstance(tc, dict)
+    ]
+    usage = Usage(
+        input_tokens=int(entry.get("input_tokens", 0) or 0),
+        output_tokens=int(entry.get("output_tokens", 0) or 0),
+    )
+    return Completion(text=str(entry.get("text", "")), tool_calls=tool_calls, usage=usage, replayed=True)
+
+
+class ReplayProvider:
+    """Deterministic replay of redacted frontier/small responses (REQ-021.5).
+
+    Recordings live under ``demo/recordings/`` (or ``REPLAY_DIR``), one JSON
+    file per scenario mapping prompt sha256 -> ``{text, tool_calls,
+    input_tokens, output_tokens, model}``. A missing recording raises
+    :class:`ReplayMissing` — the demo fails loudly instead of inventing a
+    response. Model ids recorded alongside are labels only; pricing follows
+    the recorded model via :func:`estimate_cost`.
+    """
+
+    provider_name = "replay"
+
+    def __init__(
+        self,
+        recordings_dir: str | None = None,
+        *,
+        frontier_model: str | None = None,
+        small_model: str | None = None,
+    ) -> None:
+
+        from autobridge.config import (  # noqa: PLC0415 (deferred import)
+            frontier_model as default_frontier_model,
+        )
+        from autobridge.config import (
+            replay_dir,
+        )
+        from autobridge.config import (
+            small_model as default_small_model,
+        )
+
+        self.recordings_dir = str(recordings_dir or replay_dir() or "")
+        self.frontier_model = frontier_model or default_frontier_model()
+        self.small_model = small_model or default_small_model()
+        self._recordings: dict[str, dict[str, Any]] | None = None
+
+    def model_for_tier(self, tier: str) -> str:
+        if tier == "frontier":
+            return self.frontier_model
+        if tier == "small":
+            return self.small_model
+        raise ValueError(f"unknown tier {tier!r}; expected 'frontier' or 'small'")
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        if self._recordings is None:
+            import glob as _glob  # noqa: PLC0415
+            import json as _json  # noqa: PLC0415
+            import os as _os  # noqa: PLC0415
+
+            merged: dict[str, dict[str, Any]] = {}
+            if self.recordings_dir:
+                for path in sorted(_glob.glob(_os.path.join(self.recordings_dir, "*.json"))):
+                    try:
+                        with open(path, encoding="utf-8") as fh:
+                            data = _json.load(fh)
+                    except Exception:
+                        continue
+                    if isinstance(data, dict):
+                        for key, entry in data.items():
+                            if isinstance(entry, dict):
+                                merged[str(key)] = entry
+            self._recordings = merged
+        return self._recordings
+
+    def complete(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int = 1024,
+        tier: str = "small",
+        purpose: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Completion:
+        _ = (max_tokens, tier, purpose, tools)  # replay is input-determined, not parameter-tuned
+        key = prompt_hash(messages)
+        entry = self._load().get(key)
+        if entry is None:
+            raise ReplayMissing(key, self.recordings_dir or "(no recordings dir)")
+        return _recording_to_completion(entry)
+
+
+def resolve_frontier_provider() -> tuple[Any, str]:
+    """Pick the L2/L3 provider from env (REQ-021 item 5).
+
+    ``FRONTIER_MODE``: ``"live"`` (needs ``FRONTIER_API_KEY``),
+    ``"replay"`` (recordings under ``REPLAY_DIR``), ``"auto"`` (live when a
+    key is configured, else replay) or ``"off"`` (no provider; callers must
+    say plainly that L3 was skipped). Returns ``(provider, mode)`` where
+    mode is ``"live"`` or ``"replay"``; ``"off"`` returns ``(None, "off")``.
+    Model ids come from config in every mode.
+    """
+    from autobridge.config import frontier_api_key, frontier_mode  # noqa: PLC0415
+
+    mode = frontier_mode()
+    if mode == "off":
+        return None, "off"
+    if mode == "live" or (mode == "auto" and frontier_api_key()):
+        if mode == "live" and not frontier_api_key():
+            raise RuntimeError("FRONTIER_MODE=live needs FRONTIER_API_KEY (generate a dedicated Muse key)")
+        return MuseProvider(), "live"
+    if mode not in ("auto", "replay"):
+        raise RuntimeError(f"FRONTIER_MODE must be live|replay|auto|off, got {mode!r}")
+    return ReplayProvider(), "replay"
 
 
 # ---------------------------------------------------------------------------

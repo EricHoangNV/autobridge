@@ -20,7 +20,13 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", default_database_url())
+# A programmatic Config (startup migrator, tests) may already carry the URL:
+# keep it. An ini-loaded Config keeps the historical behavior: DATABASE_URL
+# (or the local-dev default) wins over the ini value.
+if config.config_file_name is None and config.get_main_option("sqlalchemy.url"):
+    pass
+else:
+    config.set_main_option("sqlalchemy.url", default_database_url())
 
 target_metadata = Base.metadata
 

@@ -96,6 +96,29 @@ def model_price_per_million(model: str) -> tuple[str, str] | None:
 SPEC_VOCABULARIES = ("v1", "v2")
 
 
+#: Frontier provider modes (REQ-021 item 5).
+FRONTIER_MODES = ("live", "replay", "auto", "off")
+
+
+def frontier_mode() -> str:
+    """How L2/L3 calls are served (env ``FRONTIER_MODE``, default ``"auto"``).
+
+    ``"live"`` calls the Muse API (needs ``FRONTIER_API_KEY``); ``"replay"``
+    serves redacted recordings (missing recording fails loudly); ``"auto"``
+    is live when a key is configured, else replay; ``"off"`` means no
+    provider — callers record the skip plainly instead of calling.
+    """
+    raw = (os.environ.get("FRONTIER_MODE", "") or "").strip().lower() or "auto"
+    if raw not in FRONTIER_MODES:
+        raise ValueError(f"FRONTIER_MODE must be one of {list(FRONTIER_MODES)}, got {raw!r}")
+    return raw
+
+
+def replay_dir() -> str:
+    """Directory of replay recordings (env ``REPLAY_DIR``, default ``demo/recordings``)."""
+    return (os.environ.get("REPLAY_DIR", "") or "").strip() or "demo/recordings"
+
+
 def runtime_max_vocabulary() -> str:
     """Newest vocabulary the runtime executes (cap for sync pins)."""
     return SPEC_VOCABULARIES[-1]

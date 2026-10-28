@@ -11,10 +11,14 @@ from autobridge.llm.provider import (
     LLMProvider,
     MuseProvider,
     OpenAIProvider,
+    ReplayMissing,
+    ReplayProvider,
     ToolCall,
     Usage,
     estimate_cost,
+    prompt_hash,
     record_model_call,
+    resolve_frontier_provider,
 )
 
 __all__ = [
@@ -27,9 +31,13 @@ __all__ = [
     "LLMProvider",
     "MuseProvider",
     "OpenAIProvider",
+    "ReplayMissing",
+    "ReplayProvider",
     "ToolCall",
     "Usage",
     "estimate_cost",
     "healthz",
+    "prompt_hash",
     "record_model_call",
+    "resolve_frontier_provider",
 ]

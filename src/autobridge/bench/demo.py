@@ -445,6 +445,9 @@ def rung_table_row(step: dict[str, Any]) -> str:
     calls = int(usage.get("calls", 0) or 0)
     small = int(usage.get("small_tokens", 0) or 0)
     frontier = int(usage.get("frontier_tokens", evidence.get("frontier_tokens", 0)) or 0)
+    frontier_label = f"{frontier} frontier"
+    if evidence.get("frontier_replayed"):
+        frontier_label += " (replay)"
     why = str(
         evidence.get("why_escalated")
         or evidence.get("escalation_question")
@@ -452,7 +455,7 @@ def rung_table_row(step: dict[str, Any]) -> str:
         or evidence.get("degradation")
         or "—"
     )
-    return f"{scenario} | resolved {resolved} | {calls} calls | {small} small / {frontier} frontier | {why}"
+    return f"{scenario} | resolved {resolved} | {calls} calls | {small} small / {frontier_label} | {why}"
 
 
 def render_rung_summary(report: dict[str, Any]) -> str:
@@ -673,17 +676,117 @@ def step3_zero_token_recovery(seed: int, live: bool, base_url: str) -> dict[str,
     )
 
 
-def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[str, Any]:
-    """gross_to_net: decoy patch rejected, escalation bundle, Decimal money."""
-    from autobridge.repair.escalation import escalation_for_no_fix  # noqa: PLC0415
+def _gross_net_hypotheses() -> list[dict[str, Any]]:
+    """The documented gross/net pair (ids + priors feed the replay hashes).
 
-    decoy_patch = [{"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}]
-    trapped = any("net_amount" in str(op.get("value", "")) and "total_amount" in str(op.get("path", "")) for op in decoy_patch)
-    assert trapped, "demo decoy patch must exhibit the net_amount→total_amount trap"
+    Kept identical to the matrix fixture: the L2/L3 recordings under
+    ``demo/recordings/gross_to_net.json`` are keyed by these prompts.
+    """
+    return [
+        {
+            "id": "gross_is_canonical",
+            "family": "amount",
+            "claim": "total_amount must stay gross",
+            "candidate_mapping_fragment": {"family": "amount", "field": "total_amount"},
+            "prior": 0.41,
+            "field": "total_amount",
+        },
+        {
+            "id": "net_is_canonical",
+            "family": "amount",
+            "claim": "total_amount tracks net",
+            "candidate_mapping_fragment": {"family": "amount", "field": "total_amount"},
+            "prior": 0.39,
+            "field": "total_amount",
+        },
+    ]
+
+
+def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[str, Any]:
+    """gross_to_net: the real L0 -> L1 -> L2 -> L3 climb, trap, escalation.
+
+    The ladder consults knowledge (miss), tries deterministic rules (none
+    match a semantic drift), ranks the gross/net readings with the small
+    model (0.41 < 0.70: not confident), calls the frontier model — live when
+    FRONTIER_API_KEY is set, else the redacted replay — which proposes the
+    plausible-but-wrong net_amount -> total_amount patch. The proposal is
+    checked (live verifier verdict, else the documented trap predicate) and
+    rejected as invalid_patch_trap; the run escalates with one question.
+    """
+    from autobridge.discovery.docs_reader import Provenance  # noqa: PLC0415
+    from autobridge.discovery.hypotheses import Hypothesis  # noqa: PLC0415
+    from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
+    from autobridge.repair.escalation import escalation_for_no_fix  # noqa: PLC0415
+    from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
+    from autobridge.repair.ladder import run_frontier_climb  # noqa: PLC0415
+
+    provider, mode = resolve_frontier_provider()
+    hyps = [
+        Hypothesis(
+            id=h["id"],
+            family=h["family"],
+            claim=h["claim"],
+            candidate_mapping_fragment=dict(h["candidate_mapping_fragment"]),
+            prior=float(h["prior"]),
+            evidence_for=(Provenance(source="demo:gross_to_net", line=1, snippet="total_amount reads net"),),
+            field=h["field"],
+        )
+        for h in _gross_net_hypotheses()
+    ]
+    climb = run_frontier_climb(
+        spec={"spec_version": 1, "connector": {"id": "demo", "vendor": "harbor"}},
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=hyps,
+        enumerator_yield_count=1,
+        provider=provider,
+        budget=Budget(),
+        knowledge_cache=KnowledgeCache(),
+        fingerprint_delta={"semantic": "gross_to_net"},
+        vendor="harbor",
+    )
+    attempts = list(climb["attempts"])
+    usage = dict(climb["usage"])
+    proposal = climb["proposal"] or []
+    # The frontier's proposal must be the documented decoy: net_amount mapped
+    # to total_amount. Checked against the live verifier when reachable,
+    # else against the trap predicate (same rule the oracle encodes).
+    trapped = any(
+        "net_amount" in str(op.get("value", "")) and "total_amount" in str(op.get("path", ""))
+        for op in proposal
+        if isinstance(op, dict)
+    )
+    checked_by = "trap predicate (documented oracle rule)"
+    if live:
+        from autobridge.engine.verification import verify_spec  # noqa: PLC0415
+
+        harbor_spec = _load_reference_spec("harborpms")
+        from autobridge.spec.patch import apply_patch  # noqa: PLC0415
+
+        patched = apply_patch(harbor_spec, proposal) if proposal else harbor_spec
+        verifier_url = (os.environ.get("VERIFIER_URL", "") or "").strip() or base_url.replace("8101", "8104")
+        try:
+            outcome = verify_spec(patched, "invalid_patch_trap", verifier_url)
+            failed = [f.get("name", "") for f in outcome.failed_checks]
+            trapped = trapped and ("invalid_patch_trap" in failed)
+            checked_by = f"live verifier verdict={outcome.verdict} failed={failed}"
+        except Exception as exc:
+            # Transport failure, not a verdict: the predicate above still
+            # proves the trap; say exactly what happened instead of failing
+            # the step on an environmental error.
+            checked_by = f"live verifier unreachable ({exc}); trap predicate used"
+    assert trapped, f"demo decoy patch must exhibit the net_amount→total_amount trap (proposal={proposal})"
     bundle = escalation_for_no_fix(
         "gross_to_net: net is 10% below gross; no deterministic rule maps net_amount safely",
         evidence_ids=["sync-harbor-gross_to_net", "probe-harbor-amounts"],
         question="Harbor totals now read net instead of gross — should total_amount track $.gross_amount with the money transform, or is a new canonical field needed?",
+    )
+    attempts.append(
+        {
+            "rung": 4,
+            "action": "escalate",
+            "reason": "invalid_patch_trap: plausible-but-wrong proposal rejected; one operator question",
+            "calls": [],
+        }
     )
     sample_money = Decimal("225.00")
     assert isinstance(sample_money, Decimal) and sample_money.as_tuple().exponent == -2
@@ -691,6 +794,16 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     if live:
         calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-harbor", "scenario_id": "gross_to_net", "seed": seed}))
         calls.append(_control_call(base_url, "GET", "/drift"))
+    from autobridge.llm.provider import Usage, estimate_cost  # noqa: PLC0415
+
+    frontier_cost = estimate_cost(
+        "frontier",
+        Usage(usage.get("frontier_input", 0), usage.get("frontier_output", 0)),
+        model="muse-spark-1.3",
+    )
+    small_cost = estimate_cost(
+        "small", Usage(usage.get("small_input", 0), usage.get("small_output", 0)), model="muse-spark-1.3"
+    )
     return _finish_step(
         "Hard semantic failure — gross_to_net rejected, escalated",
         {
@@ -699,17 +812,21 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             "drift_class": "SEMANTIC_VALUE_DRIFT",
             "decoy_patch_rejected": "invalid_patch_trap",
             "rejection_reason": "total_amount must stay gross; net_amount is the decoy net",
+            "checked_by": checked_by,
+            "frontier_mode": mode,
+            "frontier_replayed": mode == "replay",
             "escalation_question": bundle.question,
             "money_type": "Decimal(2dp)",
             "resolved_rung": "L4 (escalated)",
-            "rung_attempts": [
-                {
-                    "rung": 4,
-                    "action": "escalate",
-                    "reason": "no deterministic rule maps net_amount safely; one operator question",
-                }
-            ],
+            "rung_attempts": attempts,
             "why_escalated": "total_amount must stay gross; net_amount is the decoy net",
+            "model_usage_ledger": {
+                "calls": usage.get("calls", 0),
+                "small_tokens": usage.get("small_tokens", 0),
+                "frontier_tokens": usage.get("frontier_tokens", 0),
+                "estimated_cost": str(frontier_cost + small_cost),
+                "mode": mode,
+            },
         },
         calls,
     )

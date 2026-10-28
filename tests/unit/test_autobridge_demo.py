@@ -365,3 +365,26 @@ def test_main_exits_nonzero_when_write_fails(monkeypatch: Any, capsys: Any) -> N
     )
     assert main(["--control-url", "http://control:8101", "--seed", "0"]) == 1
     assert "FAILED" in capsys.readouterr().out
+
+
+def test_only_hard_semantic_step_uses_frontier() -> None:
+    """REQ-021 item 4: the frontier fires only when cheaper rungs cannot.
+
+    Every main-script step except the hard semantic failure resolves with
+    0 frontier tokens; that step climbs L0 -> L1 -> L2 -> L3 (replayed) and
+    escalates after the trap rejects the L3 proposal.
+    """
+    report = run_demo(seed=0, control_url="http://localhost:9")
+    assert report["failed"] == 0
+    for step in report["steps"]:
+        ev = step["evidence"]
+        usage = ev.get("model_usage_ledger", {}) if isinstance(ev.get("model_usage_ledger"), dict) else {}
+        frontier = int(usage.get("frontier_tokens", ev.get("frontier_tokens", 0)) or 0)
+        if "Hard semantic failure" in step["name"]:
+            assert frontier > 0, step
+            assert ev["frontier_replayed"] is True
+            assert ev["frontier_mode"] == "replay"
+            assert [a["rung"] for a in ev["rung_attempts"]] == [0, 1, 2, 3, 4]
+            assert ev["resolved_rung"] == "L4 (escalated)"
+        else:
+            assert frontier == 0, step

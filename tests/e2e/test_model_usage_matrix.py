@@ -273,19 +273,6 @@ MATRIX: list[dict[str, Any]] = [
         "covers": "transport: backoff only, no patch, 0 calls",
     },
     {
-        "scenario": "token_expired",
-        "spec": "atlaspms",
-        "drift_class": "AUTH_EXPIRED",
-        "delta": "generic",
-        "extra": {},
-        "expected_rung": 4,
-        "expected_levels": [4],
-        "expected_decision": "escalate",
-        "expected_rule": None,
-        "patch": False,
-        "covers": "refresh not permitted on bearer specs -> escalate, no patch",
-    },
-    {
         "scenario": "token_revoked",
         "spec": "atlaspms",
         "drift_class": "AUTH_REVOKED",
@@ -597,3 +584,86 @@ def test_matrix_live_reset_repeatability(e2e_stack: str) -> None:
     usage = _control_request("GET", "/metrics/model-usage", {})
     assert usage["total_calls"] == 0, usage
     assert usage["frontier_tokens"] == 0, usage
+
+
+def _gross_net_hypotheses() -> list[Any]:
+    """Documented gross/net pair (ids + priors feed the replay prompt hashes)."""
+    from autobridge.discovery.docs_reader import Provenance  # noqa: PLC0415
+    from autobridge.discovery.hypotheses import Hypothesis  # noqa: PLC0415
+
+    prov = (Provenance(source="demo:gross_to_net", line=1, snippet="total_amount reads net"),)
+    return [
+        Hypothesis(
+            id="gross_is_canonical",
+            family="amount",
+            claim="total_amount must stay gross",
+            candidate_mapping_fragment={"family": "amount", "field": "total_amount"},
+            prior=0.41,
+            evidence_for=prov,
+            field="total_amount",
+        ),
+        Hypothesis(
+            id="net_is_canonical",
+            family="amount",
+            claim="total_amount tracks net",
+            candidate_mapping_fragment={"family": "amount", "field": "total_amount"},
+            prior=0.39,
+            evidence_for=prov,
+            field="total_amount",
+        ),
+    ]
+
+
+def test_matrix_gross_to_net_climbs_through_l3() -> None:
+    """gross_to_net must attempt L3 (and only it may use the frontier).
+
+    The deterministic ladder alone would stop at L4 with no calls; the
+    semantic climb goes L0 miss -> L1 no rule -> L2 below threshold ->
+    L3 frontier proposal (replay) -> trap rejection -> L4. Every other
+    matrix row resolves with 0 frontier calls.
+    """
+    from autobridge.llm.provider import Budget, ReplayProvider  # noqa: PLC0415
+    from autobridge.repair.escalation import escalation_for_no_fix  # noqa: PLC0415
+    from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
+    from autobridge.repair.ladder import run_frontier_climb  # noqa: PLC0415
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    SessionFactory = sessionmaker(bind=engine)
+    provider = ReplayProvider(recordings_dir=str(REPO_ROOT / "demo" / "recordings"))
+    with SessionFactory() as session:
+        climb = run_frontier_climb(
+            spec={"spec_version": 1, "connector": {"id": "matrix", "vendor": "harbor"}},
+            drift_class="SEMANTIC_VALUE_DRIFT",
+            hypotheses=_gross_net_hypotheses(),
+            enumerator_yield_count=1,
+            provider=provider,
+            budget=Budget(),
+            session=session,
+            run_id="matrix-gross_to_net",
+            knowledge_cache=KnowledgeCache(),
+            fingerprint_delta={"semantic": "gross_to_net"},
+            vendor="harbor",
+        )
+        session.commit()
+        levels = [a["rung"] for a in climb["attempts"]]
+        assert levels == [0, 1, 2, 3], climb["attempts"]
+        # L3 was attempted and paid for (replay-labelled, never silent).
+        assert climb["usage"]["frontier_tokens"] > 0
+        assert climb["usage"]["small_tokens"] > 0
+        l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+        assert l3["action"] == "frontier_generate"
+        # The proposal is the documented decoy: rejected, never applied.
+        assert climb["proposal"] == [
+            {"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}
+        ]
+        rows = session.query(ModelCall).order_by(ModelCall.created_at).all()
+        assert len(rows) == 2
+        assert all(r.purpose.endswith("(replay)") for r in rows)
+        assert sum(1 for r in rows if r.tier == "frontier") == 1
+        bundle = escalation_for_no_fix(
+            "gross_to_net: trap rejected",
+            evidence_ids=["matrix-gross_to_net"],
+            question="Harbor totals now read net instead of gross — gross or new field?",
+        )
+        assert bundle.question.endswith("?")

@@ -34,7 +34,6 @@ from autobridge.control.models import (
     ModelCallArchive,
     RepairRun,
     SyncRun,
-    session_factory,
 )
 from autobridge.llm.provider import Usage, record_model_call
 from autobridge.repair.knowledge import get_default_cache, reset_default_cache
@@ -43,7 +42,17 @@ from autobridge.repair.knowledge import get_default_cache, reset_default_cache
 def _client_for(tmp_path: pathlib.Path) -> tuple[TestClient, Any]:
     engine = create_engine(f"sqlite:///{tmp_path}/reset_test.db")
     Base.metadata.create_all(engine)
-    factory = session_factory(engine)
+    return _client_for_engine(engine)
+
+
+def _client_for_db_url(url: str) -> tuple[TestClient, Any]:
+    return _client_for_engine(create_engine(url))
+
+
+def _client_for_engine(engine: Any) -> tuple[TestClient, Any]:
+    from autobridge.control.models import session_factory as _session_factory
+
+    factory = _session_factory(engine)
 
     def override_db():  # type: ignore[no-untyped-def]
         s = factory()
@@ -287,3 +296,57 @@ def test_demo_reset_main_failure_prints_body(
     monkeypatch.setattr(driver, "demo_reset", lambda _url: ({"error": "down"}, 1))
     assert driver.main() == 1
     assert "down" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Owner check: upgrade a previous-schema database, then serve /repairs
+# ---------------------------------------------------------------------------
+
+
+def test_reset_upgrades_previous_schema_then_serves_repairs(tmp_path: pathlib.Path) -> None:
+    """A database file kept across runs (pre-0005/0006) resets and serves.
+
+    Never require the operator to delete their database: /demo/reset
+    migrates first, then the repair endpoints (which need ladder_trace)
+    answer 200.
+    """
+    import sqlalchemy as sa
+    from alembic.config import Config
+
+    from alembic import command
+    from autobridge.control.migrate import ensure_migrated
+
+    db_file = tmp_path / "old_schema.db"
+    url = f"sqlite:///{db_file}"
+    root = pathlib.Path("alembic")
+    assert root.is_dir(), "run from the repo root"
+    cfg = Config()
+    cfg.set_main_option("script_location", str(root.resolve()))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, "head")
+    # Simulate the kept-across-runs database: back at 0004, before the
+    # archive table and the repair ladder_trace column existed.
+    command.downgrade(cfg, "0004_discovery_records")
+    with sa.create_engine(url).connect() as conn:
+        tables = sa.inspect(conn).get_table_names()
+        assert "model_call_archive" not in tables
+        cols = [c["name"] for c in sa.inspect(conn).get_columns("repair_runs")]
+        assert "ladder_trace" not in cols
+
+    client, factory = _client_for_db_url(url)
+    try:
+        with patch("httpx.Client") as mock_c:
+            mock_c.return_value.__enter__.return_value.post.return_value = _ok_admin()
+            r = client.post("/demo/reset")
+            assert r.status_code == 200, r.text
+            assert r.json()["session_id"].startswith("demo-")
+        assert ensure_migrated(url) is not None
+        with sa.create_engine(url).connect() as conn:
+            assert "model_call_archive" in sa.inspect(conn).get_table_names()
+            cols = [c["name"] for c in sa.inspect(conn).get_columns("repair_runs")]
+            assert "ladder_trace" in cols
+        r = client.get("/repairs")
+        assert r.status_code == 200, r.text
+    finally:
+        app.dependency_overrides.clear()
+        reset_default_cache()

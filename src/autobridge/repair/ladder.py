@@ -91,7 +91,17 @@ class LadderResult:
 
 
 def _empty_model_usage() -> dict[str, Any]:
-    return {"frontier_tokens": 0, "small_tokens": 0, "calls": 0, "frontier_calls": 0, "small_calls": 0}
+    return {
+        "frontier_tokens": 0,
+        "small_tokens": 0,
+        "calls": 0,
+        "frontier_calls": 0,
+        "small_calls": 0,
+        "frontier_input": 0,
+        "frontier_output": 0,
+        "small_input": 0,
+        "small_output": 0,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +171,10 @@ def _call_small_model_rank(
         "calls": 1,
         "frontier_calls": 0,
         "small_calls": 1,
+        "frontier_input": 0,
+        "frontier_output": 0,
+        "small_input": result.usage.input_tokens,
+        "small_output": result.usage.output_tokens,
     }
     return ranked, usage
 
@@ -240,13 +254,17 @@ def _call_frontier_generate(
         "calls": 1,
         "frontier_calls": 1,
         "small_calls": 0,
+        "frontier_input": result.usage.input_tokens,
+        "frontier_output": result.usage.output_tokens,
+        "small_input": 0,
+        "small_output": 0,
     }
     return new_hyps, usage
 
 
 def _merge_model_usage(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
-    for k in ("frontier_tokens", "small_tokens", "calls", "frontier_calls", "small_calls"):
+    for k in ("frontier_tokens", "small_tokens", "calls", "frontier_calls", "small_calls", "frontier_input", "frontier_output", "small_input", "small_output"):
         merged[k] = int(merged.get(k, 0)) + int(delta.get(k, 0))
     return merged
 
@@ -1183,3 +1201,256 @@ def run_ladder(
         escalation_bundle=bundle,
         requires_release=False,
     )
+
+
+#: L2 confidence gate (REQ-021 owner check): the top-ranked hypothesis must
+#: reach this prior for the ranking to stand on its own; below it the climb
+#: continues to the frontier instead of guessing.
+L2_CONFIDENCE_THRESHOLD = 0.70
+
+
+def run_frontier_climb(
+    *,
+    spec: dict[str, Any],
+    drift_class: str,
+    hypotheses: list[Any],
+    enumerator_yield_count: int,
+    provider: Any | None,
+    budget: Budget | None = None,
+    session: Any | None = None,
+    run_id: str | None = None,
+    knowledge_cache: KnowledgeCache | None = None,
+    fingerprint_delta: Any | None = None,
+    extra: dict[str, Any] | None = None,
+    vendor: str | None = None,
+    l2_threshold: float = L2_CONFIDENCE_THRESHOLD,
+) -> dict[str, Any]:
+    """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then stop (REQ-021).
+
+    Unlike :func:`run_ladder` (L3-before-L2 per plan §2.6), this orchestrates
+    the demonstration order the hard-semantic scenario needs: L0 consults
+    learned knowledge, L1 tries deterministic rules, L2 ranks the competing
+    hypotheses with the small model and continues only when the winner's
+    prior is below *l2_threshold*, L3 calls the frontier model for a novel
+    hypothesis. It returns the climb — attempts with one-line reasons, model
+    usage, the L3 response text and any parsed patch proposal — and lets the
+    caller validate the proposal (verifier verdict or scenario trap check)
+    and escalate. No patch is ever applied here.
+
+    *provider* ``None`` (``FRONTIER_MODE=off``) records an explicit skip at
+    L2/L3 instead of calling: the run says plainly that no provider was
+    configured, never silently. Every model call goes through
+    :class:`BudgetedProvider` (via the L2/L3 helpers), so ``BudgetExhausted``
+    propagates and ``ModelCall`` rows land when *session* + *run_id* are
+    given (linked to the rung by tier, see :func:`rung_ledger`).
+    """
+    from autobridge.repair.context import RepairContext  # noqa: PLC0415
+    from autobridge.repair.registry import matching_rules  # noqa: PLC0415
+
+    vendor_val = vendor or _extract_vendor(spec)
+    attempts: list[dict[str, Any]] = []
+    usage = _empty_model_usage()
+
+    # --- L0: learned knowledge ---
+    if knowledge_cache is not None and fingerprint_delta is not None:
+        entry = knowledge_cache.lookup(vendor_val, fingerprint_delta)
+        if entry is not None:
+            attempts.append(
+                {
+                    "rung": 0,
+                    "action": "knowledge_hit",
+                    "reason": f"L0 hit: cached {entry.rule_id} patch reused",
+                    "calls": [],
+                }
+            )
+            return {
+                "attempts": attempts,
+                "usage": usage,
+                "resolved_rung": 0,
+                "l3_text": "",
+                "proposal": None,
+                "ranked_ids": [],
+                "l2_confidence": None,
+            }
+        attempts.append(
+            {
+                "rung": 0,
+                "action": "knowledge_miss",
+                "reason": f"L0 miss: no known fix for {vendor_val}",
+                "calls": [],
+            }
+        )
+
+    # --- L1: deterministic rules ---
+    ctx = RepairContext(
+        spec=spec,
+        drift_class=drift_class,
+        signals=[],
+        fingerprint_delta=fingerprint_delta,
+        classification=None,
+        extra=dict(extra or {}),
+    )
+    matched = matching_rules(ctx)
+    if matched:
+        names = ", ".join(e.id for e in matched)
+        attempts.append(
+            {
+                "rung": 1,
+                "action": "rules_matched",
+                "reason": f"L1 rules matched ({names}) but none covers {drift_class}; continuing",
+                "calls": [],
+            }
+        )
+    else:
+        attempts.append(
+            {
+                "rung": 1,
+                "action": "no_rule_matched",
+                "reason": f"L1: no rule precondition matched for {drift_class}",
+                "calls": [],
+            }
+        )
+
+    # --- L2: small-model ranking with a confidence gate ---
+    ranked: list[Any] = list(hypotheses)
+    l2_confidence: float | None = None
+    if provider is None:
+        attempts.append(
+            {
+                "rung": 2,
+                "action": "l2_skipped",
+                "reason": "L2 skipped: no provider configured (FRONTIER_MODE=off)",
+                "calls": [],
+            }
+        )
+        return {
+            "attempts": attempts,
+            "usage": usage,
+            "resolved_rung": 1,
+            "l3_text": "",
+            "proposal": None,
+            "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
+            "l2_confidence": None,
+        }
+    if len(ranked) >= 2:
+        l2_entry: dict[str, Any] = {
+            "rung": 2,
+            "action": "small_rank",
+            "reason": f"L2 ranking {len(ranked)} hypotheses for {drift_class}",
+            "calls": [],
+        }
+        attempts.append(l2_entry)
+        ranked, delta = _call_small_model_rank(ranked, provider, budget, run_id=run_id, session=session)
+        usage = _merge_model_usage(usage, delta)
+        l2_entry["ranked_ids"] = [getattr(h, "id", str(h)) for h in ranked[:5]]
+        top_prior = float(getattr(ranked[0], "prior", 0.0)) if ranked else 0.0
+        l2_confidence = top_prior
+        if top_prior >= l2_threshold:
+            l2_entry["reason"] = (
+                f"L2 confident: {top_prior:.2f} >= {l2_threshold:.2f}; ranking stands, no frontier call"
+            )
+            l2_entry["model_usage_delta"] = delta
+            return {
+                "attempts": attempts,
+                "usage": usage,
+                "resolved_rung": 2,
+                "l3_text": "",
+                "proposal": None,
+                "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
+                "l2_confidence": l2_confidence,
+            }
+        l2_entry["reason"] = (
+            f"L2 confidence {top_prior:.2f} < {l2_threshold:.2f}: ranking cannot decide; continuing to L3"
+        )
+        l2_entry["model_usage_delta"] = delta
+    else:
+        attempts.append(
+            {
+                "rung": 2,
+                "action": "l2_skipped",
+                "reason": f"L2 skipped: fewer than two hypotheses ({len(ranked)})",
+                "calls": [],
+            }
+        )
+
+    # --- L3: frontier proposal (plan §2.6 gate: enumerator yielded < 2) ---
+    # The frontier answers the climb with a patch proposal (JSON Patch);
+    # the raw text is returned so the caller can validate it (verifier
+    # verdict or scenario trap check) and escalate on rejection.
+    if enumerator_yield_count >= 2:
+        attempts.append(
+            {
+                "rung": 3,
+                "action": "l3_skipped",
+                "reason": f"L3 skipped: enumerator yielded {enumerator_yield_count} >= 2 for {drift_class}",
+                "calls": [],
+            }
+        )
+        return {
+            "attempts": attempts,
+            "usage": usage,
+            "resolved_rung": 2,
+            "l3_text": "",
+            "proposal": None,
+            "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
+            "l2_confidence": l2_confidence,
+        }
+    l3_entry: dict[str, Any] = {
+        "rung": 3,
+        "action": "frontier_generate",
+        "reason": f"L3 invoked: enumerator yielded {enumerator_yield_count} < 2 for {drift_class}",
+        "calls": [],
+    }
+    attempts.append(l3_entry)
+    l3_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You repair API connectors. Propose a JSON Patch (RFC 6902 list of "
+                "op/path/value objects) that fixes the drift. Answer with the patch only."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"drift_class: {drift_class}; ranked hypotheses: {[getattr(h, 'id', str(h)) for h in ranked]}",
+        },
+    ]
+    effective: Any = provider
+    if budget is not None:
+        effective = BudgetedProvider(provider, budget, session=session, run_id=run_id)
+    l3_result = effective.complete(l3_messages, max_tokens=1024, tier="frontier", purpose="l3-generate-patch")
+    l3_delta = {
+        "frontier_tokens": l3_result.usage.total_tokens,
+        "small_tokens": 0,
+        "calls": 1,
+        "frontier_calls": 1,
+        "small_calls": 0,
+        "frontier_input": l3_result.usage.input_tokens,
+        "frontier_output": l3_result.usage.output_tokens,
+        "small_input": 0,
+        "small_output": 0,
+    }
+    usage = _merge_model_usage(usage, l3_delta)
+    l3_entry["model_usage_delta"] = l3_delta
+    l3_text = l3_result.text or ""
+    proposal: list[dict[str, Any]] | None = None
+    try:
+        import json as _json  # noqa: PLC0415
+
+        parsed = _json.loads(l3_text.strip())
+        if isinstance(parsed, list) and all(
+            isinstance(op, dict) and "op" in op and "path" in op for op in parsed
+        ):
+            proposal = [dict(op) for op in parsed]
+            l3_entry["proposal_ops"] = len(proposal)
+    except Exception:
+        proposal = None
+    return {
+        "attempts": attempts,
+        "usage": usage,
+        "resolved_rung": 3,
+        "l3_text": l3_text,
+        "proposal": proposal,
+        "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
+        "l2_confidence": l2_confidence,
+    }

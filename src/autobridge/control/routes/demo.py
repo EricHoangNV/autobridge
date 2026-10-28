@@ -168,6 +168,13 @@ def demo_reset(
     """
     session_id = f"demo-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
 
+    # Migrate first (REQ-021 owner check): a database file kept across runs
+    # may predate the newest columns (e.g. model_call_archive); reset must
+    # upgrade it, never ask the operator to delete it.
+    from autobridge.control.migrate import ensure_migrated  # noqa: PLC0415
+
+    ensure_migrated(db.get_bind())
+
     resets: list[dict[str, Any]] = []
     for target in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian"):
         base = _admin_url_for_target(target)

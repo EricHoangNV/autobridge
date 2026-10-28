@@ -32,14 +32,13 @@ from autobridge.control.routes.runs import router as runs_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure DB tables exist on startup (Alembic does prod migrations; this handles dev/test)
-    try:
-        engine = get_engine()
-        from autobridge.control.models import Base
+    # Migrate on startup (REQ-021 owner check): create_all never adds
+    # columns, so a database file kept across runs goes stale and endpoints
+    # 500. Upgrade-to-head handles fresh, stale and current databases;
+    # failure is loud (no serving a broken schema).
+    from autobridge.control.migrate import ensure_migrated
 
-        Base.metadata.create_all(engine)
-    except Exception:
-        pass
+    ensure_migrated(get_engine())
     yield
 
 
