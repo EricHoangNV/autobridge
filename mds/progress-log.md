@@ -2482,3 +2482,7 @@ Next: 5c joins (customer name, order-item money sums, UTC→enterprise-tz busine
 
 ### 2026-10-28 REQ-020 sub-step 5c — joins done (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). Declarative joins shipped: spec models (v2-gated) + runtime/joins.py + sync/monitor wiring + discovery proposal from docs + schema regen + §12 docs. Discovered Meridian spec now syncs Complete live (names via customers, totals via summed order items, Decimal end to end). Full make test green (2095/91% + 97/94% + 290/96% + ui 148); lint + typecheck green. Remaining for REQ-020: 6 (bootstrap-then-verify gate + ≥2 fault scenarios + bench note), 7 (demo step + docs/demo.md).
+
+## 2026-10-28 — REQ-020 sub-step 6 done (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Meridian after-proof + two ladder-repaired faults merged on branch (this entry covers the code commit 99d9812b; bookkeeping merge to main follows).
+After: discovered v2 spec passes gate, syncs Complete live, UTC->property-local business dates. Faults: State->Status via rename_field, Cursor->NextCursor via new generic cursor_next_path_shift; both L1, 0 frontier, verified releases, L0 repeat hit. Catalog 17 scenarios. Full gates green: pytest 2103/99/294 (91/94/96), ui 148, lint+typecheck+tsc, 39 e2e live. Remaining: REQ-020 item 7 demo step.
