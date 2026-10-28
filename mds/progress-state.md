@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-019 done (sbx1 2026-10-28): Atlas serves the method-style hotel PMS surface (getReservations/getReservation/getGuest/getHotels/getTransactions, x-api-key, pageNumber/pageSize, JSON-number money, canceled spelling); reference spec + discovery + runtime (page/total_path) + oracle updated; L1 rule page_to_cursor added (8 rules); LegacyStay guard test added. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+REQ-020 sub-step 5a done (sbx1 2026-10-28): ConnectorSpec v2 (POST + body template, body_fields auth, body_cursor pagination) + runtime (auth body, HttpClient.post, body pagination, interpreter POST + short_page stop) + schemas/connector-spec.v2.json (v1 kept, v1 docs still validate) + live e2e proof against sim-meridian. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - W1 Foundations: scaffold, compose, ConnectorSpec, schemas, DB models, jobs, evidence, LLMProvider, fakes, e2e harness base
@@ -18,12 +18,13 @@ REQ-019 done (sbx1 2026-10-28): Atlas serves the method-style hotel PMS surface 
   - REQ-001…REQ-019 + REQ-017 + REQ-018 all DONE (REQ-019: method-style Atlas surface)
   - P2.S1.1 … P2.S7.1 DONE (LegacyStay, Edge target, DiscoveryResult import, MCP Guardian, OpenAI provider, Richer UI, CLI)
   - AR-2-1 … AR-2-6 + AR-1-1 … AR-1-5 (residual) all code-fixed (Cycle 2 re-verification pending owner)
-  - REQ-020 sub-step A IN PROGRESS (sbx1 2026-10-28): sim-meridian (POST/JSON, body auth, Limitation cursor, customers/orderItems/configuration) + meridian-openapi.yaml + guides-first portal + compose/local/smoke wiring + vocabulary_guard before-refusal (item 4, generally) + e2e before-pin (live green)
-- Tests: 2406 pass / 0 fail (autobridge 91.47% / 2021, verifier 93.78% / 97, simulators 96.08% / 288) + ui 148 pass; lint + typecheck green
-- Stack: local mode verified (sbx1 no-Docker sandbox, 2026-10-28): local-up 12/12 readyz, smoke OK (local), demo 6/6 (5 live), test_01/02/03/04/05 live green; readyz green
+  - REQ-020 sub-step A done (sbx1 2026-10-28): sim-meridian (POST/JSON, body auth, Limitation cursor, customers/orderItems/configuration) + meridian-openapi.yaml + guides-first portal + compose/local/smoke wiring + vocabulary_guard before-refusal (item 4, generally) + e2e before-pin (live green)
+  - REQ-020 sub-step 5a done (sbx1 2026-10-28): spec v2 + runtime + live e2e proof (above)
+- Tests: 2431 pass / 0 fail (autobridge 2046, verifier 97, simulators 288) + ui 148 pass; 90% gates green; lint + typecheck green
+- Stack: Docker available in this sandbox: sim-meridian live verified (before-refusal + v2 cursor walk + Decimal money + 403-no-leak)
 
 ## Next tasks
-0. **REQ-020** — [>] IN PROGRESS sbx1 (sub-step A merged: simulator + docs portal + before-refusal; remaining: 5a schema+runtime, 5b discovery, 5c joins, 6 faults+after, 7 demo)
+0. **REQ-020** — [>] IN PROGRESS sbx1 (sub-steps A + 5a merged; remaining: 5b discovery, 5c joins, 6 faults+after, 7 demo)
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS (codeable REQ-007 flow done 2026-10-27)
 3. Code Review Cycle 2 re-verification (all FAIL items code-fixed)

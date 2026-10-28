@@ -939,3 +939,22 @@ Decisions/gotchas:
 Not in this sub-step (follow-ups): 5a spec schema v2 (POST + body template, body_fields auth, body-cursor
 pagination, joins) + runtime, 5b discovery (classifiers/hypotheses/probes), 5c joins, 6 (bootstrap-then-verify
 + ≥2 fault scenarios + bench note), 7 (demo step + docs/demo.md), `POST /demo/inject-fault` target map entry.
+
+### REQ-020 sub-step 5a — ConnectorSpec v2 + runtime (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Status: 5a merged; remaining: 5b discovery, 5c joins, 6 faults+after, 7 demo.
+
+What landed (generic vocabulary, no vendor branch — `test_engine_never_references_meridian` green):
+- `src/autobridge/spec/models.py`: `spec_version: Literal[1, 2]` with a `_v1_vocabulary` gate (POST/body/body_fields/body_cursor under v1 → `requires spec_version 2`); `AuthSpec.type += body_fields` with `body_fields: {dotted path: CREDENTIAL_REF}`; `OperationSpec.method: GET|POST` + optional `body` template (GET+body rejected); `Pagination.strategy += body_cursor` with `cursor_path`/`count_path`/`count_value` 1..1000; `check_body_path` + `BODY_PATH_RE`; `SCHEMA_FILENAME = connector-spec.v2.json`. Module docstring updated.
+- `schemas/connector-spec.v2.json`: generated from models (`ConnectorSpec.model_json_schema()`); v1 file kept for reference; every v1 document still validates (harbor round-trip test pins it).
+- Runtime: `auth.build_auth_body` + `auth_body_refs` (refs from env, errors name refs never values); `HttpClient.post` (Decimal JSON like GET); `pagination.build_request_body`/`effective_count`/`set+get_body_path` + body_cursor in `initial_state`/`build_request_params`(passthrough)/`is_repeated_cursor`/`advance_state`; `interpreter` POST branch (single via `_single_items`, paginated `_paginated_fetch_post` with null/repeated/empty guards + `short_page` stop, checkpoint templates resolved nested in body, body_fields auth deep-merged into body). POST with query pagination raises.
+- Tests: spec (v1+v2 accept, v1-gate per feature, body_fields/body_cursor shapes, GET+body rejected, patch-touches-v2-fields, v1 file still valid, before-refusal pin updated to the v1 gate); pagination (body build first/later page, deep-copy isolation, effective_count, advance, full POST walks incl. short-page, null-cursor, auth-in-body, query-pagination rejection, single POST); auth (nested body, dotted paths, missing-secret message, empty headers, refs list); http (POST success + Decimal + non-JSON). E2E `tests/e2e/test_meridian_runtime_v2.py`: schema validation in-process + live cursor walk across pages (multi-page, unique ids, explicit stop), Decimal `GrossValue`, wrong-token 403 with no leak.
+- Docs: `docs/connector-spec.md` v1/v2 (new §10 with example shape) + `docs/architecture.md` §5 + tree updated.
+- Verified: targeted 251 + trust/boundary/bootstrap/repair/engine sets green; `tests/e2e/test_meridian_before.py` still green (bootstrap still v1 → before-refusal intact); full `make test` green (autobridge 2046 / verifier 97 / simulators 288 + ui 148, 90% gates); `make lint`, `make typecheck` green.
+
+Decisions/gotchas:
+- DIRECTIVES §1 still names `schemas/connector-spec.v1.json`; REQ-020 item 5 (owner decision) requires the version bump, so the task text wins and v2 validates both versions. Noted here per directives loop (no rule violation: transforms closed, repairs stay JSON Patch, no model calls).
+- `short_page` is an explicit stop reason (like `total_reached`), not a drift signal.
+- `credential_ref` is now optional at model level but required for every non-body_fields type by validator, so v1 behavior is unchanged.
+- Coverage: full-gate green; per-module % not re-measured (gate is the contract).
+
+Not in this sub-step (follow-ups): 5b discovery (classifiers/hypotheses/probes proposing v2 from docs + `auth_body_refs` wired into redaction callers), 5c joins, 6 (bootstrap-then-verify + ≥2 fault scenarios + bench note), 7 (demo step + docs/demo.md), `POST /demo/inject-fault` target map entry.
