@@ -38,6 +38,42 @@ Wanted:
 3. If the stack is not reachable, the live tests fail rather than skip when `AUTOBRIDGE_E2E_REQUIRE_STACK=1`, and the
    `make e2e` target sets it.
 
+### REQ-011 — Publish compose ports on localhost only (2026-10-28)
+Status: OPEN
+Every port in `compose.yaml` is published as `"81xx:8000"` with no host IP, so Docker listens on all interfaces. While
+the stack runs, anyone on the same network (e.g. hackathon Wi-Fi) can reach the control API (unauthenticated write
+routes: approve/reject repairs, inject faults, import/connect connectors), the UI, the simulators, and the verifier on
+8104, whose hidden cases must stay out of reach.
+Wanted:
+1. Every published port binds to loopback: `"127.0.0.1:8101:8000"` and so on, for all services and every second port
+   (8109–8112). Container-to-container traffic on the compose networks is unchanged.
+2. Optional override for anyone who needs LAN access on purpose: a `AUTOBRIDGE_BIND_HOST` variable, default `127.0.0.1`,
+   used as `"${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8101:8000"`. Document it in `.env.example` with a warning.
+3. A test that parses `compose.yaml` and fails if any published port lacks a host IP, or uses `0.0.0.0` as a literal.
+4. `make up`, `make smoke`, `make e2e` and `make demo` still pass on the host (localhost URLs are unchanged).
+Note the trust-boundary smoke checks: the verifier and simulators stay unreachable from the engine network as before.
+
+### REQ-012 — Optional bearer token on the control API's write routes (2026-10-28)
+Status: OPEN
+The control API has no authentication; the only identity is the server-side `AUTOBRIDGE_OPERATOR` name (REQ-001).
+That is fine on localhost (REQ-011), but not if the stack is ever hosted for judges.
+Wanted:
+1. New setting `AUTOBRIDGE_CONTROL_TOKEN`. When unset or empty, behavior is exactly as today (local runs, tests, demo
+   need nothing). When set, every state-changing route (POST/PUT/PATCH/DELETE in `src/autobridge/control/routes`)
+   requires `Authorization: Bearer <token>` and answers 401 without it, compared in constant time
+   (`hmac.compare_digest`). Read-only GETs, `/healthz`, `/readyz` and the SSE stream stay open.
+2. The UI never ships the token to the browser. The UI proxies `/api/*` to the control API through the rewrite in
+   `ui/next.config.mjs`; add the header on the server side (Next middleware or a route handler that forwards
+   to the control API), reading `AUTOBRIDGE_CONTROL_TOKEN` from the UI container's env. No `NEXT_PUBLIC_` variable.
+3. Every other caller sends it when set: `make demo` (`autobridge.bench.demo`), the bench harness, e2e helpers, and
+   `scripts/` that call the control API.
+4. The token is a credential: never logged, never in API responses, evidence, prompts or the OpenAPI examples; the
+   SSE redaction in `control/sse.py` already covers `*_TOKEN` names, so check it covers this one.
+5. Tests: unset → write routes open; set → 401 without or with a wrong token, 2xx with the right one; GETs open
+   either way. Update the OpenAPI contract (security scheme on the write routes) and `make openapi-check`.
+6. `.env.example` gets `AUTOBRIDGE_CONTROL_TOKEN=` with a one-line note (set it before exposing the stack beyond
+   localhost); `compose.yaml` passes it to `control` and `ui`.
+
 ---
 
 ## Resolved Requests (reference only)
