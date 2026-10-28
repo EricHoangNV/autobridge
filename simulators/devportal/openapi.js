@@ -11,6 +11,17 @@
       const parts = n.$ref.replace(/^#\//, "").split("/");
       n = parts.reduce((acc, p) => (acc ? acc[p] : undefined), spec) || {};
     }
+    if (Array.isArray(n.allOf)) {
+      // Merge composed schemas (e.g. a shared envelope plus a typed `data`): later parts win.
+      const merged = { type: "object", properties: {}, required: [] };
+      for (const part of n.allOf) {
+        const p = resolve(spec, part);
+        Object.assign(merged.properties, p.properties || {});
+        merged.required.push(...(p.required || []));
+        if (p.description && !merged.description) merged.description = p.description;
+      }
+      return merged;
+    }
     return n;
   }
   const refName = (node) => (node && node.$ref ? node.$ref.split("/").pop() : null);
@@ -42,11 +53,15 @@
   };
 
   function sample(spec, s, depth, key) {
-    if (key && Object.prototype.hasOwnProperty.call(EXAMPLES, key)) return EXAMPLES[key];
     s = resolve(spec, s);
-    if (depth > 4) return null;
-    if (s.enum) return s.enum[0];
     const t = Array.isArray(s.type) ? s.type.find((x) => x !== "null") : s.type;
+    // Envelope counters are integers even where a money field shares the name (e.g. `total`).
+    if (t === "integer" && key === "count") return 1;
+    if (t === "integer" && key === "total") return 30;
+    if (t === "boolean") return key === "success" ? true : false;
+    if (key && Object.prototype.hasOwnProperty.call(EXAMPLES, key)) return EXAMPLES[key];
+    if (depth > 6) return null;
+    if (s.enum) return s.enum[0];
     if (t === "array") return [sample(spec, s.items, depth + 1)];
     if (t === "integer") return key === "total" ? 30 : key === "next_offset" || key === "limit" ? 10 : s.default !== undefined ? s.default : s.minimum || 0;
     if (t === "string") {
