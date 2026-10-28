@@ -1461,3 +1461,90 @@ Decisions:
 - test_00's per-check assertion could never pass for the PABX (A reports
   `fias_link` as a state string, never "ok"); the retry block accepts
   "up" and polls through the redial window instead of asserting instant-ok.
+
+### REQ-022 sub-step C — FIAS spec vocabulary (spec v3, discovery, runtime, repair)
+
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+What landed (sub-step C only; D scenarios, E demo remain):
+- **Spec v3** (`src/autobridge/spec/models.py`, `schemas/connector-spec.v3.json`
+  generated from the models): `source.protocol: http | fias_tcp` (default
+  `http`) + `source.link` (ack_mode, max_frame_bytes, announced_records);
+  `operations.*`: `method: EVENT` + `feed: {record, via: edge_relay,
+  dedupe_keys}` (no path/body/pagination/checkpoint/params on feeds);
+  `FieldMapping.paths` (multi-path list into the pipeline) + const-led
+  fields without any path; `commands:` templates
+  `{record, fields: {FID: {param}}, defaults, now, expect}`;
+  `auth.type: edge_relay` (credential_ref = relay operator token env key).
+  v1/v2 vocabularies frozen: new `_v2_vocabulary` gate; every v3 construct
+  rejected under v1/v2 with a `requires spec_version 3` error;
+  `signature_canonical_data` strips all v3 defaults (v1/v2 signatures
+  byte-identical — golden + frozen-schema tests extended, not weakened).
+- **Transforms stay closed-set** (args only, no new names): `money`
+  `minor_units: true` (÷100 before quantize, exact Decimal); framed wire
+  `YYMMDD[ HHMMSS]` parsing in `base.parse_wire_datetime` (2000+YY, naive);
+  `naive_as: utc|source` on date_local/business_date/datetime_utc, each
+  keeping its legacy default (date_local/business_date UTC, datetime_utc
+  source). `concat` over `paths` builds the wire datetime string.
+- **Feed execution** (`runtime/feeds.py`: `RelayFeedReader` drains
+  `GET /v1/postings` with the operator token, filters by record type,
+  folds resends on `dedupe_keys`; `FeedError` → sync `Blocked`
+  `feed_unavailable`); `Interpreter` serves EVENT ops from the reader,
+  HTTP ops from `HttpClient` (never built for fias specs);
+  `execute_sync(..., feed_reader=...)`; `run_sync_handler` builds the
+  reader from the spec's edge_relay auth for fias specs.
+- **Discovery**: `docs_reader` detects framed-protocol docs (FIAS + STX),
+  parses record tables (multi-record ✓ columns with per-code assignment,
+  combined `DA, TI` ids, aligned format cells), the link contract (ACK,
+  64 KB, `LR|RIxx` announcements, listen port), site facts (prop-001,
+  USD), and sentence-scoped answer correlation (KR/KD→KA, KZ→KZ;
+  conditional WR→WA stays `ack`). `bootstrap` refuses framed docs under
+  v1/v2 (`event-driven fias_tcp ... not expressible in ConnectorSpec v1/2`,
+  0 calls) and compiles the v3 spec (PS→FolioCharge with composite
+  charge_id, minor-unit money, property-local posted_at/business_date;
+  RE→RoomStatus; 10 command templates; canary on the charge feed).
+- **Repair**: `rename_field` accepts a same-name wire rename when extra
+  carries an explicit `new_path` that differs (generic; the existing
+  same-name refusal test still passes).
+- **Control/UI**: `SPEC_VOCABULARIES` + v3; build/sync pins accept v1|v2|v3;
+  `/capabilities` lists v3 (EVENT/edge_relay/fias_tcp/feeds/commands) +
+  `v2_v3_diff`; AGENT_TOOLS enums + CLI + knowledge page (`v3 = everything
+  in v2, plus:`) + regenerated `ui/openapi.json` + `schema.d.ts`.
+- `edge/bundle.py::bundle_from_spec` converts spec `commands` to executable
+  bundle data (verified by `render_command` for WR/KR incl. expects).
+- Tests: 24 unit (`test_autobridge_fias_vocab.py`) + `test_fias_before.py`
+  (refusal ×2) + `test_fias_after.py` (in-process Complete + live
+  burst-postings → relay → Complete via the real agent link). Also fixed
+  the v2/v3 wording of 3 vocabulary tests + `test_knowledge_flow`
+  versions. Docs: `docs/connector-spec.md` §13.
+- Verification: `make test` green (autobridge 2267 pass / 90.66%,
+  verifier 99 / 93.62%, simulators 325 / 90.36%, ui 156); lint (incl.
+  import-linter) + `make typecheck` + `ui-typecheck` green;
+  `make up` + `make smoke` green; e2e files green live (fias before/after,
+  meridian ×5, s2 + 02_reference + meridian faults/joins/runtime ×19,
+  knowledge flow).
+- Flake note: `make test` first ran 1 failed / 2266 passed
+  (`test_edge_worker_app_health`, passes alone and on retry — sandbox load
+  flake of the kind REQ-026 exists to surface; no timeout flags added here,
+  that is REQ-026's scope). Also fixed a pre-existing F401
+  (`encode_frame` imported unused in `test_simulators_fias_pabx.py`).
+- Bugs found while building (fixed): (1) `_parse_md_table_row` empty cells
+  (`''`) were not excluded from ✓-column assignment, so every command got
+  every field — one-line exclusion fix; (2) doc-driven param collision
+  (`DA`/`TI` both "Time of the change") resolved by mechanical `_2`
+  suffixing; (3) `datetime_utc` legacy naive assumption is source-tz, not
+  UTC — preserved per-transform defaults instead of unifying.
+
+Decisions:
+- spec_version 3 (not v2-extension): keeps v2's shipped meaning frozen so
+  the Meridian before/after stays reproducible; the sync pin, build pin
+  and `runtime_max_vocabulary` generalize by number.
+- No FIAS-specific branch outside the generic transport: engine/runtime
+  see only `fias_tcp`/EVENT/feed/edge_relay vocabulary; doc heuristics live
+  in `docs_reader` (same precedent as Harbor's H1–H5 handling).
+- `charge_id` = RN+P#+DA+TI concat (P# wraps; resends are identical);
+  `reservation_id` ← room (the PABX names rooms, not reservations — the
+  PMS side resolves the correlation); `RE → RoomStatus` (not canonical,
+  mapped generically, no uniqueness check since statuses repeat).
+- Command `expect` only from unconditional answers ("always" or
+  self-answer); conditional answers stay `ack` for the scenario to track.

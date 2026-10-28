@@ -211,3 +211,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - `threading.Thread._stop()` is a method: naming an `Event` attribute `_stop` breaks `Thread.join()` with `TypeError: 'Event' object is not callable`. Name it `_halt`/`_shutdown`.
 - The in-process test host's `pump(0.1)` used a fixed 2 s socket timeout, so every quiet poll cost 2 s and the suite took 300 s+. Bound `settimeout` to the remaining poll budget (`max(0.01, min(remaining, 2.0))`).
 - **Rule:** When a threaded server hangs, suspect your own locking before the protocol: grep nested acquisition, never shadow `Thread` internals, and make test socket timeouts budget-aware — a fixed recv timeout turns every idle poll into a multi-second stall.
+
+---
+
+## 22. An empty markdown cell is not a dash: ✓-column parsers must exclude ""
+
+**Context:** REQ-022 sub-step C table parsing (2026-10-28). Host-record tables mark applicability with ✓ per record column; empty means "not this record".
+
+- The row filter excluded only `("-", "—", "–")`, so `""` passed and every command inherited every field (KR/KD/KZ all looked identical). The bug was invisible in single-record tables — only the multi-record ✓ tables exposed it — and a manual replication of the loop passed because it bypassed the header condition the real code evaluates.
+- Fix: add `""` to the exclusion set; regression test pins per-record field sets (KR full, KD without K#/GA/GD, KZ minimal).
+- **Rule:** When filtering table cells by marker, exclude the empty cell explicitly — `"" not in ("-", "—")` is True, and an empty applicability cell is the common case, not the exception.

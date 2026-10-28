@@ -2670,3 +2670,21 @@ Gates: make test green (2666 unit: 2242/99/325; 90.69 / 93.62 / 90.36) +
 ui 156; lint, typecheck, ui-typecheck green.
 Remaining: REQ-022 C (FIAS spec vocabulary before/after) → D (fault
 scenarios + verifier checks) → E (demo step + simulators index + docs).
+
+## 2026-10-28 18:10 UTC — REQ-022 sub-step C merged (sbx1)
+
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+Spec v3 vocabulary for the on-premise edge story. FIAS PABX docs now refuse
+under v1/v2 (Blocked, named reason, 0 model calls) and compile under v3 to
+a connector that syncs Complete: PS postings → FolioCharge (minor-unit
+amounts exact, property-local business dates, resends folded), RE → room
+status, 10 host command templates as spec data executable through
+bundle_from_spec. Capabilities/CLI/UI list v3 as everything-in-v2-plus.
+Full gates green (2267+99+325+156; 90.66/93.62/90.36), live e2e green
+(fias before/after incl. burst-postings drain, meridian, s2, knowledge).
+One sandbox-load flake (`test_edge_worker_app_health`) passed on retry —
+noted for REQ-026. Remaining: REQ-022 D (fault scenarios + verifier checks)
+then E (demo + docs + simulators index). REQ-020/REQ-021 REQUESTS.MD
+statuses are stale IN_PROGRESS (work merged on this branch); left
+untouched — owner to confirm before flipping to DONE.
