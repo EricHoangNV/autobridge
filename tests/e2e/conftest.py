@@ -176,6 +176,17 @@ def control_headers() -> dict[str, str]:
     return headers
 
 
+def agent_token() -> str:
+    """Agent-side relay token (REQ-022 owner check 2026-10-29).
+
+    Forwards ``EDGE_AGENT_TOKEN`` when set (non-empty); otherwise returns
+    "". In-process relay fixtures pass this to ``RelayClient`` so ``make
+    e2e`` passes both with no tokens and with all tokens set — no second
+    copy of the env lookup in the test files.
+    """
+    return os.environ.get("EDGE_AGENT_TOKEN", "")
+
+
 def _http_post_json(url: str, payload: dict, timeout: float = 5.0, admin: bool = False) -> bool:
     try:
         data = json.dumps(payload).encode()

@@ -76,6 +76,7 @@ def control_client(tmp_path: Path, monkeypatch: Any) -> Any:
 def relay_pair(tmp_path: Path, monkeypatch: Any) -> tuple[TestClient, RelayClient]:
     """Real relay app + an agent-side client talking to it in-process."""
     from autobridge.edge.relay import _Store, create_app
+    from tests.e2e.conftest import agent_token  # noqa: PLC0415
 
     relay_app = create_app(_Store(str(tmp_path / "relay.db")))
     inner = TestClient(relay_app)
@@ -91,7 +92,7 @@ def relay_pair(tmp_path: Path, monkeypatch: Any) -> tuple[TestClient, RelayClien
             return False
 
     monkeypatch.setattr(httpx, "Client", _FakeHttpxClient)
-    return inner, RelayClient("http://relay", session=inner)
+    return inner, RelayClient("http://relay", agent_token=agent_token(), session=inner)
 
 
 class _Sink:

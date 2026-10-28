@@ -59,6 +59,7 @@ def relay_pair(tmp_path: Path, monkeypatch: Any) -> tuple[TestClient, RelayClien
     import httpx
 
     from autobridge.edge.relay import _Store, create_app
+    from tests.e2e.conftest import agent_token  # noqa: PLC0415
 
     relay_app = create_app(_Store(str(tmp_path / "relay.db")))
     inner = TestClient(relay_app)
@@ -74,7 +75,7 @@ def relay_pair(tmp_path: Path, monkeypatch: Any) -> tuple[TestClient, RelayClien
             return False
 
     monkeypatch.setattr(httpx, "Client", _FakeHttpxClient)
-    return inner, RelayClient(RELAY_URL, session=inner)
+    return inner, RelayClient(RELAY_URL, agent_token=agent_token(), session=inner)
 
 
 @pytest.fixture()
@@ -127,7 +128,10 @@ def _future_wire() -> tuple[str, str]:
 
 
 def _results_for(inner: TestClient, agent_id: str) -> list[dict[str, Any]]:
-    return inner.get("/v1/results", params={"agent_id": agent_id}).json()["results"]
+    from tests.e2e.conftest import control_headers  # noqa: PLC0415
+
+    return inner.get("/v1/results", params={"agent_id": agent_id},
+                     headers=control_headers()).json()["results"]
 
 
 def _result_statuses(inner: TestClient, agent_id: str, request_id: str) -> list[str]:
@@ -139,7 +143,10 @@ def _result_statuses(inner: TestClient, agent_id: str, request_id: str) -> list[
 
 
 def _relay_postings(inner: TestClient, agent_id: str) -> list[dict[str, Any]]:
-    return inner.get("/v1/postings", params={"agent_id": agent_id}).json()["postings"]
+    from tests.e2e.conftest import control_headers  # noqa: PLC0415
+
+    return inner.get("/v1/postings", params={"agent_id": agent_id},
+                     headers=control_headers()).json()["postings"]
 
 
 def _drain_forward(agent: Agent, limit: int = 500) -> int:
@@ -155,10 +162,12 @@ def _drain_forward(agent: Agent, limit: int = 500) -> int:
 def _enqueue(inner: TestClient, agent_id: str, kind: str = "wakeup.set",
              params: dict[str, Any] | None = None,
              expires_at: str | None = None) -> str:
+    from tests.e2e.conftest import control_headers  # noqa: PLC0415
+
     body: dict[str, Any] = {"agent_id": agent_id, "kind": kind, "params": params or {}}
     if expires_at is not None:
         body["expires_at"] = expires_at
-    r = inner.post("/v1/enqueue", json=body)
+    r = inner.post("/v1/enqueue", json=body, headers=control_headers())
     assert r.status_code == 200, r.text
     return r.json()["request_id"]
 
@@ -650,6 +659,28 @@ def _wait_agent_link_live(timeout: float = 120.0) -> None:
     )
 
 
+def _wait_edge_readyz_link_up(timeout: float = 120.0) -> None:
+    """Wait until the agent's own /readyz reports the PABX link up.
+
+    Called in every live fault test's teardown after the scenario reset:
+    the next file must inherit a connected link, never a redial in
+    progress (REQ-022 owner check 2026-10-29 — not a flake to retry).
+    """
+    import httpx  # noqa: PLC0415
+
+    def _up() -> bool:
+        try:
+            body = httpx.get("http://localhost:8114/readyz", timeout=10.0).json()
+        except Exception:
+            return False
+        if not isinstance(body, dict):
+            return False
+        link = body.get("link", {})
+        return bool(isinstance(link, dict) and link.get("link_up") is True)
+
+    _wait_for(_up, timeout=timeout, what="edge-worker readyz link_up")
+
+
 def test_live_scenario_route_arms_every_fault(e2e_stack: str) -> None:
     """Live: /admin/scenario arms each D fault; reset returns to baseline."""
     from simulators.fias_pabx.admin import SCENARIO_LINK_FAULTS  # noqa: PLC0415
@@ -670,6 +701,7 @@ def test_live_scenario_route_arms_every_fault(e2e_stack: str) -> None:
     assert body.get("ps_layout") == "baseline"
     assert body.get("faults", {}).get("silent_types") == []
     _wait_agent_link_live()  # leave the link settled for the next test
+    _wait_edge_readyz_link_up()
 
 
 def test_live_layout_change_visible_in_agent_heartbeat(e2e_stack: str) -> None:
@@ -704,6 +736,7 @@ def test_live_layout_change_visible_in_agent_heartbeat(e2e_stack: str) -> None:
         timeout=60.0, what="layout back to baseline",
     )
     _wait_agent_link_live()  # leave the link settled for the next test
+    _wait_edge_readyz_link_up()
 
 
 def test_live_inject_fault_proxies_to_fias(e2e_stack: str) -> None:
@@ -726,3 +759,4 @@ def test_live_inject_fault_proxies_to_fias(e2e_stack: str) -> None:
         _live_post(admin_url("sim-fias-pabx", "/admin/fias/reset"), {},
                    headers=admin_headers())
         _wait_agent_link_live()  # leave the link settled for the next test
+        _wait_edge_readyz_link_up()

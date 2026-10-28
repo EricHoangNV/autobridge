@@ -102,7 +102,8 @@ class RelayClient:
     def next_command(self, agent_id: str) -> dict[str, Any] | None:
         try:
             with self._client() as client:
-                resp = client.get("/v1/commands/next", params={"agent_id": agent_id})
+                resp = client.get("/v1/commands/next", params={"agent_id": agent_id},
+                                  headers=self._headers())
         except httpx.HTTPError as exc:
             self.last_contact_ok = False
             log.warning("relay poll failed: %s", type(exc).__name__)
@@ -119,7 +120,8 @@ class RelayClient:
         try:
             with self._client() as client:
                 resp = client.post(f"/v1/commands/{request_id}/result",
-                                   json={"status": status, "detail": detail})
+                                   json={"status": status, "detail": detail},
+                                   headers=self._headers())
         except httpx.HTTPError as exc:
             self.last_contact_ok = False
             log.warning("relay result failed for %s: %s", request_id, type(exc).__name__)
@@ -134,7 +136,7 @@ class RelayClient:
                 resp = client.post("/v1/postings", json={
                     "agent_id": agent_id, "idempotency_key": key,
                     "record_type": record_type, "fields": fields, "occurred_at": occurred_at,
-                })
+                }, headers=self._headers())
         except httpx.HTTPError as exc:
             self.last_contact_ok = False
             log.warning("relay posting failed for %s: %s", key, type(exc).__name__)
@@ -149,7 +151,7 @@ class RelayClient:
                 resp = client.post("/v1/heartbeats", json={
                     "agent_id": agent_id, "link_up": link_up, "link_detail": link_detail,
                     "outbox_depth": outbox_depth, "inbox_depth": inbox_depth,
-                })
+                }, headers=self._headers())
         except httpx.HTTPError:
             self.last_contact_ok = False
             return False
