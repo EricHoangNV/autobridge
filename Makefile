@@ -1,7 +1,7 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles edge-sign edge-check
+.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout verify-heldout-reveal demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles edge-sign edge-check
 
 # ---- Docker ----
 up: edge-check
@@ -102,6 +102,16 @@ bench-heldout:
 	@echo ">> bench (heldout split — private seeds from HELDOUT_DIR, Nov 3 run)"
 	. ./scripts/load_dotenv.sh; if [ -z "$${HELDOUT_DIR:-}" ]; then echo "heldout SHA check failed: HELDOUT_DIR not set" >&2; exit 2; fi; \
 	BENCH_VISIBILITY=heldout uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
+
+# REQ-024 A4: after the single Nov 3 run the owner publishes the seed files
+# under verifier/hidden_cases/heldout/revealed/ (an owner commit). Anyone can
+# then check them against the frozen SHA256SUMS and reproduce the scorecard
+# from them. Refuses when the reveal has not happened yet (exit 2).
+verify-heldout-reveal:
+	@echo ">> verify heldout reveal against frozen SHA256SUMS, then rerun bench-heldout from it"
+	. ./scripts/load_dotenv.sh; if [ ! -d verifier/hidden_cases/heldout/revealed ]; then echo "no reveal yet: verifier/hidden_cases/heldout/revealed/ missing (owner publishes after the Nov 3 run)" >&2; exit 2; fi; \
+	HELDOUT_DIR=verifier/hidden_cases/heldout/revealed uv run python -c "from autobridge.bench.harness import check_heldout_sha; check_heldout_sha()" && \
+	HELDOUT_DIR=verifier/hidden_cases/heldout/revealed BENCH_VISIBILITY=heldout uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
 
 demo:
 	@echo ">> demo: eight steps via control API (W10)"

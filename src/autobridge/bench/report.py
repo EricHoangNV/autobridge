@@ -31,6 +31,22 @@ _METRIC_LABELS: list[tuple[str, str]] = [
 ]
 
 
+def _leak_audit_line(leak_audit: Any) -> str:
+    """Render the REQ-024 A1 leak-audit header line (counts only, never secrets)."""
+    if not isinstance(leak_audit, dict):
+        return "Leak audit: not run (owner runs scripts/heldout_leak_audit.py --write before the Nov 3 run)"
+    sources = leak_audit.get("sources", {}) if isinstance(leak_audit.get("sources"), dict) else {}
+    parts: list[str] = []
+    for name, unit in (("transcripts", "files"), ("git-blobs", "blobs"), ("worktrees", "files"), ("project", "files")):
+        entry = sources.get(name, {})
+        count_key = unit if isinstance(entry, dict) and unit in entry else "files"
+        hits = entry.get("hits", "?") if isinstance(entry, dict) else "?"
+        total = entry.get(count_key, "?") if isinstance(entry, dict) else "?"
+        parts.append(f"{hits} hits in {total} {unit}")
+    verdict = "clean" if leak_audit.get("ok") else "FAIL"
+    return "Leak audit: " + verdict + " — " + ", ".join(parts)
+
+
 def _result_cell(arms_t: dict[str, Any], nm: str) -> str:
     """Render one per-trial arm cell (PASS/fail + verdict/regression flags)."""
     s = arms_t.get(nm)
@@ -58,6 +74,7 @@ def render_scorecard_markdown(scorecard: dict[str, Any]) -> str:
         lines.append(f"Heldout seeds: private (manifest {scorecard.get('heldout_manifest_sha', 'unknown')})")
     else:
         lines.append("Heldout seeds: n/a — dev run on public YAML seeds")
+    lines.append(_leak_audit_line(scorecard.get("leak_audit")))
     lines.append("")
     lines.append("## Aggregate metrics (per arm)")
     lines.append("")

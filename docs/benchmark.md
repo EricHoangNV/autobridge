@@ -177,3 +177,90 @@ manifest first and refuses to run on tampered heldout fixtures (exit 2);
 dev runs (`make bench`, `test_07`) skip the gate.
 `tests/e2e/test_07_benchmark_matched_budget.py` runs one dev scenario
 through both arms and validates the scorecard schema.
+
+## Held-out protocol (REQ-024 A)
+
+"Ralph never saw the held-out data" is checkable, not claimed. Every
+step below prints counts and hashes only — never seed or nonce values,
+which live only in the owner's `$HELDOUT_DIR` and in memory while a
+script runs.
+
+### Isolation evidence
+
+* Sandboxes mount only the project folder. On the owner's host `sbx ls`
+  shows the workspace column per sandbox; in any checkout
+  `python3 scripts/heldout_isolation_check.py` prints the same facts from
+  inside: the git top-level, whether `$HELDOUT_DIR` is set and outside the
+  repo (exit 2 when it points inside), the harness use sites proving the
+  bench reads `$HELDOUT_DIR` only for heldout runs
+  (`check_heldout_sha` / `load_heldout_seeds`, skipped entirely on dev
+  runs), the freeze commit `ff372083` with its local date, and the sha256
+  of the frozen `SHA256SUMS`.
+* The bench refuses heldout runs without `$HELDOUT_DIR` (exit 2), and the
+  leak audit refuses to run with it inside the repo (exit 2).
+
+### Leak audit
+
+Before the Nov 3 run the owner runs:
+
+```bash
+HELDOUT_DIR=~/autobridge-heldout python3 scripts/heldout_leak_audit.py \
+  --write experiments/benchmark_runs/_leak_audit.json
+```
+
+It reads each private file's nonce and seed in memory and its sha256,
+then scans every `ralph-logs/*.jsonl` transcript, every blob in the full
+git history (`git rev-list --all` + `git cat-file`), every file under
+`.worktrees/`, and the project folder for any occurrence of a nonce, a
+seed file's sha256, or a seed file's raw bytes. Output is one line per
+source with counts (`0 hits in 109 transcripts, 0 in 2 140 blobs …`) and
+exit 1 on any hit. Bare seed integers are not searched (small ints occur
+everywhere); the exact raw file bytes cover that case with no false
+positives. The committed manifest itself is the one legitimate place for
+hashes, so it is excluded and reported as excluded. The audit result
+(counts only) is written into the scorecard: `make bench` /
+`make bench-heldout` pick up `<output-dir>/_leak_audit.json`
+automatically (or pass `--leak-audit <path>`), and the scorecard header
+renders `Leak audit: clean — …` or `not run`.
+
+### Public timestamp (owner step)
+
+After the freeze commit lands, from the owner's host:
+
+```bash
+git tag -s heldout-freeze ff372083 -m "heldout seeds sealed (REQ-024)"
+git push origin heldout-freeze
+gh release create heldout-freeze --title "heldout freeze" \
+  --notes "Seals verifier/hidden_cases/heldout/SHA256SUMS at ff372083"
+```
+
+GitHub records the tag and release time. Optionally commit an
+OpenTimestamps proof of `SHA256SUMS` beside it (`ots stamp
+verifier/hidden_cases/heldout/SHA256SUMS`).
+
+### Reveal after the run
+
+After the single Nov 3 run, the owner publishes the seed files:
+
+```bash
+mkdir -p verifier/hidden_cases/heldout/revealed
+cp ~/autobridge-heldout/*.yaml verifier/hidden_cases/heldout/revealed/
+git add verifier/hidden_cases/heldout/revealed && git commit -m "heldout reveal (REQ-024)"
+```
+
+Then anyone reproduces the scorecard:
+
+```bash
+make verify-heldout-reveal   # checks the reveal against frozen SHA256SUMS, reruns make bench-heldout from it
+```
+
+Until the owner does this, the `revealed/` folder must not exist (guard
+test `test_revealed_folder_absent_or_valid`).
+
+### Honest scope
+
+What is sealed is the instance data (seeds): the four scenario
+definitions are public and the builder saw them. Unseen-vendor
+generalization is measured separately on LegacyStay (REQ-019 item 5):
+the `test_s1_legacystay.py` generalization guard keeps that vendor out of
+engine code, so the deck never relies on having seen it.

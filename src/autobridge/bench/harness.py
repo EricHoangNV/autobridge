@@ -1104,6 +1104,24 @@ def assert_results_reproducible(first: BenchResult, second: BenchResult) -> None
 # ---------------------------------------------------------------------------
 
 
+def _load_leak_audit(output_dir: str | pathlib.Path) -> dict[str, Any] | None:
+    """Load the counts-only leak-audit JSON when the owner wrote one (REQ-024 A1).
+
+    Returns ``None`` when absent or invalid (scorecard renders "not run").
+    Never raises — a broken audit file must not fail scoring.
+    """
+    import json as _json  # noqa: PLC0415
+
+    candidate = pathlib.Path(output_dir) / "_leak_audit.json"
+    if not candidate.is_file():
+        return None
+    try:
+        data = _json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def score_and_report(
     bench_result: BenchResult,
     verify_fn: Any | None = None,
@@ -1114,6 +1132,7 @@ def score_and_report(
     verifier_timeout_s: float = 10.0,
     heldout_seeds: dict[str, int] | None = None,
     heldout_manifest_sha: str | None = None,
+    leak_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Score *bench_result* via verifier hidden mode and write scorecard files.
 
@@ -1130,6 +1149,10 @@ def score_and_report(
     verified with its private seed (via the ``seed`` override, never
     recorded in the scorecard), and the scorecard header records the
     manifest sha — never the seeds.
+
+    REQ-024 A1: when *leak_audit* is ``None``, ``<output_dir>/_leak_audit.json``
+    (written by ``scripts/heldout_leak_audit.py --write``) is picked up
+    automatically when present; the JSON carries counts only, never secrets.
     """
     from autobridge.bench.report import write_scorecard, write_scorecard_json  # noqa: PLC0415
     from autobridge.bench.scoring import (  # noqa: PLC0415
@@ -1146,11 +1169,14 @@ def score_and_report(
         fn = functools.partial(verify_via_http, verifier_url=url, timeout_s=verifier_timeout_s)
     if heldout_seeds:
         fn = wrap_verify_fn_with_seeds(fn, heldout_seeds)
+    if leak_audit is None:
+        leak_audit = _load_leak_audit(output_dir)
     scorecard = score_bench(
         bench_result,
         fn,
         heldout=bool(heldout_seeds),
         heldout_manifest_sha=heldout_manifest_sha,
+        leak_audit=leak_audit,
     )
     out_dir = pathlib.Path(output_dir)
     write_scorecard_json(scorecard, out_dir / "_scorecard.json")
@@ -1231,6 +1257,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--scorecard", type=str, default="experiments/scorecard.md", help="Scorecard markdown path")
     parser.add_argument("--no-score", action="store_true", help="Skip scoring/report (harness JSONL only)")
+    parser.add_argument(
+        "--leak-audit",
+        type=str,
+        default=None,
+        help="Counts-only leak-audit JSON (scripts/heldout_leak_audit.py --write); copied to <output-dir>/_leak_audit.json",
+    )
     parser.add_argument("--token-ceiling", type=int, default=None)
     parser.add_argument("--wall-clock", type=float, default=None)
     parser.add_argument("--control-api-url", type=str, default=None)
@@ -1353,12 +1385,22 @@ def main(argv: list[str] | None = None) -> int:
         print(guard_err, flush=True)
         return 1
     if not no_score:
+        leak_audit_arg: dict[str, Any] | None = None
+        if args.leak_audit:
+            import json as _cli_json  # noqa: PLC0415
+
+            try:
+                loaded = _cli_json.loads(pathlib.Path(args.leak_audit).read_text(encoding="utf-8"))
+                leak_audit_arg = loaded if isinstance(loaded, dict) else None
+            except (OSError, ValueError) as exc:
+                print(f"bench harness: ignoring unreadable --leak-audit file: {exc}", flush=True)
         scorecard = score_and_report(
             bench_result,
             output_dir=args.output_dir,
             scorecard_path=args.scorecard,
             heldout_seeds=heldout_seeds,
             heldout_manifest_sha=manifest_sha,
+            leak_audit=leak_audit_arg,
         )
         wins = len(scorecard.get("wins", []))
         losses = len(scorecard.get("losses", []))

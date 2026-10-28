@@ -514,6 +514,7 @@ def score_bench(
     seed: int | None = None,
     heldout: bool = False,
     heldout_manifest_sha: str | None = None,
+    leak_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Score a full harness run; returns the JSON-safe scorecard dict.
 
@@ -522,6 +523,9 @@ def score_bench(
     escalation was needed (never silently dropped).
     REQ-007: *heldout* marks a private-seed run; *heldout_manifest_sha*
     is recorded in the scorecard header (seeds never are).
+    REQ-024 A1: *leak_audit* is the counts-only result of
+    ``scripts/heldout_leak_audit.py --write`` (never secrets); it is
+    recorded verbatim and rendered in the scorecard header.
     """
     bundles = escalation_bundles or {}
     if isinstance(bench_result, dict):
@@ -551,6 +555,7 @@ def score_bench(
         "losses": agg["losses"],
         "heldout": heldout,
         "heldout_manifest_sha": heldout_manifest_sha,
+        "leak_audit": leak_audit,
     }
 
 
@@ -592,6 +597,9 @@ def validate_scorecard_schema(scorecard: dict[str, Any]) -> None:
         raise AssertionError("scorecard['heldout'] must be a bool")
     if scorecard.get("heldout_manifest_sha") is not None and not isinstance(scorecard["heldout_manifest_sha"], str):
         raise AssertionError("scorecard['heldout_manifest_sha'] must be a str")
+    # REQ-024 A1 optional leak-audit provenance (counts only, never secrets).
+    if scorecard.get("leak_audit") is not None and not isinstance(scorecard["leak_audit"], dict):
+        raise AssertionError("scorecard['leak_audit'] must be a dict")
 
 
 def healthz() -> dict[str, str]:
