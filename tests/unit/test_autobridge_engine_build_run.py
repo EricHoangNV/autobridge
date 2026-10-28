@@ -100,7 +100,7 @@ def test_execute_build_with_verifier_url_mock(tmp_path: Path, monkeypatch: pytes
     assert orig_out["success"]
 
     # With fake verifier URL that is unreachable, should still have trace
-    out = execute_build(HARBOR_MD, source="harbor.md", verifier_url="http://invalid:9999")
+    out = execute_build(HARBOR_MD, source="harbor.md", verifier_url="http://127.0.0.1:9")
     assert out["success"] is True
     # trace should contain verifier entry (skipped or error)
     assert any("verifier" in t.get("stage", "") for t in out["trace"])
@@ -334,7 +334,7 @@ def test_run_build_handler_gate_blocked_persists_no_release(tmp_path: Path, monk
     runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
     runner.submit_build(
         cid,
-        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "verifier_url": "http://verifier:8000", "scenario_id": "baseline"},
+        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "verifier_url": "http://127.0.0.1:9", "scenario_id": "baseline"},
     )
     runner.run_until_empty()
     with SessionLocal() as s:
@@ -357,7 +357,7 @@ def test_run_build_handler_gate_unreachable_persists_no_release(tmp_path: Path, 
     runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
     runner.submit_build(
         cid,
-        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "verifier_url": "http://verifier-down:9999", "scenario_id": "baseline"},
+        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "verifier_url": "http://127.0.0.1:9", "scenario_id": "baseline"},
     )
     runner.run_until_empty()
     with SessionLocal() as s:
@@ -379,7 +379,7 @@ def test_run_build_handler_gate_pass_persists_release(tmp_path: Path, monkeypatc
     runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
     runner.submit_build(
         cid,
-        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "verifier_url": "http://verifier:8000", "scenario_id": "baseline"},
+        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "verifier_url": "http://127.0.0.1:9", "scenario_id": "baseline"},
     )
     runner.run_until_empty()
     with SessionLocal() as s:
@@ -391,7 +391,7 @@ def test_run_build_handler_gate_pass_persists_release(tmp_path: Path, monkeypatc
         assert rel is not None
     # Gate-before-persist was actually invoked with the build's scenario
     assert capture.get("scenario_id") == "baseline"
-    assert capture.get("verifier_url") == "http://verifier:8000"
+    assert capture.get("verifier_url") == "http://127.0.0.1:9"
     engine.dispose()
 
 

@@ -45,7 +45,7 @@ def _no_live_frontier(monkeypatch: Any, tmp_path: Any) -> None:
 
 
 def test_run_demo_all_six_steps_ok_offline() -> None:
-    report = run_demo(seed=0, control_url="http://localhost:9")
+    report = run_demo(seed=0, control_url="http://127.0.0.1:9")
     assert report["mode"] == "local-evidence"
     assert report["seed"] == 0
     assert len(report["steps"]) == 7
@@ -57,7 +57,7 @@ def test_run_demo_all_six_steps_ok_offline() -> None:
 
 
 def test_step1_complete_zero_model_usage_decimal() -> None:
-    step = step1_reusable_artifact(0, False, "http://localhost:9")
+    step = step1_reusable_artifact(0, False, "http://127.0.0.1:9")
     ev = step["evidence"]
     assert ev["outcome"] == "Complete"
     assert ev["records_observed"] == {"Reservation": 4, "FolioCharge": 3}
@@ -67,7 +67,7 @@ def test_step1_complete_zero_model_usage_decimal() -> None:
 
 
 def test_step2_docs_to_draft_spec_no_model_calls() -> None:
-    step = step2_unfamiliar_api(0, False, "http://localhost:9")
+    step = step2_unfamiliar_api(0, False, "http://127.0.0.1:9")
     ev = step["evidence"]
     assert ev["doc_type"] == "markdown"
     assert "GET /reservations" in ev["operations"]
@@ -78,7 +78,7 @@ def test_step2_docs_to_draft_spec_no_model_calls() -> None:
 
 
 def test_step3_l1_patch_frontier_zero() -> None:
-    step = step3_zero_token_recovery(0, False, "http://localhost:9")
+    step = step3_zero_token_recovery(0, False, "http://127.0.0.1:9")
     ev = step["evidence"]
     assert ev["l1_rule"] == "page_to_cursor"
     assert ev["frontier_tokens"] == 0
@@ -88,7 +88,7 @@ def test_step3_l1_patch_frontier_zero() -> None:
 
 def test_step4_decoy_rejected_escalation_single_question(monkeypatch: Any) -> None:
     monkeypatch.setenv("REPLAY_DIR", str(REPO_ROOT / "tests" / "fixtures" / "replay"))
-    step = step4_hard_semantic_failure(0, False, "http://localhost:9")
+    step = step4_hard_semantic_failure(0, False, "http://127.0.0.1:9")
     ev = step["evidence"]
     assert ev["sync_outcome"] == "Degraded"
     assert ev["unmet_criteria"] == ["money_invariant"]
@@ -103,7 +103,7 @@ def test_step4_without_recording_labels_l3_skipped(monkeypatch: Any, tmp_path: A
     """No key + no recording: L3 is labelled skipped, never invented."""
     monkeypatch.setenv("REPLAY_DIR", str(tmp_path / "empty"))
     monkeypatch.delenv("FRONTIER_API_KEY", raising=False)
-    step = step4_hard_semantic_failure(0, False, "http://localhost:9")
+    step = step4_hard_semantic_failure(0, False, "http://127.0.0.1:9")
     assert step["status"] == "ok", step
     ev = step["evidence"]
     assert ev["l3_skipped"] is True
@@ -116,7 +116,7 @@ def test_step4_without_recording_labels_l3_skipped(monkeypatch: Any, tmp_path: A
 
 
 def test_step5_scorecard_shape() -> None:
-    step = step5_head_to_head(0, False, "http://localhost:9")
+    step = step5_head_to_head(0, False, "http://127.0.0.1:9")
     ev = step["evidence"]
     assert ev["scorecard_path"].endswith("experiments/scorecard.md")
     assert isinstance(ev["scorecard_lines"], int)
@@ -127,7 +127,7 @@ def test_step7_v1_refuses_v2_connects_offline(monkeypatch: Any) -> None:
     """REQ-020 step 7: before (v1 Blocked, named reason, 0 calls) + after (v2 Complete)."""
     monkeypatch.delenv("MERIDIAN_CLIENT_TOKEN", raising=False)
     monkeypatch.delenv("MERIDIAN_ACCESS_TOKEN", raising=False)
-    step = step7_new_api_style(0, False, "http://localhost:9")
+    step = step7_new_api_style(0, False, "http://127.0.0.1:9")
     assert step["status"] == "ok", step
     ev = step["evidence"]
     assert ev["docs_ref"] == "simulators/docs/meridian-openapi.yaml"
@@ -152,13 +152,13 @@ def test_step7_v1_refuses_v2_connects_offline(monkeypatch: Any) -> None:
 def test_step7_rung_row_reports_zero_frontier() -> None:
     from autobridge.bench.demo import rung_table_row
 
-    step = step7_new_api_style(0, False, "http://localhost:9")
+    step = step7_new_api_style(0, False, "http://127.0.0.1:9")
     row = rung_table_row(step)
     assert "0 frontier" in row and "v1 Blocked" in row
 
 
 def test_step6_signatures_match_build_reports() -> None:
-    step = step6_reproducibility(0, False, "http://localhost:9")
+    step = step6_reproducibility(0, False, "http://127.0.0.1:9")
     ev = step["evidence"]
     assert ev["seed"] == 0
     assert len(ev["atlas_reference_signature"]) == 64
@@ -209,7 +209,7 @@ def test_redact_body_truncates_and_omits_specs() -> None:
 
 
 def test_render_text_lists_all_steps_and_ledger() -> None:
-    text = render_text(run_demo(seed=7, control_url="http://localhost:9"))
+    text = render_text(run_demo(seed=7, control_url="http://127.0.0.1:9"))
     for needle in (
         "Atlas release",
         "Harbor docs",
@@ -233,10 +233,10 @@ def test_render_text_failed_step() -> None:
 
 
 def test_main_text_and_json_modes(capsys: Any) -> None:
-    assert main(["--control-url", "http://localhost:9", "--seed", "0"]) == 0
+    assert main(["--control-url", "http://127.0.0.1:9", "--seed", "0"]) == 0
     out = capsys.readouterr().out
     assert "Step 1/7" in out and "Step 7/7" in out
-    assert main(["--control-url", "http://localhost:9", "--json"]) == 0
+    assert main(["--control-url", "http://127.0.0.1:9", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert len(report["steps"]) == 7 and report["failed"] == 0
 
@@ -340,7 +340,7 @@ def test_harbor_reference_sync_complete_via_cursor_fake() -> None:
 
 def test_step5_without_scorecard_file(monkeypatch: Any, tmp_path: Any) -> None:
     monkeypatch.setattr(demo_mod, "SCORECARD_PATH", tmp_path / "missing.md")
-    step = step5_head_to_head(0, False, "http://localhost:9")
+    step = step5_head_to_head(0, False, "http://127.0.0.1:9")
     assert step["evidence"]["scorecard_lines"] == 0
     assert step["evidence"]["preview"] == ["no scorecard yet — run make bench"]
 
@@ -350,7 +350,7 @@ def test_run_demo_step_failure_is_reported_not_raised(monkeypatch: Any) -> None:
         raise RuntimeError("synthetic step failure")
 
     monkeypatch.setattr(demo_mod, "STEPS", (_boom,))
-    report = run_demo(seed=0, control_url="http://localhost:9")
+    report = run_demo(seed=0, control_url="http://127.0.0.1:9")
     assert report["failed"] == 1
     assert report["steps"][0]["status"] == "failed"
 
@@ -420,7 +420,7 @@ def test_demo_labels_live_vs_inprocess_steps(monkeypatch: Any) -> None:
     assert "(live)" in text and "(in-process)" in text
     # NOTE: the probe is still stubbed True above, so force the offline path.
     monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: False)
-    offline = run_demo(seed=0, control_url="http://localhost:9")
+    offline = run_demo(seed=0, control_url="http://127.0.0.1:9")
     assert all(s["mode"] == "in-process" for s in offline["steps"])
     assert "in-process" in render_text(offline)
 
@@ -447,7 +447,7 @@ def test_only_hard_semantic_step_uses_frontier(monkeypatch: Any) -> None:
     tokens. Without a capture the step labels L3 skipped and still uses 0.
     """
     monkeypatch.setenv("REPLAY_DIR", str(REPO_ROOT / "tests" / "fixtures" / "replay"))
-    report = run_demo(seed=0, control_url="http://localhost:9")
+    report = run_demo(seed=0, control_url="http://127.0.0.1:9")
     assert report["failed"] == 0
     for step in report["steps"]:
         ev = step["evidence"]
@@ -467,7 +467,7 @@ def test_only_hard_semantic_step_uses_frontier(monkeypatch: Any) -> None:
 def test_demo_without_recording_skips_l3_with_zero_frontier(monkeypatch: Any, tmp_path: Any) -> None:
     monkeypatch.setenv("REPLAY_DIR", str(tmp_path / "empty"))
     monkeypatch.delenv("FRONTIER_API_KEY", raising=False)
-    report = run_demo(seed=0, control_url="http://localhost:9")
+    report = run_demo(seed=0, control_url="http://127.0.0.1:9")
     assert report["failed"] == 0
     for step in report["steps"]:
         ev = step["evidence"]
@@ -504,7 +504,7 @@ def test_step4_live_prose_without_patch_says_what_happened(monkeypatch: Any) -> 
         "I cannot determine a safe mapping. Net vs gross needs an operator decision."
     )
     monkeypatch.setattr(provider_mod, "resolve_frontier_provider", lambda: (fake, "live"))
-    step = step4_hard_semantic_failure(0, False, "http://localhost:9")
+    step = step4_hard_semantic_failure(0, False, "http://127.0.0.1:9")
     assert step["status"] == "ok", step
     ev = step["evidence"]
     assert ev["l3_skipped"] is False
@@ -532,7 +532,7 @@ def test_step4_live_unparsable_patch_says_what_happened(monkeypatch: Any) -> Non
 
     fake = _live_fake_provider('[{"op": "replace", "path": "/entities/Reservation/fields/total_amount/pa')
     monkeypatch.setattr(provider_mod, "resolve_frontier_provider", lambda: (fake, "live"))
-    step = step4_hard_semantic_failure(0, False, "http://localhost:9")
+    step = step4_hard_semantic_failure(0, False, "http://127.0.0.1:9")
     assert step["status"] == "ok", step
     ev = step["evidence"]
     assert ev["l3_skipped"] is False

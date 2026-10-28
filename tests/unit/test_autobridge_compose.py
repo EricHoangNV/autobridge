@@ -274,7 +274,10 @@ def _check_health(app_module: str) -> None:
     assert "checks" in resp.json()
 
 
-def test_control_app_health() -> None:
+def test_control_app_health(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Hermetic readyz (REQ-022 DNS-hermetic fix): refuse on loopback instead
+    # of resolving the default verifier hostname.
+    monkeypatch.setenv("VERIFIER_URL", "http://127.0.0.1:9")
     _check_health("autobridge.control.app")
 
 

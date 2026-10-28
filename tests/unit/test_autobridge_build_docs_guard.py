@@ -14,8 +14,24 @@ from autobridge.control.app import app
 from autobridge.control.deps import get_db
 from autobridge.control.jobs import JobRunner
 from autobridge.control.models import Base, BuildRun, Connector
-from autobridge.control.routes.builds import validate_docs_url
+from autobridge.control.routes.builds import _docs_url_resolves_internal, validate_docs_url
 from autobridge.engine.build_run import run_build_handler
+
+
+@pytest.fixture(autouse=True)
+def _no_live_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The route layer never does real DNS in these tests (unit hermeticity).
+
+    ``validate_docs_url`` resolves public hosts in a worker thread; on macOS
+    that initialises the system resolver off the main thread and poisons
+    every later forked child (REQ-022 DNS-hermetic fix). The denylist and
+    literal-IP checks under test do not need the network, so resolve every
+    host as public here; ``_docs_url_resolves_internal`` itself is covered
+    with a directly-mocked ``socket.getaddrinfo`` below.
+    """
+    from autobridge.control.routes import builds
+
+    monkeypatch.setattr(builds, "_docs_url_resolves_internal", lambda _host, _port: False)
 
 
 def _client_and_factory(tmp_path: pathlib.Path) -> tuple[TestClient, object, str]:
@@ -102,6 +118,31 @@ def test_validate_docs_url_unit() -> None:
         assert exc.value.status_code == 422
     # Public https host passes validation (fetch itself is mocked elsewhere).
     validate_docs_url("https://example.com/docs.md")
+
+
+def test_docs_url_resolves_internal_classifies_ips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolver check without the network: classify mocked ``getaddrinfo`` results.
+
+    Keeps coverage of the fail-open DNS probe after the route-level mock
+    above removed its only real-network caller in this file.
+    """
+    import socket as socket_mod
+
+    def _infos(*ips: str) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        return [(socket_mod.AF_INET, socket_mod.SOCK_STREAM, 6, "", (ip, 80)) for ip in ips]
+
+    monkeypatch.setattr(socket_mod, "getaddrinfo", lambda *_args: _infos("93.184.216.34"))
+    assert _docs_url_resolves_internal("example.com", 443) is False
+    monkeypatch.setattr(socket_mod, "getaddrinfo", lambda *_args: _infos("10.0.0.5"))
+    assert _docs_url_resolves_internal("example.com", 80) is True
+    monkeypatch.setattr(socket_mod, "getaddrinfo", lambda *_args: _infos("not-an-ip"))
+    assert _docs_url_resolves_internal("example.com", 80) is True
+
+    def _offline(*_args: object) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        raise socket_mod.gaierror("offline hermetic test")
+
+    monkeypatch.setattr(socket_mod, "getaddrinfo", _offline)
+    assert _docs_url_resolves_internal("example.com", 80) is False
 
 
 def test_fetch_error_redacts_userinfo(tmp_path: pathlib.Path) -> None:

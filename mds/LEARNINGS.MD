@@ -238,3 +238,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The ladder had recorded the call faithfully (usage tokens, `proposal_rejected` action); the *reader* of the trace (`l3_skipped = action != "frontier_generate"`) misclassified the rejection as a skip.
 - Fix: call-ness is `action in ("frontier_generate", "proposal_rejected")`; only an explicit skip action means no call. The called-but-unusable reason names mode + model + tokens with the parse/apply detail and carries the truncated raw reply on the run.
 - **Rule:** Never derive "was the model called" from proposal presence — a rejection, an unparsable reply and an empty reply are all billed calls. Reserve "skipped" for paths where no provider call happened, and say why (no provider, missing replay + the capture command).
+---
+
+## 25. The sandbox proxy turns every httpx client into a DNS client for the proxy host
+
+**Context:** REQ-022 macOS DNS-hermetic fix (sbx1 2026-10-28)
+
+- Unit tests tripped a new no-real-DNS guard not on the target host but on `gateway.docker.internal`: the sandbox exports `https_proxy=http://gateway.docker.internal:3128`, and any `httpx.Client` built with default `trust_env=True` resolves the *proxy* host via `getaddrinfo` — even for requests that ultimately fail fast. `trust_env=False` in source only changes *which* hostname trips the guard (the target instead of the proxy), so it cannot make a test hermetic by itself.
+- A second trap: setting `VERIFIER_URL` in a shared test fixture silently changed build outcomes, because `builds.py` falls back to that env var for the verifier gate — a build that previously skipped the gate suddenly attempted it and persisted no release. Dependency-URL env vars belong in the narrowest fixture (or per-test), never in a shared client fixture.
+- How it was fixed: tests point dependency URLs at refused loopback (`http://127.0.0.1:9`, a literal IP needing no resolution) or mock the HTTP/resolver layer; the guard trips on any non-literal `getaddrinfo` host, including `localhost`, and fails at teardown so worker-thread trips swallowed by fail-open handlers are still caught.
+
+**Rule:** Unit tests must never resolve a hostname — use literal-IP refused-loopback URLs or mock the transport, and scope dependency-URL env vars to the tests that need them.

@@ -30,7 +30,11 @@ from autobridge.control.models import (
 
 
 @pytest.fixture()
-def client(tmp_path: pathlib.Path) -> Any:  # type: ignore[no-untyped-def]
+def client(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> Any:  # type: ignore[no-untyped-def]
+    # Hermetic (REQ-022 DNS-hermetic fix): /demo/reset posts every simulator
+    # admin URL over real httpx; refuse on loopback instead of resolving
+    # hostnames (macOS fork-safety: no real DNS in unit tests).
+    monkeypatch.setenv("SIMULATOR_ADMIN_URL", "http://127.0.0.1:9")
     engine = create_engine(f"sqlite:///{tmp_path}/control.db")
     Base.metadata.create_all(engine)
     factory = session_factory(engine)

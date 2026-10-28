@@ -2836,3 +2836,29 @@ flap). Next: REQ-022 D (fault scenarios) then E (demo + docs + index).
 - Compose-stack `/demo/reset` can never reach sim-fias-pabx (control has no edge-net route by design); the matrix live-reset test asserting all-200 is local-stack-only — run e2e on `make local-up` for REQ-022 work
 - Simulators coverage gate flutters 89.8–90.4 run to run (random order, pre-existing, unrelated); make test still exits green
 - Next per owner: macOS DNS-hermetic fix, then REQ-022 sub-step D
+## REQ-022 DNS-hermetic fix — unit tests must not do real DNS
+**Date:** 2026-10-28
+**Ref:** REQUESTS.MD REQ-022 owner re-check (2026-10-29, on f64c6956): "do next, independent of sub-step D"
+
+**What was done:**
+- Added `tests/unit/conftest.py` with an autouse fixture replacing `socket.getaddrinfo`: literal IPs pass through, any other host raises + records a trip, teardown asserts no trips (catches worker-thread trips swallowed by fail-open handlers).
+- Made docs-guard tests hermetic (route-level resolver mock) + added a resolver classification test with mocked getaddrinfo, keeping probe coverage.
+- Made the bench w85 full-pipeline test hermetic (patched `verify_via_http`; no real localhost:9 POST).
+- Fixed all 29 remaining guard trips test-side: dependency URLs (`VERIFIER_URL`, `EDGE_RELAY_URL`, `SIMULATOR_ADMIN_URL`, verifier_url inputs, demo control URLs) → refused loopback `127.0.0.1:9` or mocked transport. No src changes.
+- Verified the owner repro trio passes; full `make test` green with coverage gates; ran `make e2e` on the local stack (144 pass / 2 skip / 1 documented edge-agent order flake, green alone).
+
+**Key decisions:**
+- Test-side hermeticity over src `trust_env=False`: the latter only changes which hostname trips the guard, never eliminates the trip (LEARNINGS #25).
+- Scoped `VERIFIER_URL` to per-test/fixture minimum after a shared-fixture setting silently changed build outcomes (builds.py env fallback for the gate).
+- Reverted a `ruff format` pass that reflowed already-dirty files; kept the diff minimal (ruff check is the enforced gate, not format).
+
+**Files changed:**
+- `tests/unit/conftest.py` (new) — no-real-DNS autouse guard
+- `tests/unit/test_autobridge_build_docs_guard.py` — route resolver mock + classification test
+- `tests/unit/test_autobridge_bench_w85.py` — hermetic pipeline (fake verify)
+- `tests/unit/test_autobridge_control_api.py`, `test_autobridge_control_token.py`, `test_autobridge_control_contract.py`, `test_autobridge_compose.py`, `test_autobridge_smoke.py`, `test_health_smoke.py`, `tests/unit/test_autobridge_control_api_extended.py` — refused-loopback dependency URLs
+- `tests/unit/test_autobridge_engine_build_run.py`, `tests/unit/test_autobridge_demo.py`, `tests/unit/test_autobridge_demo_reset.py` — `localhost`/fake hostnames → `127.0.0.1:9`
+
+**Notes for next iteration:**
+- Owner verifies on macOS: the 3-test repro + full `uv run pytest tests/unit` must pass with zero new crash reports (sandbox is Linux, cannot show the crash).
+- Next in REQ-022: sub-step D fault scenarios, then E demo; `make demo`/`make e2e` already exercised against the local stack here.

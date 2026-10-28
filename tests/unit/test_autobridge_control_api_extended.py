@@ -81,11 +81,16 @@ def test_build_docs_url_and_path(tmp_path: pathlib.Path) -> None:
     r = client.post("/connectors", json={"name": "BuildTest", "base_url": "http://sim-harbor:8000", "credential_ref": "HARBOUR_API_KEY", "target_entities": []})
     cid = r.json()["id"]
 
-    # Mock docs_url fetch
+    # Mock docs_url fetch (and the resolver probe: unit tests never do real
+    # DNS — REQ-022 hermeticity fix; the probe itself is covered in the
+    # docs-guard file with a directly-mocked getaddrinfo).
     mock_resp = Mock()
     mock_resp.text = "# HarborPMS API\nBase URL: http://sim-harbor:8000\nGET /reservations\nGET /folios\n"
     mock_resp.raise_for_status = Mock()
-    with patch("httpx.Client") as mock_client:
+    with (
+        patch("httpx.Client") as mock_client,
+        patch("autobridge.control.routes.builds._docs_url_resolves_internal", return_value=False),
+    ):
         mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
         r2 = client.post(f"/connectors/{cid}/build", json={"docs_url": "http://example.com/docs.md"})
         assert r2.status_code == 200, r2.text

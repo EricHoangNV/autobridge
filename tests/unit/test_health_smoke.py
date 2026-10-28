@@ -16,9 +16,12 @@ def test_control_healthz_content_type() -> None:
     assert resp.headers["content-type"].startswith("application/json")
 
 
-def test_control_readyz_has_checks() -> None:
+def test_control_readyz_has_checks(monkeypatch: Any) -> None:
     from autobridge.control.app import app
 
+    # Hermetic (REQ-022 DNS-hermetic fix): refuse on loopback instead of
+    # resolving the default verifier hostname.
+    monkeypatch.setenv("VERIFIER_URL", "http://127.0.0.1:9")
     client = TestClient(app)
     resp = client.get("/readyz")
     data = resp.json()

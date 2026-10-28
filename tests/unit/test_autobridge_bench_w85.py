@@ -180,6 +180,16 @@ def test_score_and_report_lists_losses(tmp_path: pathlib.Path) -> None:
 
 def test_main_full_pipeline_writes_scorecard(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTOBRIDGE_BENCH_SKIP_PROBE", "1")
+    # Hermetic: the pipeline would otherwise POST the verifier hidden mode
+    # over real HTTP (socket.getaddrinfo on localhost), which on macOS
+    # poisons later forked children (REQ-022 DNS-hermetic fix). The URL
+    # plumbing is still exercised; only the transport is faked.
+    from autobridge.bench import scoring as scoring_mod
+
+    def _fake_verify(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {"verdict": "pass", "score": 1.0, "failed_checks": [], "regression": "pass"}
+
+    monkeypatch.setattr(scoring_mod, "verify_via_http", _fake_verify)
     out = tmp_path / "runs"
     sc = tmp_path / "scorecard.md"
     ret = main(

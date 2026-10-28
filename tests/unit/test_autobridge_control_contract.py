@@ -53,6 +53,13 @@ def _isolated_control_db(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
     control API tests.
     """
     monkeypatch.setenv("AUTOBRIDGE_CONTROL_TOKEN", "contract-fuzz-token")
+    # Hermetic dependency URLs (REQ-022 DNS-hermetic fix): /readyz probes
+    # VERIFIER_URL and /edge/* proxies EDGE_RELAY_URL over real httpx.
+    # Refuse on loopback so fuzzing never resolves a hostname (macOS
+    # fork-safety); the asserted 503-degraded / 502-relay paths are
+    # identical for refused hosts.
+    monkeypatch.setenv("VERIFIER_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("EDGE_RELAY_URL", "http://127.0.0.1:9")
     engine = create_engine(f"sqlite:///{tmp_path}/control.db")
     Base.metadata.create_all(engine)
     factory = session_factory(engine)

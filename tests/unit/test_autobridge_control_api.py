@@ -28,7 +28,15 @@ from autobridge.control.models import (
 
 
 @pytest.fixture()
-def client(tmp_path: pathlib.Path) -> Any:  # type: ignore[no-untyped-def]
+def client(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> Any:  # type: ignore[no-untyped-def]
+    # Hermetic (REQ-022 DNS-hermetic fix): /demo/* posts simulator admin URLs
+    # over real httpx. Point them at refused loopback so no test resolves a
+    # hostname (on macOS a worker-thread DNS lookup poisons later forked
+    # children). The labelled/error paths asserted here are identical for
+    # refused vs unresolvable hosts. NOTE: no VERIFIER_URL here — builds.py
+    # falls back to it for the verifier gate, so setting it would change
+    # build outcomes; readyz tests set it per-test instead.
+    monkeypatch.setenv("SIMULATOR_ADMIN_URL", "http://127.0.0.1:9")
     # Use file DB to avoid StaticPool quirks with threads; tmp_path gives isolation
     engine = create_engine(f"sqlite:///{tmp_path}/control.db")
     Base.metadata.create_all(engine)
@@ -77,7 +85,10 @@ def test_healthz(client: Any) -> None:  # type: ignore[no-untyped-def]
     assert r.json()["status"] == "ok"
 
 
-def test_readyz(client: Any) -> None:  # type: ignore[no-untyped-def]
+def test_readyz(client: Any, monkeypatch: Any) -> None:  # type: ignore[no-untyped-def]
+    # Hermetic (REQ-022 DNS-hermetic fix): readyz probes VERIFIER_URL over
+    # real httpx — refuse on loopback instead of resolving the hostname.
+    monkeypatch.setenv("VERIFIER_URL", "http://127.0.0.1:9")
     r = client.get("/readyz")
     # readyz is honest about dependencies (plan §3, AR-2-6): without a
     # reachable verifier the status is "degraded" and the code is 503,

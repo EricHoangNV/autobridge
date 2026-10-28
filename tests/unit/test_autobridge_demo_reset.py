@@ -266,7 +266,7 @@ def test_reset_targets_legacystay_alias(tmp_path: pathlib.Path) -> None:
 def test_demo_reset_driver_unreachable() -> None:
     from autobridge.bench.demo_reset import demo_reset
 
-    body, code = demo_reset("http://localhost:9")
+    body, code = demo_reset("http://127.0.0.1:9")
     assert code == 1
     assert "error" in body
 
