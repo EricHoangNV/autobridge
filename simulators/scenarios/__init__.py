@@ -39,7 +39,7 @@ _ALLOWED_DRIFT_CLASSES = frozenset(
 )
 _ALLOWED_FIXABLE = frozenset({"fixable", "escalate"})
 _ALLOWED_VISIBILITY = frozenset({"dev", "heldout"})
-_ALLOWED_VENDOR = frozenset({"both", "atlas", "harbor"})
+_ALLOWED_VENDOR = frozenset({"both", "atlas", "harbor", "meridian"})
 
 
 @dataclass(frozen=True)

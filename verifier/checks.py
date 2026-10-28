@@ -277,6 +277,13 @@ def check_field_presence(
         prod_missing = sum(1 for r in produced.get("reservations", []) if "guest_name" not in r)
         if exp_has_guest and prod_missing:
             fails.append(_failed("field_missing", prod_missing, "guest_name missing (renamed to guest_identifier)"))
+    if scenario_id == "meridian_state_renamed":
+        # Meridian renamed the wire State leaf to Status; an unfixed spec
+        # leaves canonical status unmapped.
+        exp_has_status = any("status" in r for r in expected.get("reservations", []))
+        prod_missing = sum(1 for r in produced.get("reservations", []) if "status" not in r)
+        if exp_has_status and prod_missing:
+            fails.append(_failed("field_missing", prod_missing, "status missing (Meridian State renamed to Status)"))
     return fails
 
 
@@ -306,6 +313,24 @@ def check_pagination_and_transport(
         if strategy != "cursor":
             fails.append(_failed("pagination_shape", 1, "page/offset vs cursor mismatch"))
 
+    if scenario_id == "meridian_cursor_renamed":
+        # Meridian renamed the response cursor leaf Cursor -> NextCursor.
+        # A spec still following the old leaf stops after the first page.
+        follows_new = False
+        if spec is not None:
+            try:
+                ops = spec.get("operations", {})
+                for op in ops.values():
+                    pag = op.get("pagination", {}) if isinstance(op, dict) else {}
+                    if isinstance(pag, dict):
+                        nxt = pag.get("next_path", "")
+                        if isinstance(nxt, str) and "nextcursor" in nxt.lower().replace("_", ""):
+                            follows_new = True
+                            break
+            except Exception:
+                pass
+        if not follows_new:
+            fails.append(_failed("pagination_shape", 1, "body_cursor leaf Cursor renamed to NextCursor"))
     if scenario_id == "cursor_repeat_token":
         # Repeated cursor bug
         should_repeat = should_repeat_cursor(scenario_id)
@@ -467,6 +492,8 @@ def run_all_checks(
         "status_vocab_change": {"unknown_status", "unknown_enum", "status_mapping"},
         "gross_to_net": {"money_mismatch"},
         "tz_boundary_shift": {"business_date_mismatch"},
+        "meridian_state_renamed": {"field_missing"},
+        "meridian_cursor_renamed": {"pagination_shape"},
         "duplicate_late_records": {"duplicate_records"},
         "endpoint_removed": {"endpoint_not_found"},
         "invalid_patch_trap": {"invalid_patch_trap"},

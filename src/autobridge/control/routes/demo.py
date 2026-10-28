@@ -18,12 +18,16 @@ router = APIRouter(prefix="/demo", tags=["demo"])
 TARGET_MAP = {
     "sim-atlas": "sim-atlas",
     "sim-harbor": "sim-harbor",
+    "sim-meridian": "sim-meridian",
     "atlas": "sim-atlas",
     "harbor": "sim-harbor",
+    "meridian": "sim-meridian",
     "atlaspms": "sim-atlas",
     "harborpms": "sim-harbor",
+    "meridianpms": "sim-meridian",
     "atlas-pms": "sim-atlas",
     "harbor-pms": "sim-harbor",
+    "meridian-pms": "sim-meridian",
 }
 
 
@@ -31,7 +35,7 @@ def _resolve_target(target: str) -> str:
     key = target.strip().lower()
     resolved = TARGET_MAP.get(key)
     if not resolved:
-        raise HTTPException(status_code=422, detail=f"unknown demo target {target!r}; use sim-atlas or sim-harbor")
+        raise HTTPException(status_code=422, detail=f"unknown demo target {target!r}; use sim-atlas, sim-harbor or sim-meridian")
     return resolved
 
 
@@ -57,7 +61,7 @@ def _admin_url_for_target(resolved: str) -> str:
         # In container: use service DNS
         return f"http://{resolved}:8001"
     # Host mode: map to host ports
-    port_map = {"sim-atlas": 8109, "sim-harbor": 8110}
+    port_map = {"sim-atlas": 8109, "sim-harbor": 8110, "sim-meridian": 8117}
     port = port_map.get(resolved, 8109)
     return f"http://localhost:{port}"
 

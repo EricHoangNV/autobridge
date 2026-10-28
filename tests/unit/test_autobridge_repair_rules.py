@@ -101,8 +101,8 @@ def _delta_items_path(op: str, old_path: str, new_path: str) -> FingerprintDelta
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_seven_rules() -> None:
-    assert len(RULE_REGISTRY) == 8
+def test_registry_has_nine_rules() -> None:
+    assert len(RULE_REGISTRY) == 9
     expected = {
         "rename_field",
         "offset_to_cursor",
@@ -112,13 +112,14 @@ def test_registry_has_seven_rules() -> None:
         "enum_extend_requires_evidence",
         "nested_path_shift",
         "type_coerce_string_number",
+        "cursor_next_path_shift",
     }
     assert set(RULE_REGISTRY.keys()) == expected
 
 
 def test_registry_all_rules_ordered() -> None:
     rules = all_rules()
-    assert len(rules) == 8
+    assert len(rules) == 9
     assert rules[0].id == "rename_field"
     assert rules[-1].id == "type_coerce_string_number"
 
@@ -965,3 +966,128 @@ def test_registry_entry_precondition_and_patch_delegation() -> None:
     assert entry.precondition(ctx) is True
     patch = entry.generate_patch(ctx)
     assert len(patch) == 1
+
+
+# ---------------------------------------------------------------------------
+# cursor_next_path_shift (REQ-020 item 6: response cursor leaf renamed)
+# ---------------------------------------------------------------------------
+
+
+def _body_cursor_fixture_spec() -> dict:
+    """Minimal v2 spec with body_cursor pagination (Meridian shape)."""
+    spec = _load_spec("atlaspms")
+    for op in spec["operations"].values():
+        pag = op.get("pagination", {})
+        pag["strategy"] = "body_cursor"
+        pag.pop("page_param", None)
+        pag.pop("offset_param", None)
+        pag.pop("limit_param", None)
+        pag.pop("total_path", None)
+        pag["cursor_path"] = "Limitation.Cursor"
+        pag["count_path"] = "Limitation.Count"
+        pag["count_value"] = 100
+        pag["next_path"] = "$.Cursor"
+        pag["items_path"] = "$.Reservations"
+        pag["stop_when"] = ["null_cursor", "empty_page"]
+    spec["spec_version"] = 2
+    return spec
+
+
+def _delta_next_path(op: str, old_path: str, new_path: str) -> FingerprintDelta:
+    return FingerprintDelta(
+        fingerprint_changed=True,
+        pagination_changed=True,
+        keys_changed=False,
+        types_changed=False,
+        changed_entities=[],
+        pagination_details={
+            op: {
+                "previous": {"strategy": "body_cursor", "next_path": old_path, "pages_fetched": 8},
+                "current": {"strategy": "body_cursor", "next_path": new_path, "pages_fetched": 1},
+            }
+        },
+        keys_details={},
+        types_details={},
+    )
+
+
+def test_cursor_next_path_shift_precondition_true() -> None:
+    from autobridge.repair.rules.cursor_next_path_shift import precondition
+
+    spec = _body_cursor_fixture_spec()
+    delta = _delta_next_path("list_reservations", "$.Cursor", "$.NextCursor")
+    ctx = RepairContext(
+        spec=spec,
+        drift_class="PAGINATION_CHANGE",
+        fingerprint_delta=delta,
+        extra={"new_next_path": "$.NextCursor"},
+    )
+    assert precondition(ctx) is True
+
+
+def test_cursor_next_path_shift_precondition_true_no_delta() -> None:
+    from autobridge.repair.rules.cursor_next_path_shift import precondition
+
+    spec = _body_cursor_fixture_spec()
+    ctx = RepairContext(
+        spec=spec,
+        drift_class="PAGINATION_CHANGE",
+        extra={"new_next_path": "$.NextCursor"},
+    )
+    assert precondition(ctx) is True
+
+
+def test_cursor_next_path_shift_precondition_false_wrong_class() -> None:
+    from autobridge.repair.rules.cursor_next_path_shift import precondition
+
+    spec = _body_cursor_fixture_spec()
+    ctx = RepairContext(
+        spec=spec,
+        drift_class="SCHEMA_RENAME",
+        extra={"new_next_path": "$.NextCursor"},
+    )
+    assert precondition(ctx) is False
+
+
+def test_cursor_next_path_shift_precondition_false_no_new_path() -> None:
+    from autobridge.repair.rules.cursor_next_path_shift import precondition
+
+    spec = _body_cursor_fixture_spec()
+    delta = _delta_next_path("list_reservations", "$.Cursor", "$.NextCursor")
+    ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE", fingerprint_delta=delta)
+    assert precondition(ctx) is False
+
+
+def test_cursor_next_path_shift_precondition_false_page_spec() -> None:
+    from autobridge.repair.rules.cursor_next_path_shift import precondition
+
+    spec = _load_spec("atlaspms")  # page strategy, not cursor family
+    ctx = RepairContext(
+        spec=spec,
+        drift_class="PAGINATION_CHANGE",
+        extra={"new_next_path": "$.NextCursor"},
+    )
+    assert precondition(ctx) is False
+
+
+def test_cursor_next_path_shift_patch_shape_and_valid() -> None:
+    from autobridge.repair.rules.cursor_next_path_shift import generate_patch, precondition
+
+    spec = _body_cursor_fixture_spec()
+    ctx = RepairContext(
+        spec=spec,
+        drift_class="PAGINATION_CHANGE",
+        extra={"new_next_path": "$.NextCursor"},
+    )
+    assert precondition(ctx) is True
+    patch = generate_patch(ctx)
+    assert patch, "expected non-empty patch"
+    assert all(p["op"] == "replace" and p["path"].endswith("/pagination/next_path") for p in patch)
+    assert all(p["value"] == "$.NextCursor" for p in patch)
+    assert len(patch) == len(spec["operations"])
+    # Patched spec still validates as v2.
+    new_spec = apply_patch(spec, patch)
+    from autobridge.spec.models import load_spec_from_dict
+
+    parsed = load_spec_from_dict(new_spec)
+    assert parsed is not None

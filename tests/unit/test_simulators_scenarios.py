@@ -49,8 +49,8 @@ SCENARIOS_DIR = pathlib.Path("simulators/scenarios")
 
 def test_yaml_count_matches_catalog() -> None:
     yaml_files = list(SCENARIOS_DIR.glob("*.yaml"))
-    assert len(yaml_files) == 15, f"expected 14 YAML files, found {len(yaml_files)}: {yaml_files}"
-    assert len(KNOWN_SCENARIO_IDS) == 15
+    assert len(yaml_files) == 17, f"expected 17 YAML files, found {len(yaml_files)}: {yaml_files}"
+    assert len(KNOWN_SCENARIO_IDS) == 17
 
 
 def test_yaml_ids_match_fault_ids() -> None:
@@ -64,7 +64,7 @@ def test_yaml_required_keys_and_enums() -> None:
         assert scen.drift_class
         assert scen.fixable in ("fixable", "escalate")
         assert scen.visibility in ("dev", "heldout")
-        assert scen.vendor in ("both", "atlas", "harbor")
+        assert scen.vendor in ("both", "atlas", "harbor", "meridian")
         assert isinstance(scen.seed, int)
         assert scen.description
         assert isinstance(scen.expected, dict)
@@ -161,7 +161,7 @@ def _has_field_rename(mutation: str, mutated_reservations: list[dict[str, object
 
 
 def _has_pagination_change(mutation: str) -> bool:
-    return mutation in ("offset_to_cursor", "page_to_cursor") and is_pagination_mutated(mutation)
+    return mutation in ("offset_to_cursor", "page_to_cursor", "meridian_cursor_renamed") and is_pagination_mutated(mutation)
 
 
 def _has_pagination_bug(mutation: str) -> bool:
@@ -247,6 +247,11 @@ _EXPECTED_SIGNALS: dict[str, list[str]] = {
     "duplicate_late_records": ["duplicate_records"],
     "endpoint_removed": ["endpoint_removed"],
     "invalid_patch_trap": ["invalid_patch_trap"],
+    # Wire-level Meridian drifts: no canonical-dataset signal exists for the
+    # State->Status rename (values unchanged; detected at wire + oracle level).
+    # The cursor leaf rename changes the fetch shape (pagination_change).
+    "meridian_state_renamed": [],
+    "meridian_cursor_renamed": ["pagination_change"],
 }
 
 _ALL_SIGNAL_NAMES = [
@@ -358,6 +363,8 @@ def test_http_status_consistent() -> None:
         "duplicate_late_records": 200,
         "endpoint_removed": 404,
         "invalid_patch_trap": 200,
+        "meridian_state_renamed": 200,
+        "meridian_cursor_renamed": 200,
     }
     for scen in load_all_scenarios():
         assert scen.expected["http_status"] == expected_status[scen.id], (

@@ -641,3 +641,12 @@ def test_sync_without_active_release_is_422(client: Any) -> None:  # type: ignor
     r = client.post(f"/connectors/{c['id']}/sync", json={})
     assert r.status_code == 422
     assert "no active release" in r.text
+
+
+def test_demo_inject_fault_meridian_target(client: Any) -> None:  # type: ignore[no-untyped-def]
+    r = client.post("/demo/inject-fault", json={"target": "sim-meridian", "scenario_id": "meridian_state_renamed"})
+    assert r.status_code == 200
+    assert r.json()["target"] == "sim-meridian"
+    r2 = client.post("/demo/inject-fault", json={"target": "meridian", "scenario_id": "meridian_cursor_renamed"})
+    assert r2.status_code == 200
+    assert r2.json()["target"] == "sim-meridian"

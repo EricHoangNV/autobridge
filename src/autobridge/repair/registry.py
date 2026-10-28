@@ -1,4 +1,4 @@
-"""Repair rule registry — the 7 deterministic rules (P1.W4.3).
+"""Repair rule registry — the deterministic rules (P1.W4.3).
 
 Each rule module in :mod:`autobridge.repair.rules` exposes:
   - RULE_ID: str
@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from autobridge.repair.rules import cursor_next_path_shift as _cursor_next_path_shift
 
 # Import rule modules to register them. Each is a deterministic module with
 # precondition/patch generator, confidence and verification level.
@@ -77,6 +79,13 @@ RULE_REGISTRY: dict[str, RuleEntry] = {
         confidence=_cursor_to_offset.CONFIDENCE,
         verification_level=_cursor_to_offset.VERIFICATION_LEVEL,
         produces_patch=_cursor_to_offset.PRODUCES_PATCH,
+    ),
+    _cursor_next_path_shift.RULE_ID: RuleEntry(
+        id=_cursor_next_path_shift.RULE_ID,
+        module=_cursor_next_path_shift,
+        confidence=_cursor_next_path_shift.CONFIDENCE,
+        verification_level=_cursor_next_path_shift.VERIFICATION_LEVEL,
+        produces_patch=_cursor_next_path_shift.PRODUCES_PATCH,
     ),
     _retry_backoff.RULE_ID: RuleEntry(
         id=_retry_backoff.RULE_ID,

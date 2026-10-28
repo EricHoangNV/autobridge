@@ -842,16 +842,20 @@
             "title": "Seed"
           },
           "target": {
-            "description": "Simulator target id: sim-atlas, sim-harbor, atlas, harbor, atlaspms, harborpms",
+            "description": "Simulator target id: sim-atlas, sim-harbor, sim-meridian, atlas, harbor, meridian, atlaspms, harborpms, meridianpms",
             "enum": [
               "sim-atlas",
               "sim-harbor",
+              "sim-meridian",
               "atlas",
               "harbor",
+              "meridian",
               "atlaspms",
               "harborpms",
+              "meridianpms",
               "atlas-pms",
-              "harbor-pms"
+              "harbor-pms",
+              "meridian-pms"
             ],
             "title": "Target",
             "type": "string"

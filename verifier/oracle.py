@@ -159,6 +159,29 @@ def _spec_pagination_strategy(spec: dict[str, Any] | None) -> str | None:
     return None
 
 
+def _spec_next_path(spec: dict[str, Any] | None) -> str | None:
+    """Return the first operation pagination next_path, if present.
+
+    Generic across cursor-family strategies (``cursor``, ``body_cursor``):
+    the leaf name tells which response field the spec follows.
+    """
+    if spec is None:
+        return None
+    try:
+        ops = spec.get("operations", {})
+        for op in ops.values():
+            if not isinstance(op, dict):
+                continue
+            pag = op.get("pagination")
+            if isinstance(pag, dict):
+                nxt = pag.get("next_path")
+                if isinstance(nxt, str):
+                    return nxt
+    except Exception:
+        return None
+    return None
+
+
 def _spec_stop_when(spec: dict[str, Any] | None) -> list[str]:
     """Extract stop_when list from spec's first operation."""
     if spec is None:
@@ -341,6 +364,45 @@ def simulate_produced_records(
 
     # For status vocab: if spec doesn't map new vocab, we keep old values but they will be checked
     # For gross_to_net etc., produced is just mutated values (net) — will be caught by money check
+
+    # REQ-020 Meridian drifts (wire-level renames; canonical dataset is unchanged).
+    if scenario_id == "meridian_state_renamed":
+        # Fixed spec reads the renamed $.Status leaf; otherwise status is unmapped.
+        if _spec_has_field_path(spec, "$.Status"):
+            return {
+                "reservations": list(mutated.get("reservations", [])),
+                "folios": list(mutated.get("folios", [])),
+                "properties": list(mutated.get("properties", [])),
+            }
+        out_res = []
+        for rec in mutated.get("reservations", []):
+            produced = dict(rec)
+            produced.pop("status", None)
+            out_res.append(produced)
+        return {
+            "reservations": out_res,
+            "folios": list(mutated.get("folios", [])),
+            "properties": list(mutated.get("properties", [])),
+        }
+    if scenario_id == "meridian_cursor_renamed":
+        # Fixed spec follows the renamed NextCursor leaf; otherwise the fetch
+        # stops after the first page (null cursor) — truncated like the
+        # page_to_cursor mismatch path above.
+        nxt = _spec_next_path(spec)
+        if isinstance(nxt, str) and "nextcursor" in nxt.lower().replace("_", ""):
+            return {
+                "reservations": list(mutated.get("reservations", [])),
+                "folios": list(mutated.get("folios", [])),
+                "properties": list(mutated.get("properties", [])),
+            }
+        res = mutated.get("reservations", [])
+        fol = mutated.get("folios", [])
+        truncation = 10 if len(res) > 10 else max(1, len(res) // 2)
+        return {
+            "reservations": list(res[:truncation]),
+            "folios": list(fol[:truncation]) if fol else [],
+            "properties": list(mutated.get("properties", [])),
+        }
 
     return {
         "reservations": list(mutated.get("reservations", [])),

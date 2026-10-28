@@ -108,7 +108,7 @@ scenarios via fake transports and proves the engine never imports
 For each scenario the catalog lists the *primary* failed check. Secondary
 consequences (e.g. `no_loss` caused by a 429 truncation) are filtered so
 `failed_checks` exactly matches `expected.failed_checks` from the YAML.
-`tests/e2e/test_01_simulators_and_oracle.py` asserts this for all 15 scenarios.
+`tests/e2e/test_01_simulators_and_oracle.py` asserts this for all 17 scenarios.
 
 ## 4. Scenario catalog (14, plan §2.8)
 

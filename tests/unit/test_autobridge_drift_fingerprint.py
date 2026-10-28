@@ -436,3 +436,25 @@ def test_diff_fingerprints_changed_entities_union() -> None:
     delta = diff_fingerprints(prev, cur)
     assert delta.keys_changed and delta.types_changed
     assert delta.changed_entities == ["Reservation"]
+
+
+def test_fingerprint_pagination_shape_covers_body_cursor_fields() -> None:
+    """REQ-020 item 6: body_cursor request paths are fingerprinted for drift."""
+    from autobridge.drift.fingerprint import fingerprint_pagination_shape
+
+    spec = _spec_dict(
+        {
+            "strategy": "body_cursor",
+            "cursor_path": "Limitation.Cursor",
+            "count_path": "Limitation.Count",
+            "count_value": 100,
+            "next_path": "$.Cursor",
+            "items_path": "$.Reservations",
+            "stop_when": ["null_cursor", "empty_page"],
+        }
+    )
+    shape = fingerprint_pagination_shape(spec, {})
+    assert shape["list_reservations"]["strategy"] == "body_cursor"
+    assert shape["list_reservations"]["cursor_path"] == "Limitation.Cursor"
+    assert shape["list_reservations"]["count_path"] == "Limitation.Count"
+    assert shape["list_reservations"]["count_value"] == 100

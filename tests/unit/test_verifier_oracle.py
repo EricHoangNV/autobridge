@@ -48,6 +48,8 @@ def test_baseline_mutated_differ_for_non_baseline() -> None:
                 "page_to_cursor",
                 "cursor_repeat_token",
                 "tz_boundary_shift",
+                "meridian_state_renamed",
+                "meridian_cursor_renamed",
             )
 
 
@@ -455,3 +457,62 @@ def test_oracle_verdict_accepts_override() -> None:
     assert verdict in ("pass", "fail")
     assert 0.0 <= score <= 1.0
     assert isinstance(failed, list)
+
+
+def _meridian_style_spec(status_path: str = "$.State", next_path: str = "$.Cursor") -> dict:
+    """Minimal v2-shaped spec with Meridian-like entity + body_cursor pagination."""
+    return {
+        "spec_version": 2,
+        "connector": {"id": "m", "vendor": "Test"},
+        "source": {
+            "base_url": "https://example.com",
+            "auth": {"type": "body_fields", "credential_ref": "TEST_KEY"},
+            "timezone_source": {"kind": "static", "value": "UTC"},
+        },
+        "operations": {
+            "list_reservations": {
+                "method": "POST",
+                "path": "/reservations",
+                "pagination": {
+                    "strategy": "body_cursor",
+                    "cursor_path": "Limitation.Cursor",
+                    "count_path": "Limitation.Count",
+                    "count_value": 100,
+                    "next_path": next_path,
+                    "items_path": "$.Reservations",
+                    "stop_when": ["null_cursor", "empty_page"],
+                },
+            }
+        },
+        "entities": {
+            "Reservation": {
+                "from": "list_reservations",
+                "key": "$.reservation_id",
+                "fields": {
+                    "reservation_id": {"path": "$.Id"},
+                    "status": {"path": status_path},
+                },
+            }
+        },
+        "capabilities": {"read": ["Reservation"]},
+        "health": {"canary": {"every": "60s", "operation": "list_reservations"}},
+    }
+
+
+def test_oracle_meridian_state_renamed_old_fails_fixed_passes() -> None:
+    old_verdict, _, old_failed = oracle_verdict("meridian_state_renamed", _meridian_style_spec())
+    assert old_verdict == "fail"
+    assert {f["name"] for f in old_failed} == {"field_missing"}
+    new_verdict, score, new_failed = oracle_verdict("meridian_state_renamed", _meridian_style_spec(status_path="$.Status"))
+    assert new_verdict == "pass", new_failed
+    assert score == 1.0 and not new_failed
+
+
+def test_oracle_meridian_cursor_renamed_old_fails_fixed_passes() -> None:
+    old_verdict, _, old_failed = oracle_verdict("meridian_cursor_renamed", _meridian_style_spec())
+    assert old_verdict == "fail"
+    assert {f["name"] for f in old_failed} == {"pagination_shape"}
+    fixed = _meridian_style_spec(next_path="$.NextCursor")
+    new_verdict, score, new_failed = oracle_verdict("meridian_cursor_renamed", fixed)
+    assert new_verdict == "pass", new_failed
+    assert score == 1.0 and not new_failed

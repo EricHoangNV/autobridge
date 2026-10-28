@@ -107,7 +107,7 @@ autobridge/
 ├── schemas/         reservation / folio-charge / connector-spec.v1 / runtime-target / discovery-result.v0
 ├── src/autobridge/  spec/ runtime/ discovery/ drift/ repair/ llm/ evidence/ control/ engine/ bench/
 ├── verifier/        own pyproject; oracle, canonical checks, hidden_cases/{dev,heldout}
-├── simulators/      own pyproject; common/ atlaspms/ harborpms/ docs/ scenarios/ (15 YAMLs)
+├── simulators/      own pyproject; common/ atlaspms/ harborpms/ docs/ scenarios/ (17 YAMLs)
 ├── generated/       connectors/<id>/<release>/spec.yaml + build-report.json
 ├── ui/              Next.js 15 + TypeScript + Tailwind; lib/api (openapi-typescript client)
 ├── experiments/     benchmark_runs/*.jsonl  scorecard.md

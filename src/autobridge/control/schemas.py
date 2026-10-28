@@ -325,8 +325,8 @@ class JobOut(BaseModel):
 
 
 class InjectFaultRequest(BaseModel):
-    target: Literal["sim-atlas", "sim-harbor", "atlas", "harbor", "atlaspms", "harborpms", "atlas-pms", "harbor-pms"] = Field(
-        description="Simulator target id: sim-atlas, sim-harbor, atlas, harbor, atlaspms, harborpms"
+    target: Literal["sim-atlas", "sim-harbor", "sim-meridian", "atlas", "harbor", "meridian", "atlaspms", "harborpms", "meridianpms", "atlas-pms", "harbor-pms", "meridian-pms"] = Field(
+        description="Simulator target id: sim-atlas, sim-harbor, sim-meridian, atlas, harbor, meridian, atlaspms, harborpms, meridianpms"
     )
     scenario_id: str = Field(description="Scenario id to inject (e.g. rename_guest_id, baseline)")
     seed: StrictInt | None = Field(default=None, description="Optional seed override")

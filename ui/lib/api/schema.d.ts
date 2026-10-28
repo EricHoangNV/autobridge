@@ -1073,10 +1073,10 @@ export interface components {
             seed?: number | null;
             /**
              * Target
-             * @description Simulator target id: sim-atlas, sim-harbor, atlas, harbor, atlaspms, harborpms
+             * @description Simulator target id: sim-atlas, sim-harbor, sim-meridian, atlas, harbor, meridian, atlaspms, harborpms, meridianpms
              * @enum {string}
              */
-            target: "sim-atlas" | "sim-harbor" | "atlas" | "harbor" | "atlaspms" | "harborpms" | "atlas-pms" | "harbor-pms";
+            target: "sim-atlas" | "sim-harbor" | "sim-meridian" | "atlas" | "harbor" | "meridian" | "atlaspms" | "harborpms" | "meridianpms" | "atlas-pms" | "harbor-pms" | "meridian-pms";
         } & {
             [key: string]: unknown;
         };

@@ -1,0 +1,14 @@
+id: meridian_state_renamed
+drift_class: FIELD_RENAME
+fixable: fixable
+visibility: dev
+vendor: meridian
+seed: 42
+description: Meridian reservation State renamed to Status on the wire; the spec's $.State extraction path breaks.
+expected:
+  fails: true
+  http_status: 200
+  pagination_mode: body_cursor
+  failed_checks: [field_missing]
+  field: status
+  new_field: Status

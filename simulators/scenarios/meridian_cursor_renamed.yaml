@@ -1,0 +1,14 @@
+id: meridian_cursor_renamed
+drift_class: PAGINATION_CHANGE
+fixable: fixable
+visibility: dev
+vendor: meridian
+seed: 42
+description: Meridian Limitation cursor contract change — the response cursor leaf Cursor renamed to NextCursor, so the spec's $.Cursor next path reads null and the fetch stops after the first page.
+expected:
+  fails: true
+  http_status: 200
+  pagination_mode: body_cursor
+  failed_checks: [pagination_shape]
+  field: Cursor
+  new_field: NextCursor

@@ -272,3 +272,36 @@ def test_filters_across_operations() -> None:
          "Limitation": {"Count": 10}},
     ).json()
     assert cust["Customers"] == [] and cust["Cursor"] is None
+
+
+def test_state_renamed_wire_serves_status_not_state() -> None:
+    """REQ-020 item 6: meridian_state_renamed renames the State leaf to Status."""
+    from fastapi.testclient import TestClient
+
+    from simulators.common.state import set_scenario
+
+    set_scenario("meridian_state_renamed", 42)
+    client = TestClient(meridian_app)
+    payload = _post(client, RES_PATH, {"Limitation": {"Count": 3}}).json()
+    assert len(payload["Reservations"]) == 3
+    for res in payload["Reservations"]:
+        assert "Status" in res, res.keys()
+        assert "State" not in res, res.keys()
+    # Cursor contract itself is unchanged by this scenario.
+    assert "Cursor" in payload
+
+
+def test_cursor_renamed_envelope_uses_next_cursor() -> None:
+    """REQ-020 item 6: meridian_cursor_renamed renames the response Cursor leaf."""
+    from fastapi.testclient import TestClient
+
+    from simulators.common.state import set_scenario
+
+    set_scenario("meridian_cursor_renamed", 42)
+    client = TestClient(meridian_app)
+    payload = _post(client, RES_PATH, {"Limitation": {"Count": 5}}).json()
+    assert "NextCursor" in payload, payload.keys()
+    assert "Cursor" not in payload, payload.keys()
+    # Pagination still walks: NextCursor value feeds the next request Cursor.
+    nxt = payload["NextCursor"]
+    assert nxt == payload["Reservations"][-1]["Id"]

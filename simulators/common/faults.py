@@ -12,7 +12,8 @@ Scenario list (plan §2.8 + REQ-019 page_to_cursor):
   baseline, rename_guest_id, offset_to_cursor, page_to_cursor,
   cursor_repeat_token, rate_limit_429, transient_503, token_expired,
   token_revoked, status_vocab_change, gross_to_net, tz_boundary_shift,
-  duplicate_late_records, endpoint_removed, invalid_patch_trap
+  duplicate_late_records, endpoint_removed, invalid_patch_trap,
+  meridian_state_renamed, meridian_cursor_renamed
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ SCENARIO_CATALOG: list[dict[str, str]] = [
     {"id": "endpoint_removed", "drift_class": "CAPABILITY_REMOVED", "fixable": "escalate", "visibility": "heldout"},
     {"id": "token_revoked", "drift_class": "AUTH_REVOKED", "fixable": "escalate", "visibility": "heldout"},
     {"id": "invalid_patch_trap", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "escalate", "visibility": "heldout"},
+  {"id": "meridian_state_renamed", "drift_class": "FIELD_RENAME", "fixable": "fixable", "visibility": "dev"},
+  {"id": "meridian_cursor_renamed", "drift_class": "PAGINATION_CHANGE", "fixable": "fixable", "visibility": "dev"},
 ]
 
 KNOWN_SCENARIO_IDS: set[str] = {s["id"] for s in SCENARIO_CATALOG}
@@ -192,16 +195,27 @@ def apply_dataset_mutations(
 
 
 def is_pagination_mutated(scenario_id: str) -> bool:
-    """True if scenario changes pagination shape (offset/page ↔ cursor)."""
-    return scenario_id in ("offset_to_cursor", "page_to_cursor", "cursor_repeat_token")
+    """True if scenario changes pagination shape (offset/page ↔ cursor).
+
+    Includes Meridian's Limitation cursor contract change (body_cursor leaf
+    rename): the request strategy is unchanged but the fetch shape breaks.
+    """
+    return scenario_id in (
+        "offset_to_cursor",
+        "page_to_cursor",
+        "cursor_repeat_token",
+        "meridian_cursor_renamed",
+    )
 
 
 def pagination_mode_for_scenario(scenario_id: str, default: str = "offset") -> str:
-    """Return pagination mode for scenario: 'offset', 'page' or 'cursor'."""
+    """Return pagination mode for scenario: 'offset', 'page', 'cursor' or 'body_cursor'."""
     if scenario_id in ("offset_to_cursor", "page_to_cursor"):
         return "cursor"
     if scenario_id == "cursor_repeat_token":
         return "cursor"
+    if scenario_id in ("meridian_state_renamed", "meridian_cursor_renamed"):
+        return "body_cursor"
     return default
 
 

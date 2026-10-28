@@ -221,6 +221,16 @@ def _updated_interval(body: dict[str, Any]) -> tuple[str, str] | None:
     return str(raw["StartUtc"]), str(raw["EndUtc"])
 
 
+def _cursor_leaf(scenario_id: str) -> str:
+    """Response cursor leaf name (Limitation cursor contract, REQ-020 item 6).
+
+    Under ``meridian_cursor_renamed`` the vendor renames the response
+    ``Cursor`` leaf to ``NextCursor``; specs reading ``$.Cursor`` then stop
+    after the first page.
+    """
+    return "NextCursor" if scenario_id == "meridian_cursor_renamed" else "Cursor"
+
+
 def _paginate_by_cursor(items: list[dict[str, Any]], count: int, cursor: str | None) -> tuple[list[dict[str, Any]], str | None]:
     """Slice ``items`` (Id ascending) after ``cursor``; Cursor is the last id.
 
@@ -271,8 +281,13 @@ def account_id_for(reservation_id: str) -> str:
     return f"ACC-{reservation_id}"
 
 
-def to_wire_reservation(rec: dict[str, Any]) -> dict[str, Any]:
-    """Internal reservation -> getAll reservation (no name, no money)."""
+def to_wire_reservation(rec: dict[str, Any], scenario_id: str = "baseline") -> dict[str, Any]:
+    """Internal reservation -> getAll reservation (no name, no money).
+
+    Under ``meridian_state_renamed`` the vendor renames the ``State`` leaf
+    to ``Status`` (REQ-020 item 6: a renamed field repaired through the
+    ladder).
+    """
     arrival = datetime.date.fromisoformat(str(rec.get("arrival_date")))
     departure = datetime.date.fromisoformat(str(rec.get("departure_date")))
     updated = datetime.datetime.fromisoformat(str(rec.get("updated_at")))
@@ -281,7 +296,7 @@ def to_wire_reservation(rec: dict[str, Any]) -> dict[str, Any]:
     state = _STATE_MAP.get(str(rec.get("status")), str(rec.get("status")))
     actual_start = _utc_z(datetime.datetime(arrival.year, arrival.month, arrival.day, 16, 0)) if state in ("Started", "Processed") else None
     actual_end = _utc_z(datetime.datetime(departure.year, departure.month, departure.day, 10, 0)) if state == "Processed" else None
-    return {
+    wire = {
         "Id": rec.get("reservation_id"),
         "ServiceId": service_id_for(str(rec.get("property_id"))),
         "AccountId": account_id_for(str(rec.get("reservation_id"))),
@@ -298,6 +313,9 @@ def to_wire_reservation(rec: dict[str, Any]) -> dict[str, Any]:
         "RateId": f"RATE-{rec.get('property_id')}-STD",
         "AssignedResourceId": f"ROOM-{rec.get('property_id')}-{_number_for(str(rec.get('reservation_id')))[:3]}",
     }
+    if scenario_id == "meridian_state_renamed" and "State" in wire:
+        wire["Status"] = wire.pop("State")
+    return wire
 
 
 def to_wire_customer(account_id: str, guest_name: str | None, updated_utc: str) -> dict[str, Any]:
@@ -388,7 +406,7 @@ def reservations_get_all(body: dict[str, Any]) -> Response:
     interval = _updated_interval(body)
 
     dataset = get_dataset_for_current_state()
-    wires = [to_wire_reservation(r) for r in dataset.get("reservations", [])]
+    wires = [to_wire_reservation(r, scenario_id) for r in dataset.get("reservations", [])]
     if enterprise_ids is not None:
         wanted = set(enterprise_ids)
         wires = [w for w in wires if str(w["ServiceId"]).removeprefix("SVC-") in wanted]
@@ -397,12 +415,12 @@ def reservations_get_all(body: dict[str, Any]) -> Response:
     if reservation_ids is not None:
         wires = [w for w in wires if str(w["Id"]) in set(reservation_ids)]
     if states is not None:
-        wires = [w for w in wires if str(w["State"]) in set(states)]
+        wires = [w for w in wires if str(w.get("State", w.get("Status"))) in set(states)]
     if interval is not None:
         start, end = interval
         wires = [w for w in wires if start <= str(w["UpdatedUtc"]) <= end]
     page, out_cursor = _paginate_by_cursor(wires, count, cursor)
-    return _json_response({"Reservations": page, "Cursor": out_cursor})
+    return _json_response({"Reservations": page, _cursor_leaf(scenario_id): out_cursor})
 
 
 @app.post(f"{API_PREFIX}/customers/getAll/{VERSION}")
@@ -428,7 +446,7 @@ def customers_get_all(body: dict[str, Any]) -> Response:
         start, end = interval
         wires = [w for w in wires if start <= str(w["UpdatedUtc"]) <= end]
     page, out_cursor = _paginate_by_cursor(wires, count, cursor)
-    return _json_response({"Customers": page, "Cursor": out_cursor})
+    return _json_response({"Customers": page, _cursor_leaf(scenario_id): out_cursor})
 
 
 @app.post(f"{API_PREFIX}/orderItems/getAll/{VERSION}")
@@ -455,7 +473,7 @@ def order_items_get_all(body: dict[str, Any]) -> Response:
         start, end = interval
         wires = [w for w in wires if start <= str(w["PostedUtc"]) <= end]
     page, out_cursor = _paginate_by_cursor(wires, count, cursor)
-    return _json_response({"OrderItems": page, "Cursor": out_cursor})
+    return _json_response({"OrderItems": page, _cursor_leaf(scenario_id): out_cursor})
 
 
 @app.post(f"{API_PREFIX}/configuration/get/{VERSION}")
