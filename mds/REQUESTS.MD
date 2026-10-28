@@ -7,7 +7,7 @@ remaining review FAIL item. Constraint for all of them: someone who downloads th
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
 ### REQ-018 — UI in compose cannot load anything: browser calls `http://control:8000` (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 08:44)
 Opening http://localhost:8107/connectors after `make up` shows "Failed to load connectors: Failed to fetch".
 Cause: `ui/Dockerfile` bakes `NEXT_PUBLIC_API_URL=http://control:8000` into the browser bundle (confirmed: the string
 is in `.next/static/chunks/app/connectors/page-*.js`), and `ui/lib/api/hooks.ts` `getBaseUrl()` and
