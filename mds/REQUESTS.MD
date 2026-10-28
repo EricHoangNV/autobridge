@@ -300,6 +300,18 @@ by local-up/compose where they need it), validate `target` against it at runtime
 (the OpenAPI can list the ids from the file at export), and keep one registry (the reset-targets fix just made it
 one; keep it one). Then `make e2e` against the stack fully green.
 
+**Owner check (2026-10-29, on 3e566c85): the macOS fork crash is fixed (3-test repro and full unit suite: 0 crash
+reports, 2730 passed in file order).** One real race left, flaky on the owner's Mac:
+`tests/unit/test_autobridge_edge_agent.py::test_link_postings_flow_to_sink` fails **6 of 10 runs alone** with
+`postings never PA'd: {... 'postings_sent': 6, 'pa_ok': 5, 'duplicates_seen_by_host': 1, 'resends': 0 ...}`.
+Cause (simulators/fias_pabx/pabx.py ~651–662 and `_apply_pa` ~907): the PABX sends a PS and waits for its ACK,
+and only *after* that registers the P# in `_unacked`. The host's PA can arrive while the PABX is still inside
+`_send_record_and_wait_ack`; `_apply_pa` then finds no `_unacked` entry, counts it as a duplicate and drops it,
+so that posting is never confirmed and the test times out. In a demo this is a charge that looks lost. Fix: register
+the P# in `_unacked` (under the lock) before the frame goes out, and drop it again only if the send itself fails;
+same check for any other record that expects an answer (WR/KR → KA etc.). Add a test that forces the order (PA
+delivered before the ACK-wait returns) instead of relying on timing, and check the flakiness: 20 runs alone green.
+
 ### REQ-023 — Demo plan v2: main script plus a fault-scenario catalogue (2026-10-28)
 Status: OPEN
 Owner: the demo plan must include the fault scenarios from REQ-019 … REQ-022. Rule: a step enters `docs/demo.md` and
