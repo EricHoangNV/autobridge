@@ -3,7 +3,7 @@
 ## Open Requests (read this section only)
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 16:30 UTC)
 Priority: do this first. `make bench-heldout` on Nov 3 has the same bug.
 Found by a clean-clone check of f516bc0. With the stack up (`make up`), `make bench` exits 0, but every number for
 both arms is zero: verified completion 0.0, 0 tool calls, 0 ms elapsed, 0 frontier tokens, "10 wins, 20 losses".
