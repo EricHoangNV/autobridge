@@ -1225,6 +1225,7 @@ def run_frontier_climb(
     vendor: str | None = None,
     l2_threshold: float = L2_CONFIDENCE_THRESHOLD,
     scenario: str | None = None,
+    validate_against: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then stop (REQ-021).
 
@@ -1238,11 +1239,19 @@ def run_frontier_climb(
     caller validate the proposal (verifier verdict or scenario trap check)
     and escalate. No patch is ever applied here.
 
+    A proposal that does not apply, does not parse, or fails schema
+    validation is a normal outcome, not an error: when *validate_against* is
+    given, the proposal is apply-checked (mechanics only, never semantics —
+    a plausible-but-wrong patch still passes here and is for the verifier or
+    trap check) and a rejection is recorded on the rung with the proposal,
+    its tokens and the reason; the exception never escapes. Without a spec
+    to check against, parsing alone decides and the caller validates.
+
     *provider* ``None`` (``FRONTIER_MODE=off``) records an explicit skip at
     L2/L3 instead of calling. A :class:`ReplayMissing` (replay mode without
-    a recording for the prompt hash) is also recorded as an explicit skip
-    naming the hash and the ``make record-frontier SCENARIO=...`` capture
-    command — never silent, never invented. Every model call goes through
+    a recording for the prompt hash) is recorded as an explicit skip naming
+    the hash and the ``make record-frontier SCENARIO=...`` capture command —
+    never silent, never invented. Every model call goes through
     :class:`BudgetedProvider`, so ``BudgetExhausted`` propagates and
     ``ModelCall`` rows land when *session* + *run_id* are given (linked to
     the rung by tier, see :func:`rung_ledger`).
@@ -1499,13 +1508,24 @@ def run_frontier_climb(
             proposal = [dict(op) for op in parsed]
             l3_entry["proposal_ops"] = len(proposal)
         elif l3_text.strip():
-            # Non-empty but unparseable: log a redacted preview so a silent
-            # empty/odd response can be diagnosed (prompts carry no secrets;
-            # truncate defense-in-depth).
             l3_entry["raw_preview"] = l3_text.strip()[:300]
     except Exception:
         proposal = None
         if l3_text.strip():
+            # Malformed JSON is a normal outcome: log a truncated preview so
+            # a silent empty/odd response can be diagnosed (prompts carry no
+            # secrets; truncate defense-in-depth).
+            l3_entry["raw_preview"] = l3_text.strip()[:300]
+    if proposal is not None and validate_against is not None:
+        try:
+            from autobridge.spec.patch import apply_patch as _apply_patch  # noqa: PLC0415
+
+            _apply_patch(validate_against, proposal)
+            l3_entry["proposal_validated"] = True
+        except Exception as exc:
+            proposal = None
+            l3_entry["action"] = "proposal_rejected"
+            l3_entry["reason"] = f"L3 proposal rejected: patch does not apply ({exc})"
             l3_entry["raw_preview"] = l3_text.strip()[:300]
     replay_captured_at = str(getattr(provider, "last_captured_at", "") or "")
     return {

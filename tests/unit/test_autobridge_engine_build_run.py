@@ -393,3 +393,31 @@ def test_run_build_handler_gate_pass_persists_release(tmp_path: Path, monkeypatc
     assert capture.get("scenario_id") == "baseline"
     assert capture.get("verifier_url") == "http://verifier:8000"
     engine.dispose()
+
+
+def test_run_build_handler_refusal_records_no_release(tmp_path: Path) -> None:
+    """A refused build (v1 vocabulary vs POST-only docs) never crashes the job.
+
+    The BuildRun records success False with a named reason; no release is
+    persisted and the handler returns normally.
+    """
+    from autobridge.control.models import BuildRun as _BR
+
+    SessionLocal, engine = _sessions(tmp_path)
+    cid = _connector_id(SessionLocal)
+    meridian = (REPO_ROOT / "simulators" / "docs" / "meridian-openapi.yaml").read_text()
+    runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
+    runner.submit_build(
+        cid,
+        inputs={"docs_text": meridian, "docs_source": "meridian.yaml", "spec_vocabulary": "v1"},
+    )
+    runner.run_until_empty()
+    with SessionLocal() as s:
+        br = s.query(_BR).first()
+        assert br is not None
+        assert br.state == "succeeded"
+        assert br.result["success"] is False
+        assert br.result.get("release_id") is None
+        assert s.query(ConnectorRelease).count() == 0
+        assert any(t.get("stage") == "vocabulary_guard" for t in br.ladder_trace)
+    engine.dispose()

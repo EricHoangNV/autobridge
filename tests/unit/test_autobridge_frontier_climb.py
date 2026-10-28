@@ -300,3 +300,78 @@ def test_tapping_provider_records_shape() -> None:
     assert entry["model"] == "muse-spark-1.3"
     assert (entry["input_tokens"], entry["output_tokens"]) == (10, 20)
     assert entry["captured_at"]
+
+
+# ---------------------------------------------------------------------------
+# Recorded rejection: proposals that do not apply/parse/validate (owner check)
+# ---------------------------------------------------------------------------
+
+
+def _harbor_ref() -> dict[str, Any]:
+    import yaml as _yaml
+
+    return _yaml.safe_load((REPO_ROOT / "generated" / "connectors" / "harborpms" / "reference" / "spec.yaml").read_text(encoding="utf-8"))
+
+
+def _climb_with_texts(l3_text: str, validate_against: Any = "harbor") -> dict[str, Any]:
+    fake = FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(4, 4)
+            ),
+            "frontier": Completion(text=l3_text, usage=Usage(10, 10)),
+        }
+    )
+    return run_frontier_climb(
+        spec={"spec_version": 1, "connector": {"id": "t", "vendor": "harbor"}},
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=fake,
+        budget=Budget(),
+        knowledge_cache=KnowledgeCache(),
+        fingerprint_delta={"semantic": "gross_to_net"},
+        vendor="harbor",
+        scenario="gross_to_net",
+        validate_against=_harbor_ref() if validate_against == "harbor" else validate_against,
+    )
+
+
+def test_l3_non_applying_patch_is_recorded_rejection() -> None:
+    climb = _climb_with_texts('[{"op": "replace", "path": "/entities/Reservation/fields/nope/path", "value": "x"}]')
+    assert climb["proposal"] is None
+    assert climb["resolved_rung"] == 3
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "proposal_rejected"
+    assert "does not apply" in l3["reason"]
+    assert l3["raw_preview"]
+    assert climb["usage"]["frontier_tokens"] == 20
+
+
+def test_l3_malformed_json_is_recorded_not_raised() -> None:
+    climb = _climb_with_texts("not json{{{")
+    assert climb["proposal"] is None
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "frontier_generate"
+    assert l3["raw_preview"] == "not json{{{"
+    # The run continues to the caller for escalation instead of crashing.
+    assert [a["rung"] for a in climb["attempts"]] == [0, 1, 2, 3]
+
+
+def test_l3_out_of_spec_path_rejected() -> None:
+    climb = _climb_with_texts('[{"op": "replace", "path": "/does/not/exist", "value": 1}]')
+    assert climb["proposal"] is None
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "proposal_rejected"
+
+
+def test_l3_valid_proposal_passes_validation() -> None:
+    climb = _climb_with_texts(
+        '[{"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}]'
+    )
+    assert climb["proposal"] == [
+        {"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}
+    ]
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "frontier_generate"
+    assert l3.get("proposal_validated") is True

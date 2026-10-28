@@ -641,6 +641,8 @@ def _assert_semantic_climb(scenario: str, evidence_ids: list[str]) -> None:
             knowledge_cache=KnowledgeCache(),
             fingerprint_delta={"semantic": scenario},
             vendor="harbor",
+            scenario=scenario,
+            validate_against=_load_reference_spec("harborpms"),
         )
         session.commit()
         levels = [a["rung"] for a in climb["attempts"]]

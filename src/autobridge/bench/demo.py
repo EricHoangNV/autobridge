@@ -749,6 +749,7 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         fingerprint_delta={"semantic": "gross_to_net"},
         vendor="harbor",
         scenario="gross_to_net",
+        validate_against=_load_reference_spec("harborpms"),
     )
     attempts = list(climb["attempts"])
     usage = dict(climb["usage"])
@@ -773,7 +774,14 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         harbor_spec = _load_reference_spec("harborpms")
         from autobridge.spec.patch import apply_patch  # noqa: PLC0415
 
-        patched = apply_patch(harbor_spec, proposal) if proposal else harbor_spec
+        try:
+            patched = apply_patch(harbor_spec, proposal) if proposal else harbor_spec
+        except Exception as exc:
+            # A proposal that does not apply is a recorded rejection, never
+            # a crash: the ladder already checked mechanics, this guards the
+            # verify path itself.
+            checked_by = f"L3 proposal does not apply ({exc}); recorded, never released"
+            proposal = []
         verifier_url = (os.environ.get("VERIFIER_URL", "") or "").strip() or base_url.replace("8101", "8104")
         try:
             outcome = verify_spec(patched, "invalid_patch_trap", verifier_url)
