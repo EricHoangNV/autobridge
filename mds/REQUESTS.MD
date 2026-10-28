@@ -287,6 +287,12 @@ same FIAS docs page bootstraps a working connector, with no FIAS-specific branch
 change → repair → postings flow again, with REQ-021's per-rung table and model usage), plus a restart-without-loss
 moment. Update docs/architecture.md and docs/safety-model.md (edge-net boundary, outbound-only agent, delivery
 guarantees), README vendor table, `make up` / smoke / local mode (REQ-017; the agent and PABX run as local processes).
+**Simulators index** (owner, 2026-10-28; built here because REQ-022 lands last): one UI page, linked from the "System
+status" link in the top bar, listing every simulator: Atlas, Harbor, LegacyStay, Meridian (REQ-020) and FIAS PABX.
+Per vendor: name and API style (e.g. "Cloudbeds-style REST", "Mews-style POST/JSON", "FIAS over TCP"), its
+`/developers` docs link, public port, live up/down from its `/readyz` (fetched server-side through the UI's `/api`
+route, never from the browser to the simulator directly), the active fault scenario if any, and which connectors use
+it. Generated from one registry (no hand-kept list in two places), works in local mode, covered by a UI test.
 
 **F. Gates.** Unit and e2e tests for every item above, `make test`, `make up && make smoke && make e2e && make demo`
 green; grep proves no EdgePOS remnants and no private names. Split into claimable sub-steps in the build note
