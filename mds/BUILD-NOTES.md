@@ -1139,3 +1139,33 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
   96.10%, ui 150 pass); `make lint` + `make typecheck` + `make ui-typecheck` green. Existing Meridian
   before/after e2e untouched (explicit pins; default path unchanged).
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-021 sub-step D — Rung ledger + demo per-run table (2026-10-28)
+- **Did:** (1) `RepairRun.ladder_trace` column (migration 0006; nullable add, reads use `or []`) persisted
+  by the controller — builds already stored theirs, so both run kinds now record each rung tried.
+  (2) `rung_ledger(trace, calls)` + `ledger_totals` in `repair/ladder.py`: one entry per leveled trace
+  entry (rung/action/one-line reason); each `ModelCall` attaches by tier (small→L2, frontier→L3 —
+  the only tiers each rung uses; unknown tiers fall back to the last attempt so nothing drops silently)
+  as tier/purpose/tokens/Decimal cost. (3) `GET /repairs/{id}/ledger` (attempts + totals + resolved
+  rung = `ladder_level_reached`); `RepairRunOut` gains `ladder_trace` (list/detail outs in `drift.py`
+  + `runs.py`). (4) UI `RungLedger` section on the repair page (attempts, reasons, per-call table,
+  totals line; loading/empty/error states). (5) `make demo` prints the per-run row
+  (`scenario | resolved rung | calls | small/frontier | why escalated`) inline per step plus a final
+  summary table; steps record `rung_attempts`/`resolved_rung` only where the code climbs (step3 dynamic
+  L0/L1 on hit/miss, step4 the performed L4 escalation, others empty — no fabricated climbs).
+- **Not in scope (follow-ups):** the repair job path still never wires an LLM provider/budget, so L2/L3
+  model calls cannot happen on live repairs yet — the ledger handles them (unit-covered via in-process
+  runs with fakes), but enabling them in `repair_job_handler` belongs to item 5/matrix work. Prompt and
+  response bodies stay out of the ledger (counts/labels only, cost as Decimal string).
+- **Files:** `control/models.py`, `alembic/versions/0006_repair_ladder_trace.py`,
+  `repair/controller.py`, `repair/ladder.py`, `control/schemas.py` (`Rung*Out`),
+  `control/routes/drift.py` (ledger endpoint + trace outs), `control/routes/runs.py`,
+  `bench/demo.py` (row/summary helpers + step evidence), `ui/components/RungLedger.*`,
+  `ui/app/repairs/[id]/page.tsx`, OpenAPI + UI types regenerated,
+  `tests/unit/test_autobridge_rung_ledger.py` (8 tests).
+- **Gotchas:** another heredoc-joined line in `drift.py` (same failure mode as sub-step C — check the
+  diff hunk after every `>>` append); `ConnectorRelease` immutability forced final-value fixtures;
+  handler sessions need explicit `commit()` in tests (`JobRunner` normally does it).
+- **Tests:** `make test` all green (autobridge 2156 pass / 91.44%, verifier 99 / 93.62%, simulators 294 /
+  96.10%, ui 153 pass); `make lint` + `make typecheck` + `make ui-typecheck` green.
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).

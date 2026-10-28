@@ -2542,3 +2542,13 @@ success label; demo step evidence carries the vocabulary.
 typecheck, ui-typecheck green.
 **Next:** REQ-021 sub-steps D (rung ledger), E (matrix e2e), F (capabilities/knowledge), G (replay).
 Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-021 sub-step D merged (sbx1)
+**Rung ledger:** RepairRun.ladder_trace persisted (migration 0006); rung_ledger() links ModelCalls by
+tier; GET /repairs/{id}/ledger; UI RungLedger section; demo per-run table (inline rows + summary).
+Gaps noted: live repairs still never reach L2/L3 (no provider wired in repair_job_handler) — ledger
+handles them, enabling is item 5/matrix work.
+**Gates:** `make test` green (autobridge 2156 / 91.44%, verifier 99, simulators 294, ui 153); lint,
+typecheck, ui-typecheck green.
+**Next:** REQ-021 sub-steps E (matrix e2e), F (capabilities/knowledge), G (replay).
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).
