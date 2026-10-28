@@ -367,6 +367,13 @@ green; grep proves no EdgePOS remnants and no private names. Split into claimabl
    This item is independent of sub-step D; do it next.
 
 
+**Owner check (2026-10-29, on 2df1bd33): e2e matrix test is stale since sub-step A.** Against the live local stack,
+`tests/e2e/test_model_usage_matrix.py::test_matrix_live_reset_repeatability` fails (19 of 20 pass): it pins the
+`/demo/reset` targets to `[sim-atlas, sim-harbor, sim-legacystay, sim-meridian]`, but reset now also returns
+`sim-fias-pabx` and `fias-pabx:fias` (added in sub-step A). Derive the expected list from the same registry the reset
+uses instead of a hand-kept list, and run `make e2e` against the stack (local mode is enough) before every REQ-022
+merge from now on: unit-green alone missed this.
+
 ### REQ-023 — Demo plan v2: main script plus a fault-scenario catalogue (2026-10-28)
 Status: OPEN
 Owner: the demo plan must include the fault scenarios from REQ-019 … REQ-022. Rule: a step enters `docs/demo.md` and
