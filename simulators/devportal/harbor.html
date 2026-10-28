@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HarborPMS Wiki · API Documentation</title>
+<link rel="stylesheet" href="/developers/assets/banner.css">
+<style>
+  :root { --ink: #172b4d; --ink-2: #5e6c84; --line: #dfe1e6; --bg: #fff; --side: #f4f5f7; --brand: #1d3b5c; --link: #0052cc; --warn-bg: #fffae6; --warn-line: #ffab00; --info-bg: #deebff; --info-line: #0065ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .bar { height: 48px; background: var(--brand); color: #fff; display: flex; align-items: center; gap: 18px; padding: 0 16px; }
+  .bar .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .bar .brand svg { width: 22px; height: 22px; }
+  .bar span.menu { opacity: 0.85; font-size: 13px; }
+  .bar .search { margin-left: auto; background: rgba(255,255,255,0.15); border-radius: 3px; padding: 4px 10px; font-size: 13px; width: 220px; color: rgba(255,255,255,0.75); }
+  .shell { display: grid; grid-template-columns: 260px minmax(0, 1fr) 220px; min-height: calc(100vh - 48px); }
+  .tree { background: var(--side); border-right: 1px solid var(--line); padding: 16px 12px; font-size: 13px; }
+  .tree .space { font-weight: 700; margin: 0 6px 12px; display: flex; align-items: center; gap: 8px; }
+  .tree .space i { width: 24px; height: 24px; border-radius: 4px; background: var(--brand); display: inline-block; }
+  .tree ul { list-style: none; margin: 0; padding-left: 12px; }
+  .tree li { padding: 3px 6px; border-radius: 3px; color: var(--ink); }
+  .tree li.on { background: #ebecf0; font-weight: 600; }
+  .tree li.dim { color: var(--ink-2); }
+  article { padding: 24px 48px 96px; max-width: 860px; }
+  .crumbs { font-size: 13px; color: var(--ink-2); margin-bottom: 12px; }
+  .meta { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); margin: 4px 0 24px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+  .avatar { width: 24px; height: 24px; border-radius: 50%; background: #8f7ee7; color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+  .stale { background: var(--warn-bg); border: 1px solid #ffe380; color: #7a5300; padding: 1px 8px; border-radius: 3px; font-size: 12px; }
+  #doc h1 { font-size: 28px; font-weight: 600; line-height: 1.25; margin: 0 0 4px; }
+  #doc h2 { font-size: 20px; font-weight: 600; margin: 32px 0 8px; }
+  #doc h3 { font-size: 16px; font-weight: 600; margin: 24px 0 6px; }
+  #doc h3 code { font-size: 15px; }
+  #doc hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+  #doc code { font-family: SFMono-Medium, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; background: #f4f5f7; padding: 1px 4px; border-radius: 3px; }
+  #doc pre.code { background: #f4f5f7; border: 1px solid var(--line); border-radius: 3px; padding: 12px 14px; overflow: auto; line-height: 1.5; position: relative; }
+  #doc pre.code code { background: none; padding: 0; }
+  #doc pre.code::before { content: attr(data-lang); position: absolute; top: 4px; right: 8px; font-size: 11px; color: var(--ink-2); text-transform: uppercase; }
+  #doc blockquote { margin: 16px 0; padding: 10px 14px 10px 40px; background: var(--info-bg); border-left: 3px solid var(--info-line); border-radius: 3px; position: relative; }
+  #doc blockquote::before { content: "i"; position: absolute; left: 12px; top: 11px; width: 18px; height: 18px; border-radius: 50%; background: var(--info-line); color: #fff; font: 700 12px/18px Georgia, serif; text-align: center; }
+  #doc blockquote.warn { background: var(--warn-bg); border-left-color: var(--warn-line); }
+  #doc blockquote.warn::before { content: "!"; background: var(--warn-line); font-family: inherit; }
+  #doc blockquote p { margin: 0; }
+  #doc ul { padding-left: 22px; }
+  .toc { padding: 24px 16px; font-size: 13px; border-left: 1px solid var(--line); }
+  .toc .h { font-weight: 600; color: var(--ink-2); margin-bottom: 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .toc a { display: block; padding: 2px 0; color: var(--ink-2); }
+  .toc .l3 { padding-left: 12px; }
+  .toc-wrap { position: sticky; top: 16px; }
+  .comments { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
+  .comment { display: flex; gap: 10px; margin: 12px 0; }
+  .comment .avatar { background: #36b37e; flex: none; }
+</style>
+</head>
+<body>
+<div class="sim-banner">Simulated vendor documentation for the AutoBridge demo · rendered live from <a href="/docs/harbor.md">harbor.md</a></div>
+<div class="bar">
+  <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v14M7 6h10M4 12c0 5 4 8 8 8s8-3 8-8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>HarborPMS Wiki</div>
+  <span class="menu">Spaces</span><span class="menu">People</span><span class="menu">Create</span>
+  <span class="search">Search</span>
+</div>
+<div class="shell">
+  <nav class="tree" aria-label="Page tree">
+    <div class="space"><i></i>Integrations</div>
+    <ul>
+      <li class="dim">Getting started (old)</li>
+      <li>Partner onboarding</li>
+      <li class="on">API Documentation</li>
+      <li><ul><li class="dim">v1 narrative guide (archived)</li><li class="dim">Folio export CSV</li></ul></li>
+      <li class="dim">Webhooks (draft)</li>
+      <li class="dim">Meeting notes 2023-04-11</li>
+    </ul>
+  </nav>
+  <article>
+    <div class="crumbs">Integrations / Partner documentation / API Documentation</div>
+    <div id="title"></div>
+    <div class="meta"><span class="avatar">MK</span>Last edited by Marta K. · 2 years ago · <span class="stale">Page may be out of date</span></div>
+    <div id="doc"></div>
+    <div class="comments">
+      <strong>2 comments</strong>
+      <div class="comment"><span class="avatar">JD</span><div><strong>Jonas D.</strong> · 14 months ago<br>Is the offset example still right? Our client gets <code>next_cursor</code> back.</div></div>
+      <div class="comment"><span class="avatar">MK</span><div><strong>Marta K.</strong> · 14 months ago<br>Good catch, will fix the example next sprint.</div></div>
+    </div>
+  </article>
+  <aside class="toc"><div class="toc-wrap"><div class="h">On this page</div><div id="toc"></div></div></aside>
+</div>
+<script src="/developers/assets/markdown.js"></script>
+<script>
+fetch("/developers/source", { cache: "no-store" })
+  .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+  .then((md) => {
+    const out = VendorMarkdown.render(md);
+    const doc = document.getElementById("doc");
+    doc.innerHTML = out.html;
+    const h1 = doc.querySelector("h1");
+    if (h1) document.getElementById("title").appendChild(h1);
+    doc.querySelectorAll("blockquote").forEach((q) => { if (/wrong|outdated|known issue|note/i.test(q.textContent)) q.classList.add("warn"); });
+    document.getElementById("toc").innerHTML = out.toc.filter((t) => t.level > 1).map((t) => '<a class="l' + t.level + '" href="#' + t.id + '">' + t.text + "</a>").join("");
+  })
+  .catch((e) => { document.getElementById("doc").innerHTML = '<p class="load-error">Could not load the page: ' + e.message + "</p>"; });
+</script>
+</body>
+</html>

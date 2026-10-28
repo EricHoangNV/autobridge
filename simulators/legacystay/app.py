@@ -31,6 +31,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from simulators.common.devportal import mount_devportal
 from simulators.common.faults import pagination_mode_for_scenario
 from simulators.common.helpers import (
     check_auth,
@@ -54,6 +55,9 @@ app = FastAPI(title="LegacyStay Simulator", openapi_url=None, docs_url=None, red
 # Serve docs/ directory as static files (e.g. /docs/legacystay.md)
 if DOCS_DIR.is_dir():
     app.mount("/docs", StaticFiles(directory=str(DOCS_DIR)), name="docs")
+
+# Human-readable vendor docs site (demo presentation); renders legacystay.md at load time.
+mount_devportal(app, page="legacystay.html", source="legacystay.md")
 
 
 @app.get("/healthz")

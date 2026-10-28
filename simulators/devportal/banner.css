@@ -1,0 +1,11 @@
+/* Shared strip that marks every portal as part of the AutoBridge demo. */
+.sim-banner {
+  font: 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  background: #111;
+  color: #f2d74e;
+  padding: 6px 16px;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+.sim-banner a { color: #fff; }
+.load-error { padding: 24px; color: #b00020; font-family: system-ui, sans-serif; }

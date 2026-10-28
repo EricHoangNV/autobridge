@@ -23,6 +23,15 @@ make demo                   # six demo steps through the control API (plan §6)
 make down                   # docker compose down -v
 ```
 
+With the stack up, each simulated vendor has its own documentation site, rendered live from the files
+AutoBridge reads in `simulators/docs/`:
+
+| Vendor | Docs site | Source |
+|---|---|---|
+| AtlasPMS (clean OpenAPI) | http://localhost:8105/developers | `atlas-openapi.yaml` |
+| HarborPMS (messy wiki) | http://localhost:8106/developers | `harbor.md` |
+| LegacyStay (2000s website) | http://localhost:8111/developers | `legacystay.md` |
+
 CI (`.github/workflows/ci.yml`) runs the same order from a clean clone:
 `make test → make up → make smoke → make e2e → make e2e-ui → make demo`.
 

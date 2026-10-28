@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LegacyStay Systems - Developer Resources</title>
+<link rel="stylesheet" href="/developers/assets/banner.css">
+<style>
+  body { margin: 0; background: #d8d0b8; color: #000; font: 12px/1.45 Verdana, Geneva, Tahoma, sans-serif; }
+  a { color: #0000cc; }
+  a:visited { color: #551a8b; }
+  .page { width: 860px; max-width: 100%; margin: 12px auto; background: #fffef6; border: 2px outset #b8ad8c; }
+  .masthead { background: #7a1f1f; color: #fff3c4; padding: 10px 14px; border-bottom: 4px double #c9a227; display: flex; align-items: center; gap: 12px; }
+  .masthead .mark { width: 44px; height: 44px; background: #c9a227; color: #7a1f1f; font: bold 22px/44px Georgia, "Times New Roman", serif; text-align: center; border: 2px ridge #fff3c4; }
+  .masthead h1 { margin: 0; font: bold 24px Georgia, "Times New Roman", serif; letter-spacing: 1px; }
+  .masthead small { display: block; font-size: 11px; color: #f0d98a; font-style: italic; }
+  .menu { background: #c9a227; padding: 4px 8px; border-bottom: 1px solid #7a1f1f; font-size: 11px; font-weight: bold; }
+  .menu a { color: #3b0d0d; margin-right: 6px; }
+  table.layout { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  td.left { width: 170px; vertical-align: top; background: #f1e9cf; border-right: 1px solid #b8ad8c; padding: 10px; font-size: 11px; }
+  td.left h4 { margin: 0 0 4px; background: #7a1f1f; color: #fff3c4; padding: 2px 4px; font-size: 11px; }
+  td.left ul { margin: 0 0 12px; padding-left: 14px; }
+  td.left .counter { margin-top: 18px; text-align: center; }
+  td.left .counter span { display: inline-block; font: bold 14px "Courier New", monospace; background: #000; color: #3f3; padding: 2px 4px; letter-spacing: 2px; }
+  td.main { vertical-align: top; padding: 12px 18px 24px; overflow-wrap: anywhere; }
+  .new { color: #cc0000; font-weight: bold; font-size: 10px; }
+  #doc h1 { font: bold 20px Georgia, "Times New Roman", serif; color: #7a1f1f; border-bottom: 2px solid #c9a227; margin: 4px 0 10px; }
+  #doc h2 { font: bold 15px Verdana, sans-serif; color: #fff; background: #4b6f8f; padding: 3px 6px; margin: 20px 0 8px; }
+  #doc h3 { font: bold 13px Verdana, sans-serif; color: #7a1f1f; margin: 14px 0 4px; }
+  #doc hr { border: 0; border-top: 1px dashed #b8ad8c; margin: 14px 0; }
+  #doc code { font-family: "Courier New", Courier, monospace; font-size: 12px; color: #003300; }
+  #doc pre.code { font-family: "Courier New", Courier, monospace; font-size: 12px; background: #ffffe0; border: 1px solid #c9b458; padding: 8px; overflow: auto; }
+  #doc blockquote { margin: 10px 0; padding: 6px 10px; border: 1px solid #cc9900; background: #fff8d0; }
+  #doc blockquote::before { content: "NOTE: "; font-weight: bold; color: #cc0000; }
+  #doc blockquote p { display: inline; margin: 0; }
+  #doc ul { padding-left: 20px; }
+  .footer { border-top: 1px solid #b8ad8c; padding: 8px; font-size: 10px; color: #555; text-align: center; background: #f1e9cf; }
+  .badges { margin-top: 6px; }
+  .badges span { display: inline-block; border: 1px solid #555; background: #eee; padding: 0 4px; margin: 0 2px; font: 9px Verdana, sans-serif; }
+</style>
+</head>
+<body>
+<div class="sim-banner">Simulated vendor documentation for the AutoBridge demo · rendered live from <a href="/docs/legacystay.md">legacystay.md</a></div>
+<div class="page">
+  <div class="masthead">
+    <div class="mark">LS</div>
+    <div><h1>LegacyStay Systems</h1><small>Trusted by roadside inns &amp; family motels since 1998</small></div>
+  </div>
+  <div class="menu"><a href="#">Home</a> | <a href="#">Products</a> | <a href="#">Support</a> | <a href="#"><u>Developer Resources</u></a> | <a href="#">Contact Us</a></div>
+  <table class="layout"><tr>
+    <td class="left">
+      <h4>Developers</h4>
+      <ul id="toc"></ul>
+      <h4>Downloads</h4>
+      <ul><li><a href="#">SDK for Windows (ZIP)</a></li><li><a href="#">Interface spec (PDF)</a> <span class="new">NEW!</span></li></ul>
+      <h4>Support</h4>
+      <ul><li>Tel: 1-800-555-0198</li><li>Mon-Fri 9am-5pm</li></ul>
+      <div class="counter">Visitors:<br><span>0048213</span></div>
+    </td>
+    <td class="main"><div id="doc"></div></td>
+  </tr></table>
+  <div class="footer">
+    Copyright &copy; 1998-2026 LegacyStay Systems Inc. All rights reserved. | Best viewed at 1024x768 | Last updated: 03/14/2019
+    <div class="badges"><span>HTML 4.01</span><span>Y2K READY</span></div>
+  </div>
+</div>
+<script src="/developers/assets/markdown.js"></script>
+<script>
+fetch("/developers/source", { cache: "no-store" })
+  .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+  .then((md) => {
+    const out = VendorMarkdown.render(md);
+    document.getElementById("doc").innerHTML = out.html;
+    document.getElementById("toc").innerHTML = out.toc.filter((t) => t.level === 2).map((t) => '<li><a href="#' + t.id + '">' + t.text + "</a></li>").join("");
+  })
+  .catch((e) => { document.getElementById("doc").innerHTML = '<p class="load-error">Could not load the page: ' + e.message + "</p>"; });
+</script>
+</body>
+</html>
