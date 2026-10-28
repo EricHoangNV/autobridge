@@ -98,6 +98,10 @@ demo:
 	@echo ">> demo: six steps via control API (W10)"
 	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.demo
 
+demo-reset:
+	@echo ">> demo-reset: full reset to a known first-run state (REQ-021 item 1)"
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.demo_reset
+
 # ---- Quality ----
 lint:
 	uv run --extra dev ruff check .

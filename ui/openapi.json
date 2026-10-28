@@ -842,13 +842,16 @@
             "title": "Seed"
           },
           "target": {
-            "description": "Simulator target id: sim-atlas, sim-harbor, sim-meridian, atlas, harbor, meridian, atlaspms, harborpms, meridianpms",
+            "description": "Simulator target id: sim-atlas, sim-harbor, sim-legacystay, sim-meridian, atlas, harbor, legacystay, meridian, atlaspms, harborpms, meridianpms",
             "enum": [
               "sim-atlas",
               "sim-harbor",
+              "sim-legacystay",
               "sim-meridian",
               "atlas",
               "harbor",
+              "legacystay",
+              "legacy",
               "meridian",
               "atlaspms",
               "harborpms",
@@ -3095,7 +3098,7 @@
     },
     "/demo/reset": {
       "post": {
-        "description": "Demo helper: reset both simulators to baseline.",
+        "description": "Demo helper: return the system to a known first-run state (REQ-021 item 1).\n\nIdempotent; every section tolerates an already-empty state:\n\n1. every simulator back to baseline via its admin ``/admin/reset``\n   (``resets`` keeps the historical shape so existing callers keep\n   working);\n2. the L0 knowledge cache (in-process singleton) emptied \u2014 learned fixes\n   from verified repairs do not leak into the next session;\n3. the model-usage ledger archived per demo session (rows copied to\n   ``model_call_archive`` stamped with the new ``session_id``) and the\n   live ledger emptied;\n4. demo control-plane state removed in FK-safe order: evidence,\n   approvals, repair/sync/build runs, drift events, releases,\n   dependencies, discovery records, jobs, connectors.\n\n``model_call_archive`` rows are history, not state: they are never\ndeleted here.",
         "operationId": "demo_reset_demo_reset_post",
         "responses": {
           "200": {

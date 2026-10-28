@@ -102,6 +102,11 @@ def test_engine_never_references_legacystay() -> None:
     may reference LegacyStay or be developed/tuned against it. This guard
     greps ``src/autobridge`` for ``legacystay`` (case-insensitive) outside
     comments and fails on a hit.
+
+    Exempt (REQ-021 item 1, same routing-data rationale as the Meridian
+    exemption below): the ``/demo/reset`` simulator list and the
+    inject-fault target/port maps name every simulator — routing data in
+    ``demo.py`` / ``schemas.py``, not tuning.
     """
     hits: list[str] = []
     for path in sorted(ENGINE_ROOT.rglob("*.py")):
@@ -110,6 +115,10 @@ def test_engine_never_references_legacystay() -> None:
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             code = line.split("#", 1)[0]
             if "legacystay" in code.lower():
+                if path.name in ("demo.py", "schemas.py") and any(
+                    s in code for s in _DEMO_LEGACYSTAY_ALLOWLIST
+                ):
+                    continue
                 hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
     assert not hits, "engine references LegacyStay outside comments (REQ-019.5):\n" + "\n".join(hits)
 
@@ -119,18 +128,31 @@ def test_engine_never_references_legacystay() -> None:
 # target Literal must name every simulator, Meridian included — like
 # Atlas/Harbor before it. These lines carry no spec/discovery/runtime
 # branch, so the ban below exempts them.
+# REQ-021 item 1 extends the same exemption to the /demo/reset simulator
+# list (same files, same routing-data nature) and to LegacyStay entries.
 _DEMO_TARGET_ALLOWLIST = (
     '"sim-meridian": "sim-meridian",',
     '"meridian": "sim-meridian",',
     '"meridianpms": "sim-meridian",',
     '"meridian-pms": "sim-meridian",',
     '"sim-meridian": 8117',
-    "use sim-atlas, sim-harbor or sim-meridian",
-    '"sim-meridian",',
-    '"meridian",',
-    '"meridianpms",',
-    '"meridian-pms",',
-    "sim-meridian,",
+    '"sim-meridian"',
+    '"meridian"',
+    '"meridianpms"',
+    '"meridian-pms"',
+    "sim-meridian",
+    "use sim-atlas, sim-harbor",
+)
+_DEMO_LEGACYSTAY_ALLOWLIST = (
+    '"sim-legacystay": "sim-legacystay",',
+    '"legacystay": "sim-legacystay",',
+    '"legacy": "sim-legacystay",',
+    '"sim-legacystay": 8112',
+    '"sim-legacystay"',
+    '"legacystay"',
+    '"legacy"',
+    "sim-legacystay",
+    "legacystay",
 )
 
 

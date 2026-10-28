@@ -4,12 +4,31 @@
 from __future__ import annotations
 
 import os
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Security
+from fastapi import APIRouter, Depends, HTTPException, Security
+from sqlalchemy import update
+from sqlalchemy.orm import Session
 
-from autobridge.control.deps import require_control_token
+from autobridge.control.deps import get_db, require_control_token
+from autobridge.control.models import (
+    Approval,
+    BuildRun,
+    Connector,
+    ConnectorRelease,
+    DependencyRegistration,
+    DiscoveryRecord,
+    DriftEvent,
+    EvidenceRecord,
+    Job,
+    ModelCall,
+    ModelCallArchive,
+    RepairRun,
+    SyncRun,
+)
 from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse
 
 router = APIRouter(prefix="/demo", tags=["demo"])
@@ -18,9 +37,12 @@ router = APIRouter(prefix="/demo", tags=["demo"])
 TARGET_MAP = {
     "sim-atlas": "sim-atlas",
     "sim-harbor": "sim-harbor",
+    "sim-legacystay": "sim-legacystay",
     "sim-meridian": "sim-meridian",
     "atlas": "sim-atlas",
     "harbor": "sim-harbor",
+    "legacystay": "sim-legacystay",
+    "legacy": "sim-legacystay",
     "meridian": "sim-meridian",
     "atlaspms": "sim-atlas",
     "harborpms": "sim-harbor",
@@ -35,7 +57,7 @@ def _resolve_target(target: str) -> str:
     key = target.strip().lower()
     resolved = TARGET_MAP.get(key)
     if not resolved:
-        raise HTTPException(status_code=422, detail=f"unknown demo target {target!r}; use sim-atlas, sim-harbor or sim-meridian")
+        raise HTTPException(status_code=422, detail=f"unknown demo target {target!r}; use sim-atlas, sim-harbor, sim-legacystay or sim-meridian")
     return resolved
 
 
@@ -61,7 +83,7 @@ def _admin_url_for_target(resolved: str) -> str:
         # In container: use service DNS
         return f"http://{resolved}:8001"
     # Host mode: map to host ports
-    port_map = {"sim-atlas": 8109, "sim-harbor": 8110, "sim-meridian": 8117}
+    port_map = {"sim-atlas": 8109, "sim-harbor": 8110, "sim-legacystay": 8112, "sim-meridian": 8117}
     port = port_map.get(resolved, 8109)
     return f"http://localhost:{port}"
 
@@ -121,10 +143,33 @@ def inject_fault(body: InjectFaultRequest, _: None = Security(require_control_to
 
 
 @router.post("/reset", response_model=dict, responses=AUTH_401)
-def demo_reset(_: None = Security(require_control_token)) -> dict[str, Any]:
-    """Demo helper: reset both simulators to baseline."""
-    results: dict[str, Any] = {"labelled": True, "demo": True, "resets": []}
-    for target in ("sim-atlas", "sim-harbor"):
+def demo_reset(
+    _: None = Security(require_control_token),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Demo helper: return the system to a known first-run state (REQ-021 item 1).
+
+    Idempotent; every section tolerates an already-empty state:
+
+    1. every simulator back to baseline via its admin ``/admin/reset``
+       (``resets`` keeps the historical shape so existing callers keep
+       working);
+    2. the L0 knowledge cache (in-process singleton) emptied — learned fixes
+       from verified repairs do not leak into the next session;
+    3. the model-usage ledger archived per demo session (rows copied to
+       ``model_call_archive`` stamped with the new ``session_id``) and the
+       live ledger emptied;
+    4. demo control-plane state removed in FK-safe order: evidence,
+       approvals, repair/sync/build runs, drift events, releases,
+       dependencies, discovery records, jobs, connectors.
+
+    ``model_call_archive`` rows are history, not state: they are never
+    deleted here.
+    """
+    session_id = f"demo-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+
+    resets: list[dict[str, Any]] = []
+    for target in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian"):
         base = _admin_url_for_target(target)
         # Same env overrides as inject-fault (tests point these at scratch sims).
         env_key = f"{target.upper().replace('-', '_')}_ADMIN_URL"
@@ -137,7 +182,63 @@ def demo_reset(_: None = Security(require_control_token)) -> dict[str, Any]:
             with httpx.Client(timeout=5) as client:
                 # Admin writes require admin authorization (see inject-fault).
                 r = client.post(url, json={}, headers=_admin_headers())
-                results["resets"].append({"target": target, "status": r.status_code})
+                resets.append({"target": target, "status": r.status_code})
         except Exception as exc:
-            results["resets"].append({"target": target, "error": str(exc)})
-    return results
+            resets.append({"target": target, "error": str(exc)})
+
+    # L0: drop learned fixes (in-process singleton; no persisted form exists —
+    # RepairRun rows holding the same patches are wiped below).
+    from autobridge.repair.knowledge import get_default_cache, reset_default_cache  # noqa: PLC0415
+
+    knowledge_before = get_default_cache().size()
+    reset_default_cache()
+    knowledge_after = get_default_cache().size()
+
+    # Ledger: archive per demo session, then empty the live table.
+    archived = 0
+    for call in db.query(ModelCall).all():
+        db.add(
+            ModelCallArchive(
+                session_id=session_id,
+                run_id=call.run_id,
+                provider=call.provider,
+                model=call.model,
+                tier=call.tier,
+                input_tokens=call.input_tokens,
+                output_tokens=call.output_tokens,
+                latency_ms=call.latency_ms,
+                cost_estimate=call.cost_estimate,
+                purpose=call.purpose,
+            )
+        )
+        archived += 1
+    db.query(ModelCall).delete()
+
+    # Domain state, children before parents (Postgres-safe; SQLite is lenient).
+    db.execute(update(Connector).values(active_release_id=None))
+    removed: dict[str, int] = {}
+    for model in (
+        EvidenceRecord,
+        Approval,
+        RepairRun,
+        SyncRun,
+        DriftEvent,
+        BuildRun,
+        ConnectorRelease,
+        DependencyRegistration,
+        DiscoveryRecord,
+        Job,
+        Connector,
+    ):
+        removed[model.__tablename__] = db.query(model).delete()
+    db.commit()
+
+    return {
+        "labelled": True,
+        "demo": True,
+        "session_id": session_id,
+        "resets": resets,
+        "knowledge_cache": {"entries_before": knowledge_before, "entries_after": knowledge_after},
+        "model_usage": {"archived": archived, "session_id": session_id},
+        "removed": removed,
+    }

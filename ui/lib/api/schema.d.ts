@@ -217,7 +217,24 @@ export interface paths {
         put?: never;
         /**
          * Demo Reset
-         * @description Demo helper: reset both simulators to baseline.
+         * @description Demo helper: return the system to a known first-run state (REQ-021 item 1).
+         *
+         *     Idempotent; every section tolerates an already-empty state:
+         *
+         *     1. every simulator back to baseline via its admin ``/admin/reset``
+         *        (``resets`` keeps the historical shape so existing callers keep
+         *        working);
+         *     2. the L0 knowledge cache (in-process singleton) emptied — learned fixes
+         *        from verified repairs do not leak into the next session;
+         *     3. the model-usage ledger archived per demo session (rows copied to
+         *        ``model_call_archive`` stamped with the new ``session_id``) and the
+         *        live ledger emptied;
+         *     4. demo control-plane state removed in FK-safe order: evidence,
+         *        approvals, repair/sync/build runs, drift events, releases,
+         *        dependencies, discovery records, jobs, connectors.
+         *
+         *     ``model_call_archive`` rows are history, not state: they are never
+         *     deleted here.
          */
         post: operations["demo_reset_demo_reset_post"];
         delete?: never;
@@ -1073,10 +1090,10 @@ export interface components {
             seed?: number | null;
             /**
              * Target
-             * @description Simulator target id: sim-atlas, sim-harbor, sim-meridian, atlas, harbor, meridian, atlaspms, harborpms, meridianpms
+             * @description Simulator target id: sim-atlas, sim-harbor, sim-legacystay, sim-meridian, atlas, harbor, legacystay, meridian, atlaspms, harborpms, meridianpms
              * @enum {string}
              */
-            target: "sim-atlas" | "sim-harbor" | "sim-meridian" | "atlas" | "harbor" | "meridian" | "atlaspms" | "harborpms" | "meridianpms" | "atlas-pms" | "harbor-pms" | "meridian-pms";
+            target: "sim-atlas" | "sim-harbor" | "sim-legacystay" | "sim-meridian" | "atlas" | "harbor" | "legacystay" | "legacy" | "meridian" | "atlaspms" | "harborpms" | "meridianpms" | "atlas-pms" | "harbor-pms" | "meridian-pms";
         } & {
             [key: string]: unknown;
         };

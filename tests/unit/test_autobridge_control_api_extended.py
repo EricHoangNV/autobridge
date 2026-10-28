@@ -536,10 +536,16 @@ def test_demo_reset_sends_admin_net_header(tmp_path: pathlib.Path, monkeypatch) 
         r = client.post("/demo/reset")
         assert r.status_code == 200
         calls = mock_c.return_value.__enter__.return_value.post.call_args_list
-        assert len(calls) == 2
+        # REQ-021 item 1: all four simulators reset (atlas, harbor, legacystay, meridian).
+        assert len(calls) == 4
         for _, kwargs in calls:
             assert kwargs.get("headers", {}).get("X-Admin-Network") == "admin-net"
-        assert all(entry["status"] == 200 for entry in r.json()["resets"])
+        body = r.json()
+        assert [e["target"] for e in body["resets"]] == [
+            "sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian",
+        ]
+        assert all(entry["status"] == 200 for entry in body["resets"])
+        assert body["labelled"] is True and body["session_id"].startswith("demo-")
 
     app.dependency_overrides.clear()
     monkeypatch.delenv("SIMULATOR_ADMIN_URL", raising=False)

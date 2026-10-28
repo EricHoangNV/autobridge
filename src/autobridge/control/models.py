@@ -584,6 +584,51 @@ class ModelCall(Base):
         return value
 
 
+class ModelCallArchive(Base):
+    """Per-demo-session archive of the model-usage ledger (REQ-021 item 1).
+
+    ``POST /demo/reset`` copies every :class:`ModelCall` row here stamped
+    with the reset's ``session_id``, then deletes the live rows — so usage
+    from one demo session never mixes into the next, while staying
+    queryable per session (the per-run table in REQ-021 item 3 reads the
+    live rows; the archive holds history). Never stores secrets: the same
+    ledger columns as :class:`ModelCall` (provider/model/tier/tokens/cost
+    are counts and labels, not credential values).
+    """
+
+    __tablename__ = "model_call_archive"
+    __table_args__ = (
+        _check("model_call_archive", "tier", "tier", MODEL_TIERS),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(String(72), nullable=False, index=True)
+    run_id: Mapped[str] = mapped_column(String(72), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latency_ms: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    #: Never float: Decimal end to end (DIRECTIVES Quick Reference 5).
+    cost_estimate: Mapped[Decimal] = mapped_column(
+        Numeric(12, 6), nullable=False, default=Decimal("0")
+    )
+    purpose: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    archived_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+    @validates("tier")
+    def _validate_tier(self, key: str, value: str) -> str:
+        if value not in MODEL_TIERS:
+            raise ValueError(f"{key} must be one of {sorted(MODEL_TIERS)}")
+        return value
+
+
 class DependencyRegistration(Base):
     """A downstream consumer; release activation may pause or notify it."""
 
