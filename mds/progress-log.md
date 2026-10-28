@@ -2590,3 +2590,41 @@ plan as steps land; owner live steps (record-frontier capture). Agent: opencode 
 build refusal pinned. Gates green (2192/99/294 + ui 156).
 **Next:** REQ-020 step 7 (demo before/after) — owner order — unless a new owner check lands first.
 Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-020 step 7 merged (sbx1)
+**Ref:** REQUESTS.MD REQ-020 item 7 (owner order: after REQ-021, before REQ-022)
+
+**What was done:**
+- `make demo` gains step 7 "New API style — Meridian v1 refuses, v2 connects": the committed
+  `simulators/docs/meridian-openapi.yaml` builds twice — v1 stops at `vocabulary_guard` (Blocked,
+  named reason, no draft spec, 0 model calls) and v2 compiles to spec_version 2 (POST-only,
+  body_fields auth, body_cursor, joins) and syncs Complete against an inline POST-body fake
+  (Ada Lovelace joined, total 20.00 Decimal, 1 Reservation + 2 FolioCharges).
+- Live mode attaches read-only `GET /capabilities`; per-run table row reads
+  "v1 Blocked → v2 Complete | 0 calls | 0 small / 0 frontier".
+- `docs/demo.md` gains section 7 (before/after calls + evidence each half shows); all "six steps"
+  references go 6 → 7 (demo.py, Makefile echo, tests).
+- Trust guard `test_engine_never_references_meridian` gains a step-7 scenario-data allowlist
+  (docs path, connector id, display strings, inline fake — generic APIs only); the fake's base
+  URL reuses `https://demo.invalid` like the Atlas/Harbor fakes instead of widening the list.
+
+**Key decisions:**
+- Read the real committed YAML (like the model-usage matrix does) instead of an inline excerpt,
+  so "the same Meridian docs" is literally true; noted the fs-read (not import) in the module docstring.
+- Appended as step 7 (not inserted as 6) to keep the reproducibility step and its tests stable;
+  REQ-023 will reorder when it owns the main script.
+- No Meridian drift in this step (belongs to the REQ-023 catalogue; faults already pinned by
+  `test_meridian_faults.py`).
+
+**Files changed:**
+- `src/autobridge/bench/demo.py` — step 7, Meridian fake, 6→7 counts
+- `docs/demo.md` — section 7, header/repro counts
+- `Makefile` — demo echo seven steps
+- `tests/unit/test_autobridge_demo.py` — 6→7 counts, step-7 before/after + rung-row tests
+- `tests/unit/test_autobridge_trust_boundaries.py` — step-7 allowlist
+
+**Notes for next iteration:**
+- REQ-020 codeable work is complete (A, 5a–5c, 6, signature fix, 7 all merged); REQUESTS.MD status
+  left IN_PROGRESS for the owner to flip on verification.
+- **Next:** REQ-022 (FIAS PABX + edge agent) per owner order.
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).

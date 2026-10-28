@@ -1300,3 +1300,19 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
   lint + typecheck + ui-typecheck green; `make demo` green (L3 skipped plainly without a recording).
   Live step-4 + `make record-frontier` capture remain owner steps (key + host stack).
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-020 sub-step 7 — Meridian before/after demo step (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Status: 7 merged; REQ-020 codeable work complete (A + 5a + 5b + 5c + 6 + signature fix + 7).
+
+What landed:
+- `src/autobridge/bench/demo.py`: `step7_new_api_style` — before (`spec_vocabulary="v1"` on the committed Meridian YAML → `success False`, `degradation_reason` "operations need POST with a JSON body and body-field auth; not expressible in ConnectorSpec v1", `vocabulary_guard` trace stage, zeros asserted on calls/frontier/small) + after (`"v2"` → `spec_version 2`, all-POST ops, `body_fields` auth, ≥1 `body_cursor` pagination, zeros asserted; `load_spec_from_dict` validates; `execute_sync` against `_meridian_fake_client` → `Complete`, `guest_name "Ada Lovelace"`, `total_amount Decimal("20.00")`, records `{Reservation: 1, FolioCharge: 2}`). Body-field secrets via `MERIDIAN_CLIENT_TOKEN/ACCESS_TOKEN` demo placeholders, set/restored around the sync, never stored. Live mode: one read-only `GET /capabilities`. Evidence carries both vocabularies + `model_usage_ledger` zeros; `resolved_rung "v1 Blocked → v2 Complete"`. `STEPS` 7-tuple; `run_demo`/`render_text` counts dynamic (`len(STEPS)`/`len(steps)`).
+- `docs/demo.md`: section 7 with the before/after call blocks and the evidence each half shows; header + step-6 reproducibility counts 6 → 7.
+- `Makefile`: demo echo seven steps. `tests/unit/test_autobridge_demo.py`: counts 6 → 7, `test_step7_v1_refuses_v2_connects_offline` (before/after evidence, env non-leak) + `test_step7_rung_row_reports_zero_frontier`, Meridian render needle. `tests/unit/test_autobridge_trust_boundaries.py`: `_DEMO_STEP7_ALLOWLIST` (`MERIDIAN_`, `_meridian_`, `meridian-openapi.yaml`, `Meridian`) for bench `demo.py` scenario data; docstring notes generic-APIs-only rationale.
+- Verified: `make demo` offline (local evidence, 7/7 ok) and live (Compose up in-sandbox, 7/7 ok incl. step 7 live via /capabilities); `tests/e2e/test_meridian_before.py` green; `tests/e2e/test_model_usage_matrix.py -m "not live"` 18 pass; full `make test` green (autobridge 2194 / 91.32%, verifier 99 / 93.62%, simulators 294 / 96.10%, ui 156); `make lint` (contracts kept) + `make typecheck` green; stack down cleanly.
+- DIRECTIVES loop: §2 — step 7 reads the committed docs YAML from disk (input data, never an import; same as the matrix test) and calls only generic discovery/runtime APIs; closed transforms, repairs stay JSON Patch, no model calls. §5 — full gate + the workstream's e2e file run. §8 — bench untouched.
+
+Decisions/gotchas:
+- Real YAML over inline excerpt (matrix-test precedent; "same docs" literal). Appended as step 7 to avoid renumbering step 6 + its tests.
+- `rows, key` tuple unpack across fake branches needed explicit `list[dict[str, Any]]`/`str` annotations (mypy).
+- Trust guard counts docstring prose as code (only `#` comments split out) — the fake's base URL reuses `https://demo.invalid` like the other fakes instead of adding `meridian.example.com` to the allowlist.
+- render footer test with a synthetic 1-step report now asserts the dynamic "1 steps via control API".
