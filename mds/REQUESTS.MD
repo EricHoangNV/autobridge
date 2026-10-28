@@ -509,7 +509,7 @@ simulators/verifier side; the engine never imports, reads or reaches them.
 Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make bench-heldout` keeps working.
 
 ### REQ-026 — Per-test timeout so a hanging test fails fast with a stack trace (2026-10-29)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 18:35)
 Priority: small; do it right after the REQ-022 sub-step in progress, before the next sub-step (the edge agent and
 PABX tests are socket code that can hang).
 Why: in REQ-022 sub-step A a hanging FIAS socket test cost ~15 of 78 minutes. The first full run waited for the
