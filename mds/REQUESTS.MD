@@ -30,7 +30,7 @@ Wanted:
    demo && make local-down` passes.
 
 ### REQ-019 — Reshape the Atlas simulator after the Cloudbeds PMS API (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 10:02)
 Owner wants the simulated vendors to look like real hotel PMS APIs. Atlas (the "clean, documented" vendor) follows the
 **Cloudbeds API** shape. Keep the fictional name Atlas/AtlasPMS everywhere (simulator, docs site, UI): copy the API
 *shape*, never Cloudbeds' name, logo, branding or doc text. Read the reference before coding and match names exactly:
