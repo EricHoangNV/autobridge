@@ -296,3 +296,72 @@ def test_demo_money_values_are_decimal_not_float() -> None:
     for rec in summary["canonical_records"]["Reservation"]:
         assert isinstance(rec["total_amount"], Decimal)
         assert rec["total_amount"].as_tuple().exponent == -2
+
+
+def test_step_write_401_fails_step(monkeypatch: Any) -> None:
+    """REQ-016: a 401 on a step's live write fails the step (missing token)."""
+    monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
+    monkeypatch.setattr(
+        demo_mod,
+        "_control_call",
+        lambda _b, m, p, _payload=None: {"method": m, "path": p, "status": 401,
+                                          "body": {"detail": "missing token"}},
+    )
+    step = step3_zero_token_recovery(0, True, "http://control:8101")
+    assert step["status"] == "failed", step
+    assert "POST" in step["error"] and "/demo/inject-fault" in step["error"]
+    assert "401" in step["error"]
+    report = run_demo(seed=0, control_url="http://control:8101")
+    assert report["failed"] >= 1
+    assert any(s["status"] == "failed" for s in report["steps"])
+
+
+def test_step_write_500_fails_step(monkeypatch: Any) -> None:
+    """REQ-016: a 500 on a step's live write fails the step with detail."""
+    monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
+    monkeypatch.setattr(
+        demo_mod,
+        "_control_call",
+        lambda _b, m, p, _payload=None: {"method": m, "path": p, "status": 500,
+                                          "body": {"detail": "boom"}},
+    )
+    step = step4_hard_semantic_failure(0, True, "http://control:8101")
+    assert step["status"] == "failed", step
+    assert "500" in step["error"] and "POST" in step["error"]
+    text = render_text(run_demo(seed=0, control_url="http://control:8101"))
+    assert "FAILED" in text and "500" in text
+
+
+def test_demo_labels_live_vs_inprocess_steps(monkeypatch: Any) -> None:
+    """REQ-016: output says which steps ran live and which were in-process."""
+    monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
+    monkeypatch.setattr(
+        demo_mod,
+        "_control_call",
+        lambda _b, m, p, _payload=None: {"method": m, "path": p, "status": 200, "body": {"ok": True}},
+    )
+    report = run_demo(seed=0, control_url="http://control:8101")
+    modes = {s["number"]: s["mode"] for s in report["steps"]}
+    assert modes["6/6"] == "in-process"  # step 6 never calls the control plane
+    assert modes["1/6"] == "live"
+    text = render_text(report)
+    assert "live steps:" in text and "in-process steps:" in text
+    assert "(live)" in text and "(in-process)" in text
+    # NOTE: the probe is still stubbed True above, so force the offline path.
+    monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: False)
+    offline = run_demo(seed=0, control_url="http://localhost:9")
+    assert all(s["mode"] == "in-process" for s in offline["steps"])
+    assert "in-process" in render_text(offline)
+
+
+def test_main_exits_nonzero_when_write_fails(monkeypatch: Any, capsys: Any) -> None:
+    """REQ-016: make demo exits non-zero when a live write fails."""
+    monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
+    monkeypatch.setattr(
+        demo_mod,
+        "_control_call",
+        lambda _b, m, p, _payload=None: {"method": m, "path": p, "status": 401,
+                                          "body": {"detail": "missing token"}},
+    )
+    assert main(["--control-url", "http://control:8101", "--seed", "0"]) == 1
+    assert "FAILED" in capsys.readouterr().out

@@ -313,6 +313,53 @@ def _live_ensure_connector(base_url: str, payload: dict[str, Any]) -> list[dict[
     return calls
 
 
+def _call_ok(call: dict[str, Any]) -> bool:
+    """A live control call succeeded iff its HTTP status is 2xx (REQ-016)."""
+    status = call.get("status")
+    return isinstance(status, int) and 200 <= status <= 299
+
+
+def _failed_call_error(calls: list[dict[str, Any]]) -> str | None:
+    """Error line for the first failing live call, or None when all are 2xx."""
+    for call in calls:
+        if _call_ok(call):
+            continue
+        status = call.get("status")
+        detail = call.get("error") or call.get("body")
+        try:
+            detail_text = json.dumps(detail, default=str)[:300]
+        except Exception:
+            detail_text = str(detail)[:300]
+        return (
+            f"control {call.get('method')} {call.get('path')} "
+            f"-> {status}: {detail_text}"
+        )
+    return None
+
+
+def _finish_step(
+    name: str, evidence: dict[str, Any], calls: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Build a step record; any non-2xx live call fails the step (REQ-016)."""
+    error = _failed_call_error(calls)
+    if error is not None:
+        return {
+            "name": name,
+            "status": "failed",
+            "error": error,
+            "evidence": evidence,
+            "control_calls": calls,
+            "mode": "live" if calls else "in-process",
+        }
+    return {
+        "name": name,
+        "status": "ok",
+        "evidence": evidence,
+        "control_calls": calls,
+        "mode": "live" if calls else "in-process",
+    }
+
+
 def _redact_body(body: Any, *, _depth: int = 0) -> Any:
     """Truncate control-plane bodies for demo output (credential_ref names only)."""
     if _depth > 3:
@@ -355,10 +402,9 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
         calls.append(_control_call(base_url, "GET", "/healthz"))
         calls.append(_control_call(base_url, "GET", "/connectors/atlaspms"))
         calls.append(_control_call(base_url, "GET", "/metrics/model-usage"))
-    return {
-        "name": "Reusable artifact — Atlas release, zero inference",
-        "status": "ok",
-        "evidence": {
+    return _finish_step(
+        "Reusable artifact — Atlas release, zero inference",
+        {
             "connector": "atlaspms",
             "release": "reference",
             "seed": seed,
@@ -369,8 +415,8 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
             "model_usage_ledger": model_usage,
             "credential_ref": spec["source"]["auth"]["credential_ref"],
         },
-        "control_calls": calls,
-    }
+        calls,
+    )
 
 
 def step2_unfamiliar_api(seed: int, live: bool, base_url: str) -> dict[str, Any]:
@@ -419,12 +465,11 @@ def step2_unfamiliar_api(seed: int, live: bool, base_url: str) -> dict[str, Any]
                 },
             )
         )
-    return {
-        "name": "Unfamiliar API — Harbor docs to draft spec",
-        "status": "ok",
-        "evidence": evidence,
-        "control_calls": calls,
-    }
+    return _finish_step(
+        "Unfamiliar API — Harbor docs to draft spec",
+        evidence,
+        calls,
+    )
 
 
 def step3_zero_token_recovery(seed: int, live: bool, base_url: str) -> dict[str, Any]:
@@ -449,10 +494,9 @@ def step3_zero_token_recovery(seed: int, live: bool, base_url: str) -> dict[str,
         calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-atlas", "scenario_id": "offset_to_cursor", "seed": seed}))
         calls.append(_control_call(base_url, "GET", "/drift"))
         calls.append(_control_call(base_url, "GET", "/repairs"))
-    return {
-        "name": "Zero-token recovery — offset_to_cursor via L1 rule",
-        "status": "ok",
-        "evidence": {
+    return _finish_step(
+        "Zero-token recovery — offset_to_cursor via L1 rule",
+        {
             "drift_class": "PAGINATION_CHANGE",
             "l0_knowledge": "miss" if not l0_hit else "hit",
             "l1_rule": rule.id,
@@ -460,8 +504,8 @@ def step3_zero_token_recovery(seed: int, live: bool, base_url: str) -> dict[str,
             "patch": patch[:4],
             "frontier_tokens": 0,
         },
-        "control_calls": calls,
-    }
+        calls,
+    )
 
 
 def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[str, Any]:
@@ -482,10 +526,9 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     if live:
         calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-harbor", "scenario_id": "gross_to_net", "seed": seed}))
         calls.append(_control_call(base_url, "GET", "/drift"))
-    return {
-        "name": "Hard semantic failure — gross_to_net rejected, escalated",
-        "status": "ok",
-        "evidence": {
+    return _finish_step(
+        "Hard semantic failure — gross_to_net rejected, escalated",
+        {
             "sync_outcome": "Degraded",
             "unmet_criteria": ["money_invariant"],
             "drift_class": "SEMANTIC_VALUE_DRIFT",
@@ -494,8 +537,8 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             "escalation_question": bundle.question,
             "money_type": "Decimal(2dp)",
         },
-        "control_calls": calls,
-    }
+        calls,
+    )
 
 
 def step5_head_to_head(seed: int, live: bool, base_url: str) -> dict[str, Any]:
@@ -515,12 +558,11 @@ def step5_head_to_head(seed: int, live: bool, base_url: str) -> dict[str, Any]:
         body = rec.get("body")
         if isinstance(body, dict):
             evidence["control_scorecards_total"] = body.get("total")
-    return {
-        "name": "Head-to-head — bench scorecards",
-        "status": "ok",
-        "evidence": evidence,
-        "control_calls": calls,
-    }
+    return _finish_step(
+        "Head-to-head — bench scorecards",
+        evidence,
+        calls,
+    )
 
 
 def step6_reproducibility(seed: int, live: bool, base_url: str) -> dict[str, Any]:
@@ -528,6 +570,7 @@ def step6_reproducibility(seed: int, live: bool, base_url: str) -> dict[str, Any
     return {
         "name": "Reproducibility — seed, release ids, make demo",
         "status": "ok",
+        "mode": "in-process",
         "evidence": {
             "seed": seed,
             "control_url": base_url,
@@ -559,7 +602,9 @@ def run_demo(seed: int = DEFAULT_SEED, control_url: str = DEFAULT_CONTROL_URL) -
             step = fn(seed, live, control_url)
             step["number"] = f"{i}/6"
         except Exception as exc:  # demo never crashes mid-run; a step fails loudly
-            step = {"number": f"{i}/6", "name": fn.__name__, "status": "failed", "error": str(exc)[:500], "control_calls": []}
+            step = {"number": f"{i}/6", "name": fn.__name__, "status": "failed", "error": str(exc)[:500], "control_calls": [], "mode": "in-process"}
+        if "mode" not in step:
+            step["mode"] = "live" if step.get("control_calls") else "in-process"
         steps.append(step)
     failed = [s for s in steps if s.get("status") != "ok"]
     return {
@@ -575,10 +620,25 @@ def render_text(report: dict[str, Any]) -> str:
     """Human-readable rendering — the same evidence the UI screens show."""
     out: list[str] = []
     out.append(f"AutoBridge demo — 6 steps (mode: {report['mode']}, seed {report['seed']})")
+    live_steps = [s.get("number") for s in report["steps"] if s.get("mode") == "live"]
+    local_steps = [s.get("number") for s in report["steps"] if s.get("mode") != "live"]
+    if report["mode"] == "live-control-api":
+        out.append(f"live steps: {', '.join(live_steps) or 'none'}; in-process steps: {', '.join(local_steps) or 'none'}")
+    else:
+        out.append("all steps computed in-process (control plane unreachable)")
     for step in report["steps"]:
-        out.append(f"--- Step {step['number']}: {step.get('name')} [{step.get('status')}]")
+        src = step.get("mode", "in-process")
+        out.append(f"--- Step {step['number']}: {step.get('name')} [{step.get('status')}] ({src})")
         if step.get("status") != "ok":
             out.append(f"    error: {step.get('error')}")
+            for call in step.get("control_calls", []):
+                if not _call_ok(call):
+                    detail = call.get("error") or call.get("body")
+                    try:
+                        detail_text = json.dumps(detail, default=str)[:300]
+                    except Exception:
+                        detail_text = str(detail)[:300]
+                    out.append(f"    FAILED control {call.get('method')} {call.get('path')} -> {call.get('status')}: {detail_text}")
             continue
         for key, value in step.get("evidence", {}).items():
             if key == "preview":

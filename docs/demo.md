@@ -12,6 +12,10 @@ evidence. With the stack down it computes the same evidence locally through
 the engine (reference specs + deterministic rules + escalation bundle) and
 says so in its header/footer, so the script is reproducible anywhere
 (`DEMO_SEED=… make demo`, `--json` for the machine-readable report).
+Any live control-API call that is part of a step must return 2xx —
+otherwise the step is marked FAILED (with method, path, status and detail)
+and `make demo` exits non-zero. Each step is labelled `(live)` or
+`(in-process)` and the header lists which steps ran live.
 Reference specs under
 `generated/connectors/{atlaspms,harborpms}/reference/`. Fault injection goes through
 the single labelled bridge `POST /demo/inject-fault` (proxied to the simulator admin
