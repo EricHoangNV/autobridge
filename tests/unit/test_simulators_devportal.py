@@ -102,3 +102,32 @@ def test_meridian_source_is_the_yaml_parsed_to_json() -> None:
         assert "post" in paths[op]
     assert "Limitation" in spec["components"]["schemas"]
     assert TestClient(meridian_app).get("/docs/meridian-openapi.yaml").status_code == 200
+
+
+def test_meridian_portal_fetches_absolute_source() -> None:
+    """Owner check (REQ-020 sub-step A): fetch('source') 404s from /developers.
+
+    The page must use the absolute /developers/source like the other portals.
+    """
+    html = TestClient(meridian_app).get("/developers").text
+    assert 'fetch("/developers/source"' in html
+    assert 'fetch("source")' not in html
+
+
+def test_meridian_portal_renders_at_least_one_operation() -> None:
+    """Owner check: the Operations pages have data + renderer for every op.
+
+    Mirrors the page's own mapping (paths -> post operations) and asserts each
+    served POST operation carries the fields renderOperation needs
+    (operationId, summary), and the HTML ships that renderer.
+    """
+    html = TestClient(meridian_app).get("/developers").text
+    assert "function renderOperation" in html
+    assert "On this page" in html
+    spec = TestClient(meridian_app).get("/developers/source").json()
+    ops = [(path, item.get("post", {})) for path, item in spec["paths"].items()]
+    assert len(ops) >= 1
+    for path, op in ops:
+        assert op.get("operationId"), f"{path} has no operationId"
+        assert op.get("summary"), f"{path} has no summary"
+    assert "#/operations/" in html

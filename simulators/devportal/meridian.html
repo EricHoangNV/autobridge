@@ -275,7 +275,7 @@ function render() {
   setRail([]);
 }
 async function init() {
-  const res = await fetch("source");
+  const res = await fetch("/developers/source", { cache: "no-store" });
   state.spec = await res.json();
   state.opIndex = Object.entries(state.spec.paths || {}).map(([p, i]) => [p, i.post || {}]);
   buildNav();
