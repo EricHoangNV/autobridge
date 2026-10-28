@@ -1106,3 +1106,36 @@ failed `load_release` with `ReleaseCorruptError: signature mismatch` and
 - **Tests:** `make test` all green (autobridge 2130 pass / 91.33%, verifier 99 / 93.62%, simulators 294 /
   96.10%, ui 148 pass); `make lint` + `make typecheck` green; `export --check` + ui-client tests green.
   Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### REQ-021 sub-step C — Pinned spec_vocabulary + runtime gate (2026-10-28)
+- **Did:** per-build `spec_vocabulary: v1 | v2` (request field on `POST /connectors/{id}/build` and
+  `/sync`; 422 on other values) with `SPEC_VOCABULARY` env default (`"v1"`, fail-loud on garbage).
+  Builds persist the resolved pin in `BuildRun.inputs` (already exposed by `BuildRunOut`, no schema
+  change); discovery (`build_draft_spec`), `execute_build` and `bootstrap_and_create_release` resolve
+  `None` through config so the env default governs every programmatic path too.
+- **Runtime gate** (`run_sync_handler`, before any HTTP client exists): pin = request pin, else the
+  release's provenance build vocabulary, else the runtime max (`"v2"` — the runtime never narrows an
+  existing release below what it was built with unless the operator pins explicitly). `spec_version`
+  above the pin ends `Blocked` with named `vocabulary_v1_cannot_execute_spec_v2`; unknown/missing
+  versions fail closed (`unknown_spec_version`, DIRECTIVES §4). Repair needs no extra gate: a v2 patch
+  against a v1 spec already fails spec-schema validation.
+- **Refusal stays at 0 calls:** v1 build of POST/body-auth docs → `success False`, no draft spec, no
+  release, `vocabulary_guard` trace, `calls == 0` — asserted in-process (`FakeProvider.calls == []`)
+  and end to end at the API (no release rows, `model_usage.calls == 0`).
+- **UI + demo:** vocabulary radio (v1 default) on the new-connector form, sent with the build and shown
+  as `vocabulary vN` on success (2 new component tests); `make demo` records `spec_vocabulary` in the
+  step-2 evidence (the live path builds in-process). `SPEC_VOCABULARY` in `.env.example`; OpenAPI + UI
+  types regenerated.
+- **Files:** `config.py` (`spec_vocabulary_default`, `runtime_max_vocabulary`, `SPEC_VOCABULARIES`),
+  `control/schemas.py`, `control/routes/builds.py`, `control/jobs.py` (sync payload pin),
+  `discovery/bootstrap.py`, `engine/build_run.py`, `engine/sync_run.py`
+  (`resolve_sync_vocabulary` + gate), `bench/demo.py`, `.env.example`,
+  `tests/unit/test_autobridge_vocabulary.py` (17 tests), UI form + tests.
+- **Gotchas:** `ConnectorRelease` immutability (`before_update`/`before_delete` raise) — tests fabricate
+  releases with final values up front instead of mutating. Handler tests must `commit()` the ctx session
+  (`JobRunner` normally does). `export --check` goes green only after re-export; `openapi-check`'s final
+  `git diff` step passes after commit.
+- **Tests:** `make test` all green (autobridge 2147 pass / 91.40%, verifier 99 / 93.62%, simulators 294 /
+  96.10%, ui 150 pass); `make lint` + `make typecheck` + `make ui-typecheck` green. Existing Meridian
+  before/after e2e untouched (explicit pins; default path unchanged).
+  Agent: opencode meta/muse-spark-1.3-contributor (escalation).

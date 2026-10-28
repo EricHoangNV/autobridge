@@ -2532,3 +2532,13 @@ exemption (demo.py/schemas.py only). **Gates:** `make test` green (autobridge 21
 simulators 294, ui 148); lint + typecheck green.
 **Next:** REQ-021 sub-steps C (pinned vocabulary), D (rung ledger), E (matrix e2e), F (capabilities/knowledge),
 G (replay). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## 2026-10-28 — REQ-021 sub-step C merged (sbx1)
+**Pinned vocabulary:** request field + `SPEC_VOCABULARY` env (default v1) persisted in `BuildRun.inputs`;
+runtime gate in `run_sync_handler` (request > provenance > runtime max; v2-under-v1 → `Blocked` named;
+unknown → fail closed). v1 refusal pinned at 0 model calls in-process and via API. UI vocabulary radio +
+success label; demo step evidence carries the vocabulary.
+**Gates:** `make test` green (autobridge 2147 / 91.40%, verifier 99, simulators 294, ui 150); lint,
+typecheck, ui-typecheck green.
+**Next:** REQ-021 sub-steps D (rung ledger), E (matrix e2e), F (capabilities/knowledge), G (replay).
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).
