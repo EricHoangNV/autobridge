@@ -39,7 +39,7 @@ Wanted:
    `make e2e` target sets it.
 
 ### REQ-011 — Publish compose ports on localhost only (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 12:10 UTC)
+Status: OPEN
 Every port in `compose.yaml` is published as `"81xx:8000"` with no host IP, so Docker listens on all interfaces. While
 the stack runs, anyone on the same network (e.g. hackathon Wi-Fi) can reach the control API (unauthenticated write
 routes: approve/reject repairs, inject faults, import/connect connectors), the UI, the simulators, and the verifier on
@@ -54,7 +54,7 @@ Wanted:
 Note the trust-boundary smoke checks: the verifier and simulators stay unreachable from the engine network as before.
 
 ### REQ-012 — Optional bearer token on the control API's write routes (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 12:10 UTC)
+Status: OPEN
 The control API has no authentication; the only identity is the server-side `AUTOBRIDGE_OPERATOR` name (REQ-001).
 That is fine on localhost (REQ-011), but not if the stack is ever hosted for judges.
 Wanted:
