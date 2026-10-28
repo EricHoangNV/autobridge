@@ -5,7 +5,12 @@
   values are never logged (DIRECTIVES §6).
 - Retry honours ``RetryPolicy`` (statuses / backoff / max_attempts) with
   exponential / linear / constant backoff; ``Retry-After`` overrides backoff
-  when present and numeric.
+  when present and numeric, capped at ``MAX_RETRY_AFTER_S`` so a hostile or
+  misconfigured vendor cannot stall a job with one huge header (AR-2-1).
+  Cumulative vendor-requested delay on one client is bounded by
+  ``max_total_delay_s``; exceeding it raises :class:`RetryDeadlineExceeded`
+  (an :class:`HttpError`) so the sync job ends ``Blocked`` with a named
+  criterion instead of stalling.
 - Every model call goes through :mod:`autobridge.llm.provider`; this module
   never touches it, so a reference sync keeps ``ModelCall`` count 0.
 
@@ -50,6 +55,11 @@ _ENV_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 
 _DEFAULT_BASE_DELAY_S = 0.05  # small so tests stay fast
 
+#: Upper bound on any single vendor-requested ``Retry-After`` delay (AR-2-1).
+#: A larger header value is honoured only up to this cap, so one hostile
+#: ``Retry-After: 86400`` cannot stall a job.
+MAX_RETRY_AFTER_S = 60.0
+
 
 class HttpError(RuntimeError):
     """Non-retryable HTTP error or retry budget exhausted."""
@@ -58,6 +68,15 @@ class HttpError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.response = response
+
+
+class RetryDeadlineExceeded(HttpError):
+    """Cumulative vendor-requested retry delay exceeded the client budget.
+
+    Subclasses :class:`HttpError` so existing ``except HttpError`` callers
+    keep working; the sync engine maps it explicitly to a ``Blocked`` run
+    with the ``sync_deadline_exceeded`` criterion named (AR-2-1).
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +160,7 @@ class HttpClient:
         *,
         timeout_s: float = 30.0,
         base_delay_s: float = _DEFAULT_BASE_DELAY_S,
+        max_total_delay_s: float | None = None,
         sleep_fn: Callable[[float], None] = time.sleep,
         client_factory: Callable[..., httpx.Client] | None = None,
     ) -> None:
@@ -149,6 +169,13 @@ class HttpClient:
         self.retry = retry
         self.timeout_s = timeout_s
         self.base_delay_s = base_delay_s
+        #: Cumulative cap on vendor-requested/computed retry sleeps for this
+        #: client instance. ``None`` (default) means unbounded — callers that
+        #: run inside a job (e.g. the sync handler) pass an explicit budget so
+        #: a hostile vendor cannot stall the job (AR-2-1).
+        self.max_total_delay_s = max_total_delay_s
+        #: Seconds slept so far against ``max_total_delay_s``.
+        self.total_delay_s = 0.0
         self.sleep_fn = sleep_fn
         self.client_factory = client_factory or httpx.Client
         self._oauth_token: OAuth2Token | None = None
@@ -199,6 +226,28 @@ class HttpClient:
         self._oauth_token = self._oauth_manager._token
         return token
 
+    # -- retry delay -----------------------------------------------------
+
+    def _sleep(self, delay: float) -> None:
+        """Sleep *delay* seconds, enforcing the cumulative delay budget.
+
+        Raises :class:`RetryDeadlineExceeded` when ``max_total_delay_s`` is
+        set and already exhausted; otherwise sleeps at most the remaining
+        budget so ``total_delay_s`` never exceeds it (AR-2-1).
+        """
+        if delay < 0:
+            delay = 0.0
+        if self.max_total_delay_s is not None:
+            remaining = self.max_total_delay_s - self.total_delay_s
+            if remaining <= 0:
+                raise RetryDeadlineExceeded(
+                    f"vendor retry-delay budget exhausted "
+                    f"(slept {self.total_delay_s:.2f}s of {self.max_total_delay_s:.2f}s allowed)"
+                )
+            delay = min(delay, remaining)
+        self.total_delay_s += delay
+        self.sleep_fn(delay)
+
     # -- request -----------------------------------------------------------
 
     def request(
@@ -214,7 +263,10 @@ class HttpClient:
 
         Retries only when ``response.status_code`` is in ``retry.statuses`` and
         ``attempt < retry.max_attempts``.  ``Retry-After`` header, when numeric,
-        overrides the computed backoff.  Exhaustion raises :class:`HttpError`.
+        overrides the computed backoff but is capped at ``MAX_RETRY_AFTER_S``.
+        Cumulative retry sleeps on this client are bounded by
+        ``max_total_delay_s``; exceeding it raises
+        :class:`RetryDeadlineExceeded`.  Exhaustion raises :class:`HttpError`.
         Network errors (``httpx.RequestError``) are treated as retryable
         when a retry policy exists, otherwise they raise immediately.
         """
@@ -244,7 +296,7 @@ class HttpClient:
                 if not retry_statuses:
                     raise HttpError(f"network error with no retry policy: {exc}") from exc
                 delay = compute_backoff(attempt, backoff, self.base_delay_s)
-                self.sleep_fn(delay)
+                self._sleep(delay)
                 continue
 
             # Success path: 2xx
@@ -255,12 +307,13 @@ class HttpClient:
             if resp.status_code in retry_statuses and attempt < max_attempts:
                 retry_after = _retry_after_seconds(resp)
                 if retry_after is not None and retry_after >= 0:
-                    delay = retry_after
+                    # Honour the vendor's delay only up to the cap (AR-2-1).
+                    delay = min(retry_after, MAX_RETRY_AFTER_S)
                 else:
                     delay = compute_backoff(attempt, backoff, self.base_delay_s)
                 # Capture for diagnostics; do not log credential values.
                 last_response = resp
-                self.sleep_fn(delay)
+                self._sleep(delay)
                 continue
 
             # Non-retryable or exhausted: raise with status.

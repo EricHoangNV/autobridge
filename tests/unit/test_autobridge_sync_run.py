@@ -495,3 +495,122 @@ def test_fingerprint_config_defaults() -> None:
     assert _fingerprint_config({}) == {"keys": True, "types": True, "pagination_shape": True}
     assert _fingerprint_config({"health": {"fingerprint": {"keys": False}}}) == {"keys": False, "types": True, "pagination_shape": True}
     assert _fingerprint_config({"health": {"fingerprint": "bad"}}) == {"keys": True, "types": True, "pagination_shape": True}
+
+
+def _hostile_http(budget_s: float = 10.0) -> object:
+    """HttpClient whose vendor answers every page with a huge Retry-After (AR-2-1)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        return httpx.Response(429, headers={"Retry-After": "99999"}, json={})
+
+    transport = httpx.MockTransport(handler)
+
+    def factory(**kwargs):
+        return httpx.Client(transport=transport, timeout=kwargs.get("timeout", 5))
+
+    from autobridge.runtime.http import HttpClient
+    from autobridge.spec.models import RetryPolicy
+
+    return HttpClient(
+        "https://example.com",
+        retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=3),
+        max_total_delay_s=budget_s,
+        sleep_fn=lambda _: None,
+        client_factory=factory,
+    )
+
+
+def test_execute_sync_deadline_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AR-2-1: a vendor stalling via Retry-After ends the run Blocked with a named criterion."""
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    pagination = {
+        "strategy": "cursor",
+        "cursor_param": "cursor",
+        "next_path": "$.meta.next_cursor",
+        "items_path": "$.data",
+        "stop_when": ["null_cursor"],
+    }
+    summary = execute_sync(_spec_dict(pagination), _hostile_http())
+    assert summary["outcome"] == "Blocked"
+    assert summary["unmet_criteria"] == ["sync_deadline_exceeded"]
+    assert summary["data_readiness"] == {"freshness": "stale", "completeness": "incomplete"}
+
+
+def test_run_sync_handler_wires_delay_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AR-2-1: the production sync path builds its client with the delay budget."""
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    from autobridge.engine.sync_run import DEFAULT_SYNC_MAX_TOTAL_DELAY_S
+
+    assert DEFAULT_SYNC_MAX_TOTAL_DELAY_S > 0
+
+    engine = create_engine("sqlite:///:memory:")
+    init_db(engine)
+    sessions = session_factory(engine)
+    pagination = {
+        "strategy": "cursor",
+        "cursor_param": "cursor",
+        "next_path": "$.meta.next_cursor",
+        "items_path": "$.data",
+        "stop_when": ["null_cursor"],
+    }
+    spec_dict = _spec_dict(pagination)
+    with sessions() as s:
+        conn = Connector(
+            name="Test",
+            base_url="https://example.com",
+            credential_ref="TEST_TOKEN",
+            target_entities=["Reservation"],
+            runtime_target={"kind": "local_process"},
+        )
+        s.add(conn)
+        s.commit()
+        conn_id = conn.id
+        rel = ConnectorRelease(
+            connector_id=conn_id,
+            version=1,
+            spec=spec_dict,
+            signature=spec_signature(spec_dict),
+        )
+        s.add(rel)
+        s.commit()
+        release_id = rel.id
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"data": [], "meta": {"next_cursor": None}})  # noqa: ARG005
+    )
+
+    def default_factory(**kwargs):
+        return httpx.Client(transport=transport, timeout=kwargs.get("timeout", 5))
+
+    captured: dict = {}
+    from autobridge.runtime import http as http_module
+
+    real_client = http_module.HttpClient
+
+    class SpyClient(real_client):  # type: ignore[valid-type, misc]
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("client_factory", default_factory)
+            kwargs.setdefault("sleep_fn", lambda _: None)
+            captured.update(kwargs)
+            super().__init__(*args, **kwargs)
+
+    # run_sync_handler does `from autobridge.runtime.http import HttpClient`
+    # at call time, so this patch intercepts the default-client build.
+    monkeypatch.setattr(http_module, "HttpClient", SpyClient)
+
+    from autobridge.control.jobs import JobContext
+    from autobridge.engine.sync_run import run_sync_handler
+
+    with sessions() as s:
+        ctx = JobContext(
+            job_id="job-budget",
+            kind="sync",
+            run_id=None,
+            payload={"release_id": release_id},
+            attempt=1,
+            session=s,
+            worker_id="w1",
+        )
+        result = run_sync_handler(ctx)
+        assert captured.get("max_total_delay_s") == DEFAULT_SYNC_MAX_TOTAL_DELAY_S
+        assert result["outcome"] == "Complete"

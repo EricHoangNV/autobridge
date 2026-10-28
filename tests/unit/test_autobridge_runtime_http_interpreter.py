@@ -11,9 +11,11 @@ import httpx
 import pytest
 
 from autobridge.runtime.http import (
+    MAX_RETRY_AFTER_S,
     AuthError,
     HttpClient,
     HttpError,
+    RetryDeadlineExceeded,
     build_auth_headers,
     compute_backoff,
     resolve_base_url,
@@ -265,6 +267,53 @@ def test_request_exhaustion_raises() -> None:
         client.request("GET", "/reservations")
     # 3 attempts => 2 sleeps
     assert sleep_mock.call_count == 2
+
+
+def test_request_retry_after_is_capped() -> None:
+    """AR-2-1: a hostile ``Retry-After: 99999`` sleeps at most MAX_RETRY_AFTER_S."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        return httpx.Response(429, headers={"Retry-After": "99999"}, json={})
+
+    client, sleep_mock = _make_client_with_transport(handler)
+    with pytest.raises(HttpError, match="retry budget exhausted"):
+        client.request("GET", "/reservations")
+    # 3 attempts => 2 sleeps, each capped instead of 99999
+    assert sleep_mock.call_count == 2
+    for call in sleep_mock.call_args_list:
+        assert call[0][0] == pytest.approx(MAX_RETRY_AFTER_S)
+    assert client.total_delay_s == pytest.approx(2 * MAX_RETRY_AFTER_S)
+
+
+def test_request_total_delay_budget_exceeded() -> None:
+    """AR-2-1: cumulative delay past max_total_delay_s raises RetryDeadlineExceeded."""
+
+    def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        return httpx.Response(429, headers={"Retry-After": "99999"}, json={})
+
+    sleeps: list[float] = []
+    transport = httpx.MockTransport(handler)
+
+    def factory(**kwargs):
+        return httpx.Client(transport=transport, timeout=kwargs.get("timeout", 5))
+
+    client = HttpClient(
+        "https://example.com",
+        retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=5),
+        max_total_delay_s=100.0,
+        sleep_fn=sleeps.append,
+        client_factory=factory,
+    )
+    with pytest.raises(RetryDeadlineExceeded, match="budget exhausted"):
+        client.request("GET", "/reservations")
+    # 60 capped + 40 remainder = budget; the third sleep raises instead.
+    assert sum(sleeps) == pytest.approx(100.0)
+    assert client.total_delay_s == pytest.approx(100.0)
+
+
+def test_retry_deadline_is_http_error() -> None:
+    """RetryDeadlineExceeded stays catchable as HttpError (backward compat)."""
+    assert issubclass(RetryDeadlineExceeded, HttpError)
 
 
 def test_request_non_retryable_404() -> None:

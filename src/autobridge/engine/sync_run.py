@@ -23,8 +23,16 @@ from autobridge.control.models import SyncRun, utcnow
 from autobridge.drift import fingerprint as _fp
 from autobridge.runtime.checkpoint import compute_checkpoint_for_operation
 from autobridge.runtime.checks import evaluate_entity_checks
+from autobridge.runtime.http import RetryDeadlineExceeded
 from autobridge.runtime.interpreter import Interpreter, OperationResult
 from autobridge.runtime.mapping import map_records_to_entities
+
+#: Default cumulative vendor-delay budget for one sync job (AR-2-1). The
+#: sync handler passes this to the default ``HttpClient`` so a hostile or
+#: misconfigured vendor answering every page with a huge ``Retry-After``
+#: cannot stall the inline job (and the control request driving it)
+#: indefinitely; the run ends ``Blocked`` with ``sync_deadline_exceeded``.
+DEFAULT_SYNC_MAX_TOTAL_DELAY_S = 300.0
 
 
 def _fingerprint_config(spec: dict[str, Any]) -> dict[str, bool]:
@@ -161,8 +169,12 @@ def execute_sync(
         status = getattr(exc, "status_code", None)
         msg = str(exc).lower()
         unmet: list[str] = []
+        # A vendor that stalls via huge Retry-After values trips the
+        # cumulative delay budget first (AR-2-1): name it explicitly.
+        if isinstance(exc, RetryDeadlineExceeded):
+            unmet = ["sync_deadline_exceeded"]
         # Infer Blocked reason from status or message
-        if status == 404 or "404" in msg or "not found" in msg or "endpoint" in msg:
+        elif status == 404 or "404" in msg or "not found" in msg or "endpoint" in msg:
             unmet = ["endpoint_not_found"]
         elif status == 403 or "403" in msg or "revoked" in msg:
             unmet = ["auth_revoked"]
@@ -413,7 +425,8 @@ def run_sync_handler(
     if http_client_factory is not None:
         http_client = http_client_factory(spec_dict)
     else:
-        # Build from spec.source
+        # Build from spec.source, with a cumulative vendor-delay budget so a
+        # hostile Retry-After cannot stall this (inline) job (AR-2-1).
         from autobridge.runtime.http import HttpClient
         from autobridge.spec.models import load_spec_from_dict
 
@@ -422,6 +435,7 @@ def run_sync_handler(
             base_url=spec.source.base_url,
             auth=spec.source.auth,
             retry=spec.source.rate_limit.retry,
+            max_total_delay_s=DEFAULT_SYNC_MAX_TOTAL_DELAY_S,
         )
 
     checkpoint = payload.get("checkpoint", {}) or {}

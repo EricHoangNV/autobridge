@@ -1984,3 +1984,32 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 - `make openapi-check` passes only after the regenerated files are committed (its `git diff --exit-code` compares worktree to index) — verify post-merge
 - No live-stack verification in sandbox (docker present, stack down); first `make up` run with a token set should exercise one authed write + one 401 to confirm compose wiring end to end
 - Open: P1.W10.3 + P1.W2.8 owner steps; Code Review Cycle 2 FAIL items (AR-1-1…AR-1-5, AR-2-1…AR-2-6) still unaddressed
+
+## AR-2-1 — Cap vendor Retry-After + per-job delay budget
+**Date:** 2026-10-28
+**Ref:** Code Review Cycle 2 (FEEDBACKS.MD), AR-2-1 — vendor-controlled unbounded `Retry-After` stall
+
+**What was done:**
+- Capped honoured `Retry-After` at `MAX_RETRY_AFTER_S = 60.0` in `src/autobridge/runtime/http.py`
+- Added opt-in cumulative delay budget (`max_total_delay_s` / `total_delay_s` / `_sleep()`) raising `RetryDeadlineExceeded(HttpError)` on exhaustion
+- Wired a 300 s default budget into the production sync path (`run_sync_handler`); `execute_sync` maps exhaustion to `Blocked` + `sync_deadline_exceeded`
+- Documented the cap/budget/criterion in `docs/connector-spec.md`
+- Added 5 unit tests (cap, budget exhaustion, HttpError subclass compat, sync Blocked mapping, handler wiring)
+- Ran `make lint` (fixed one isort ordering), `make typecheck`, full `make test`: 1906 + 97 + 241 pass, coverage 91/94/97%, ui 143 pass — all green
+
+**Key decisions:**
+- Per-sleep cap (60 s, review's suggestion) PLUS cumulative per-client budget: cap alone still allows ~10 min/request × pages/ops of stall; the budget bounds the whole job's vendor-delay exposure
+- Budget opt-in (`None` default) on the generic client so library behavior is unchanged; default applied only in the sync job path where one client instance == one job
+- `RetryDeadlineExceeded` subclasses `HttpError` so existing `except HttpError` handling keeps working; explicit `isinstance` branch in `execute_sync` names the criterion per DIRECTIVES §4
+- Left FEEDBACKS.MD verdict untouched (reviewer re-verifies); no PRD-TRACKING line exists for FAIL items so no claim/status flip
+
+**Files changed:**
+- `src/autobridge/runtime/http.py` — cap, budget, exception, docstring/request updates
+- `src/autobridge/engine/sync_run.py` — default budget constant, handler wiring, Blocked mapping
+- `tests/unit/test_autobridge_runtime_http_interpreter.py` — 3 new tests + import
+- `tests/unit/test_autobridge_sync_run.py` — 2 new tests + hostile-client helper
+- `docs/connector-spec.md` — retry bullet updated
+
+**Notes for next iteration:**
+- Remaining Cycle 2 FAIL items still open: AR-1-1, AR-1-2, AR-1-3, AR-1-4 (REQ-012 done, loopback-override part open), AR-1-5, AR-2-2…AR-2-6; AR-2-2 (build-route SSRF/file-read) is the other Medium and a natural next pick
+- E2E `tests/e2e/` for the runtime workstream not run (no Compose stack in sandbox); change covered by unit fakes

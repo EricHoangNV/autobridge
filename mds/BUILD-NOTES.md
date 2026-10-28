@@ -667,3 +667,44 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 - **Tests:** new `tests/unit/test_autobridge_control_token.py` (11 tests); contract fuzz fixture sets the token so enforcement is on (schemathesis treats declared bearer auth as required — unauthenticated fuzz without it fails ST401 by design). `ui/openapi.json` + `schema.d.ts` regenerated (purely additive diff).
 - **Gotchas:** ruff RET501 (no explicit `return None`); demo `_Client` test stub lacks `headers` kwarg → pass headers conditionally; `make openapi-check`'s `git diff --exit-code` only passes once generated files are committed.
 - **Results:** `make test` 1901+97+241 pass / 0 fail + ui 143 pass (gates pass); lint, typecheck, ui-typecheck green. No stack in sandbox → no live e2e; unit fakes + contract fuzz cover it. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+### AR-2-1 — Cap vendor Retry-After + per-job delay budget (Code Review Cycle 2, sbx1 2026-10-28)
+Remediation for AR-2-1 (Medium): a vendor answering 429/503 with a huge
+`Retry-After` stalled the inline sync job unboundedly (attempts bounded at
+<=10 per request, each sleep unbounded; `JobRunner._execute` has no wall
+deadline). No manifest/request line covers FAIL items, so no claim commit
+was possible; worked directly on branch.
+- `src/autobridge/runtime/http.py`: new `MAX_RETRY_AFTER_S = 60.0`; vendor
+  delay honoured only up to the cap. New `RetryDeadlineExceeded(HttpError)`
+  + `HttpClient(max_total_delay_s=None)` cumulative budget (`total_delay_s`
+  counter, `_sleep()` helper clamps each sleep to the remaining budget and
+  raises once exhausted). Default `None` = unbounded, so existing library
+  behavior and all prior tests are unchanged.
+- `src/autobridge/engine/sync_run.py`: new `DEFAULT_SYNC_MAX_TOTAL_DELAY_S
+  = 300.0`; `run_sync_handler` passes it when building the default client
+  (one client per sync job, so this is the per-job HTTP-delay deadline);
+  `execute_sync` maps `RetryDeadlineExceeded` to `Blocked` with
+  `unmet_criteria == ["sync_deadline_exceeded"]` (+ stale/incomplete
+  readiness), ahead of the generic status/message inference.
+- `docs/connector-spec.md`: retry bullet documents the 60 s cap, the
+  per-job budget and the new criterion.
+- Tests (5 new): `test_request_retry_after_is_capped` (99999 -> 2x60 s
+  sleeps), `test_request_total_delay_budget_exceeded` (budget 100 -> sleeps
+  sum exactly 100 then raise), `test_retry_deadline_is_http_error`
+  (backward-compat subclass), `test_execute_sync_deadline_blocked`
+  (Blocked + criterion), `test_run_sync_handler_wires_delay_budget`
+  (SpyClient proves the production path passes the default budget and the
+  run still Completes on healthy pages).
+- Gotchas: ruff/isort wants `MAX_RETRY_AFTER_S` first in the import parens
+  (uppercase-first ordering); an early draft of the wiring test rebuilt the
+  client manually instead of exercising `run_sync_handler` — rewrote with a
+  SpyClient + mock transport so it tests the real path. `unmet_criteria`
+  consumers (classifier/signals) treat the list as open strings, so the new
+  criterion needs no registry change.
+- Not done: full per-job wall clock inside `JobRunner._execute` (would need
+  cross-handler deadline plumbing); the HTTP-delay budget bounds the exact
+  stall named in the finding. E2E `test_02` not run (no stack in sandbox);
+  covered by fakes in unit tests. FEEDBACKS.MD verdict left untouched for
+  the reviewer to re-verify. Remaining Cycle 2 items (AR-1-1…AR-2-6 except
+  AR-2-1) still open.
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation).

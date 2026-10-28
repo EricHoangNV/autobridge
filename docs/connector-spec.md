@@ -124,7 +124,9 @@ health:
 
 * `rate_limit.retry` — `statuses` (e.g. `[429, 503]`), `backoff` (`exponential |
   linear | constant`), `max_attempts` 1..10. The `HttpClient` retries on those
-  statuses with exponential backoff (`Retry-After` overrides when numeric).
+  statuses with exponential backoff (`Retry-After` overrides when numeric,
+  capped at 60 s per sleep; cumulative retry delay per sync job is bounded
+  and trips `Blocked` with `sync_deadline_exceeded` instead of stalling).
 
 * `timezone_source` — how the runtime resolves property-local tz for
   `date_local` / `business_date`:
