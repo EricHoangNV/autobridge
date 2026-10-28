@@ -27,13 +27,17 @@ def test_harbor_app_health() -> None:
     _check("simulators.harborpms.app")
 
 
+def test_meridian_app_health() -> None:
+    _check("simulators.meridianpms.app")
+
+
 def test_sim_apps_do_not_import_engine_or_verifier() -> None:
     import re
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
     pattern = re.compile(r"^\s*(?:import|from)\s+(\S+)", re.MULTILINE)
-    for rel in ("simulators/atlaspms/app.py", "simulators/harborpms/app.py"):
+    for rel in ("simulators/atlaspms/app.py", "simulators/harborpms/app.py", "simulators/meridianpms/app.py"):
         text = (root / rel).read_text(encoding="utf-8")
         for match in pattern.finditer(text):
             top = match.group(1).split(".")[0]

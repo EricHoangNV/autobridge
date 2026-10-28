@@ -187,6 +187,23 @@ services:
       - "127.0.0.1:8112:8001"
     healthcheck: *healthcheck-py
 
+  sim-meridian:
+    build:
+      context: ./simulators
+      dockerfile: Dockerfile
+    environment:
+      APP_MODULE: simulators.meridianpms.app:app
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+    networks:
+      - vendor-net
+      - admin-net
+    ports:
+      - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8116:8000"
+      # AR-1-4 residual: simulator admin APIs never follow
+      # AUTOBRIDGE_BIND_HOST — loopback-only even on a LAN-exposed stack.
+      - "127.0.0.1:8117:8001"
+    healthcheck: *healthcheck-py
+
   # P2.S4.1 MCP Guardian: mock HotelTools V1/V2 + compatibility gateway
   # (engine trust zone, engine-net only; no verifier/simulator route).
   mcp-hotel:

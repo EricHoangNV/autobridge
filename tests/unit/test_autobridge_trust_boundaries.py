@@ -112,3 +112,20 @@ def test_engine_never_references_legacystay() -> None:
             if "legacystay" in code.lower():
                 hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
     assert not hits, "engine references LegacyStay outside comments (REQ-019.5):\n" + "\n".join(hits)
+
+
+def test_engine_never_references_meridian() -> None:
+    """REQ-020 item 5: no Meridian-specific branch anywhere in the engine.
+
+    ``grep`` must find no "meridian" in ``src/autobridge`` outside tests
+    and fixtures — the vocabulary extension lands as generic spec data.
+    """
+    hits: list[str] = []
+    for path in sorted(ENGINE_ROOT.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            code = line.split("#", 1)[0]
+            if "meridian" in code.lower():
+                hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
+    assert not hits, "engine references Meridian outside comments (REQ-020.5):\n" + "\n".join(hits)

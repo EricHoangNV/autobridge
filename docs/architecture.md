@@ -39,6 +39,7 @@ Design principles (plan §1):
 | `sim-atlas` | `simulators` | `simulators.atlaspms.app:app` | simulator | 8105 | AtlasPMS synthetic vendor (method-style REST, x-api-key, page pagination) + admin API |
 | `sim-harbor` | `simulators` | `simulators.harborpms.app:app` | simulator | 8106 | HarborPMS synthetic vendor (messy docs, quirks) + admin API |
 | `sim-legacystay` | `simulators` | `simulators.legacystay.app:app` | simulator | 8111 | LegacyStay synthetic vendor Phase 2 (offset, strict Bearer, throttle, nullable chaos) + admin API |
+| `sim-meridian` | `simulators` | `simulators.meridianpms.app:app` | simulator | 8116 | MeridianPMS synthetic vendor REQ-020 (Mews-style POST/JSON, body auth, Limitation cursor, UTC instants) + admin API |
 | `mcp-hotel` | `mcp_stretch` | `mcp_stretch.app:app` | engine | 8115 | MCP Guardian Phase 2 (mock HotelTools V1→V2 + compatibility gateway, pinned-consumer replay) |
 | `ui` | `ui` | Node stub → Next.js 15 (W7) | user | 8107 | Four screens over the control plane |
 | `bench` | `autobridge.bench` | `autobridge.bench.app:app` | engine | 8108 | Matched-budget harness (AutoBridge vs baseline) |
@@ -73,9 +74,9 @@ on the compose networks is unchanged.
 
 ```
 engine-net   — control, worker, runtime-sandbox, ui, bench, mcp-hotel
-vendor-net   — runtime-sandbox ↔ sim-atlas/sim-harbor/sim-legacystay public API (8000)
+vendor-net   — runtime-sandbox ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian public API (8000)
 verifier-net — control ↔ verifier, bench ↔ verifier
-admin-net    — control ↔ sim-atlas/sim-harbor/sim-legacystay admin API (8001, W2.2)
+admin-net    — control ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian admin API (8001, W2.2)
 edge-net     — edge-worker ↔ sim-edgepos public API (8000) ONLY (P2.S2)
 ```
 
@@ -93,7 +94,7 @@ probes asserted in `scripts/smoke.sh` and statically in
 
 Positive probes guard against a blanket outage masquerading as isolation:
 
-- `runtime-sandbox → sim-atlas/sim-harbor/sim-legacystay :8000` must succeed
+- `runtime-sandbox → sim-atlas/sim-harbor/sim-legacystay/sim-meridian :8000` must succeed
 - `control → verifier :8000` must succeed
 
 ### 2.3 Health contracts (plan §3)

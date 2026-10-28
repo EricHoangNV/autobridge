@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meridian Developers — Connector API</title>
+<style>
+  :root { --bg: #ffffff; --bg2: #f6f8fb; --ink: #17202b; --muted: #5b6b7c; --line: #e2e8f0;
+    --accent: #0b5fff; --accent-ink: #ffffff; --code: #0f172a; --codebg: #0b1220; --card: #ffffff;
+    --callout: #fff8e6; --callout-line: #e3b341; --verb: #007a3d; }
+  [data-theme="dark"] { --bg: #0d1520; --bg2: #111b29; --ink: #e6edf5; --muted: #93a3b5; --line: #223146;
+    --accent: #5b9bff; --accent-ink: #0b1526; --code: #e6edf5; --codebg: #060b13; --card: #111b29;
+    --callout: #241c07; --callout-line: #8a6d1c; --verb: #37c978; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  a { color: var(--accent); }
+  .top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px;
+    padding: 10px 18px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 800; font-size: 17px; letter-spacing: .2px; white-space: nowrap; }
+  .brand span { color: var(--accent); }
+  .switcher { display: flex; gap: 4px; background: var(--bg2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+  .switcher button { border: 0; background: transparent; color: var(--muted); border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer; }
+  .switcher button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .search { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .search input { border: 1px solid var(--line); background: var(--bg2); color: var(--ink);
+    border-radius: 8px; padding: 6px 10px; width: 220px; font-size: 13px; }
+  .search kbd { font: 11px/1 monospace; border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; color: var(--muted); }
+  .theme { border: 1px solid var(--line); background: var(--bg2); color: var(--ink); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  .layout { display: grid; grid-template-columns: 264px 1fr 220px; min-height: calc(100vh - 53px); }
+  .side { border-right: 1px solid var(--line); padding: 16px 12px; background: var(--bg); overflow: auto; }
+  .side h3 { margin: 14px 8px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+  .side h3:first-child { margin-top: 0; }
+  .side a { display: block; padding: 5px 10px; border-radius: 7px; color: var(--ink); text-decoration: none; font-size: 14px; }
+  .side a:hover { background: var(--bg2); }
+  .side a[aria-current="true"] { background: var(--bg2); border-left: 3px solid var(--accent); font-weight: 650; }
+  .side .grp { margin: 6px 8px 2px; font-size: 12px; color: var(--muted); font-weight: 700; }
+  .main { padding: 26px 34px 60px; max-width: 860px; }
+  .rail { border-left: 1px solid var(--line); padding: 20px 14px; font-size: 13px; overflow: auto; }
+  .rail h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+  .rail a { display: block; color: var(--muted); text-decoration: none; padding: 3px 0; }
+  .rail a:hover { color: var(--ink); }
+  .verb { display: inline-block; font: 700 12px/1 monospace; color: #fff; background: var(--verb);
+    border-radius: 5px; padding: 5px 8px; margin-right: 8px; vertical-align: middle; }
+  .oppath { font: 13px/1.5 monospace; word-break: break-all; }
+  table.fields { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; }
+  table.fields th, table.fields td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  table.fields th { background: var(--bg2); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  table.fields td code { font-size: 12.5px; }
+  .req { color: #b42318; font-weight: 700; font-size: 12px; }
+  .callout { border: 1px solid var(--callout-line); background: var(--callout); border-radius: 8px; padding: 10px 14px; margin: 14px 0; font-size: 14px; }
+  .tabs { display: flex; gap: 4px; margin: 16px 0 0; }
+  .tabs button { border: 1px solid var(--line); border-bottom: 0; background: var(--bg2); color: var(--ink);
+    border-radius: 8px 8px 0 0; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--codebg); color: #fff; }
+  pre.sample { background: var(--codebg); color: #e6edf5; border-radius: 0 8px 8px 8px; padding: 14px 16px;
+    overflow: auto; font-size: 12.5px; margin: 0 0 18px; }
+  details.nested { margin: 4px 0; }
+  details.nested summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+  .foot { border-top: 1px solid var(--line); margin-top: 34px; padding-top: 14px; font-size: 13px; color: var(--muted); }
+  .foot button { border: 1px solid var(--line); background: var(--bg2); color: var(--ink); border-radius: 7px; padding: 4px 12px; cursor: pointer; }
+  .hidden { display: none !important; }
+  .sim-banner { background: #3a2b00; color: #ffe9a8; font-size: 12px; padding: 5px 14px; }
+  .sim-banner a { color: #ffe9a8; }
+</style>
+</head>
+<body>
+<div class="sim-banner">Simulated vendor documentation for the AutoBridge demo · rendered live from <a href="/docs/meridian-openapi.yaml">meridian-openapi.yaml</a></div>
+<header class="top">
+  <div class="brand">Meridian <span>Developers</span></div>
+  <div class="switcher" role="tablist" aria-label="Product">
+    <button aria-pressed="true" data-product="connector">Connector API</button>
+    <button aria-pressed="false" data-product="webhooks">Webhooks</button>
+    <button aria-pressed="false" data-product="changelog">Changelog</button>
+  </div>
+  <div class="search"><input id="q" type="search" placeholder="Search docs…" aria-label="Search docs"><kbd>⌘K</kbd></div>
+  <button class="theme" id="theme" aria-label="Toggle light and dark">◐</button>
+</header>
+<div class="layout">
+  <nav class="side" id="side" aria-label="Documentation"></nav>
+  <main class="main" id="page" aria-live="polite"></main>
+  <aside class="rail" id="rail" aria-label="On this page"><h4>On this page</h4><div id="railLinks"></div></aside>
+</div>
+<script>
+"use strict";
+const GUIDE_ORDER = ["getting-started", "authentication", "requests", "responses", "pagination", "serialization"];
+const GUIDES = {
+  "getting-started": { title: "Getting started", body: `
+    <p>Build a Meridian integration in four calls: read <b>Configuration</b> for the
+    enterprise time zone and currency, page through <b>Reservations</b>, resolve each
+    reservation's guest through <b>Customers</b> by <code>AccountId</code>, and sum the
+    reservation total from <b>Order items</b> for the same account.</p>
+    <p>A reservation row on its own is never the whole truth: it carries no guest
+    name and no money. The joins are the integration.</p>` },
+  "authentication": { title: "Authentication", body: `
+    <p>Meridian authenticates every call with two tokens <b>in the JSON body</b>,
+    never in a header:</p>
+    <ul><li><code>ClientToken</code> — identifies your integration.</li>
+    <li><code>AccessToken</code> — identifies the enterprise you may access.</li>
+    <li><code>Client</code> — your application name and version, for support.</li></ul>
+    <p>A missing token answers <b>401</b>; a wrong token answers <b>403</b>.
+    Keep both values out of client-side code and out of logs.</p>` },
+  "requests": { title: "Requests", body: `
+    <p>Every operation is <b>POST</b> with a JSON body, addressed as
+    <code>/api/connector/v1/&lt;resource&gt;/getAll/&lt;version&gt;</code>.
+    Filters (<code>EnterpriseIds</code>, <code>ServiceIds</code>, id lists,
+    <code>States</code>, <code>UpdatedUtc</code>) ride in the same body next to
+    <code>Limitation</code>. Each id list accepts at most 1000 entries.</p>` },
+  "responses": { title: "Responses", body: `
+    <p>A 200 response carries the page (<code>Reservations</code>,
+    <code>Customers</code> or <code>OrderItems</code>) plus <code>Cursor</code>.
+    A 400 names the contract breach (<code>invalid_limitation</code>,
+    <code>interval_too_long</code>, <code>too_many_ids</code>); 401 means a
+    missing token and 403 a wrong one. Nothing is ever returned over GET.</p>` },
+  "pagination": { title: "Pagination", body: `
+    <p>Send <code>Limitation: {"Count": 1..1000, "Cursor": "&lt;id or null&gt;"}</code>.
+    The response <code>Cursor</code> is the id of the <b>last item returned</b> and is
+    <code>null</code> only when no data came back. Keep paging while the cursor is
+    non-null <b>and</b> the page held <code>Count</code> items; stop on a null
+    cursor or a short page.</p>` },
+  "serialization": { title: "Serialization", body: `
+    <p>Field names are <b>PascalCase</b> (<code>ScheduledStartUtc</code>,
+    <code>AccountId</code>). Every date is a <b>UTC instant</b>
+    (<code>2026-10-26T15:00:00Z</code>) — convert to the enterprise time zone
+    from Configuration before deriving the property-local business date. Money
+    arrives as <b>numbers with currency</b>: <code>NetValue</code>,
+    <code>GrossValue</code> and <code>TaxValues</code> per order item; the
+    reservation total is the sum of gross values for its account.</p>` }
+};
+const state = { spec: null, product: "connector", opIndex: [] };
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+}
+function anchorId(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+function resolveRef(ref) {
+  const prefix = "#/components/schemas/";
+  if (ref && ref.startsWith(prefix)) {
+    const name = ref.slice(prefix.length);
+    return (state.spec.components.schemas || {})[name] || {};
+  }
+  return {};
+}
+function flattenedProps(schema) {
+  // Merge allOf (ApiBase + operation fields) into one property map.
+  const out = {};
+  const parts = schema.allOf || [schema];
+  for (const part of parts) {
+    const node = part.$ref ? resolveRef(part.$ref) : part;
+    Object.assign(out, node.properties || {});
+    if (node.allOf) Object.assign(out, flattenedProps(node));
+  }
+  return out;
+}
+function fieldRows(props, required) {
+  const req = new Set(required || []);
+  return Object.entries(props).map(([name, f]) => {
+    const nested = f.type === "object" && f.properties
+      ? `<details class="nested"><summary>object fields</summary>${propTable(f.properties, f.required)}</details>`
+      : "";
+    const arr = f.type === "array" && f.items && (f.items.$ref || f.items.properties)
+      ? `<details class="nested"><summary>item fields</summary>${propTable(
+          (f.items.$ref ? resolveRef(f.items.$ref).properties : f.items.properties) || {},
+          (f.items.$ref ? resolveRef(f.items.$ref).required : f.items.required) || [])}</details>`
+      : "";
+    const refLink = f.$ref ? `<details class="nested"><summary>${esc(f.$ref.split("/").pop())}</summary>${schemaTable(f.$ref)}</details>` : "";
+    return `<tr><td><code>${esc(name)}</code>${req.has(name) ? ' <span class="req">required</span>' : ""}<br><small>${esc(f.type || "")}${f.format ? " · " + esc(f.format) : ""}${f.enum ? " · " + esc(f.enum.join(" | ")) : ""}${f.nullable ? " · nullable" : ""}</small></td><td>${esc(f.description || "")}${nested}${arr}${refLink}</td></tr>`;
+  }).join("");
+}
+function propTable(props, required) {
+  return `<table class="fields"><tr><th>Field</th><th>Description</th></tr>${fieldRows(props, required)}</table>`;
+}
+function schemaTable(ref) {
+  const s = resolveRef(ref);
+  return propTable(s.properties || {}, s.required || []);
+}
+function codeSamples(path, op) {
+  const body = JSON.stringify({ ClientToken: "your-client-token", AccessToken: "your-access-token", Client: "BridgeApp/1.4", Limitation: { Count: 100, Cursor: null } }, null, 2);
+  const curl = `curl -X POST "https://api.meridian.example/api/connector/v1${esc(path)}" \\\n  -H "Content-Type: application/json" \\\n  -d '${body}'`;
+  const js = `const res = await fetch("https://api.meridian.example/api/connector/v1${esc(path)}", {\n  method: "POST",\n  headers: { "Content-Type": "application/json" },\n  body: JSON.stringify(${body})\n});\nconst page = await res.json(); // { ${esc(collectionKey(op))}, Cursor }`;
+  const py = `import requests\nresp = requests.post(\n    "https://api.meridian.example/api/connector/v1${esc(path)}",\n    json={\n        "ClientToken": "your-client-token",\n        "AccessToken": "your-access-token",\n        "Client": "BridgeApp/1.4",\n        "Limitation": {"Count": 100, "Cursor": None},\n    },\n    timeout=30,\n)\npage = resp.json()  # { ${esc(collectionKey(op))}, Cursor }`;
+  return { "cURL": curl, "JavaScript": js, "Python": py };
+}
+function collectionKey(op) {
+  const m = { reservationsGetAll: "Reservations", customersGetAll: "Customers", orderItemsGetAll: "OrderItems" };
+  return m[op.operationId] || "Items";
+}
+function renderOperation(path, op, tag) {
+  const reqSchema = (((op.requestBody || {}).content || {})["application/json"] || {}).schema || {};
+  const props = flattenedProps(reqSchema.$ref ? resolveRef(reqSchema.$ref) : reqSchema);
+  const respSchema = ((((op.responses || {})["200"] || {}).content || {})["application/json"] || {}).schema || {};
+  const respProps = (respSchema.$ref ? resolveRef(respSchema.$ref).properties : respSchema.properties) || {};
+  const samples = codeSamples(path, op);
+  const tabs = Object.keys(samples).map((k, i) =>
+    `<button role="tab" aria-selected="${i === 0}" data-sample="${esc(op.operationId)}" data-lang="${esc(k)}">${esc(k)}</button>`).join("");
+  const pres = Object.entries(samples).map(([k, v], i) =>
+    `<pre class="sample${i === 0 ? "" : " hidden"}" data-pane="${esc(op.operationId)}:${esc(k)}"><code>${esc(v)}</code></pre>`).join("");
+  const usesPaging = !!props.Limitation;
+  const hasInterval = !!props.UpdatedUtc;
+  return `
+    <h1 id="${anchorId(op.summary || op.operationId)}">${esc(op.summary || op.operationId)}</h1>
+    <p><span class="verb">POST</span><span class="oppath">/api/connector/v1${esc(path)}</span></p>
+    <p>${esc(op.description || "")}</p>
+    <div class="callout">⚠️ Version <b>2023-04-12</b> of this operation is deprecated and answers 404. Use <b>2023-06-06</b>.</div>
+    ${usesPaging ? `<div class="callout">📄 <b>Uses pagination.</b> Send <code>Limitation</code>; stop on a null cursor or a short page.</div>` : ""}
+    ${hasInterval ? `<div class="callout">⏱ <b>Max interval 3 months.</b> <code>UpdatedUtc</code> Start/End beyond 92 days answers 400 <code>interval_too_long</code>.</div>` : ""}
+    <h2 id="${anchorId("request")}">Request body</h2>
+    ${propTable(props, (reqSchema.$ref ? resolveRef(reqSchema.$ref).required : reqSchema.required) || [])}
+    <h2 id="${anchorId("response")}">Response</h2>
+    ${propTable(respProps, (respSchema.$ref ? resolveRef(respSchema.$ref).required : respSchema.required) || [])}
+    <h2 id="${anchorId("example")}">Example</h2>
+    <div class="tabs" role="tablist">${tabs}</div>${pres}
+    <div class="callout">🔑 The tokens travel <b>in the body</b>, never in a header. Missing → 401, wrong → 403.</div>`;
+}
+function exampleResponse(op) {
+  if (op.operationId === "configurationGet") return `{"Enterprises": [{"Id": "prop-001", "Name": "Grand Plaza", "TimeZone": "America/New_York", "CurrencyCode": "USD"}]}`;
+  const key = collectionKey(op);
+  return `{"${key}": [ … ${key === "OrderItems" ? "with UnitAmount {Currency, NetValue, GrossValue, TaxValues}" : "one page"} … ], "Cursor": "<id of last item, or null>"}`;
+}
+function buildNav() {
+  const side = document.getElementById("side");
+  const groups = {};
+  for (const [path, item] of Object.entries(state.spec.paths || {})) {
+    const op = item.post || {};
+    const tag = (op.tags || ["Operations"])[0];
+    (groups[tag] = groups[tag] || []).push([path, op]);
+  }
+  let html = `<h3>Guides</h3>`;
+  for (const id of GUIDE_ORDER) html += `<a href="#/guides/${id}" data-nav="guides:${id}">${esc(GUIDES[id].title)}</a>`;
+  for (const [tag, ops] of Object.entries(groups)) {
+    html += `<h3>${esc(tag)}</h3>`;
+    for (const [, op] of ops) html += `<a href="#/operations/${esc(op.operationId)}" data-nav="operations:${esc(op.operationId)}">${esc(op.summary || op.operationId)}</a>`;
+  }
+  side.innerHTML = html;
+}
+function setRail(ids) {
+  document.getElementById("railLinks").innerHTML =
+    ids.map(([id, label]) => `<a href="javascript:void(0)" data-scroll="${esc(id)}">${esc(label)}</a>`).join("") || "<span>—</span>";
+}
+function render() {
+  const page = document.getElementById("page");
+  const h = location.hash || "#/guides/getting-started";
+  document.querySelectorAll("[data-nav]").forEach(a =>
+    a.setAttribute("aria-current", ("#" + a.getAttribute("href").slice(1).split(":")[0] === h.split(":")[0]) ? "true" : "false"));
+  if (state.product !== "connector") {
+    page.innerHTML = state.product === "webhooks"
+      ? `<h1>Webhooks</h1><p>Meridian can push event notifications to your endpoint. Webhook subscriptions are managed in Partner hub and are outside this demo build.</p>`
+      : `<h1>Changelog</h1><p><b>2023-06-06</b> — current. <b>2023-04-12</b> — deprecated, answers 404. Future versions are announced here 90 days before the old one stops answering.</p>`;
+    setRail([]);
+    return;
+  }
+  const m = h.match(/^#\/guides\/([\w-]+)/);
+  if (m && GUIDES[m[1]]) {
+    const g = GUIDES[m[1]];
+    page.innerHTML = `<h1>${esc(g.title)}</h1>${g.body}<div class="foot">Last updated 2026-10-26 · <span>Was this page helpful?</span> <button data-vote="yes">Yes</button> <button data-vote="no">No</button> <span id="thanks"></span></div>`;
+    setRail([[anchorId(g.title), g.title]]);
+    return;
+  }
+  const o = h.match(/^#\/operations\/(\w+)/);
+  if (o) {
+    for (const [path, item] of Object.entries(state.spec.paths || {})) {
+      const op = item.post || {};
+      if (op.operationId === o[1]) {
+        const tag = (op.tags || ["Operations"])[0];
+        page.innerHTML = renderOperation(path, op, tag)
+          + `<h2 id="${anchorId("raw-example")}">Raw example</h2><pre class="sample"><code>${esc(exampleResponse(op))}</code></pre>`
+          + `<div class="foot">Last updated 2026-10-26 · <span>Was this page helpful?</span> <button data-vote="yes">Yes</button> <button data-vote="no">No</button> <span id="thanks"></span></div>`;
+        setRail([[anchorId(op.summary || op.operationId), op.summary || op.operationId], [anchorId("request"), "Request body"], [anchorId("response"), "Response"], [anchorId("example"), "Example"]]);
+        return;
+      }
+    }
+  }
+  page.innerHTML = `<h1>Not found</h1><p>No such page. Start at <a href="#/guides/getting-started">Getting started</a>.</p>`;
+  setRail([]);
+}
+async function init() {
+  const res = await fetch("source");
+  state.spec = await res.json();
+  state.opIndex = Object.entries(state.spec.paths || {}).map(([p, i]) => [p, i.post || {}]);
+  buildNav();
+  render();
+  window.addEventListener("hashchange", render);
+  document.querySelectorAll(".switcher button").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll(".switcher button").forEach(x => x.setAttribute("aria-pressed", "false"));
+    b.setAttribute("aria-pressed", "true");
+    state.product = b.dataset.product;
+    render();
+  }));
+  document.getElementById("theme").addEventListener("click", () => {
+    const el = document.documentElement;
+    el.dataset.theme = el.dataset.theme === "dark" ? "light" : "dark";
+  });
+  const q = document.getElementById("q");
+  q.addEventListener("input", () => {
+    const needle = q.value.toLowerCase();
+    document.querySelectorAll("[data-nav]").forEach(a => {
+      a.classList.toggle("hidden", needle !== "" && !a.textContent.toLowerCase().includes(needle));
+    });
+  });
+  document.addEventListener("keydown", e => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); q.focus(); }
+  });
+  document.addEventListener("click", e => {
+    const s = e.target.closest("[data-scroll]");
+    if (s) {
+      const el = document.getElementById(s.dataset.scroll);
+      if (el) el.scrollIntoView({ block: "start" });
+      return;
+    }
+    const t = e.target.closest("[data-sample]");
+    if (t) {
+      const id = t.dataset.sample;
+      document.querySelectorAll(`[data-sample="${id}"]`).forEach(x => x.setAttribute("aria-selected", x === t ? "true" : "false"));
+      document.querySelectorAll(`[data-pane^="${id}:"]`).forEach(p =>
+        p.classList.toggle("hidden", p.dataset.pane !== `${id}:${t.dataset.lang}`));
+    }
+    const v = e.target.closest("[data-vote]");
+    if (v) {
+      const thanks = document.getElementById("thanks");
+      if (thanks) thanks.textContent = " Thanks — recorded for this demo session.";
+    }
+  });
+}
+init();
+</script>
+</body>
+</html>

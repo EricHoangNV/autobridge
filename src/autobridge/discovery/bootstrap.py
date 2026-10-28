@@ -825,6 +825,26 @@ def build_draft_spec(
     except Exception as exc:
         return BootstrapResult(success=False, degradation_reason=f"classification failed: {exc}", iface=iface, trace=trace + [{"stage": "classify", "error": str(exc)}])
 
+    # Stage 1b: vocabulary guard (general, vendor-neutral). ConnectorSpec v1
+    # can only express GET operations with header auth. When the docs describe
+    # no GET operation at all (e.g. a POST-with-JSON-body API with body-field
+    # auth), there is nothing in the vocabulary to compile:
+    # refuse cleanly instead of inventing GET operations that do not exist.
+    # REQ-020 item 4: this is the demonstrable "before" refusal (0 model calls).
+    methods = {op.method.upper() for op in iface.operations}
+    if iface.operations and "GET" not in methods:
+        only = sorted(methods)
+        return BootstrapResult(
+            success=False,
+            degradation_reason=(
+                f"operations need {', '.join(only)} with a JSON body and body-field auth; "
+                "not expressible in ConnectorSpec v1"
+            ),
+            iface=iface,
+            classification=classification,
+            trace=trace + [{"stage": "vocabulary_guard", "refused_methods": only, "reason": "no GET operation in vocabulary v1"}],
+        )
+
     # Stage 3: enumerate hypotheses
     enumerator = HypothesisEnumerator()
     try:

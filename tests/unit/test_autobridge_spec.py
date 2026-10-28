@@ -758,3 +758,17 @@ def test_default_base_dir_points_at_repo_generated() -> None:
     from autobridge.spec.registry import default_base_dir
 
     assert default_base_dir() == ROOT / "generated" / "connectors"
+
+
+def test_spec_v1_cannot_express_post_with_body_auth() -> None:
+    """REQ-020 item 4 pin: ConnectorSpec v1 is GET-only with header auth.
+
+    The "before" refusal is structural, not a guess: any Meridian-shaped
+    operation (POST + JSON body + body-field auth) fails v1 validation, so
+    a spec-v1-only engine must stop with Blocked instead of persisting a
+    half-working connector.
+    """
+    from autobridge.spec.models import OperationSpec
+
+    with pytest.raises(ValidationError):
+        OperationSpec(method="POST", path="/reservations/getAll")  # type: ignore[arg-type]

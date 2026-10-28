@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from simulators.atlaspms.app import app as atlas_app
 from simulators.harborpms.app import app as harbor_app
 from simulators.legacystay.app import app as legacystay_app
+from simulators.meridianpms.app import app as meridian_app
 
 PORTALS = [
     (atlas_app, "AtlasPMS", "openapi.js"),
@@ -65,3 +66,39 @@ def test_missing_source_is_404(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Non
 def test_raw_docs_mount_still_serves_files() -> None:
     """The /docs static mount AutoBridge's docs reader uses is unchanged."""
     assert TestClient(harbor_app).get("/docs/harbor.md").status_code == 200
+
+
+def test_meridian_portal_is_guides_first_and_offline() -> None:
+    """REQ-020 item 3: guides-first docs site, one HTML page, no CDN/fonts."""
+    r = TestClient(meridian_app).get("/developers")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "Meridian" in r.text
+    assert "Simulated vendor documentation" in r.text
+    # Guides sidebar (static) and product switcher / search / theme controls.
+    for guide in ("Getting started", "Authentication", "Requests", "Responses", "Pagination", "Serialization"):
+        assert guide in r.text
+    assert "Connector API" in r.text and "Changelog" in r.text
+    assert "⌘K" in r.text
+    # Offline: no external stylesheets, fonts, scripts or images.
+    assert "<link" not in r.text
+    assert "fonts.googleapis" not in r.text and "cdn." not in r.text
+    assert 'src="http' not in r.text and "src='http" not in r.text
+
+
+def test_meridian_source_is_the_yaml_parsed_to_json() -> None:
+    """The YAML is the single source: operations render from it at load time."""
+    r = TestClient(meridian_app).get("/developers/source")
+    assert r.status_code == 200
+    spec = r.json()
+    paths = spec["paths"]
+    for op in (
+        "/reservations/getAll/2023-06-06",
+        "/customers/getAll/2023-06-06",
+        "/orderItems/getAll/2023-06-06",
+        "/configuration/get/2023-06-06",
+    ):
+        assert op in paths
+        assert "post" in paths[op]
+    assert "Limitation" in spec["components"]["schemas"]
+    assert TestClient(meridian_app).get("/docs/meridian-openapi.yaml").status_code == 200

@@ -48,6 +48,7 @@ unset ADMIN_NET_HOST
 export ATLAS_BASE_URL="http://localhost:8105"
 export HARBOR_BASE_URL="http://localhost:8106"
 export LEGACYSTAY_BASE_URL="http://localhost:8111"
+export MERIDIAN_BASE_URL="http://localhost:8116"
 export EDGEPOS_BASE_URL="http://localhost:8113"
 export EDGE_ALLOWLIST="sim-edgepos,localhost"
 export EDGEPOS_API_KEY="${EDGEPOS_API_KEY:-dummy-edge-key}"
@@ -83,6 +84,8 @@ APP_MODULE=simulators.harborpms.app:app SIM_PUBLIC_PORT=8106 SIM_ADMIN_PORT=8110
   start_svc sim-harbor 8106 uv run python -m simulators.run
 APP_MODULE=simulators.legacystay.app:app SIM_PUBLIC_PORT=8111 SIM_ADMIN_PORT=8112 \
   start_svc sim-legacystay 8111 uv run python -m simulators.run
+APP_MODULE=simulators.meridianpms.app:app SIM_PUBLIC_PORT=8116 SIM_ADMIN_PORT=8117 \
+  start_svc sim-meridian 8116 uv run python -m simulators.run
 APP_MODULE=simulators.edgepos.app:app SIM_PUBLIC_PORT=8113 SIM_ADMIN_PORT=8117 \
   start_svc sim-edgepos 8113 uv run python -m simulators.run
 start_svc edge-worker 8114 uv run uvicorn autobridge.edge.app:app --host 127.0.0.1 --port 8114

@@ -74,6 +74,7 @@ def test_simulator_imports() -> None:
         "simulators.atlaspms",
         "simulators.harborpms",
         "simulators.legacystay",
+        "simulators.meridianpms",
     ]:
         importlib.import_module(mod)
 
@@ -83,8 +84,10 @@ def test_simulator_sub_health() -> None:
     from simulators.atlaspms import readyz as atlas_r
     from simulators.harborpms import healthz as harbor_h
     from simulators.legacystay import healthz as legacy_h
+    from simulators.meridianpms import healthz as meridian_h
 
     assert atlas_h()["status"] == "ok"
     assert atlas_r()["status"] == "ok"  # type: ignore[union-attr]
     assert harbor_h()["status"] == "ok"
     assert legacy_h()["status"] == "ok"
+    assert meridian_h()["status"] == "ok"

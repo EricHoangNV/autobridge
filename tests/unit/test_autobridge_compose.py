@@ -26,6 +26,7 @@ EXPECTED_SERVICES = {
     "sim-atlas",
     "sim-harbor",
     "sim-legacystay",
+    "sim-meridian",
     "sim-edgepos",
     "edge-worker",
     "mcp-hotel",
@@ -44,6 +45,7 @@ EXPECTED_ATTACHMENT = {
     "sim-atlas": {"vendor-net", "admin-net"},
     "sim-harbor": {"vendor-net", "admin-net"},
     "sim-legacystay": {"vendor-net", "admin-net"},
+    "sim-meridian": {"vendor-net", "admin-net"},
     "sim-edgepos": {"edge-net"},
     "edge-worker": {"edge-net"},
     "mcp-hotel": {"engine-net"},
@@ -84,6 +86,7 @@ EXPECTED_PORTS = {
     "sim-atlas": 8105,
     "sim-harbor": 8106,
     "sim-legacystay": 8111,
+    "sim-meridian": 8116,
     "sim-edgepos": 8113,
     "edge-worker": 8114,
     "mcp-hotel": 8115,
@@ -146,7 +149,7 @@ def test_edge_network_isolated(compose: dict) -> None:
     assert set(compose["services"]["edge-worker"]["networks"]) == {"edge-net"}
     for svc in ("control", "worker", "runtime-sandbox", "verifier", "ui", "bench", "mcp-hotel"):
         assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
-    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay"):
+    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian"):
         assert "edge-net" not in set(compose["services"][svc]["networks"]), svc
 
 
@@ -199,6 +202,7 @@ def test_trust_boundary_ports_ignore_bind_override(compose: dict) -> None:
         ("sim-atlas", "8109"),
         ("sim-harbor", "8110"),
         ("sim-legacystay", "8112"),
+        ("sim-meridian", "8117"),
     }
     for svc, port in sorted(pinned):
         mappings = [str(m) for m in compose["services"][svc].get("ports", [])]
@@ -233,7 +237,7 @@ def test_verifier_build_context_excludes_engine(compose: dict) -> None:
 
 
 def test_sim_build_context_is_simulators_only(compose: dict) -> None:
-    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-edgepos"):
+    for svc in ("sim-atlas", "sim-harbor", "sim-legacystay", "sim-meridian", "sim-edgepos"):
         build = compose["services"][svc]["build"]
         assert build["context"] in ("./simulators", "simulators")
 

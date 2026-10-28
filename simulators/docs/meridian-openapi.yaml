@@ -1,0 +1,438 @@
+openapi: 3.0.1
+info:
+  title: Meridian Connector API
+  version: "2023-06-06"
+  description: >-
+    The Meridian Connector API lets integration partners read reservations,
+    customers and order items, plus the enterprise configuration (time zone
+    and currency), out of a Meridian property. Every operation is a POST
+    with a JSON body. Authentication travels in the body, never in a header.
+  contact:
+    name: Meridian Partner Engineering
+    url: https://developers.meridian.example/support
+servers:
+  - url: https://api.meridian.example/api/connector/v1
+    description: Production
+paths:
+  /reservations/getAll/2023-06-06:
+    post:
+      operationId: reservationsGetAll
+      summary: Get all reservations
+      description: >-
+        Returns reservations page by page. A reservation carries no guest
+        name and no money: resolve the name through Customers (AccountId)
+        and money through Order items (sum of gross values). All dates are
+        UTC instants; convert to the enterprise time zone (Configuration)
+        before deriving the business date.
+      tags: [Reservations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationsGetAllRequest'
+      responses:
+        '200':
+          description: One page of reservations plus the paging cursor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationsGetAllResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /customers/getAll/2023-06-06:
+    post:
+      operationId: customersGetAll
+      summary: Get all customers
+      description: >-
+        Returns customer (account holder) rows. A reservation's AccountId
+        is the customer Id. Names may be null for walk-in accounts.
+      tags: [Customers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomersGetAllRequest'
+      responses:
+        '200':
+          description: One page of customers plus the paging cursor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomersGetAllResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /orderItems/getAll/2023-06-06:
+    post:
+      operationId: orderItemsGetAll
+      summary: Get all order items
+      description: >-
+        Returns folio order items. Each item carries UnitAmount with
+        Currency, NetValue, GrossValue and TaxValues. The reservation total
+        is the sum of gross values of its items for the same AccountId.
+      tags: [Order items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderItemsGetAllRequest'
+      responses:
+        '200':
+          description: One page of order items plus the paging cursor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderItemsGetAllResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /configuration/get/2023-06-06:
+    post:
+      operationId: configurationGet
+      summary: Get configuration
+      description: >-
+        Returns the enterprises (properties) with their time zone and
+        default currency. Read this first: every UTC instant in the other
+        operations converts to a business date in the enterprise time zone.
+      tags: [Configuration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigurationGetRequest'
+      responses:
+        '200':
+          description: Enterprise configuration rows.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigurationGetResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+components:
+  responses:
+    BadRequest:
+      description: The request body failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing ClientToken or AccessToken in the request body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Wrong ClientToken or AccessToken values.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    ApiBase:
+      type: object
+      required: [ClientToken, AccessToken, Client]
+      properties:
+        ClientToken:
+          type: string
+          description: Identifies your integration. Paste the value from Partner hub.
+        AccessToken:
+          type: string
+          description: Identifies the enterprise you may access. One token per property group.
+        Client:
+          type: string
+          description: Your application name and version, e.g. "BridgeApp/1.4".
+    Limitation:
+      type: object
+      required: [Count]
+      properties:
+        Count:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: Page size. The service never returns more items than this.
+        Cursor:
+          type: string
+          nullable: true
+          description: Paging cursor. Omit or send null for the first page; afterwards send the Cursor from the previous response.
+    UpdatedUtc:
+      type: object
+      required: [StartUtc, EndUtc]
+      properties:
+        StartUtc:
+          type: string
+          format: date-time
+          description: Inclusive lower bound (UTC instant).
+        EndUtc:
+          type: string
+          format: date-time
+          description: Inclusive upper bound (UTC instant). At most 3 months after StartUtc.
+    ReservationsGetAllRequest:
+      allOf:
+        - $ref: '#/components/schemas/ApiBase'
+        - type: object
+          properties:
+            EnterpriseIds:
+              type: array
+              maxItems: 1000
+              items: {type: string}
+              description: Filter by enterprise (property) ids.
+            ServiceIds:
+              type: array
+              maxItems: 1000
+              items: {type: string}
+              description: Filter by service ids (one bookable service per enterprise).
+            ReservationIds:
+              type: array
+              maxItems: 1000
+              items: {type: string}
+              description: Filter by reservation ids.
+            States:
+              type: array
+              items: {type: string, enum: [Inquired, Confirmed, Started, Processed, Canceled, Optional, Requested]}
+              description: Filter by reservation state.
+            UpdatedUtc:
+              $ref: '#/components/schemas/UpdatedUtc'
+            Limitation:
+              $ref: '#/components/schemas/Limitation'
+    Reservation:
+      type: object
+      required: [Id, ServiceId, AccountId, Number, State, CreatedUtc, UpdatedUtc, ScheduledStartUtc, ScheduledEndUtc]
+      properties:
+        Id:
+          type: string
+          description: Stable reservation id. Use as the paging cursor value.
+        ServiceId:
+          type: string
+          description: Bookable service the reservation belongs to.
+        AccountId:
+          type: string
+          description: Owning account. Join to Customers for the guest name.
+        BookerId:
+          type: string
+          description: Account that made the booking.
+        Number:
+          type: string
+          description: Human-readable confirmation number.
+        State:
+          type: string
+          enum: [Inquired, Confirmed, Started, Processed, Canceled, Optional, Requested]
+          description: Reservation lifecycle state.
+        Origin:
+          type: string
+          description: Booking origin channel.
+        CreatedUtc:
+          type: string
+          format: date-time
+        UpdatedUtc:
+          type: string
+          format: date-time
+        ScheduledStartUtc:
+          type: string
+          format: date-time
+          description: Planned arrival (UTC instant, not a business date).
+        ScheduledEndUtc:
+          type: string
+          format: date-time
+        ActualStartUtc:
+          type: string
+          format: date-time
+          nullable: true
+        ActualEndUtc:
+          type: string
+          format: date-time
+          nullable: true
+        RateId:
+          type: string
+        AssignedResourceId:
+          type: string
+          description: Room assignment, once assigned.
+    ReservationsGetAllResponse:
+      type: object
+      required: [Reservations, Cursor]
+      properties:
+        Reservations:
+          type: array
+          items: {$ref: '#/components/schemas/Reservation'}
+        Cursor:
+          type: string
+          nullable: true
+          description: Id of the last item returned; null only when no data came back. Stop paging when the cursor is null or the page holds fewer items than Limitation.Count.
+    CustomersGetAllRequest:
+      allOf:
+        - $ref: '#/components/schemas/ApiBase'
+        - type: object
+          properties:
+            CustomerIds:
+              type: array
+              maxItems: 1000
+              items: {type: string}
+            UpdatedUtc:
+              $ref: '#/components/schemas/UpdatedUtc'
+            Limitation:
+              $ref: '#/components/schemas/Limitation'
+    Customer:
+      type: object
+      required: [Id]
+      properties:
+        Id:
+          type: string
+          description: Account id. Matches Reservation.AccountId.
+        FirstName:
+          type: string
+          nullable: true
+        LastName:
+          type: string
+          nullable: true
+        Email:
+          type: string
+          nullable: true
+        Phone:
+          type: string
+          nullable: true
+        UpdatedUtc:
+          type: string
+          format: date-time
+    CustomersGetAllResponse:
+      type: object
+      required: [Customers, Cursor]
+      properties:
+        Customers:
+          type: array
+          items: {$ref: '#/components/schemas/Customer'}
+        Cursor:
+          type: string
+          nullable: true
+    OrderItemsGetAllRequest:
+      allOf:
+        - $ref: '#/components/schemas/ApiBase'
+        - type: object
+          properties:
+            EnterpriseIds:
+              type: array
+              maxItems: 1000
+              items: {type: string}
+            AccountIds:
+              type: array
+              maxItems: 1000
+              items: {type: string}
+              description: Filter by owning account (joins to a reservation).
+            OrderItemIds:
+              type: array
+              maxItems: 1000
+              items: {type: string}
+            UpdatedUtc:
+              $ref: '#/components/schemas/UpdatedUtc'
+            Limitation:
+              $ref: '#/components/schemas/Limitation'
+    Money:
+      type: object
+      required: [Currency, NetValue, GrossValue]
+      properties:
+        Currency:
+          type: string
+          description: ISO 4217 currency code.
+        NetValue:
+          type: number
+          format: double
+          description: Net amount in major units.
+        GrossValue:
+          type: number
+          format: double
+          description: Gross amount in major units. Sums to the reservation total per account.
+        TaxValues:
+          type: array
+          items:
+            type: object
+            required: [Code, Value]
+            properties:
+              Code: {type: string}
+              Value: {type: number, format: double}
+    OrderItem:
+      type: object
+      required: [Id, AccountId, Name, UnitCount, UnitAmount]
+      properties:
+        Id:
+          type: string
+        AccountId:
+          type: string
+          description: Owning account. Join to the reservation with the same AccountId.
+        ServiceId:
+          type: string
+        Name:
+          type: string
+        UnitCount:
+          type: integer
+        UnitAmount:
+          $ref: '#/components/schemas/Money'
+        PostedUtc:
+          type: string
+          format: date-time
+    OrderItemsGetAllResponse:
+      type: object
+      required: [OrderItems, Cursor]
+      properties:
+        OrderItems:
+          type: array
+          items: {$ref: '#/components/schemas/OrderItem'}
+        Cursor:
+          type: string
+          nullable: true
+    ConfigurationGetRequest:
+      allOf:
+        - $ref: '#/components/schemas/ApiBase'
+        - type: object
+          properties:
+            EnterpriseIds:
+              type: array
+              maxItems: 1000
+              items: {type: string}
+    Enterprise:
+      type: object
+      required: [Id, Name, TimeZone, CurrencyCode]
+      properties:
+        Id:
+          type: string
+        Name:
+          type: string
+        TimeZone:
+          type: string
+          description: IANA time zone. Convert every UTC instant to this zone before deriving business dates.
+        CurrencyCode:
+          type: string
+          description: Default ISO 4217 currency for the enterprise.
+    ConfigurationGetResponse:
+      type: object
+      required: [Enterprises]
+      properties:
+        Enterprises:
+          type: array
+          items: {$ref: '#/components/schemas/Enterprise'}
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable code, e.g. invalid_limitation, interval_too_long, unauthorized, forbidden.
+        message:
+          type: string

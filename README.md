@@ -31,6 +31,7 @@ AutoBridge reads in `simulators/docs/`:
 | AtlasPMS (method-style REST: getReservations/getReservation/getGuest/getHotels/getTransactions, x-api-key auth, pageNumber/pageSize, JSON-number money) | http://localhost:8105/developers | `atlas-openapi.yaml` |
 | HarborPMS (messy wiki) | http://localhost:8106/developers | `harbor.md` |
 | LegacyStay (2000s website) | http://localhost:8111/developers | `legacystay.md` |
+| MeridianPMS (Mews-style POST/JSON: body-field auth, Limitation cursor, UTC instants; names via customers, money via order items) | http://localhost:8116/developers | `meridian-openapi.yaml` |
 
 CI (`.github/workflows/ci.yml`) runs the same order from a clean clone:
 `make test → make up → make smoke → make e2e → make e2e-ui → make demo`.

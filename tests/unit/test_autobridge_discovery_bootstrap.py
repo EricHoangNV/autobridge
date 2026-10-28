@@ -376,3 +376,22 @@ def test_bootstrap_trace_stages() -> None:
     assert "enumerate" in stages
     assert "compile" in stages
     assert "visible_tests" in stages
+
+
+def test_build_post_only_docs_refuses_with_named_reason() -> None:
+    """REQ-020 item 4 pin: a POST-only API is outside vocabulary v1.
+
+    Building from Meridian's docs with the engine unchanged must stop
+    cleanly: no success, no draft spec (so no release is persisted), a named
+    reason, and zero model calls — never an invented GET connector.
+    """
+    docs = (REPO_ROOT / "simulators" / "docs" / "meridian-openapi.yaml").read_text(encoding="utf-8")
+    result = build_draft_spec(docs, source="simulators/docs/meridian-openapi.yaml", connector_id="meridianpms")
+    assert not result.success
+    assert result.draft_spec is None
+    assert result.degradation_reason is not None
+    assert "POST" in result.degradation_reason and "ConnectorSpec v1" in result.degradation_reason
+    assert result.model_usage.get("frontier_tokens", 0) == 0
+    assert result.model_usage.get("small_tokens", 0) == 0
+    assert result.model_usage.get("calls", 0) == 0
+    assert any(t.get("stage") == "vocabulary_guard" for t in result.trace)
