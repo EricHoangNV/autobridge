@@ -7,7 +7,7 @@ remaining review FAIL item. Constraint for all of them: someone who downloads th
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
 ### REQ-013 — Build → sync is broken since AR-1-2; sync also runs unapproved releases (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-28 08:25)
 Found by a host regression on 207f7366 (stack up). AR-1-2 (76bbff43) removed the sync fallback to the latest release,
 but nothing activates a freshly built release: `Connector.active_release_id` is only set by `_activate` in
 `src/autobridge/engine/releases.py`, reached from repair approval. So after create → build, `POST
