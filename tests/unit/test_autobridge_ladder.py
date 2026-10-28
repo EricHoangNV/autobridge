@@ -270,12 +270,12 @@ def test_ladder_l1_rename_field() -> None:
     assert res.model_usage["frontier_tokens"] == 0
 
 
-def test_ladder_l1_offset_to_cursor() -> None:
-    spec = _load_spec("atlaspms")  # atlas is offset
-    delta = _delta_pagination("list_reservations", "offset", "cursor")
+def test_ladder_l1_page_to_cursor() -> None:
+    spec = _load_spec("atlaspms")  # atlas is page
+    delta = _delta_pagination("list_reservations", "page", "cursor")
     res = run_ladder(spec, "PAGINATION_CHANGE", fingerprint_delta=delta)
     assert res.decision == "propose"
-    assert res.rule_id == "offset_to_cursor"
+    assert res.rule_id == "page_to_cursor"
     assert res.candidate_patch is not None
     assert len(res.candidate_patch) == 10  # 2 ops *5
     patched = apply_patch(spec, res.candidate_patch)

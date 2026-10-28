@@ -128,6 +128,29 @@ def _extract_next_token(response_json: dict[str, Any], next_path: str | None) ->
     return _jsonpath_find(response_json, next_path)
 
 
+def _extract_total(response_json: dict[str, Any], total_path: str | None) -> int | None:
+    """Extract an advertised total count for tokenless page pagination.
+
+    Returns the total as int, or None when absent/unparseable (callers fall
+    back to the normal stop guards).
+    """
+    if total_path is None:
+        return None
+    try:
+        total = _jsonpath_find(response_json, total_path)
+    except Exception:
+        return None
+    if isinstance(total, bool):
+        return None
+    if isinstance(total, int):
+        return total if total >= 0 else None
+    try:
+        as_int = int(str(total))
+    except (TypeError, ValueError):
+        return None
+    return as_int if as_int >= 0 else None
+
+
 @dataclass(slots=True)
 class OperationResult:
     """Result of executing one operation (possibly paginated)."""
@@ -209,6 +232,7 @@ class Interpreter:
         strategy = pagination.strategy
         items_path = pagination.items_path
         next_path = pagination.next_path
+        total_path = pagination.total_path
         stop_when = set(pagination.stop_when or [])
         limit_value = limit_override or 50
 
@@ -231,6 +255,22 @@ class Interpreter:
             all_records.extend(items)
 
             next_token = _extract_next_token(raw, next_path)
+
+            # Tokenless page pagination (e.g. method-style APIs with
+            # pageNumber/pageSize and a total count but no next token):
+            # keep fetching while fewer records than the advertised total
+            # have arrived. A missing/unparseable total falls through to the
+            # normal guards (first page only, then implicit no_next_token).
+            # Reaching the advertised total is a normal, explicit stop
+            # (``total_reached``), not an implicit-stop drift signal.
+            if strategy == "page" and next_token is None and total_path is not None:
+                total = _extract_total(raw, total_path)
+                if total is not None and len(all_records) >= total:
+                    stop_reason = "total_reached"
+                    break
+                if total is not None and len(all_records) < total:
+                    state = advance_state(state, next_token, items, limit_value)
+                    continue
 
             should_stop, reason, is_repeated = evaluate_stop(
                 state=state,

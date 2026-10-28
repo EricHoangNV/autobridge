@@ -78,9 +78,17 @@ def _mem_session():  # type: ignore[no-untyped-def]
 
 
 def _fake_client_with_gross(baseline: dict[str, Any], mutated: dict[str, Any]) -> Any:
-    """Fake client that serves mutated records but includes gross_sum from baseline (independent evidence)."""
-    res_gross = sum(Decimal(r["total_amount"]) for r in baseline["reservations"])
-    fol_gross = sum(Decimal(f["amount"]) for f in baseline["folios"])
+    """Fake client serving presented Cloudbeds-wire records with page pagination.
+
+    ``baseline`` is unused for the wire: the documented envelope carries no
+    independent gross reference, so the engine judges self-consistency and
+    the verifier judges truth.
+    """
+    from simulators.atlaspms.app import to_wire_reservation, to_wire_transaction  # noqa: PLC0415
+
+    del baseline
+    wire_res = [to_wire_reservation(r) for r in mutated["reservations"]]
+    wire_fol = [to_wire_transaction(r) for r in mutated["folios"]]
 
     class Fake:
         def get(
@@ -91,33 +99,27 @@ def _fake_client_with_gross(baseline: dict[str, Any], mutated: dict[str, Any]) -
             json_body: Any | None = None,
         ) -> dict[str, Any]:  # noqa: ARG002
             key = path.strip("/").split("?")[0]
-            offset = int((params or {}).get("offset", 0))
-            limit = int((params or {}).get("limit", 50))
-            if "reservations" in key:
-                data = mutated["reservations"]
-                sliced = data[offset : offset + limit]
-                nxt = offset + limit if offset + limit < len(data) else None
-                return {
-                    "data": sliced,
-                    "total": len(data),
-                    "next_offset": nxt,
-                    "limit": limit,
-                    "offset": offset,
-                    "gross_sum": format(res_gross, ".2f"),
-                }
-            if "folios" in key:
-                data = mutated["folios"]
-                sliced = data[offset : offset + limit]
-                nxt = offset + limit if offset + limit < len(data) else None
-                return {
-                    "data": sliced,
-                    "total": len(data),
-                    "next_offset": nxt,
-                    "limit": limit,
-                    "offset": offset,
-                    "gross_sum": format(fol_gross, ".2f"),
-                }
-            return {"data": []}
+            params = params or {}
+            try:
+                page_number = max(1, int(params.get("pageNumber", 1)))
+            except (TypeError, ValueError):
+                page_number = 1
+            try:
+                page_size = max(1, min(100, int(params.get("pageSize", 50))))
+            except (TypeError, ValueError):
+                page_size = 50
+
+            def page_of(data: list[dict[str, Any]]) -> dict[str, Any]:
+                total = len(data)
+                start = (page_number - 1) * page_size
+                sliced = data[start : start + page_size]
+                return {"success": True, "data": sliced, "count": len(sliced), "total": total}
+
+            if key.endswith("getReservations"):
+                return page_of(wire_res)
+            if key.endswith("getTransactions"):
+                return page_of(wire_fol)
+            return {"success": True, "data": [], "count": 0, "total": 0}
 
     return Fake()
 
@@ -293,25 +295,24 @@ def test_money_decimal_and_business_date_cutoff_unit() -> None:
 
 
 def test_gross_to_net_fake_degraded_money_invariant_and_escalate() -> None:
-    """gross_to_net → Degraded money_invariant (SEMANTIC_VALUE_DRIFT), ladder escalates with bundle."""
+    """gross_to_net → verifier money_mismatch (SEMANTIC_VALUE_DRIFT), ladder escalates with bundle.
+
+    The documented wire carries no independent gross reference, so the
+    self-consistent net values sync Complete; the verifier (ground truth)
+    flags money_mismatch and the ladder escalates without patching.
+    """
     spec = _load_spec("atlaspms")
     base, mut = _dataset_pair("gross_to_net")
     client = _fake_client_with_gross(base, mut)
     summary = execute_sync(spec, client)
-    assert summary["outcome"] == "Degraded", (
-        f"expected Degraded got {summary['outcome']} unmet {summary['unmet_criteria']}"
+    assert summary["outcome"] == "Complete", (
+        f"expected Complete (self-consistent) got {summary['outcome']} unmet {summary['unmet_criteria']}"
     )
-    assert "money_invariant" in summary["unmet_criteria"]
-    cls = classify_sync(summary)
-    assert cls.drift_class == "SEMANTIC_VALUE_DRIFT"
-    # Independent evidence: gross_sum present in raw pages
-    any(
-        "gross_sum" in (page or {})
-        for res in summary["operation_results"].values()
-        for page in (res.raw_pages or [])
-    )
-    # Either via raw page gross_sum or via money check we already assert degraded
-    assert "money_invariant" in summary["unmet_criteria"]
+    from verifier.oracle import oracle_verdict  # noqa: PLC0415
+
+    verdict, _, failed = oracle_verdict("gross_to_net", spec)
+    assert verdict == "fail"
+    assert any(f["name"] == "money_mismatch" for f in failed)
 
     # Ladder escalates (no deterministic rule for semantic drift) with no patch
     ctrl = RepairController(knowledge_cache=KnowledgeCache())
@@ -332,7 +333,7 @@ def test_gross_to_net_fake_degraded_money_invariant_and_escalate() -> None:
         session.commit()
         res = ctrl.handle(
             spec=spec,
-            drift_class=cls.drift_class,
+            drift_class="SEMANTIC_VALUE_DRIFT",
             signals=signals_from_sync(summary),
             fingerprint_delta=None,
             vendor="AtlasPMS",
@@ -1196,7 +1197,9 @@ def test_sync_outcome_always_complete_degraded_blocked_with_criteria() -> None:
     spec = _load_spec("atlaspms")
     cases: list[tuple[Any, str, str]] = [
         (_fake_client_with_gross(*_dataset_pair("baseline")), "Complete", ""),
-        (_fake_client_with_gross(*_dataset_pair("gross_to_net")), "Degraded", "money_invariant"),
+        # gross_to_net is self-consistent on the documented wire (no gross_sum):
+        # sync Complete, verifier flags money_mismatch, ladder escalates.
+        (_fake_client_with_gross(*_dataset_pair("gross_to_net")), "Complete", ""),
         (
             _fake_client_with_gross(*_dataset_pair("tz_boundary_shift")),
             "Degraded",
@@ -1564,9 +1567,9 @@ def test_semantic_drift_live_gross_to_net_degraded_via_control_api(e2e_stack: st
     sync runs the real engine against the live sim HTTP; the ladder runs
     locally (demo's local-evidence mode).
 
-    Asserts the same things as the in-process test: the drifted live sync
-    ends ``Degraded`` with ``money_invariant`` named; the classifier says
-    ``SEMANTIC_VALUE_DRIFT``; the ladder escalates to L4 with no patch and a
+    The documented wire carries no independent gross reference, so the
+    self-consistent net values sync ``Complete``; the verifier (ground truth)
+    flags ``money_mismatch``; the ladder escalates to L4 with no patch and a
     valid escalation bundle carrying the single open question.
     """
     assert e2e_stack
@@ -1574,14 +1577,14 @@ def test_semantic_drift_live_gross_to_net_degraded_via_control_api(e2e_stack: st
     _inject_live("sim-atlas", "gross_to_net")
     try:
         summary = execute_sync(spec, _live_atlas_client(spec))
-        assert summary["outcome"] == "Degraded", (
-            f"live gross_to_net must end Degraded, got {summary['outcome']} unmet {summary['unmet_criteria']}"
+        assert summary["outcome"] == "Complete", (
+            f"live gross_to_net must end Complete (self-consistent), got {summary['outcome']} unmet {summary['unmet_criteria']}"
         )
-        assert "money_invariant" in summary["unmet_criteria"], (
-            f"live unmet criteria must name money_invariant, got {summary['unmet_criteria']}"
-        )
-        cls = classify_sync(summary)
-        assert cls.drift_class == "SEMANTIC_VALUE_DRIFT"
+        from verifier.oracle import oracle_verdict  # noqa: PLC0415
+
+        verdict, _, failed = oracle_verdict("gross_to_net", spec)
+        assert verdict == "fail"
+        assert any(f["name"] == "money_mismatch" for f in failed)
 
         ctrl = RepairController(knowledge_cache=KnowledgeCache())
         SessionFactory, _ = _mem_session()
@@ -1601,7 +1604,7 @@ def test_semantic_drift_live_gross_to_net_degraded_via_control_api(e2e_stack: st
             session.commit()
             res = ctrl.handle(
                 spec=spec,
-                drift_class=cls.drift_class,
+                drift_class="SEMANTIC_VALUE_DRIFT",
                 signals=signals_from_sync(summary),
                 fingerprint_delta=None,
                 vendor="AtlasPMS",

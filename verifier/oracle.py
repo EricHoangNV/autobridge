@@ -112,9 +112,19 @@ ALLOWED_FAILED_CHECKS: frozenset[str] = frozenset(
 
 
 def _spec_has_field_path(spec: dict[str, Any] | None, needle: str) -> bool:
-    """Return True if any field mapping path in spec contains needle substring."""
+    """Return True if any field mapping path in spec contains needle substring.
+
+    Comparison is case- and separator-insensitive so a Cloudbeds-style wire
+    name (``$.guestIdentifier``) matches a canonical needle
+    (``guest_identifier``).
+    """
     if spec is None:
         return False
+
+    def _norm(s: str) -> str:
+        return s.lower().replace("_", "")
+
+    want = _norm(needle)
     try:
         entities = spec.get("entities", {})
         for ent in entities.values():
@@ -125,7 +135,7 @@ def _spec_has_field_path(spec: dict[str, Any] | None, needle: str) -> bool:
                 if not isinstance(fm, dict):
                     continue
                 path = fm.get("path", "")
-                if isinstance(path, str) and needle in path:
+                if isinstance(path, str) and want in _norm(path):
                     return True
     except Exception:
         return False
@@ -303,13 +313,13 @@ def simulate_produced_records(
             }
 
     # For pagination scenarios, check if spec strategy matches mutated pagination mode
-    if scenario_id in ("offset_to_cursor", "cursor_repeat_token"):
+    if scenario_id in ("offset_to_cursor", "page_to_cursor", "cursor_repeat_token"):
         spec_strategy = _spec_pagination_strategy(spec)
-        # Baseline spec for Atlas is offset, Harbor is cursor; we cannot assume
-        # So we check: if spec_strategy != mutated_mode, it's a mismatch
-        # However some specs may be Harbor (cursor) and scenario offset_to_cursor expects cursor
-        # That would be a match — we need to know vendor. Simplify: use scenario's
-        # expected mode vs spec strategy
+        # Baseline spec is offset (legacy) or page (AtlasPMS/Cloudbeds-style);
+        # Harbor is cursor; we cannot assume. So we check: if spec_strategy
+        # != mutated_mode, it's a mismatch. However some specs may be Harbor
+        # (cursor) and scenario offset_to_cursor expects cursor — that would
+        # be a match. Simplify: use scenario's expected mode vs spec strategy.
         expected_mode = "cursor"  # both pagination fault scenarios use cursor
         if spec_strategy is not None and spec_strategy != expected_mode:
             # Spec still offset while API is cursor → incomplete fetch

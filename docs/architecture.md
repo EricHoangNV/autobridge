@@ -36,7 +36,7 @@ Design principles (plan §1):
 | `worker` | `autobridge.engine` | `autobridge.engine.app:app` | engine | 8102 | Executes `BuildRun / SyncRun / RepairRun` jobs |
 | `runtime-sandbox` | `autobridge.runtime` | `autobridge.runtime.app:app` | engine (restricted) | 8103 | Interprets `ConnectorSpec`; only service that reaches simulators |
 | `verifier` | `verifier` | `verifier.app:app` | verifier | 8104 | Oracle + canonical checks; hidden fixtures at `/fixtures` (ro) |
-| `sim-atlas` | `simulators` | `simulators.atlaspms.app:app` | simulator | 8105 | AtlasPMS synthetic vendor (clean OpenAPI) + admin API |
+| `sim-atlas` | `simulators` | `simulators.atlaspms.app:app` | simulator | 8105 | AtlasPMS synthetic vendor (method-style REST, x-api-key, page pagination) + admin API |
 | `sim-harbor` | `simulators` | `simulators.harborpms.app:app` | simulator | 8106 | HarborPMS synthetic vendor (messy docs, quirks) + admin API |
 | `sim-legacystay` | `simulators` | `simulators.legacystay.app:app` | simulator | 8111 | LegacyStay synthetic vendor Phase 2 (offset, strict Bearer, throttle, nullable chaos) + admin API |
 | `mcp-hotel` | `mcp_stretch` | `mcp_stretch.app:app` | engine | 8115 | MCP Guardian Phase 2 (mock HotelTools V1→V2 + compatibility gateway, pinned-consumer replay) |
@@ -501,7 +501,7 @@ existence checks). `make e2e` runs the pytest suite (`test_00` … `test_05`,
 All Phase 1 workstreams are complete and documented on their own pages:
 
 - **W2** — `simulators/common` seeded generator, fault switchboard, Atlas/Harbor
-  apps with real pagination/auth, scenario catalog (14 YAMLs), verifier oracle +
+  apps with real pagination/auth, scenario catalog (15 YAMLs), verifier oracle +
   regression runner + mutation/invalid-patch traps. See
   [Safety model](safety-model.md) §§2–6.
 - **W3** — runtime interpreter (HTTP + retry, auth, pagination, transforms,

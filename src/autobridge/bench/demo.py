@@ -9,8 +9,8 @@ engine so ``make demo`` is reproducible anywhere:
 2. Unfamiliar API — Harbor-style messy Markdown docs → DocsReader →
    classifiers → hypothesis enumerators → draft spec (no model calls;
    any L3 call would appear in the ledger with its token count).
-3. Zero-token recovery — ``offset_to_cursor`` drift: L0 knowledge miss →
-   L1 rule ``offset_to_cursor`` → JSON Patch diff, ``frontier_tokens == 0``.
+3. Zero-token recovery — ``page_to_cursor`` drift: L0 knowledge miss →
+   L1 rule ``page_to_cursor`` → JSON Patch diff, ``frontier_tokens == 0``.
 4. Hard semantic failure — ``gross_to_net``: the plausible-but-wrong patch
    (decoy ``net_amount`` → ``total_amount``) is rejected as
    ``invalid_patch_trap``; an escalation bundle carries the single open
@@ -108,6 +108,122 @@ def _atlas_reservations() -> list[dict[str, Any]]:
     for i in range(1, 5):
         rows.append(
             {
+                "propertyID": "prop-001",
+                "reservationID": f"res-{i:03d}",
+                "dateCreated": "2026-10-26 12:00:00",
+                "dateModified": "2026-10-26 12:00:00",
+                "status": "confirmed",
+                "guestID": f"G-res-{i:03d}",
+                "guestName": f"Guest {i}",
+                "startDate": "2026-10-26",
+                "endDate": "2026-10-28",
+                "adults": "2",
+                "children": "0",
+                "balance": Decimal(f"{100 * i}.00"),
+                "sourceName": "Direct",
+            }
+        )
+    return rows
+
+
+def _atlas_folios() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for i in range(1, 4):
+        rows.append(
+            {
+                "transactionID": f"chg-{i:03d}",
+                "propertyID": "prop-001",
+                "reservationID": f"res-{i:03d}",
+                "amount": Decimal(f"{100 * i}.00"),
+                "currency": "USD",
+                "businessDate": "2026-10-26",
+                "serviceDate": "2026-10-26",
+                "transactionDateTime": "2026-10-26 12:00:00",
+                "description": f"Room charge {i}",
+            }
+        )
+    return rows
+
+
+def _demo_dumps_exact(payload: Any) -> str:
+    """Exact JSON encoder for the demo fake: Decimal -> raw JSON number."""
+    import json as _json
+
+    def encode(value: Any) -> str:
+        if value is None:
+            return "null"
+        if value is True:
+            return "true"
+        if value is False:
+            return "false"
+        if isinstance(value, Decimal):
+            return format(value, "f")
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, str):
+            return _json.dumps(value)
+        if isinstance(value, list):
+            return "[" + ",".join(encode(v) for v in value) + "]"
+        if isinstance(value, dict):
+            return "{" + ",".join(_json.dumps(str(k)) + ":" + encode(v) for k, v in value.items()) + "}"
+        raise ValueError(f"unserializable {type(value).__name__}")
+
+    return encode(payload)
+
+
+def _atlas_fake_client() -> Any:
+    """Page-pagination fake serving the inline Atlas fixtures (method-style)."""
+    import httpx  # noqa: PLC0415
+
+    from autobridge.runtime.http import HttpClient  # noqa: PLC0415
+    from autobridge.spec.models import RetryPolicy  # noqa: PLC0415
+
+    reservations = _atlas_reservations()
+    folios = _atlas_folios()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        qp = dict(request.url.params)
+
+        def page_of(data: list[dict[str, Any]]) -> httpx.Response:
+            try:
+                page_number = max(1, int(qp.get("pageNumber", "1")))
+            except ValueError:
+                page_number = 1
+            try:
+                page_size = max(1, min(100, int(qp.get("pageSize", "50"))))
+            except ValueError:
+                page_size = 50
+            total = len(data)
+            start = (page_number - 1) * page_size
+            sliced = data[start : start + page_size]
+            payload = {"success": True, "data": sliced, "count": len(sliced), "total": total}
+            return httpx.Response(200, content=_demo_dumps_exact(payload).encode(), headers={"Content-Type": "application/json"})
+
+        if request.url.path == "/api/v1.3/getReservations":
+            return page_of(reservations)
+        if request.url.path == "/api/v1.3/getTransactions":
+            return page_of(folios)
+        return httpx.Response(404, json={"msg": "not found"})
+
+    transport = httpx.MockTransport(handler)
+
+    def factory(**kw: Any) -> httpx.Client:
+        return httpx.Client(transport=transport, timeout=kw.get("timeout", 5))
+
+    return HttpClient(
+        "https://demo.invalid",
+        retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=5),
+        client_factory=factory,
+        sleep_fn=lambda _: None,
+    )
+
+
+def _harbor_reservations() -> list[dict[str, Any]]:
+    """Legacy Harbor wire: snake_case records with string money."""
+    rows: list[dict[str, Any]] = []
+    for i in range(1, 5):
+        rows.append(
+            {
                 "reservation_id": f"res-{i:03d}",
                 "property_id": "prop-001",
                 "guest_name": f"Guest {i}",
@@ -122,7 +238,7 @@ def _atlas_reservations() -> list[dict[str, Any]]:
     return rows
 
 
-def _atlas_folios() -> list[dict[str, Any]]:
+def _harbor_folios() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for i in range(1, 4):
         rows.append(
@@ -138,46 +254,6 @@ def _atlas_folios() -> list[dict[str, Any]]:
             }
         )
     return rows
-
-
-def _atlas_fake_client() -> Any:
-    """Offset-pagination fake serving the inline Atlas fixtures."""
-    import httpx  # noqa: PLC0415
-
-    from autobridge.runtime.http import HttpClient  # noqa: PLC0415
-    from autobridge.spec.models import RetryPolicy  # noqa: PLC0415
-
-    reservations = _atlas_reservations()
-    folios = _atlas_folios()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        qp = dict(request.url.params)
-        limit = int(qp.get("limit", "10"))
-        offset = int(qp.get("offset", "0"))
-        if request.url.path == "/reservations":
-            data, total = reservations, len(reservations)
-        elif request.url.path == "/folios":
-            data, total = folios, len(folios)
-        else:
-            return httpx.Response(404, json={"msg": "not found"})
-        sliced = data[offset : offset + limit]
-        nxt = offset + limit if offset + limit < total else None
-        return httpx.Response(
-            200,
-            json={"data": sliced, "total": total, "limit": limit, "offset": offset, "next_offset": nxt},
-        )
-
-    transport = httpx.MockTransport(handler)
-
-    def factory(**kw: Any) -> httpx.Client:
-        return httpx.Client(transport=transport, timeout=kw.get("timeout", 5))
-
-    return HttpClient(
-        "https://demo.invalid",
-        retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=5),
-        client_factory=factory,
-        sleep_fn=lambda _: None,
-    )
 
 
 def _harbor_fake_client() -> Any:
@@ -201,8 +277,8 @@ def _harbor_fake_client() -> Any:
     from autobridge.spec.models import RetryPolicy  # noqa: PLC0415
 
     status_map = {"confirmed": "H1", "checked_in": "H2", "checked_out": "H3", "cancelled": "H4", "no_show": "H5"}
-    reservations = [{**r, "status": status_map[r["status"]]} for r in _atlas_reservations()]
-    folios = list(_atlas_folios())
+    reservations = [{**r, "status": status_map[r["status"]]} for r in _harbor_reservations()]
+    folios = list(_harbor_folios())
 
     def handler(request: httpx.Request) -> httpx.Response:
         qp = dict(request.url.params)
@@ -313,6 +389,24 @@ def _live_ensure_connector(base_url: str, payload: dict[str, Any]) -> list[dict[
     return calls
 
 
+def _connector_id_from_calls(calls: list[dict[str, Any]], name: str) -> str | None:
+    """Extract a connector id by name from ensure-call records (GET list or POST create)."""
+    for call in calls:
+        body = call.get("body")
+        candidates: list[Any] = []
+        if isinstance(body, list):
+            candidates = body
+        elif isinstance(body, dict):
+            if isinstance(body.get("connectors"), list):
+                candidates = body["connectors"]
+            elif body.get("name") == name:
+                candidates = [body]
+        for conn in candidates:
+            if isinstance(conn, dict) and conn.get("name") == name and conn.get("id"):
+                return str(conn["id"])
+    return None
+
+
 def _call_ok(call: dict[str, Any]) -> bool:
     """A live control call succeeded iff its HTTP status is 2xx (REQ-016)."""
     status = call.get("status")
@@ -400,7 +494,22 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
     calls: list[dict[str, Any]] = []
     if live:
         calls.append(_control_call(base_url, "GET", "/healthz"))
-        calls.append(_control_call(base_url, "GET", "/connectors/atlaspms"))
+        # The reusable artifact must exist on the control plane too: ensure
+        # the atlaspms connector by name (idempotent), then fetch it by id.
+        ensure_calls = _live_ensure_connector(
+            base_url,
+            {
+                "name": "atlaspms",
+                "vendor_docs_ref": "simulators/docs/atlas-openapi.yaml",
+                "base_url": "http://sim-atlas:8000",
+                "credential_ref": "ATLAS_API_KEY",
+                "target_entities": ["Reservation", "FolioCharge"],
+            },
+        )
+        calls.extend(ensure_calls)
+        connector_id = _connector_id_from_calls(ensure_calls, "atlaspms")
+        if connector_id is not None:
+            calls.append(_control_call(base_url, "GET", f"/connectors/{connector_id}"))
         calls.append(_control_call(base_url, "GET", "/metrics/model-usage"))
     return _finish_step(
         "Reusable artifact — Atlas release, zero inference",
@@ -473,29 +582,29 @@ def step2_unfamiliar_api(seed: int, live: bool, base_url: str) -> dict[str, Any]
 
 
 def step3_zero_token_recovery(seed: int, live: bool, base_url: str) -> dict[str, Any]:
-    """offset_to_cursor drift: L0 miss → L1 rule patch, frontier_tokens == 0."""
+    """page_to_cursor drift: L0 miss → L1 rule patch, frontier_tokens == 0."""
     from autobridge.repair.context import RepairContext  # noqa: PLC0415
     from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
     from autobridge.repair.registry import RULE_REGISTRY  # noqa: PLC0415
 
     spec = _load_reference_spec("atlaspms")
     delta = {
-        "list_reservations": {"previous": {"strategy": "offset"}, "current": {"strategy": "cursor"}},
+        "list_reservations": {"previous": {"strategy": "page"}, "current": {"strategy": "cursor"}},
     }
     cache = KnowledgeCache()
     l0_hit = cache.lookup("atlas", delta)  # fresh cache: miss by construction
     ctx = RepairContext.from_dict(spec, drift_class="PAGINATION_CHANGE", fingerprint_delta={"pagination_details": delta})
-    rule = RULE_REGISTRY["offset_to_cursor"]
-    assert rule.precondition(ctx), "L1 rule precondition must hold for offset→cursor drift"
+    rule = RULE_REGISTRY["page_to_cursor"]
+    assert rule.precondition(ctx), "L1 rule precondition must hold for page→cursor drift"
     patch = rule.generate_patch(ctx)
     assert patch, "L1 rule must produce a JSON Patch"
     calls: list[dict[str, Any]] = []
     if live:
-        calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-atlas", "scenario_id": "offset_to_cursor", "seed": seed}))
+        calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-atlas", "scenario_id": "page_to_cursor", "seed": seed}))
         calls.append(_control_call(base_url, "GET", "/drift"))
         calls.append(_control_call(base_url, "GET", "/repairs"))
     return _finish_step(
-        "Zero-token recovery — offset_to_cursor via L1 rule",
+        "Zero-token recovery — page_to_cursor via L1 rule",
         {
             "drift_class": "PAGINATION_CHANGE",
             "l0_knowledge": "miss" if not l0_hit else "hit",

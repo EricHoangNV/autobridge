@@ -1,10 +1,11 @@
 """W4.7 — known repairs with frontier_tokens == 0 (P1.W4.7).
 
-Four deterministic drift scenarios, each verified end-to-end:
+Four deterministic drift scenarios, each verified end-to-end (REQ-019:
+Atlas is page-paginated, so the pagination headline is page_to_cursor):
 
   rename_guest_id      -> rename_field            (FIELD_RENAME)
-  offset_to_cursor     -> offset_to_cursor        (PAGINATION_CHANGE)
-  cursor_repeat_token  -> offset_to_cursor guard  (PAGINATION_CHANGE / repeated_cursor)
+  page_to_cursor       -> page_to_cursor          (PAGINATION_CHANGE)
+  cursor_repeat_token  -> page_to_cursor guard    (PAGINATION_CHANGE / repeated_cursor)
   nested_path_shift    -> nested_path_shift       (PAGINATION_CHANGE via items_path)
 
 For each scenario the test:
@@ -23,7 +24,6 @@ skipped when the stack is down. The W4 pass criteria is the fake path.
 
 from __future__ import annotations
 
-import base64
 import os
 import pathlib
 from decimal import Decimal
@@ -99,25 +99,69 @@ def _create_connector_and_release(spec: dict[str, Any], connector_id: str, Sessi
 # ---------------------------------------------------------------------------
 
 
-def _atlas_offset_fake(dataset: dict[str, list[dict[str, Any]]], mutated: dict[str, list[dict[str, Any]]] | None = None) -> HttpClient:
-    """Offset pagination fake (Atlas baseline)."""
+# ---------------------------------------------------------------------------
+# Fake HTTP helpers (Cloudbeds-style wire via the real Atlas presentation
+# layer, so fakes and the live simulator can never drift apart).
+# ---------------------------------------------------------------------------
+
+from simulators.atlaspms.app import (  # noqa: E402
+    _dumps_exact,
+    decode_cursor,
+    encode_cursor,
+    to_wire_reservation,
+    to_wire_transaction,
+)
+
+
+def _cloudbeds_page_envelope(records: list[dict[str, Any]], page_number: int, page_size: int) -> bytes:
+    total = len(records)
+    start = (page_number - 1) * page_size
+    sliced = records[start : start + page_size]
+    return _dumps_exact({"success": True, "data": sliced, "count": len(sliced), "total": total}).encode()
+
+
+def _cloudbeds_cursor_envelope(
+    records: list[dict[str, Any]], cursor: str | None, limit: int, repeat: bool = False
+) -> bytes:
+    offset = decode_cursor(cursor)
+    sliced = records[offset : offset + limit]
+    next_idx = offset + limit
+    if next_idx >= len(records):
+        next_cursor = None
+    elif repeat:
+        next_cursor = cursor if cursor else encode_cursor(offset)
+    else:
+        next_cursor = encode_cursor(next_idx)
+    # No total: cursor listings are followed via next_cursor until null.
+    return _dumps_exact({"success": True, "data": sliced, "count": len(sliced), "next_cursor": next_cursor}).encode()
+
+
+def _page_params(qp: dict[str, str]) -> tuple[int, int]:
+    try:
+        page_number = max(1, int(qp.get("pageNumber", "1")))
+    except ValueError:
+        page_number = 1
+    try:
+        page_size = max(1, min(100, int(qp.get("pageSize", "50"))))
+    except ValueError:
+        page_size = 50
+    return page_number, page_size
+
+
+def _atlas_page_fake(dataset: dict[str, list[dict[str, Any]]], mutated: dict[str, list[dict[str, Any]]] | None = None) -> HttpClient:
+    """Page pagination fake (Atlas baseline: pageNumber/pageSize + total)."""
     data = mutated if mutated is not None else dataset
 
     def handler(request: httpx.Request) -> httpx.Response:
         qp = dict(request.url.params)
         path = request.url.path
-        limit = int(qp.get("limit", "10"))
-        offset = int(qp.get("offset", "0"))
-        if path == "/reservations":
-            recs = data.get("reservations", [])
-            sliced = recs[offset : offset + limit]
-            next_offset = offset + limit if offset + limit < len(recs) else None
-            return httpx.Response(200, json={"data": sliced, "total": len(recs), "limit": limit, "offset": offset, "next_offset": next_offset})
-        if path == "/folios":
-            recs = data.get("folios", [])
-            sliced = recs[offset : offset + limit]
-            next_offset = offset + limit if offset + limit < len(recs) else None
-            return httpx.Response(200, json={"data": sliced, "total": len(recs), "limit": limit, "offset": offset, "next_offset": next_offset})
+        page_number, page_size = _page_params(qp)
+        if path == "/api/v1.3/getReservations":
+            wire = [to_wire_reservation(r) for r in data.get("reservations", [])]
+            return httpx.Response(200, content=_cloudbeds_page_envelope(wire, page_number, page_size), headers={"Content-Type": "application/json"})
+        if path == "/api/v1.3/getTransactions":
+            wire = [to_wire_transaction(r) for r in data.get("folios", [])]
+            return httpx.Response(200, content=_cloudbeds_page_envelope(wire, page_number, page_size), headers={"Content-Type": "application/json"})
         return httpx.Response(404, json={"msg": "not found"})
 
     transport = httpx.MockTransport(handler)
@@ -129,39 +173,23 @@ def _atlas_offset_fake(dataset: dict[str, list[dict[str, Any]]], mutated: dict[s
 
 
 def _cursor_fake(dataset: dict[str, list[dict[str, Any]]]) -> HttpClient:
-    """Cursor pagination fake (offset_to_cursor drift)."""
-
-    def encode(idx: int) -> str:
-        return base64.urlsafe_b64encode(str(idx).encode()).decode().rstrip("=")
-
-    def decode(cur: str | None) -> int:
-        if not cur:
-            return 0
-        padded = cur + "=" * (-len(cur) % 4)
-        try:
-            return int(base64.urlsafe_b64decode(padded).decode())
-        except Exception:
-            return 0
+    """Cursor pagination fake (page_to_cursor drift: cursor + next_cursor, no total)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         qp = dict(request.url.params)
         path = request.url.path
-        limit = int(qp.get("limit", "10"))
+        try:
+            limit = max(1, min(100, int(qp.get("pageSize", qp.get("limit", "50")))))
+        except ValueError:
+            limit = 50
         cursor = qp.get("cursor")
-        offset = decode(cursor)
         # Atlas ops share same dataset shape but served as cursor
-        if path == "/reservations":
-            recs = dataset.get("reservations", [])
-            sliced = recs[offset : offset + limit]
-            next_idx = offset + limit
-            next_cursor = encode(next_idx) if next_idx < len(recs) else None
-            return httpx.Response(200, json={"data": sliced, "total": len(recs), "limit": limit, "cursor": cursor, "next_cursor": next_cursor})
-        if path == "/folios":
-            recs = dataset.get("folios", [])
-            sliced = recs[offset : offset + limit]
-            next_idx = offset + limit
-            next_cursor = encode(next_idx) if next_idx < len(recs) else None
-            return httpx.Response(200, json={"data": sliced, "total": len(recs), "limit": limit, "cursor": cursor, "next_cursor": next_cursor})
+        if path == "/api/v1.3/getReservations":
+            wire = [to_wire_reservation(r) for r in dataset.get("reservations", [])]
+            return httpx.Response(200, content=_cloudbeds_cursor_envelope(wire, cursor, limit), headers={"Content-Type": "application/json"})
+        if path == "/api/v1.3/getTransactions":
+            wire = [to_wire_transaction(r) for r in dataset.get("folios", [])]
+            return httpx.Response(200, content=_cloudbeds_cursor_envelope(wire, cursor, limit), headers={"Content-Type": "application/json"})
         return httpx.Response(404, json={"msg": "not found"})
 
     transport = httpx.MockTransport(handler)
@@ -175,55 +203,24 @@ def _cursor_fake(dataset: dict[str, list[dict[str, Any]]]) -> HttpClient:
 def _cursor_repeat_fake(dataset: dict[str, list[dict[str, Any]]]) -> HttpClient:
     """Cursor pagination with repeated_cursor bug (every even request repeats)."""
 
-    def encode(idx: int) -> str:
-        return base64.urlsafe_b64encode(str(idx).encode()).decode().rstrip("=")
-
-    def decode(cur: str | None) -> int:
-        if not cur:
-            return 0
-        padded = cur + "=" * (-len(cur) % 4)
-        try:
-            return int(base64.urlsafe_b64decode(padded).decode())
-        except Exception:
-            return 0
-
     request_count = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
         request_count["n"] += 1
         qp = dict(request.url.params)
         path = request.url.path
-        limit = int(qp.get("limit", "10"))
+        try:
+            limit = max(1, min(100, int(qp.get("pageSize", qp.get("limit", "50")))))
+        except ValueError:
+            limit = 50
         cursor = qp.get("cursor")
-        offset = decode(cursor)
-        # Simulate repeat on even request_count
-        if request_count["n"] % 2 == 0 and request_count["n"] > 1:
-            # Repeat previous cursor
-            # We need to track previous next_cursor - simplify: return same cursor as received
-            if path == "/reservations":
-                recs = dataset.get("reservations", [])
-                sliced = recs[offset : offset + limit]
-                # Return same cursor as next_cursor to trigger repeated_cursor
-                cur_val = cursor if cursor else encode(offset)
-                return httpx.Response(200, json={"data": sliced, "total": len(recs), "limit": limit, "cursor": cursor, "next_cursor": cur_val})
-            if path == "/folios":
-                recs = dataset.get("folios", [])
-                sliced = recs[offset : offset + limit]
-                cur_val = cursor if cursor else encode(offset)
-                return httpx.Response(200, json={"data": sliced, "total": len(recs), "limit": limit, "cursor": cursor, "next_cursor": cur_val})
-        # Normal cursor behavior
-        if path == "/reservations":
-            recs = dataset.get("reservations", [])
-            sliced = recs[offset : offset + limit]
-            next_idx = offset + limit
-            next_cursor = encode(next_idx) if next_idx < len(recs) else None
-            return httpx.Response(200, json={"data": sliced, "total": len(recs), "limit": limit, "cursor": cursor, "next_cursor": next_cursor})
-        if path == "/folios":
-            recs = dataset.get("folios", [])
-            sliced = recs[offset : offset + limit]
-            next_idx = offset + limit
-            next_cursor = encode(next_idx) if next_idx < len(recs) else None
-            return httpx.Response(200, json={"data": sliced, "total": len(recs), "limit": limit, "cursor": cursor, "next_cursor": next_cursor})
+        repeat = request_count["n"] % 2 == 0 and request_count["n"] > 1
+        if path == "/api/v1.3/getReservations":
+            wire = [to_wire_reservation(r) for r in dataset.get("reservations", [])]
+            return httpx.Response(200, content=_cloudbeds_cursor_envelope(wire, cursor, limit, repeat=repeat), headers={"Content-Type": "application/json"})
+        if path == "/api/v1.3/getTransactions":
+            wire = [to_wire_transaction(r) for r in dataset.get("folios", [])]
+            return httpx.Response(200, content=_cloudbeds_cursor_envelope(wire, cursor, limit, repeat=repeat), headers={"Content-Type": "application/json"})
         return httpx.Response(404, json={"msg": "not found"})
 
     transport = httpx.MockTransport(handler)
@@ -239,27 +236,32 @@ def _nested_path_fake(dataset: dict[str, list[dict[str, Any]]], nest_both: bool 
 
     By default only reservations is nested (so a single-op patch fixes it);
     set nest_both=True to nest both ops (requires two separate patches).
+    Page-mode Cloudbeds envelope otherwise.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
         qp = dict(request.url.params)
         path = request.url.path
-        limit = int(qp.get("limit", "10"))
-        offset = int(qp.get("offset", "0"))
-        if path == "/reservations":
-            recs = dataset.get("reservations", [])
-            sliced = recs[offset : offset + limit]
-            next_offset = offset + limit if offset + limit < len(recs) else None
+        page_number, page_size = _page_params(qp)
+        if path == "/api/v1.3/getReservations":
+            wire = [to_wire_reservation(r) for r in dataset.get("reservations", [])]
+            total = len(wire)
+            start = (page_number - 1) * page_size
+            sliced = wire[start : start + page_size]
             # Nested envelope for reservations
-            return httpx.Response(200, json={"data": {"records": sliced}, "total": len(recs), "limit": limit, "offset": offset, "next_offset": next_offset, "_nested": True})
-        if path == "/folios":
-            recs = dataset.get("folios", [])
-            sliced = recs[offset : offset + limit]
-            next_offset = offset + limit if offset + limit < len(recs) else None
+            payload = {"success": True, "data": {"records": sliced}, "count": len(sliced), "total": total, "_nested": True}
+            return httpx.Response(200, content=_dumps_exact(payload).encode(), headers={"Content-Type": "application/json"})
+        if path == "/api/v1.3/getTransactions":
+            wire = [to_wire_transaction(r) for r in dataset.get("folios", [])]
+            total = len(wire)
+            start = (page_number - 1) * page_size
+            sliced = wire[start : start + page_size]
             if nest_both:
-                return httpx.Response(200, json={"data": {"records": sliced}, "total": len(recs), "limit": limit, "offset": offset, "next_offset": next_offset})
-            # Folios stays flat for single-op test
-            return httpx.Response(200, json={"data": sliced, "total": len(recs), "limit": limit, "offset": offset, "next_offset": next_offset})
+                payload = {"success": True, "data": {"records": sliced}, "count": len(sliced), "total": total}
+            else:
+                # Folios stays flat for single-op test
+                payload = {"success": True, "data": sliced, "count": len(sliced), "total": total}
+            return httpx.Response(200, content=_dumps_exact(payload).encode(), headers={"Content-Type": "application/json"})
         return httpx.Response(404, json={"msg": "not found"})
 
     transport = httpx.MockTransport(handler)
@@ -365,7 +367,7 @@ def _run_repair_scenario(
     # Determine drift_class to pass
     if scenario_id == "rename_guest_id":
         drift_class = "SCHEMA_RENAME"
-    elif scenario_id in ("offset_to_cursor", "cursor_repeat_token", "nested_path_shift"):
+    elif scenario_id in ("offset_to_cursor", "page_to_cursor", "cursor_repeat_token", "nested_path_shift"):
         drift_class = "PAGINATION_CHANGE"
     else:
         drift_class = classification.drift_class if classification else "UNKNOWN"
@@ -392,8 +394,8 @@ def _run_repair_scenario(
         if not has_rename_delta:
             extra_dict = {"entity": "Reservation", "field": "guest_name", "new_field": "guest_identifier", "rename": {"entity": "Reservation", "old_field": "guest_name", "new_field": "guest_identifier"}}
 
-    # For offset_to_cursor and cursor_repeat_token, ensure pagination delta shows strategy change if not auto
-    if scenario_id in ("offset_to_cursor", "cursor_repeat_token"):
+    # For page_to_cursor and cursor_repeat_token, ensure pagination delta shows strategy change if not auto
+    if scenario_id in ("page_to_cursor", "cursor_repeat_token"):
         # If auto delta doesn't show pagination_changed, inject expected delta
         need_inject = False
         if isinstance(effective_delta, FingerprintDelta):
@@ -405,7 +407,7 @@ def _run_repair_scenario(
         else:
             need_inject = True
         if need_inject:
-            # Build delta that shows offset -> cursor
+            # Build delta that shows page -> cursor
             effective_delta = FingerprintDelta(
                 fingerprint_changed=True,
                 pagination_changed=True,
@@ -413,8 +415,8 @@ def _run_repair_scenario(
                 types_changed=False,
                 changed_entities=[],
                 pagination_details={
-                    "list_reservations": {"previous": {"strategy": "offset"}, "current": {"strategy": "cursor"}},
-                    "list_folios": {"previous": {"strategy": "offset"}, "current": {"strategy": "cursor"}},
+                    "list_reservations": {"previous": {"strategy": "page"}, "current": {"strategy": "cursor"}},
+                    "list_folios": {"previous": {"strategy": "page"}, "current": {"strategy": "cursor"}},
                 },
                 keys_details={},
                 types_details={},
@@ -557,12 +559,12 @@ def test_rename_guest_id_zero_frontier() -> None:
     mutated = apply_dataset_mutations(base, "rename_guest_id")
 
     def drift_factory(ds):
-        return _atlas_offset_fake(ds, mutated=mutated)
+        return _atlas_page_fake(ds, mutated=mutated)
 
     def fixed_factory(ds):
-        # After fix, spec points at guest_identifier, so drift transport is actually correct
-        # Fixed spec will read guest_identifier and produce canonical guest_name
-        return _atlas_offset_fake(ds, mutated=mutated)
+        # After fix, spec points at guestIdentifier, so drift transport is actually correct
+        # Fixed spec will read guestIdentifier and produce canonical guest_name
+        return _atlas_page_fake(ds, mutated=mutated)
 
     _run_repair_scenario(
         scenario_id="rename_guest_id",
@@ -581,12 +583,17 @@ def test_rename_guest_id_zero_frontier() -> None:
             keys_details={},
             types_details={"Reservation": {"previous": {"guest_name": "str", "other": "str"}, "current": {"guest_identifier": "str", "other": "str"}}},
         ),
-        extra={"entity": "Reservation", "field": "guest_name", "new_field": "guest_identifier", "rename": {"entity": "Reservation", "old_field": "guest_name", "new_field": "guest_identifier"}},
+        extra={"entity": "Reservation", "field": "guest_name", "new_field": "guestIdentifier", "new_path": "$.guestIdentifier", "rename": {"entity": "Reservation", "old_field": "guest_name", "new_field": "guestIdentifier"}},
     )
 
 
-def test_offset_to_cursor_zero_frontier() -> None:
-    """offset_to_cursor -> offset_to_cursor rule, frontier 0."""
+def test_page_to_cursor_zero_frontier() -> None:
+    """page_to_cursor -> page_to_cursor rule, frontier 0 (REQ-019 Atlas headline).
+
+    The legacy ``offset_to_cursor`` rule stays covered by its rule unit tests
+    and fixtures (no live vendor is offset-based anymore); the e2e headline
+    for Atlas is the page -> cursor drift with the ``page_to_cursor`` rule.
+    """
     base, _ = _dataset_with_mutation("baseline", seed=42)
 
     def drift_factory(ds):
@@ -596,8 +603,8 @@ def test_offset_to_cursor_zero_frontier() -> None:
         return _cursor_fake(ds)
 
     _run_repair_scenario(
-        scenario_id="offset_to_cursor",
-        expected_rule_id="offset_to_cursor",
+        scenario_id="page_to_cursor",
+        expected_rule_id="page_to_cursor",
         connector_id="atlaspms",
         drift_http_factory=drift_factory,
         fixed_http_factory=fixed_factory,
@@ -606,7 +613,7 @@ def test_offset_to_cursor_zero_frontier() -> None:
 
 
 def test_cursor_repeat_token_zero_frontier() -> None:
-    """cursor_repeat_token -> offset_to_cursor (guard adds repeated_cursor), frontier 0."""
+    """cursor_repeat_token -> page_to_cursor (guard adds repeated_cursor), frontier 0."""
     base, _ = _dataset_with_mutation("baseline", seed=42)
 
     def drift_factory(ds):
@@ -618,10 +625,10 @@ def test_cursor_repeat_token_zero_frontier() -> None:
         return _cursor_fake(ds)
 
     # cursor_repeat_token is verified by presence of repeated_cursor guard
-    # The rule that adds guard is offset_to_cursor (it sets stop_when with repeated_cursor)
+    # The rule that adds guard is page_to_cursor (it sets stop_when with repeated_cursor)
     _run_repair_scenario(
         scenario_id="cursor_repeat_token",
-        expected_rule_id="offset_to_cursor",
+        expected_rule_id="page_to_cursor",
         connector_id="atlaspms",
         drift_http_factory=drift_factory,
         fixed_http_factory=fixed_factory,
@@ -641,7 +648,7 @@ def test_nested_path_shift_zero_frontier() -> None:
         types_changed=False,
         changed_entities=[],
         pagination_details={
-            "list_reservations": {"previous": {"strategy": "offset", "items_path": "$.data"}, "current": {"strategy": "offset", "items_path": "$.data.records"}},
+            "list_reservations": {"previous": {"strategy": "page", "items_path": "$.data"}, "current": {"strategy": "page", "items_path": "$.data.records"}},
         },
         keys_details={},
         types_details={},
@@ -691,7 +698,7 @@ def test_nested_path_shift_synthetic_oracle() -> None:
         keys_changed=False,
         types_changed=False,
         changed_entities=[],
-        pagination_details={"list_reservations": {"previous": {"strategy": "offset", "items_path": "$.data"}, "current": {"strategy": "offset", "items_path": "$.data.records"}}},
+        pagination_details={"list_reservations": {"previous": {"strategy": "page", "items_path": "$.data"}, "current": {"strategy": "page", "items_path": "$.data.records"}}},
         keys_details={},
         types_details={},
     )
@@ -788,7 +795,7 @@ def _live_client_from_reference_spec(spec_dict: dict[str, Any]) -> HttpClient:
 
 
 @pytest.mark.live
-def test_offset_to_cursor_live_zero_frontier_via_control_api(e2e_stack: str) -> None:
+def test_page_to_cursor_live_zero_frontier_via_control_api(e2e_stack: str) -> None:
     """Live-stack version of the test_03 headline claim (REQ-010).
 
     Fault injection and reset go through the control API (``POST
@@ -797,9 +804,9 @@ def test_offset_to_cursor_live_zero_frontier_via_control_api(e2e_stack: str) -> 
     the ladder + oracle run locally (demo's local-evidence mode).
 
     Asserts the same things as the in-process test: the labelled drift lands;
-    the drifted live sync is truncated (50 of 77 folios — the old offset spec
-    stops at the missing ``next_offset``); the ladder proposes the
-    ``offset_to_cursor`` rule with ``frontier_tokens == 0`` and no ModelCall
+    the drifted live sync is truncated (50 of 77 folios — the old page spec
+    stops at the missing next token with no total); the ladder proposes the
+    ``page_to_cursor`` rule with ``frontier_tokens == 0`` and no ModelCall
     rows; the patched spec passes the oracle and syncs ``Complete`` against
     the still-drifted live sim; the control model-usage ledger shows no
     frontier tokens.
@@ -818,10 +825,10 @@ def test_offset_to_cursor_live_zero_frontier_via_control_api(e2e_stack: str) -> 
     assert len(base_folios) == 77, f"live baseline seed 42 must serve 77 folios, got {len(base_folios)}"
 
     try:
-        _inject_live("sim-atlas", "offset_to_cursor")
+        _inject_live("sim-atlas", "page_to_cursor")
         drifted_summary = execute_sync(spec, _live_client_from_reference_spec(spec))
         drift_folios = drifted_summary["canonical_records"].get("FolioCharge", [])
-        # Old offset spec stops at the missing next_offset: first page only.
+        # Old page spec stops at the missing next token/total: first page only.
         assert len(drift_folios) == 50, (
             f"drifted live sync must truncate to 50 folios, got {len(drift_folios)} "
             f"(outcome {drifted_summary['outcome']})"
@@ -839,8 +846,8 @@ def test_offset_to_cursor_live_zero_frontier_via_control_api(e2e_stack: str) -> 
             types_changed=False,
             changed_entities=[],
             pagination_details={
-                "list_reservations": {"previous": {"strategy": "offset"}, "current": {"strategy": "cursor"}},
-                "list_folios": {"previous": {"strategy": "offset"}, "current": {"strategy": "cursor"}},
+                "list_reservations": {"previous": {"strategy": "page"}, "current": {"strategy": "cursor"}},
+                "list_folios": {"previous": {"strategy": "page"}, "current": {"strategy": "cursor"}},
             },
             keys_details={},
             types_details={},
@@ -866,7 +873,7 @@ def test_offset_to_cursor_live_zero_frontier_via_control_api(e2e_stack: str) -> 
             )
             session.commit()
             assert result.decision == "propose", f"live repair decision was {result.decision} trace {result.ladder_trace}"
-            assert result.rule_id == "offset_to_cursor", f"live rule {result.rule_id} trace {result.ladder_trace}"
+            assert result.rule_id == "page_to_cursor", f"live rule {result.rule_id} trace {result.ladder_trace}"
             assert result.candidate_patch, "live patch empty"
             assert result.model_usage["frontier_tokens"] == 0, f"live frontier_tokens {result.model_usage}"
             assert result.ladder_level_reached in (0, 1)
@@ -889,10 +896,10 @@ def test_offset_to_cursor_live_zero_frontier_via_control_api(e2e_stack: str) -> 
             session3.commit()
             assert new_release.parent_release_id == release_id
             session3.close()
-            _verify_oracle_pass(new_spec, "offset_to_cursor")
+            _verify_oracle_pass(new_spec, "page_to_cursor")
             from verifier.oracle import oracle_verdict as _ov
 
-            old_verdict, _, _ = _ov("offset_to_cursor", spec)
+            old_verdict, _, _ = _ov("page_to_cursor", spec)
             assert old_verdict == "fail", "old spec must fail the live scenario oracle"
             _verify_oracle_pass(new_spec, "baseline")
 

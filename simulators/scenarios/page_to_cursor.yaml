@@ -1,0 +1,12 @@
+id: page_to_cursor
+drift_class: PAGINATION_CHANGE
+fixable: fixable
+visibility: dev
+vendor: both
+seed: 42
+description: Pagination flipped from pageNumber/pageSize to cursor; page params ignored, next_cursor returned.
+expected:
+  fails: true
+  http_status: 200
+  pagination_mode: cursor
+  failed_checks: [pagination_shape]

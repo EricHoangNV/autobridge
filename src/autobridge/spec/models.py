@@ -374,12 +374,18 @@ class Pagination(_Strict):
     limit_param: str | None = None
     next_path: JsonPath | None = None
     items_path: JsonPath
+    total_path: JsonPath | None = None
     stop_when: list[StopCondition] = Field(min_length=1)
 
     @field_validator("next_path")
     @classmethod
     def _next_subset(cls, v: str | None) -> str | None:
         return check_jsonpath(v, "next_path") if v is not None else v
+
+    @field_validator("total_path")
+    @classmethod
+    def _total_subset(cls, v: str | None) -> str | None:
+        return check_jsonpath(v, "total_path") if v is not None else v
 
     @field_validator("items_path")
     @classmethod

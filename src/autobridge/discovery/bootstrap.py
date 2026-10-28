@@ -127,6 +127,20 @@ def _op_name_for_path(path: str) -> str:
     if "/folios" in path:
         # nested: /reservations/{id}/folios
         return "list_folios_nested"
+    # Method-style vendor paths (e.g. AtlasPMS /api/v1.3/getReservations):
+    # strip any version prefix, then match the method name.
+    method = path.rsplit("/", 1)[-1] if "/" in path else path
+    lowered = method.lower()
+    if lowered in ("getreservations", "listreservations", "reservations"):
+        return "list_reservations"
+    if lowered in ("gettransactions", "listtransactions", "folios", "listfolios", "charges"):
+        return "list_folios"
+    if lowered in ("gethotels", "listhotels", "properties", "listproperties"):
+        return "list_properties"
+    if lowered in ("getreservation", "reservation"):
+        return "get_reservation"
+    if lowered in ("getguest", "guest"):
+        return "get_guest"
     # generic sanitize
     name = path.strip("/").replace("/", "_").replace("{", "").replace("}", "").replace("-", "_")
     name = re.sub(r"[^a-z0-9_]", "", name.lower())
@@ -173,10 +187,65 @@ _PROPERTY_FIELDS = [
 _IGNORE_FIELDS = {"date"}
 
 
+# Canonical field -> documented wire names (method-style vendors use
+# camelCase; identity fallback keeps Harbor-style snake_case working).
+_WIRE_ALIASES: dict[str, tuple[str, ...]] = {
+    "reservation_id": ("reservationID",),
+    "property_id": ("propertyID",),
+    "guest_name": ("guestName",),
+    "arrival_date": ("startDate", "arrivalDate"),
+    "departure_date": ("endDate", "departureDate"),
+    "status": ("status",),
+    "total_amount": ("balance", "total", "totalAmount"),
+    "currency": ("currency", "currencyCode"),
+    "updated_at": ("dateModified", "updatedAt", "modifiedAt"),
+    "charge_id": ("transactionID", "chargeID", "chargeId"),
+    "business_date": ("businessDate",),
+    "amount": ("amount",),
+    "description": ("description",),
+    "posted_at": ("transactionDateTime", "postedAt"),
+    "name": ("propertyName", "name"),
+    "timezone": ("propertyTimezone", "timezone"),
+}
+
+# Vendor spellings normalized to canonical (clear vocabularies).
+_STATUS_NORMALIZE = {"canceled": "cancelled"}
+_CANONICAL_STATUSES = ("confirmed", "checked_in", "checked_out", "cancelled", "no_show")
+
+
+def _documented_wire_names(iface: Any) -> dict[str, str]:
+    """Map lowercased documented field name -> documented spelling."""
+    names: dict[str, str] = {}
+    for schema in getattr(iface, "schemas", []) or []:
+        for f in getattr(schema, "fields", []) or []:
+            fname = getattr(f, "name", "")
+            if isinstance(fname, str) and fname and fname.lower() not in names:
+                names[fname.lower()] = fname
+    for op in getattr(iface, "operations", []) or []:
+        for f in getattr(op, "response_fields", []) or []:
+            fname = getattr(f, "name", "")
+            if isinstance(fname, str) and fname and fname.lower() not in names:
+                names[fname.lower()] = fname
+    return names
+
+
+def _wire_name_for(canonical: str, iface: Any) -> str:
+    """Documented wire name for a canonical field (identity fallback)."""
+    pool = _documented_wire_names(iface)
+    for alias in _WIRE_ALIASES.get(canonical, ()):
+        if alias.lower() in pool:
+            return pool[alias.lower()]
+    norm = canonical.lower().replace("_", "")
+    if norm in pool:
+        return pool[norm]
+    return canonical
+
+
 def _transform_for_field(
     field_name: str,
     status_kind: str | None = None,
     status_mapping: dict[str, str] | None = None,
+    status_vocab: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Closed transform steps for a canonical field."""
     low = field_name.lower()
@@ -184,6 +253,8 @@ def _transform_for_field(
         return [{"name": "date_local", "args": {"tz": "source"}}]
     if low == "business_date":
         return [{"name": "business_date", "args": {"tz": "source", "cutoff": 4}}]
+    if low == "updated_at" or low == "posted_at":
+        return [{"name": "datetime_utc", "args": {"tz": "source"}}]
     if low == "status":
         # Determine mapping
         mapping: dict[str, str]
@@ -191,6 +262,18 @@ def _transform_for_field(
             mapping = dict(status_mapping)
         elif status_kind == "opaque":
             mapping = {"H1": "confirmed", "H2": "checked_in", "H3": "checked_out", "H4": "cancelled", "H5": "no_show"}
+        elif status_vocab:
+            # Clear vocabulary from docs: map each documented value to its
+            # canonical form (e.g. "canceled" -> "cancelled"); values with no
+            # canonical counterpart (e.g. "not_confirmed") are left out so
+            # they Block via on_unknown instead of being guessed.
+            mapping = {}
+            for v in status_vocab:
+                canon = _STATUS_NORMALIZE.get(v, v)
+                if canon in _CANONICAL_STATUSES and v not in mapping:
+                    mapping[v] = canon
+            if not mapping:
+                mapping = {cs: cs for cs in _CANONICAL_STATUSES}
         else:
             # clear identity
             mapping = {"confirmed": "confirmed", "checked_in": "checked_in", "checked_out": "checked_out", "cancelled": "cancelled", "no_show": "no_show"}
@@ -200,33 +283,34 @@ def _transform_for_field(
     return []
 
 
-def _entity_key(entity_name: str) -> str:
+def _entity_key(entity_name: str, iface: Any = None) -> str:
     if entity_name == "Reservation":
-        return "$.reservation_id"
+        return f"$.{_wire_name_for('reservation_id', iface)}"
     if entity_name == "FolioCharge":
-        return "$.charge_id"
+        return f"$.{_wire_name_for('charge_id', iface)}"
     if entity_name == "Property":
-        return "$.property_id"
+        return f"$.{_wire_name_for('property_id', iface)}"
     return "$.id"
 
 
-def _checkpoint_field_for_entity(entity_name: str) -> str:
+def _checkpoint_field_for_entity(entity_name: str, iface: Any = None) -> str:
     if entity_name == "Reservation":
-        return "$.updated_at"
+        return f"$.{_wire_name_for('updated_at', iface)}"
     if entity_name == "FolioCharge":
-        return "$.posted_at"
+        return f"$.{_wire_name_for('posted_at', iface)}"
     if entity_name == "Property":
-        return "$.updated_at"
+        return f"$.{_wire_name_for('updated_at', iface)}"
     return "$.updated_at"
 
 
 def _collect_fields_for_entity(
     entity_name: str,
-    iface: InterfaceDescription,  # noqa: ARG001 — reserved for future filtering by iface
+    iface: InterfaceDescription,
     status_kind: str | None,
     status_mapping: dict[str, str] | None,
+    status_vocab: tuple[str, ...] = (),
 ) -> dict[str, dict[str, Any]]:
-    """Build fields dict for entity."""
+    """Build fields dict for entity, with wire names resolved from docs."""
     if entity_name == "Reservation":
         field_names = list(_RESERVATION_FIELDS)
     elif entity_name == "FolioCharge":
@@ -246,13 +330,23 @@ def _collect_fields_for_entity(
     for fname in field_names:
         if fname in _IGNORE_FIELDS:
             continue
-        transform_steps = _transform_for_field(fname, status_kind, status_mapping)
-        fields[fname] = {"path": f"$.{fname}", "transform": transform_steps}
+        transform_steps = _transform_for_field(fname, status_kind, status_mapping, status_vocab)
+        fields[fname] = {"path": f"$.{_wire_name_for(fname, iface)}", "transform": transform_steps}
     return fields
 
 
-def _pagination_for_strategy(strategy: str) -> dict[str, Any]:
-    """Pagination object for a given strategy."""
+def _pagination_for_strategy(
+    strategy: str,
+    op: Any | None = None,
+) -> dict[str, Any]:
+    """Pagination object for a given strategy.
+
+    When *op* (an :class:`OperationDescription`) is given and the strategy is
+    ``page``, the page/limit parameter names and the total/next paths are
+    derived from the documented params and response fields (e.g.
+    ``pageNumber``/``pageSize``/``$.total``); otherwise legacy template
+    defaults are used.
+    """
     if strategy == "cursor":
         return {
             "strategy": "cursor",
@@ -272,16 +366,63 @@ def _pagination_for_strategy(strategy: str) -> dict[str, Any]:
             "stop_when": ["null_cursor", "empty_page"],
         }
     if strategy == "page":
-        return {
+        page_param: str | None = "page"
+        limit_param: str | None = "page_size"
+        next_path: str | None = "$.next_page"
+        total_path: str | None = None
+        if op is not None:
+            page_param, limit_param = _page_param_names(op)
+            next_path = _next_token_path(op)
+            total_path = _total_count_path(op)
+        pagination: dict[str, Any] = {
             "strategy": "page",
-            "page_param": "page",
-            "limit_param": "page_size",
-            "next_path": "$.next_page",
+            "page_param": page_param,
+            "limit_param": limit_param,
+            "next_path": next_path,
             "items_path": "$.data",
-            "stop_when": ["empty_page", "no_next"],
+            "stop_when": ["empty_page"],
         }
+        if total_path is not None:
+            pagination["total_path"] = total_path
+        return pagination
     # none -> no pagination (e.g., /properties)
     return {}
+
+
+_PAGE_PARAM_NAMES = ("pagenumber", "page_number", "page", "pageno")
+_LIMIT_PARAM_NAMES = ("pagesize", "page_size", "limit", "per_page", "count", "max_results")
+
+
+def _page_param_names(op: Any) -> tuple[str | None, str | None]:
+    """Find documented page/limit query param names for a page strategy op."""
+    names: dict[str, str] = {}
+    for p in getattr(op, "params", []) or []:
+        pname = getattr(p, "name", "")
+        if isinstance(pname, str) and pname:
+            names[pname.lower()] = pname
+    page = next((names[k] for k in _PAGE_PARAM_NAMES if k in names), None)
+    limit = next((names[k] for k in _LIMIT_PARAM_NAMES if k in names), None)
+    # Fall back to legacy template defaults when docs name nothing usable.
+    return page or "page", limit or "page_size"
+
+
+def _next_token_path(op: Any) -> str | None:
+    """Next-token response field path, or None for tokenless page APIs."""
+    fields = [getattr(f, "name", "") for f in getattr(op, "response_fields", []) or []]
+    lowered = {str(n).lower(): str(n) for n in fields if n}
+    for candidate in ("next_cursor", "next_offset", "next_page"):
+        if candidate in lowered:
+            return f"$.{lowered[candidate]}"
+    return None
+
+
+def _total_count_path(op: Any) -> str | None:
+    """Advertised-total response field path (e.g. ``$.total``), or None."""
+    for f in getattr(op, "response_fields", []) or []:
+        name = getattr(f, "name", "")
+        if isinstance(name, str) and name.lower() == "total":
+            return f"$.{name}"
+    return None
 
 
 def _choose_pagination_strategy(
@@ -362,6 +503,8 @@ def visible_tests(spec: dict[str, Any]) -> list[str]:
             errors.append(f"operations.{op_name} cursor pagination needs null_cursor guard")
         if strategy == "offset" and "empty_page" not in stop_when and "null_cursor" not in stop_when:
             errors.append(f"operations.{op_name} offset pagination needs empty_page or null_cursor guard")
+        if strategy == "page" and "empty_page" not in stop_when:
+            errors.append(f"operations.{op_name} page pagination needs empty_page guard (tokenless stop)")
         next_path = pag.get("next_path", "")
         expected_next = {"cursor": "$.next_cursor", "offset": "$.next_offset", "page": "$.next_page"}.get(strategy, "")
         if expected_next and next_path != expected_next and next_path is not None:
@@ -503,23 +646,29 @@ def _compile_spec(
             continue
         if "{" in path:
             continue
+        op_name = _op_name_for_path(path)
+        # Property lists are not Phase 1 canonical entities, and single-item
+        # fetches (one reservation / one guest) carry no pagination — skip
+        # them to match the reference spec operation set.
+        if op_name in ("list_properties", "get_reservation", "get_guest"):
+            continue
         # /properties is not a Phase 1 canonical entity — skip to match reference spec
         if path in ("/properties", "/property"):
             continue
-        op_name = _op_name_for_path(path)
         strategy = _choose_pagination_strategy(path, iface, classification)
         pagination = None
         if strategy != "none":
-            pagination = _pagination_for_strategy(strategy)
+            pagination = _pagination_for_strategy(strategy, op)
 
         checkpoint = None
         if pagination is not None:
-            if "reservation" in path:
-                checkpoint = {"field": "$.updated_at", "mode": "max"}
-            elif "folio" in path or "charge" in path:
-                checkpoint = {"field": "$.posted_at", "mode": "max"}
+            low_path = path.lower()
+            if "reservation" in low_path:
+                checkpoint = {"field": _checkpoint_field_for_entity("Reservation", iface), "mode": "max"}
+            elif "folio" in low_path or "charge" in low_path or "transaction" in low_path:
+                checkpoint = {"field": _checkpoint_field_for_entity("FolioCharge", iface), "mode": "max"}
             else:
-                checkpoint = {"field": "$.updated_at", "mode": "max"}
+                checkpoint = {"field": _checkpoint_field_for_entity("Reservation", iface), "mode": "max"}
 
         op_spec: dict[str, Any] = {"method": "GET", "path": path}
         if pagination is not None:
@@ -549,12 +698,15 @@ def _compile_spec(
         }
 
     # Entities — only canonical Reservation + FolioCharge for Phase 1
+    status_vocab: tuple[str, ...] = ()
+    if classification is not None and classification.status_vocabulary is not None:
+        status_vocab = tuple(classification.status_vocabulary.vocabulary)
     entities: dict[str, Any] = {}
     if "list_reservations" in operations:
-        fields = _collect_fields_for_entity("Reservation", iface, status_kind, status_mapping)
+        fields = _collect_fields_for_entity("Reservation", iface, status_kind, status_mapping, status_vocab)
         entities["Reservation"] = {
             "from": "list_reservations",
-            "key": _entity_key("Reservation"),
+            "key": _entity_key("Reservation", iface),
             "fields": fields,
             "checks": [
                 {"kind": "unique_key"},
@@ -563,10 +715,10 @@ def _compile_spec(
             ],
         }
     if "list_folios" in operations:
-        fields = _collect_fields_for_entity("FolioCharge", iface, status_kind, status_mapping)
+        fields = _collect_fields_for_entity("FolioCharge", iface, status_kind, status_mapping, status_vocab)
         entities["FolioCharge"] = {
             "from": "list_folios",
-            "key": _entity_key("FolioCharge"),
+            "key": _entity_key("FolioCharge", iface),
             "fields": fields,
             "checks": [
                 {"kind": "unique_key"},

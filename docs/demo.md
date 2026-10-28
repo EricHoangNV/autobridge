@@ -58,12 +58,12 @@ Renders in `/connectors/new` (docs upload → build two-step) and `/repairs/[id]
 The Harbor quirks this exercises: wrong pagination example in the docs, opaque
 `H1…H5` status codes, nested folios, ambiguous `date`.
 
-## 3. Zero-token recovery — `offset_to_cursor`
+## 3. Zero-token recovery — `page_to_cursor`
 
 Inject the pagination drift, watch L1 fix it with no frontier model call.
 
 ```
-POST /demo/inject-fault                { target: sim-atlas, scenario_id: offset_to_cursor, seed }
+POST /demo/inject-fault                { target: sim-atlas, scenario_id: page_to_cursor, seed }
 POST /connectors/{atlas_id}/sync       → SyncRun Degraded (or Blocked), unmet: [pagination_shape],
                                          fingerprint changed, DriftEvent PAGINATION_CHANGE
 POST /repairs (auto) or ladder         → L0 miss → L1 rule pagination_strategy_swap → JSON Patch diff

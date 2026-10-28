@@ -31,8 +31,8 @@ def test_atlas_source_is_the_yaml_parsed_to_json() -> None:
     assert r.status_code == 200
     spec = r.json()
     assert spec["openapi"].startswith("3.1")
-    assert "/reservations" in spec["paths"]
-    assert "Reservation" in spec["components"]["schemas"]
+    assert "/api/v1.3/getReservations" in spec["paths"]
+    assert "ReservationItem" in spec["components"]["schemas"]
 
 
 @pytest.mark.parametrize(("app", "heading"), [(harbor_app, "# HarborPMS API"), (legacystay_app, "# LegacyStay API")])

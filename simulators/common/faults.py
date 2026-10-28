@@ -8,10 +8,10 @@ The mutations are intentionally simple and data-only — they transform
 records or flip a behaviour flag that the public API checks. No code
 generation, no expressions.
 
-Scenario list (14 entries, plan §2.8):
-  baseline, rename_guest_id, offset_to_cursor, cursor_repeat_token,
-  rate_limit_429, transient_503, token_expired, token_revoked,
-  status_vocab_change, gross_to_net, tz_boundary_shift,
+Scenario list (plan §2.8 + REQ-019 page_to_cursor):
+  baseline, rename_guest_id, offset_to_cursor, page_to_cursor,
+  cursor_repeat_token, rate_limit_429, transient_503, token_expired,
+  token_revoked, status_vocab_change, gross_to_net, tz_boundary_shift,
   duplicate_late_records, endpoint_removed, invalid_patch_trap
 """
 
@@ -30,6 +30,7 @@ SCENARIO_CATALOG: list[dict[str, str]] = [
     {"id": "baseline", "drift_class": "none", "fixable": "fixable", "visibility": "dev"},
     {"id": "rename_guest_id", "drift_class": "FIELD_RENAME", "fixable": "fixable", "visibility": "dev"},
     {"id": "offset_to_cursor", "drift_class": "PAGINATION_CHANGE", "fixable": "fixable", "visibility": "dev"},
+    {"id": "page_to_cursor", "drift_class": "PAGINATION_CHANGE", "fixable": "fixable", "visibility": "dev"},
     {"id": "cursor_repeat_token", "drift_class": "PAGINATION_BUG", "fixable": "fixable", "visibility": "dev"},
     {"id": "rate_limit_429", "drift_class": "RATE_LIMIT", "fixable": "fixable", "visibility": "dev"},
     {"id": "transient_503", "drift_class": "TRANSIENT_ERROR", "fixable": "fixable", "visibility": "dev"},
@@ -191,13 +192,13 @@ def apply_dataset_mutations(
 
 
 def is_pagination_mutated(scenario_id: str) -> bool:
-    """True if scenario changes pagination shape (offset ↔ cursor)."""
-    return scenario_id in ("offset_to_cursor", "cursor_repeat_token")
+    """True if scenario changes pagination shape (offset/page ↔ cursor)."""
+    return scenario_id in ("offset_to_cursor", "page_to_cursor", "cursor_repeat_token")
 
 
 def pagination_mode_for_scenario(scenario_id: str, default: str = "offset") -> str:
-    """Return pagination mode for scenario: 'offset' or 'cursor'."""
-    if scenario_id == "offset_to_cursor":
+    """Return pagination mode for scenario: 'offset', 'page' or 'cursor'."""
+    if scenario_id in ("offset_to_cursor", "page_to_cursor"):
         return "cursor"
     if scenario_id == "cursor_repeat_token":
         return "cursor"

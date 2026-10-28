@@ -16,6 +16,7 @@ const SCENARIO_OPTIONS = [
   "baseline",
   "rename_guest_id",
   "offset_to_cursor",
+  "page_to_cursor",
   "cursor_repeat_token",
   "nested_path_shift",
   "gross_to_net",

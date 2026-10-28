@@ -818,6 +818,39 @@ def test_interpreter_page_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(result.records) == 2
 
 
+def test_interpreter_page_pagination_tokenless_total(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tokenless page pagination: no next token, advertised total drives paging.
+
+    REQ-019 (AtlasPMS/Cloudbeds-style pageNumber/pageSize + total): the loop
+    keeps fetching while fewer records than the total arrived and stops with
+    ``total_reached``; a missing total stops after the first page.
+    """
+    monkeypatch.setenv("TEST_TOKEN", "tok")
+    pagination = {
+        "strategy": "page",
+        "page_param": "pageNumber",
+        "limit_param": "pageSize",
+        "next_path": None,
+        "items_path": "$.data",
+        "total_path": "$.total",
+        "stop_when": ["empty_page"],
+    }
+    spec_dict = _spec_dict("https://example.com", pagination=pagination)
+    from autobridge.spec.models import load_spec_from_dict
+
+    spec = load_spec_from_dict(spec_dict)
+    pages = [
+        {"success": True, "data": [{"id": 1}, {"id": 2}], "count": 2, "total": 3},
+        {"success": True, "data": [{"id": 3}], "count": 1, "total": 3},
+    ]
+    http = _fake_http(pages)
+    interp = Interpreter(spec, http_client=http)
+    result = interp.execute_operation("list_reservations", limit_override=2)
+    assert len(result.records) == 3
+    assert result.stop_reason == "total_reached"
+    assert result.pages_fetched == 2
+
+
 def test_interpreter_repeated_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TEST_TOKEN", "tok")
     pagination = {

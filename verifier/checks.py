@@ -288,7 +288,7 @@ def check_pagination_and_transport(
 ) -> list[dict[str, Any]]:
     fails: list[dict[str, Any]] = []
     # Pagination shape mismatch
-    if scenario_id == "offset_to_cursor":
+    if scenario_id in ("offset_to_cursor", "page_to_cursor"):
         # If spec strategy is not cursor, it's pagination_shape failure
         # Also if produced truncated vs expected
         strategy = None
@@ -304,7 +304,7 @@ def check_pagination_and_transport(
                 pass
         # If no spec, we report pagination_shape based on scenario
         if strategy != "cursor":
-            fails.append(_failed("pagination_shape", 1, "offset vs cursor mismatch"))
+            fails.append(_failed("pagination_shape", 1, "page/offset vs cursor mismatch"))
 
     if scenario_id == "cursor_repeat_token":
         # Repeated cursor bug
@@ -458,6 +458,7 @@ def run_all_checks(
         "baseline": set(),
         "rename_guest_id": {"field_missing"},
         "offset_to_cursor": {"pagination_shape"},
+        "page_to_cursor": {"pagination_shape"},
         "cursor_repeat_token": {"repeated_cursor"},
         "rate_limit_429": {"rate_limited"},
         "transient_503": {"transient_error"},

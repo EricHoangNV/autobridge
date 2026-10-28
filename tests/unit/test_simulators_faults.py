@@ -42,7 +42,8 @@ from simulators.common.helpers import (
 )
 from simulators.common.state import get_state, increment_request_count, reset_state, set_scenario
 
-ATLAS_AUTH = {"Authorization": "Bearer test-token"}
+ATLAS_AUTH = {"x-api-key": "test-token"}
+ATLAS_BEARER = {"Authorization": "Bearer test-token"}
 
 
 
@@ -59,8 +60,8 @@ def _reset_state():
 
 
 def test_known_scenarios_count() -> None:
-    assert len(SCENARIO_CATALOG) == 14
-    assert len(KNOWN_SCENARIO_IDS) == 14
+    assert len(SCENARIO_CATALOG) == 15
+    assert len(KNOWN_SCENARIO_IDS) == 15
     assert "baseline" in KNOWN_SCENARIO_IDS
     assert "rename_guest_id" in KNOWN_SCENARIO_IDS
     assert "endpoint_removed" in KNOWN_SCENARIO_IDS
@@ -478,7 +479,7 @@ def test_admin_get_scenario() -> None:
     data = resp.json()
     assert data["scenario_id"] == "baseline"
     assert "known_scenarios" in data
-    assert len(data["known_scenarios"]) == 14
+    assert len(data["known_scenarios"]) == 15
 
 
 def test_admin_get_scenario_requires_header() -> None:
@@ -599,42 +600,50 @@ def test_harbor_public_health_and_readyz() -> None:
     assert client.get("/readyz").status_code == 200
 
 
-def test_atlas_baseline_reservations_offset_pagination() -> None:
+def test_atlas_baseline_reservations_page_pagination() -> None:
     from simulators.atlaspms.app import app as atlas_app
 
     set_scenario("baseline", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations?limit=5&offset=0", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=5", headers=ATLAS_AUTH)
     assert resp.status_code == 200
     data = resp.json()
-    assert "data" in data
+    assert data["success"] is True
     assert len(data["data"]) == 5
+    assert data["count"] == 5
     assert data["total"] == 30  # 3 props *10
-    assert data["limit"] == 5
-    assert data["offset"] == 0
-    assert data["next_offset"] == 5
+    assert "next_cursor" not in data
 
-    resp2 = client.get("/reservations?limit=5&offset=5", headers=ATLAS_AUTH)
+    resp2 = client.get("/api/v1.3/getReservations?pageNumber=2&pageSize=5", headers=ATLAS_AUTH)
     assert resp2.status_code == 200
     assert resp2.json()["data"] != data["data"]
 
 
-def test_atlas_offset_to_cursor_switches_to_cursor() -> None:
-    from simulators.atlaspms.app import app as atlas_app
-
-    set_scenario("offset_to_cursor", 42)
-    client = TestClient(atlas_app)
-    resp = client.get("/reservations?limit=5", headers=ATLAS_AUTH)
+def _assert_atlas_cursor_mode(client, scenario_id: str) -> None:
+    set_scenario(scenario_id, 42)
+    resp = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=5", headers=ATLAS_AUTH)
     assert resp.status_code == 200
     data = resp.json()
-    # Should be cursor mode: has next_cursor, not next_offset
+    # Should be cursor mode: has next_cursor
     assert "next_cursor" in data
     assert data["data"][0].keys()  # has data
 
     # Use cursor to paginate
     assert data["next_cursor"] is not None
-    resp2 = client.get(f"/reservations?limit=5&cursor={data['next_cursor']}", headers=ATLAS_AUTH)
+    resp2 = client.get(f"/api/v1.3/getReservations?pageSize=5&cursor={data['next_cursor']}", headers=ATLAS_AUTH)
     assert resp2.status_code == 200
+
+
+def test_atlas_offset_to_cursor_switches_to_cursor() -> None:
+    from simulators.atlaspms.app import app as atlas_app
+
+    _assert_atlas_cursor_mode(TestClient(atlas_app), "offset_to_cursor")
+
+
+def test_atlas_page_to_cursor_switches_to_cursor() -> None:
+    from simulators.atlaspms.app import app as atlas_app
+
+    _assert_atlas_cursor_mode(TestClient(atlas_app), "page_to_cursor")
 
 
 def test_atlas_rename_guest_id_field() -> None:
@@ -642,16 +651,16 @@ def test_atlas_rename_guest_id_field() -> None:
 
     set_scenario("rename_guest_id", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations?limit=2", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=2", headers=ATLAS_AUTH)
     assert resp.status_code == 200
     for rec in resp.json()["data"]:
-        assert "guest_name" not in rec
-        assert "guest_identifier" in rec
+        assert "guestName" not in rec
+        assert "guestIdentifier" in rec
 
     set_scenario("baseline", 42)
-    resp2 = client.get("/reservations?limit=2", headers=ATLAS_AUTH)
+    resp2 = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=2", headers=ATLAS_AUTH)
     for rec in resp2.json()["data"]:
-        assert "guest_name" in rec
+        assert "guestName" in rec
 
 
 def test_atlas_gross_to_net_changes_amount() -> None:
@@ -659,12 +668,12 @@ def test_atlas_gross_to_net_changes_amount() -> None:
 
     set_scenario("baseline", 42)
     client = TestClient(atlas_app)
-    resp_base = client.get("/reservations?limit=1", headers=ATLAS_AUTH)
-    base_amt = Decimal(resp_base.json()["data"][0]["total_amount"])
+    resp_base = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=1", headers=ATLAS_AUTH)
+    base_amt = Decimal(str(resp_base.json()["data"][0]["balance"]))
 
     set_scenario("gross_to_net", 42)
-    resp_net = client.get("/reservations?limit=1", headers=ATLAS_AUTH)
-    net_amt = Decimal(resp_net.json()["data"][0]["total_amount"])
+    resp_net = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=1", headers=ATLAS_AUTH)
+    net_amt = Decimal(str(resp_net.json()["data"][0]["balance"]))
     expected = (base_amt * Decimal("0.9")).quantize(Decimal("0.01"))
     assert net_amt == expected
 
@@ -674,7 +683,7 @@ def test_atlas_status_vocab_change() -> None:
 
     set_scenario("status_vocab_change", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations?limit=20", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=20", headers=ATLAS_AUTH)
     assert resp.status_code == 200
     for rec in resp.json()["data"]:
         assert rec["status"] in set(STATUS_VOCAB_MAP.values())
@@ -685,11 +694,11 @@ def test_atlas_duplicate_late_records_has_duplicates() -> None:
 
     set_scenario("baseline", 42)
     client = TestClient(atlas_app)
-    resp_base = client.get("/reservations?limit=100", headers=ATLAS_AUTH)
+    resp_base = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=100", headers=ATLAS_AUTH)
     base_count = len(resp_base.json()["data"])
 
     set_scenario("duplicate_late_records", 42)
-    resp_dup = client.get("/reservations?limit=100", headers=ATLAS_AUTH)
+    resp_dup = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=100", headers=ATLAS_AUTH)
     dup_count = len(resp_dup.json()["data"])
     assert dup_count > base_count
 
@@ -699,7 +708,7 @@ def test_atlas_token_expired_returns_401() -> None:
 
     set_scenario("token_expired", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getReservations", headers=ATLAS_AUTH)
     assert resp.status_code == 401
     assert resp.json()["detail"]["code"] == "token_expired"
 
@@ -709,7 +718,7 @@ def test_atlas_token_revoked_returns_403() -> None:
 
     set_scenario("token_revoked", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getReservations", headers=ATLAS_AUTH)
     assert resp.status_code == 403
     assert resp.json()["detail"]["code"] == "token_revoked"
 
@@ -720,10 +729,10 @@ def test_atlas_rate_limit_429() -> None:
     set_scenario("rate_limit_429", 42)
     client = TestClient(atlas_app)
     # First two requests should succeed (count 1,2)
-    assert client.get("/reservations", headers=ATLAS_AUTH).status_code == 200
-    assert client.get("/reservations", headers=ATLAS_AUTH).status_code == 200
+    assert client.get("/api/v1.3/getReservations", headers=ATLAS_AUTH).status_code == 200
+    assert client.get("/api/v1.3/getReservations", headers=ATLAS_AUTH).status_code == 200
     # Third should be 429 (count 3)
-    resp = client.get("/reservations", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getReservations", headers=ATLAS_AUTH)
     assert resp.status_code == 429
     assert resp.json()["detail"]["code"] == "rate_limit"
 
@@ -734,8 +743,8 @@ def test_atlas_transient_503() -> None:
     set_scenario("transient_503", 42)
     client = TestClient(atlas_app)
     for _ in range(3):
-        assert client.get("/reservations", headers=ATLAS_AUTH).status_code == 200
-    resp = client.get("/reservations", headers=ATLAS_AUTH)
+        assert client.get("/api/v1.3/getReservations", headers=ATLAS_AUTH).status_code == 200
+    resp = client.get("/api/v1.3/getReservations", headers=ATLAS_AUTH)
     assert resp.status_code == 503
 
 
@@ -744,14 +753,14 @@ def test_atlas_endpoint_removed_404() -> None:
 
     set_scenario("endpoint_removed", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getReservations", headers=ATLAS_AUTH)
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "not_found"
-    # Folios also gone
-    resp2 = client.get("/folios", headers=ATLAS_AUTH)
+    # Transactions also gone
+    resp2 = client.get("/api/v1.3/getTransactions", headers=ATLAS_AUTH)
     assert resp2.status_code == 404
-    # Properties still work
-    resp3 = client.get("/properties", headers=ATLAS_AUTH)
+    # Property list still works
+    resp3 = client.get("/api/v1.3/getHotels", headers=ATLAS_AUTH)
     assert resp3.status_code == 200
 
 
@@ -760,11 +769,11 @@ def test_atlas_cursor_repeat_token_bug() -> None:
 
     set_scenario("cursor_repeat_token", 42)
     client = TestClient(atlas_app)
-    resp1 = client.get("/reservations?limit=5", headers=ATLAS_AUTH)
+    resp1 = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=5", headers=ATLAS_AUTH)
     assert resp1.status_code == 200
     c1 = resp1.json().get("next_cursor")
     assert c1 is not None
-    resp2 = client.get(f"/reservations?limit=5&cursor={c1}", headers=ATLAS_AUTH)
+    resp2 = client.get(f"/api/v1.3/getReservations?pageSize=5&cursor={c1}", headers=ATLAS_AUTH)
     assert resp2.status_code == 200
     # Second page's next_cursor should repeat previous (bug) because request_count 2 is even
     _c2 = resp2.json().get("next_cursor")
@@ -777,7 +786,7 @@ def test_atlas_cursor_repeat_token_bug() -> None:
     seen = [c1]
     cur = c1
     for _ in range(4):
-        r = client.get(f"/reservations?limit=5&cursor={cur}", headers=ATLAS_AUTH)
+        r = client.get(f"/api/v1.3/getReservations?pageSize=5&cursor={cur}", headers=ATLAS_AUTH)
         if r.status_code != 200:
             break
         nxt = r.json().get("next_cursor")
@@ -830,7 +839,7 @@ def test_properties_endpoint() -> None:
 
     set_scenario("baseline", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/properties", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getHotels", headers=ATLAS_AUTH)
     assert resp.status_code == 200
     assert len(resp.json()["data"]) == 3
 
@@ -841,12 +850,12 @@ def test_filter_by_property_id() -> None:
     set_scenario("baseline", 42)
     client = TestClient(atlas_app)
     # Get properties to find a valid property_id
-    props = client.get("/properties", headers=ATLAS_AUTH).json()["data"]
-    pid = props[0]["property_id"]
-    resp = client.get(f"/reservations?property_id={pid}&limit=100", headers=ATLAS_AUTH)
+    props = client.get("/api/v1.3/getHotels", headers=ATLAS_AUTH).json()["data"]
+    pid = props[0]["propertyID"]
+    resp = client.get(f"/api/v1.3/getReservations?propertyID={pid}&pageSize=100", headers=ATLAS_AUTH)
     assert resp.status_code == 200
     for rec in resp.json()["data"]:
-        assert rec["property_id"] == pid
+        assert rec["propertyID"] == pid
 
 
 def test_invalid_patch_trap_has_both_fields() -> None:
@@ -854,11 +863,11 @@ def test_invalid_patch_trap_has_both_fields() -> None:
 
     set_scenario("invalid_patch_trap", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations?limit=2", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=2", headers=ATLAS_AUTH)
     assert resp.status_code == 200
     for rec in resp.json()["data"]:
-        assert "total_amount" in rec
-        assert "net_amount" in rec
+        assert "balance" in rec
+        assert "netAmount" in rec
 
 
 def test_is_known_scenario() -> None:
@@ -884,25 +893,25 @@ def test_atlas_folios_and_get_by_id() -> None:
 
     set_scenario("baseline", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/folios?limit=5", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getTransactions?pageNumber=1&pageSize=5", headers=ATLAS_AUTH)
     assert resp.status_code == 200
     assert "data" in resp.json()
     assert len(resp.json()["data"]) > 0
-    # filter by reservation_id
+    # filter by reservationID
     first_folio = resp.json()["data"][0]
-    rid = first_folio["reservation_id"]
-    resp2 = client.get(f"/folios?reservation_id={rid}&limit=10", headers=ATLAS_AUTH)
+    rid = first_folio["reservationID"]
+    resp2 = client.get(f"/api/v1.3/getTransactions?reservationID={rid}&pageSize=10", headers=ATLAS_AUTH)
     assert resp2.status_code == 200
     for rec in resp2.json()["data"]:
-        assert rec["reservation_id"] == rid
+        assert rec["reservationID"] == rid
     # get reservation by id
-    res_resp = client.get("/reservations?limit=1", headers=ATLAS_AUTH)
-    res_id = res_resp.json()["data"][0]["reservation_id"]
-    get_resp = client.get(f"/reservations/{res_id}", headers=ATLAS_AUTH)
+    res_resp = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=1", headers=ATLAS_AUTH)
+    res_id = res_resp.json()["data"][0]["reservationID"]
+    get_resp = client.get(f"/api/v1.3/getReservation?reservationID={res_id}", headers=ATLAS_AUTH)
     assert get_resp.status_code == 200
-    assert get_resp.json()["data"]["reservation_id"] == res_id
+    assert get_resp.json()["data"]["reservationID"] == res_id
     # not found
-    nf = client.get("/reservations/RES-DOES-NOT-EXIST", headers=ATLAS_AUTH)
+    nf = client.get("/api/v1.3/getReservation?reservationID=RES-DOES-NOT-EXIST", headers=ATLAS_AUTH)
     assert nf.status_code == 404
 
 
@@ -911,7 +920,7 @@ def test_atlas_folios_offset_to_cursor() -> None:
 
     set_scenario("offset_to_cursor", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/folios?limit=3", headers=ATLAS_AUTH)
+    resp = client.get("/api/v1.3/getTransactions?pageNumber=1&pageSize=3", headers=ATLAS_AUTH)
     assert resp.status_code == 200
     assert "next_cursor" in resp.json()
 

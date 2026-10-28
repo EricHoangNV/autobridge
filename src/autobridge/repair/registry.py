@@ -22,6 +22,7 @@ from autobridge.repair.rules import cursor_to_offset as _cursor_to_offset
 from autobridge.repair.rules import enum_extend_requires_evidence as _enum_extend
 from autobridge.repair.rules import nested_path_shift as _nested_path_shift
 from autobridge.repair.rules import offset_to_cursor as _offset_to_cursor
+from autobridge.repair.rules import page_to_cursor as _page_to_cursor
 from autobridge.repair.rules import rename_field as _rename_field
 from autobridge.repair.rules import retry_backoff_only as _retry_backoff
 from autobridge.repair.rules import type_coerce_string_number as _type_coerce
@@ -62,6 +63,13 @@ RULE_REGISTRY: dict[str, RuleEntry] = {
         confidence=_offset_to_cursor.CONFIDENCE,
         verification_level=_offset_to_cursor.VERIFICATION_LEVEL,
         produces_patch=_offset_to_cursor.PRODUCES_PATCH,
+    ),
+    _page_to_cursor.RULE_ID: RuleEntry(
+        id=_page_to_cursor.RULE_ID,
+        module=_page_to_cursor,
+        confidence=_page_to_cursor.CONFIDENCE,
+        verification_level=_page_to_cursor.VERIFICATION_LEVEL,
+        produces_patch=_page_to_cursor.PRODUCES_PATCH,
     ),
     _cursor_to_offset.RULE_ID: RuleEntry(
         id=_cursor_to_offset.RULE_ID,

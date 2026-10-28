@@ -1,7 +1,7 @@
 {
-  "built_by": "P1.W3.7 reference spec",
+  "built_by": "REQ-019 method-style AtlasPMS reference spec",
   "connector_id": "atlaspms",
   "note": "reference sync must be Complete with ModelCall 0",
   "release_id": "reference",
-  "signature": "c0d950763c814a7bfc96e786253f7f600e05ed809a129f1ce4967bab6dbad9fc"
+  "signature": "7a3c60cecda5d8df3d3c0dbbf98a62d742fd7dcd80a72f818ad962e35977115a"
 }

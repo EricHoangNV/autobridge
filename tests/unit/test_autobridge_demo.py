@@ -63,7 +63,7 @@ def test_step2_docs_to_draft_spec_no_model_calls() -> None:
 def test_step3_l1_patch_frontier_zero() -> None:
     step = step3_zero_token_recovery(0, False, "http://localhost:9")
     ev = step["evidence"]
-    assert ev["l1_rule"] == "offset_to_cursor"
+    assert ev["l1_rule"] == "page_to_cursor"
     assert ev["frontier_tokens"] == 0
     assert ev["patch_ops"] >= 4
     assert any(op["path"].endswith("/strategy") and op["value"] == "cursor" for op in ev["patch"])
@@ -143,7 +143,7 @@ def test_render_text_lists_all_steps_and_ledger() -> None:
     for needle in (
         "Atlas release",
         "Harbor docs",
-        "offset_to_cursor",
+        "page_to_cursor",
         "gross_to_net",
         "scorecards",
         "Reproducibility",

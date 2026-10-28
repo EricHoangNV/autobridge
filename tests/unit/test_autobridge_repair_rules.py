@@ -1,4 +1,4 @@
-"""P1.W4.3: 7 deterministic repair rules with precondition, patch, confidence, verification level."""
+"""P1.W4.3: 8 deterministic repair rules with precondition, patch, confidence, verification level."""
 
 from __future__ import annotations
 
@@ -16,6 +16,31 @@ from autobridge.spec.patch import apply_patch
 def _load_spec(vendor: str) -> dict:
     path = Path(f"generated/connectors/{vendor}/reference/spec.yaml")
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _offset_fixture_spec() -> dict:
+    """Legacy offset-pagination fixture (mirrors the pre-REQ-019 Atlas shape).
+
+    Derived from the Atlas reference spec with both operations flipped to the
+    legacy ``offset`` strategy, so JSON-Patch ``replace`` applies and the
+    fixture validates. The ``offset_to_cursor`` rule stays covered by these
+    tests even though no live vendor is offset-based anymore (REQ-019).
+    """
+    import copy
+
+    spec = copy.deepcopy(_load_spec("atlaspms"))
+    for op in spec["operations"].values():
+        pag = op.get("pagination", {})
+        pag["strategy"] = "offset"
+        pag["offset_param"] = "offset"
+        pag["page_param"] = None
+        pag["cursor_param"] = None
+        pag["limit_param"] = "limit"
+        pag["next_path"] = "$.next_offset"
+        pag.pop("total_path", None)
+        pag["items_path"] = "$.data"
+        pag["stop_when"] = ["null_cursor", "empty_page"]
+    return spec
 
 
 def _delta_with_types(entity: str, old_field: str, new_field: str, old_type: str = "str", new_type: str = "str") -> FingerprintDelta:
@@ -77,10 +102,11 @@ def _delta_items_path(op: str, old_path: str, new_path: str) -> FingerprintDelta
 
 
 def test_registry_has_seven_rules() -> None:
-    assert len(RULE_REGISTRY) == 7
+    assert len(RULE_REGISTRY) == 8
     expected = {
         "rename_field",
         "offset_to_cursor",
+        "page_to_cursor",
         "cursor_to_offset",
         "retry_backoff_only",
         "enum_extend_requires_evidence",
@@ -92,7 +118,7 @@ def test_registry_has_seven_rules() -> None:
 
 def test_registry_all_rules_ordered() -> None:
     rules = all_rules()
-    assert len(rules) == 7
+    assert len(rules) == 8
     assert rules[0].id == "rename_field"
     assert rules[-1].id == "type_coerce_string_number"
 
@@ -230,7 +256,7 @@ def test_rename_field_patch_empty_without_info() -> None:
 def test_offset_to_cursor_precondition_true() -> None:
     from autobridge.repair.rules.offset_to_cursor import precondition
 
-    spec = _load_spec("atlaspms")  # atlas is offset
+    spec = _offset_fixture_spec()  # legacy offset fixture (REQ-019)
     delta = _delta_pagination("list_reservations", "offset", "cursor")
     ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE", fingerprint_delta=delta)
     assert precondition(ctx) is True
@@ -239,7 +265,7 @@ def test_offset_to_cursor_precondition_true() -> None:
 def test_offset_to_cursor_precondition_true_no_delta() -> None:
     from autobridge.repair.rules.offset_to_cursor import precondition
 
-    spec = _load_spec("atlaspms")
+    spec = _offset_fixture_spec()
     ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE")
     assert precondition(ctx) is True
 
@@ -247,7 +273,7 @@ def test_offset_to_cursor_precondition_true_no_delta() -> None:
 def test_offset_to_cursor_precondition_false_wrong_class() -> None:
     from autobridge.repair.rules.offset_to_cursor import precondition
 
-    spec = _load_spec("atlaspms")
+    spec = _offset_fixture_spec()
     ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME")
     assert precondition(ctx) is False
 
@@ -263,7 +289,7 @@ def test_offset_to_cursor_precondition_false_already_cursor() -> None:
 def test_offset_to_cursor_precondition_false_delta_mismatch() -> None:
     from autobridge.repair.rules.offset_to_cursor import precondition
 
-    spec = _load_spec("atlaspms")
+    spec = _offset_fixture_spec()
     delta = _delta_pagination("list_reservations", "cursor", "offset")
     ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE", fingerprint_delta=delta)
     assert precondition(ctx) is False
@@ -272,11 +298,11 @@ def test_offset_to_cursor_precondition_false_delta_mismatch() -> None:
 def test_offset_to_cursor_patch_shape() -> None:
     from autobridge.repair.rules.offset_to_cursor import generate_patch
 
-    spec = _load_spec("atlaspms")
+    spec = _offset_fixture_spec()
     delta = _delta_pagination("list_reservations", "offset", "cursor")
     ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE", fingerprint_delta=delta)
     patch = generate_patch(ctx)
-    # Atlas has 2 ops both offset, so 5 ops per op = 10 total
+    # Fixture has 2 ops both offset, so 5 ops per op = 10 total
     assert len(patch) == 10
     # Check structure of first 5
     assert patch[0]["path"] == "/operations/list_reservations/pagination/strategy"
@@ -293,6 +319,98 @@ def test_offset_to_cursor_patch_shape() -> None:
 
 def test_offset_to_cursor_patch_filtered_operations() -> None:
     from autobridge.repair.rules.offset_to_cursor import generate_patch
+
+    spec = _offset_fixture_spec()
+    ctx = RepairContext(
+        spec=spec,
+        drift_class="PAGINATION_CHANGE",
+        extra={"operations": ["list_reservations"]},
+    )
+    patch = generate_patch(ctx)
+    assert len(patch) == 5
+    assert all("list_reservations" in p["path"] for p in patch)
+
+
+# ---------------------------------------------------------------------------
+# page_to_cursor (REQ-019: AtlasPMS is page-paginated)
+# ---------------------------------------------------------------------------
+
+
+def test_page_to_cursor_precondition_true() -> None:
+    from autobridge.repair.rules.page_to_cursor import precondition
+
+    spec = _load_spec("atlaspms")  # atlas is page
+    delta = _delta_pagination("list_reservations", "page", "cursor")
+    ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE", fingerprint_delta=delta)
+    assert precondition(ctx) is True
+
+
+def test_page_to_cursor_precondition_true_no_delta() -> None:
+    from autobridge.repair.rules.page_to_cursor import precondition
+
+    spec = _load_spec("atlaspms")
+    ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE")
+    assert precondition(ctx) is True
+
+
+def test_page_to_cursor_precondition_false_wrong_class() -> None:
+    from autobridge.repair.rules.page_to_cursor import precondition
+
+    spec = _load_spec("atlaspms")
+    ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME")
+    assert precondition(ctx) is False
+
+
+def test_page_to_cursor_precondition_false_already_cursor() -> None:
+    from autobridge.repair.rules.page_to_cursor import precondition
+
+    spec = _load_spec("harborpms")  # harbor is cursor
+    ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE")
+    assert precondition(ctx) is False
+
+
+def test_page_to_cursor_precondition_false_offset_spec() -> None:
+    from autobridge.repair.rules.page_to_cursor import precondition
+
+    spec = _offset_fixture_spec()  # offset, not page
+    delta = _delta_pagination("list_reservations", "page", "cursor")
+    ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE", fingerprint_delta=delta)
+    assert precondition(ctx) is False
+
+
+def test_page_to_cursor_precondition_false_delta_mismatch() -> None:
+    from autobridge.repair.rules.page_to_cursor import precondition
+
+    spec = _load_spec("atlaspms")
+    delta = _delta_pagination("list_reservations", "offset", "cursor")
+    ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE", fingerprint_delta=delta)
+    assert precondition(ctx) is False
+
+
+def test_page_to_cursor_patch_shape() -> None:
+    from autobridge.repair.rules.page_to_cursor import generate_patch
+
+    spec = _load_spec("atlaspms")
+    delta = _delta_pagination("list_reservations", "page", "cursor")
+    ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE", fingerprint_delta=delta)
+    patch = generate_patch(ctx)
+    # Atlas has 2 ops both page, so 5 ops per op = 10 total
+    assert len(patch) == 10
+    # Check structure of first 5
+    assert patch[0]["path"] == "/operations/list_reservations/pagination/strategy"
+    assert patch[0]["value"] == "cursor"
+    assert patch[1]["value"] == "cursor"
+    assert patch[2]["value"] == "$.next_cursor"
+    assert patch[3]["value"] is None
+    # Validate applies
+    result = apply_patch(spec, patch)
+    assert result["operations"]["list_reservations"]["pagination"]["strategy"] == "cursor"
+    assert result["operations"]["list_reservations"]["pagination"]["cursor_param"] == "cursor"
+    assert result["operations"]["list_folios"]["pagination"]["strategy"] == "cursor"
+
+
+def test_page_to_cursor_patch_filtered_operations() -> None:
+    from autobridge.repair.rules.page_to_cursor import generate_patch
 
     spec = _load_spec("atlaspms")
     ctx = RepairContext(

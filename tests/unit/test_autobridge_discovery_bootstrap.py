@@ -166,10 +166,15 @@ def test_build_draft_spec_atlas_success() -> None:
     assert result.success
     assert result.draft_spec is not None
     assert result.draft_spec["connector"]["id"] == "atlaspms"
-    assert result.draft_spec["operations"]["list_reservations"]["pagination"]["strategy"] == "offset"
-    # Status identity for Atlas
+    assert result.draft_spec["operations"]["list_reservations"]["pagination"]["strategy"] == "page"
+    assert result.draft_spec["operations"]["list_reservations"]["pagination"]["page_param"] == "pageNumber"
+    assert result.draft_spec["operations"]["list_reservations"]["pagination"]["limit_param"] == "pageSize"
+    assert result.draft_spec["operations"]["list_reservations"]["path"] == "/api/v1.3/getReservations"
+    assert result.draft_spec["source"]["auth"]["type"] == "api_key_header"
+    # Status vocabulary: vendor "canceled" maps to canonical "cancelled"
     mmap = result.draft_spec["entities"]["Reservation"]["fields"]["status"]["transform"][0]["args"]["map"]
     assert mmap["confirmed"] == "confirmed"
+    assert mmap["canceled"] == "cancelled"
     load_spec_from_dict(result.draft_spec)
 
 

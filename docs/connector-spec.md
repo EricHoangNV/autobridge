@@ -23,7 +23,7 @@ creates a new directory.
 
 | Connector | Vendor | Spec | Base URL (env placeholder) | Auth | Pagination | Status vocab |
 |---|---|---|---|---|---|---|
-| `atlaspms` | AtlasPMS | `generated/connectors/atlaspms/reference/spec.yaml` | `${ATLAS_BASE_URL}` → `http://sim-atlas:8000` in Compose, `http://localhost:8105` on the host | bearer `ATLAS_API_KEY` | offset (`limit`/`offset`/`next_offset`) | clear English (`confirmed`…) |
+| `atlaspms` | AtlasPMS | `generated/connectors/atlaspms/reference/spec.yaml` | `${ATLAS_BASE_URL}` → `http://sim-atlas:8000` in Compose, `http://localhost:8105` on the host | `api_key_header` `x-api-key` `ATLAS_API_KEY` (OAuth2 `Bearer` accepted as alternative) | page (`pageNumber`/`pageSize`/`$.total`, tokenless) | `canceled` → `cancelled`; `not_confirmed` unmapped → `Block` (no canonical counterpart) |
 | `harborpms` | HarborPMS | `generated/connectors/harborpms/reference/spec.yaml` | `${HARBOR_BASE_URL}` → `http://sim-harbor:8000` / `8106` | bearer `HARBOR_API_KEY` (Harbor is permissive, but the spec still carries a `credential_ref`) | cursor (`cursor`/`next_cursor` base64) | opaque codes `H1`…`H5` |
 | `legacystay` | LegacyStay | bootstrapped from `simulators/docs/legacystay.md` — no reference spec (Phase 2 S1, unseen-generalization vendor) | `${LEGACYSTAY_BASE_URL}` → `http://sim-legacystay:8000` / `8111` | bearer `LEGACYSTAY_API_KEY` (strict, missing/empty → 401) | offset (`limit`/`offset`/`next_offset`) | clear English (`confirmed`…) |
 
@@ -210,7 +210,15 @@ The interpreter supports three strategies; each page is fetched via
 |---|---|---|---|
 | `offset` | `offset_param`, `limit_param` | `next_path` e.g. `$.next_offset` → int | `offset = int(next_token)` fallback `offset + len(items)` |
 | `cursor` | `cursor_param` (omitted on first page), `limit_param` | `$.next_cursor` → opaque base64 index | `cursor = next_token`, `previous_cursor` retained for cycle detection |
-| `page` | `page_param`, `limit_param` | optional `next_path` | `page += 1` |
+| `page` | `page_param`, `limit_param` | optional `next_path`; optional `total_path` (e.g. `$.total`) | `page += 1` |
+
+Tokenless page pagination: when `next_path` is absent (or yields no token)
+and `strategy == page`, the interpreter compares fetched records against the
+advertised `total_path` count and keeps fetching while behind it. Reaching
+the total is an explicit `total_reached` stop (not a drift signal); a
+missing/unparseable total stops after the first page via the implicit
+`no_next_token` guard. Every tokenless `page` pagination must list
+`empty_page` in `stop_when` (enforced by bootstrap visible tests).
 
 `stop_when` is a closed name set:
 
@@ -226,8 +234,25 @@ when not listed; `repeated_cursor` is only surfaced when the spec opts in.
 A `repeated_cursor` stop marks the run `Degraded` with `unmet_criteria:
 [no_loss]`.
 
-Atlas uses `offset` (`next_offset` / `total` / `limit` / `offset`);
+Atlas uses `page` (`pageNumber` / `pageSize` / `$.total`, tokenless);
 Harbor uses `cursor` (`next_cursor` / `total` / `cursor` / `limit`).
+
+Atlas notes (REQ-019):
+
+* Status: vendor `canceled` maps to canonical `cancelled`. Vendor
+  `not_confirmed` has no canonical counterpart and is deliberately absent
+  from the map: with `on_unknown: block` it ends `Blocked` with the unmet
+  criterion named, never guessed.
+* Currency is not on the reservation list items; it lives on the property
+  list. The reference connector materializes that vendor fact as an
+  `enum_map` on `propertyID` (all seeded properties covered, unknown
+  property → `Block`). Discovery leaves the draft `currency` path on the
+  documented field and raises no silent default.
+* Zone-less date-times (`dateModified`, `transactionDateTime`) are
+  property-local times rendered in `America/New_York` for every property
+  (documented vendor quirk). The engine interprets them with
+  `timezone_source: static America/New_York`, so the round-trip is exact;
+  assuming UTC misreads them by the offset — the real trap.
 The reference Harbor spec includes `repeated_cursor` so the cursor-repeat
 fault is detected as `Degraded` rather than looping.
 

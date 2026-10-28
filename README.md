@@ -28,7 +28,7 @@ AutoBridge reads in `simulators/docs/`:
 
 | Vendor | Docs site | Source |
 |---|---|---|
-| AtlasPMS (clean OpenAPI) | http://localhost:8105/developers | `atlas-openapi.yaml` |
+| AtlasPMS (method-style REST: getReservations/getReservation/getGuest/getHotels/getTransactions, x-api-key auth, pageNumber/pageSize, JSON-number money) | http://localhost:8105/developers | `atlas-openapi.yaml` |
 | HarborPMS (messy wiki) | http://localhost:8106/developers | `harbor.md` |
 | LegacyStay (2000s website) | http://localhost:8111/developers | `legacystay.md` |
 
@@ -106,7 +106,7 @@ autobridge/
 ├── schemas/         reservation / folio-charge / connector-spec.v1 / runtime-target / discovery-result.v0
 ├── src/autobridge/  spec/ runtime/ discovery/ drift/ repair/ llm/ evidence/ control/ engine/ bench/
 ├── verifier/        own pyproject; oracle, canonical checks, hidden_cases/{dev,heldout}
-├── simulators/      own pyproject; common/ atlaspms/ harborpms/ docs/ scenarios/ (14 YAMLs)
+├── simulators/      own pyproject; common/ atlaspms/ harborpms/ docs/ scenarios/ (15 YAMLs)
 ├── generated/       connectors/<id>/<release>/spec.yaml + build-report.json
 ├── ui/              Next.js 15 + TypeScript + Tailwind; lib/api (openapi-typescript client)
 ├── experiments/     benchmark_runs/*.jsonl  scorecard.md

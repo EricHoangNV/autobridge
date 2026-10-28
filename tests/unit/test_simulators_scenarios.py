@@ -49,8 +49,8 @@ SCENARIOS_DIR = pathlib.Path("simulators/scenarios")
 
 def test_yaml_count_matches_catalog() -> None:
     yaml_files = list(SCENARIOS_DIR.glob("*.yaml"))
-    assert len(yaml_files) == 14, f"expected 14 YAML files, found {len(yaml_files)}: {yaml_files}"
-    assert len(KNOWN_SCENARIO_IDS) == 14
+    assert len(yaml_files) == 15, f"expected 14 YAML files, found {len(yaml_files)}: {yaml_files}"
+    assert len(KNOWN_SCENARIO_IDS) == 15
 
 
 def test_yaml_ids_match_fault_ids() -> None:
@@ -161,7 +161,7 @@ def _has_field_rename(mutation: str, mutated_reservations: list[dict[str, object
 
 
 def _has_pagination_change(mutation: str) -> bool:
-    return mutation == "offset_to_cursor" and is_pagination_mutated(mutation)
+    return mutation in ("offset_to_cursor", "page_to_cursor") and is_pagination_mutated(mutation)
 
 
 def _has_pagination_bug(mutation: str) -> bool:
@@ -235,6 +235,7 @@ _EXPECTED_SIGNALS: dict[str, list[str]] = {
     "baseline": [],
     "rename_guest_id": ["field_rename"],
     "offset_to_cursor": ["pagination_change"],
+    "page_to_cursor": ["pagination_change"],
     "cursor_repeat_token": ["pagination_bug"],
     "rate_limit_429": ["rate_limit"],
     "transient_503": ["transient"],
@@ -345,6 +346,7 @@ def test_http_status_consistent() -> None:
         "baseline": 200,
         "rename_guest_id": 200,
         "offset_to_cursor": 200,
+        "page_to_cursor": 200,
         "cursor_repeat_token": 200,
         "rate_limit_429": 429,
         "transient_503": 503,

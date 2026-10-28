@@ -252,41 +252,50 @@ def test_sim_data_endpoints_honor_faults(e2e_stack: str) -> None:
         for svc in ("sim-atlas", "sim-harbor"):
             _http_post_json(admin_url(svc, "/admin/reset"), {}, headers=_admin_headers())
 
-    # Baseline: both sims return 200 with offset/cursor as per vendor defaults
+    # Baseline: sims return 200; pagination shape per vendor defaults
     set_scenario("baseline")
-    for svc in ("sim-atlas", "sim-harbor"):
-        status, body = _sim_get(svc, "/reservations?limit=5", auth="Bearer test-token")
-        assert status == 200, f"{svc} baseline reservations -> {status} {body}"
-        assert body is not None and "data" in body
-        assert isinstance(body["data"], list) and len(body["data"]) > 0
-        # Pagination shape per vendor
-        if svc == "sim-atlas":
-            assert "next_offset" in body, f"{svc} baseline should be offset pagination {body}"
-            assert "total" in body
-        else:
-            assert "next_cursor" in body, f"{svc} baseline should be cursor pagination {body}"
+    status, body = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=5", auth="Bearer test-token")
+    assert status == 200, f"sim-atlas baseline reservations -> {status} {body}"
+    assert body is not None and "data" in body
+    assert isinstance(body["data"], list) and len(body["data"]) > 0
+    # Atlas (Cloudbeds-style): page envelope, no cursor/offset tokens
+    assert body.get("success") is True
+    assert "total" in body and "count" in body
+    assert "next_cursor" not in body
+    assert "next_offset" not in body
+    status, body = _sim_get("sim-harbor", "/reservations?limit=5", auth="Bearer test-token")
+    assert status == 200, f"sim-harbor baseline reservations -> {status} {body}"
+    assert body is not None and "data" in body
+    assert isinstance(body["data"], list) and len(body["data"]) > 0
+    assert "next_cursor" in body, f"sim-harbor baseline should be cursor pagination {body}"
 
-    # rename_guest_id: check that returned records have guest_identifier not guest_name
+    # rename_guest_id: check that returned records have guestIdentifier not guestName
     set_scenario("rename_guest_id")
-    status, body = _sim_get("sim-atlas", "/reservations?limit=5", auth="Bearer test-token")
+    status, body = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=5", auth="Bearer test-token")
     assert status == 200
     assert body is not None
     sample = body["data"][0] if body["data"] else {}
-    # After mutation, guest_name is renamed to guest_identifier in raw dataset;
-    # Atlas serves raw dataset without Harbor quirks, so check mutation visible
-    assert "guest_identifier" in sample or "guest_name" not in sample, f"rename not visible {sample}"
+    # After mutation, guest_name is renamed to guestIdentifier on the wire;
+    # Atlas serves the renamed shape, so check mutation visible
+    assert "guestIdentifier" in sample or "guestName" not in sample, f"rename not visible {sample}"
 
-    # offset_to_cursor: Atlas should now return cursor pagination
+    # page_to_cursor: Atlas should now return cursor pagination
+    set_scenario("page_to_cursor")
+    status, body = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=5", auth="Bearer test-token")
+    assert status == 200
+    assert body is not None
+    assert "next_cursor" in body, f"page_to_cursor should be cursor {body}"
+
+    # offset_to_cursor still flips Atlas to cursor too (legacy scenario id)
     set_scenario("offset_to_cursor")
-    status, body = _sim_get("sim-atlas", "/reservations?limit=5", auth="Bearer test-token")
+    status, body = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=5", auth="Bearer test-token")
     assert status == 200
     assert body is not None
     assert "next_cursor" in body, f"offset_to_cursor should be cursor {body}"
-    assert "next_offset" not in body or body.get("next_cursor") is not None
 
-    # token_expired: Atlas bearer auth should 401
+    # token_expired: Atlas x-api-key auth should 401
     set_scenario("token_expired")
-    status, body = _sim_get("sim-atlas", "/reservations?limit=5", auth="Bearer test-token")
+    status, body = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=5", auth="Bearer test-token")
     assert status == 401, f"token_expired should 401 got {status} {body}"
     # Harbor is permissive but fault still wins via check_auth
     status_h, _ = _sim_get("sim-harbor", "/reservations?limit=5", auth="Bearer test-token")
@@ -294,42 +303,42 @@ def test_sim_data_endpoints_honor_faults(e2e_stack: str) -> None:
 
     # token_revoked: 403 on both
     set_scenario("token_revoked")
-    status, _ = _sim_get("sim-atlas", "/reservations?limit=5", auth="Bearer test-token")
+    status, _ = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=5", auth="Bearer test-token")
     assert status == 403
     status_h, _ = _sim_get("sim-harbor", "/reservations?limit=5", auth="Bearer test-token")
     assert status_h == 403
 
     # endpoint_removed: 404
     set_scenario("endpoint_removed")
-    status, _ = _sim_get("sim-atlas", "/reservations?limit=5", auth="Bearer test-token")
+    status, _ = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=5", auth="Bearer test-token")
     assert status == 404
-    status, _ = _sim_get("sim-atlas", "/folios?limit=5", auth="Bearer test-token")
+    status, _ = _sim_get("sim-atlas", "/api/v1.3/getTransactions?pageNumber=1&pageSize=5", auth="Bearer test-token")
     assert status == 404
 
     # status_vocab_change: reservations contain opaque statuses
     set_scenario("status_vocab_change")
-    status, body = _sim_get("sim-atlas", "/reservations?limit=5", auth="Bearer test-token")
+    status, body = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=5", auth="Bearer test-token")
     assert status == 200
     assert body is not None
     statuses = {r.get("status") for r in body["data"]}
     assert statuses & {"active", "in_house", "departed", "void", "noshow"}, f"status vocab not changed {statuses}"
 
-    # invalid_patch_trap: check decoy field net_amount present
+    # invalid_patch_trap: check decoy field netAmount present
     set_scenario("invalid_patch_trap")
-    status, body = _sim_get("sim-atlas", "/reservations?limit=5", auth="Bearer test-token")
+    status, body = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=5", auth="Bearer test-token")
     assert status == 200
     assert body is not None
     sample = body["data"][0] if body["data"] else {}
-    assert "net_amount" in sample, f"trap should have net_amount {sample}"
-    assert "total_amount" in sample, f"trap should keep total_amount {sample}"
+    assert "netAmount" in sample, f"trap should have netAmount {sample}"
+    assert "balance" in sample, f"trap should keep balance {sample}"
 
     # duplicate_late_records: expect duplicates when fetching all pages
     set_scenario("duplicate_late_records")
-    # Fetch two pages offset and check for duplicate ids if present
-    status, body = _sim_get("sim-atlas", "/reservations?limit=100", auth="Bearer test-token")
+    # Fetch first page with large page size and check for duplicate ids if present
+    status, body = _sim_get("sim-atlas", "/api/v1.3/getReservations?pageNumber=1&pageSize=100", auth="Bearer test-token")
     assert status == 200
     assert body is not None
-    ids = [r.get("reservation_id") for r in body["data"]]
+    ids = [r.get("reservationID") for r in body["data"]]
     # With limit 100 we get at most one page, but duplicate set is larger than baseline
     # We verify via verifier that duplicate_records is flagged; direct HTTP duplicate
     # detection needs pagination across pages — we just ensure data present

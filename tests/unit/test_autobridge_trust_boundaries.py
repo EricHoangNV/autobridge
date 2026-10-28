@@ -93,3 +93,22 @@ def test_simulators_never_imports_engine() -> None:
     }
     bad = {rel: names for rel, names in bad.items() if names}
     assert not bad, f"simulators import autobridge: {bad}"
+
+
+def test_engine_never_references_legacystay() -> None:
+    """REQ-019 item 5: LegacyStay stays unseen — no vendor-specific tuning.
+
+    No L1 rule, hypothesis enumerator, classifier, prompt or knowledge entry
+    may reference LegacyStay or be developed/tuned against it. This guard
+    greps ``src/autobridge`` for ``legacystay`` (case-insensitive) outside
+    comments and fails on a hit.
+    """
+    hits: list[str] = []
+    for path in sorted(ENGINE_ROOT.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            code = line.split("#", 1)[0]
+            if "legacystay" in code.lower():
+                hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
+    assert not hits, "engine references LegacyStay outside comments (REQ-019.5):\n" + "\n".join(hits)

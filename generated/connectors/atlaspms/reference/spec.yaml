@@ -6,9 +6,9 @@ connector:
 source:
   base_url: ${ATLAS_BASE_URL}
   auth:
-    type: bearer
+    type: api_key_header
     credential_ref: ATLAS_API_KEY
-    header_name: null
+    header_name: x-api-key
     username: null
     token_url: null
     scopes: []
@@ -27,62 +27,62 @@ source:
 operations:
   list_reservations:
     method: GET
-    path: /reservations
+    path: /api/v1.3/getReservations
     params: {}
     pagination:
-      strategy: offset
+      strategy: page
       cursor_param: null
-      offset_param: offset
-      page_param: null
-      limit_param: limit
-      next_path: $.next_offset
+      offset_param: null
+      page_param: pageNumber
+      limit_param: pageSize
+      next_path: null
       items_path: $.data
+      total_path: $.total
       stop_when:
-      - null_cursor
       - empty_page
     checkpoint:
-      field: $.updated_at
+      field: $.dateModified
       mode: max
   list_folios:
     method: GET
-    path: /folios
+    path: /api/v1.3/getTransactions
     params: {}
     pagination:
-      strategy: offset
+      strategy: page
       cursor_param: null
-      offset_param: offset
-      page_param: null
-      limit_param: limit
-      next_path: $.next_offset
+      offset_param: null
+      page_param: pageNumber
+      limit_param: pageSize
+      next_path: null
       items_path: $.data
+      total_path: $.total
       stop_when:
-      - null_cursor
       - empty_page
     checkpoint:
-      field: $.posted_at
+      field: $.transactionDateTime
       mode: max
 entities:
   Reservation:
     from: list_reservations
-    key: $.reservation_id
+    key: $.reservationID
     fields:
       reservation_id:
-        path: $.reservation_id
+        path: $.reservationID
         transform: []
       property_id:
-        path: $.property_id
+        path: $.propertyID
         transform: []
       guest_name:
-        path: $.guest_name
+        path: $.guestName
         transform: []
       arrival_date:
-        path: $.arrival_date
+        path: $.startDate
         transform:
         - name: date_local
           args:
             tz: source
       departure_date:
-        path: $.departure_date
+        path: $.endDate
         transform:
         - name: date_local
           args:
@@ -96,21 +96,33 @@ entities:
               confirmed: confirmed
               checked_in: checked_in
               checked_out: checked_out
-              cancelled: cancelled
+              canceled: cancelled
               no_show: no_show
             on_unknown: block
       total_amount:
-        path: $.total_amount
+        path: $.balance
         transform:
         - name: money
           args:
             scale: 2
       currency:
-        path: $.currency
-        transform: []
+        path: $.propertyID
+        transform:
+        - name: enum_map
+          args:
+            map:
+              prop-001: USD
+              prop-002: USD
+              prop-003: EUR
+              prop-004: JPY
+              prop-005: GBP
+            on_unknown: block
       updated_at:
-        path: $.updated_at
-        transform: []
+        path: $.dateModified
+        transform:
+        - name: datetime_utc
+          args:
+            tz: source
     checks:
     - kind: unique_key
       compare_to: null
@@ -126,22 +138,22 @@ entities:
       after: departure_date
     - kind: money_invariant
       field: total_amount
-      compare_to: $.gross_sum
+      compare_to: null
   FolioCharge:
     from: list_folios
-    key: $.charge_id
+    key: $.transactionID
     fields:
       charge_id:
-        path: $.charge_id
+        path: $.transactionID
         transform: []
       reservation_id:
-        path: $.reservation_id
+        path: $.reservationID
         transform: []
       property_id:
-        path: $.property_id
+        path: $.propertyID
         transform: []
       business_date:
-        path: $.business_date
+        path: $.businessDate
         transform:
         - name: date_local
           args:
@@ -159,8 +171,11 @@ entities:
         path: $.description
         transform: []
       posted_at:
-        path: $.posted_at
-        transform: []
+        path: $.transactionDateTime
+        transform:
+        - name: datetime_utc
+          args:
+            tz: source
     checks:
     - kind: unique_key
       compare_to: null
@@ -172,7 +187,7 @@ entities:
       after: null
     - kind: money_invariant
       field: amount
-      compare_to: $.gross_sum
+      compare_to: null
     - kind: business_date_invariant
       field: business_date
       reference_field: posted_at

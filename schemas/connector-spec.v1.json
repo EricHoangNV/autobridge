@@ -521,6 +521,19 @@
           "title": "Items Path",
           "type": "string"
         },
+        "total_path": {
+          "anyOf": [
+            {
+              "description": "JSONPath subset, no expressions",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Path"
+        },
         "stop_when": {
           "items": {
             "enum": [

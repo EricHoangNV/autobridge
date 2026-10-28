@@ -45,6 +45,7 @@ def test_baseline_mutated_differ_for_non_baseline() -> None:
                 "token_revoked",
                 "endpoint_removed",
                 "offset_to_cursor",
+                "page_to_cursor",
                 "cursor_repeat_token",
                 "tz_boundary_shift",
             )

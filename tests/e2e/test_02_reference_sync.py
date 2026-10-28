@@ -80,27 +80,31 @@ def _assert_spec_valid(spec_dict: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 def _atlas_fake_client(dataset: dict[str, list[dict[str, Any]]]) -> HttpClient:
+    from simulators.atlaspms.app import _dumps_exact, to_wire_reservation, to_wire_transaction  # noqa: PLC0415
+
     def handler(request: httpx.Request) -> httpx.Response:
         qp = dict(request.url.params)
         path = request.url.path
-        limit = int(qp.get("limit", "10"))
-        offset = int(qp.get("offset", "0"))
-        if path == "/reservations":
-            data = dataset["reservations"]
+
+        def page_of(data: list[dict[str, Any]]) -> httpx.Response:
+            try:
+                page_number = max(1, int(qp.get("pageNumber", "1")))
+            except ValueError:
+                page_number = 1
+            try:
+                page_size = max(1, min(100, int(qp.get("pageSize", "50"))))
+            except ValueError:
+                page_size = 50
             total = len(data)
-            sliced = data[offset : offset + limit]
-            next_offset = offset + limit if offset + limit < total else None
-            return httpx.Response(
-                200, json={"data": sliced, "total": total, "limit": limit, "offset": offset, "next_offset": next_offset}
-            )
-        if path == "/folios":
-            data = dataset["folios"]
-            total = len(data)
-            sliced = data[offset : offset + limit]
-            next_offset = offset + limit if offset + limit < total else None
-            return httpx.Response(
-                200, json={"data": sliced, "total": total, "limit": limit, "offset": offset, "next_offset": next_offset}
-            )
+            start = (page_number - 1) * page_size
+            sliced = data[start : start + page_size]
+            payload = {"success": True, "data": sliced, "count": len(sliced), "total": total}
+            return httpx.Response(200, content=_dumps_exact(payload).encode(), headers={"Content-Type": "application/json"})
+
+        if path == "/api/v1.3/getReservations":
+            return page_of([to_wire_reservation(r) for r in dataset["reservations"]])
+        if path == "/api/v1.3/getTransactions":
+            return page_of([to_wire_transaction(r) for r in dataset["folios"]])
         return httpx.Response(404, json={"msg": "not found"})
 
     transport = httpx.MockTransport(handler)

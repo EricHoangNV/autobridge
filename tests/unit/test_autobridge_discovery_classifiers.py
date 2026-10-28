@@ -288,12 +288,13 @@ def test_pagination_real_atlas_docs() -> None:
         return
     iface = read_docs_file(p)
     res = classify_pagination(iface)
-    # Atlas should have offset for reservations and folios
+    # Atlas (Cloudbeds-style) is page-paginated on the list methods
     ops = {g.operation: g.strategy for g in res.per_operation}
-    assert ops.get("/reservations") == "offset"
-    assert ops.get("/folios") == "offset"
-    # /properties is none
-    assert ops.get("/properties") == "none"
+    assert ops.get("/api/v1.3/getReservations") == "page"
+    assert ops.get("/api/v1.3/getTransactions") == "page"
+    # single-item fetches carry no pagination
+    assert ops.get("/api/v1.3/getReservation") == "none"
+    assert ops.get("/api/v1.3/getGuest") == "none"
 
 
 def test_pagination_real_harbor_docs() -> None:
@@ -434,8 +435,11 @@ def test_date_real_atlas_docs() -> None:
     iface = read_docs_file(p)
     res = classify_date_semantics(iface)
     fields = {f.field: f.semantics for f in res.fields}
-    assert fields.get("arrival_date") == "property_local_date"
-    assert fields.get("business_date") == "business_date"
+    # Cloudbeds-style wire names: pure property-local dates classify;
+    # zone-less date-times stay unknown (documented vendor trap).
+    assert fields.get("startDate") == "property_local_date"
+    assert fields.get("endDate") == "property_local_date"
+    assert fields.get("businessDate") == "business_date"
     # atlas should not have ambiguous date
 
 
@@ -530,6 +534,8 @@ def test_status_real_atlas_docs() -> None:
     res = classify_status_vocabulary(iface)
     assert res.kind == "clear"
     assert "confirmed" in res.vocabulary
+    # Cloudbeds spelling uses single-l "canceled"
+    assert "canceled" in res.vocabulary
 
 
 # ---------------------------------------------------------------------------

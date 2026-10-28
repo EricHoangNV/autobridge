@@ -9,7 +9,11 @@ isolation:
 * ``cursor`` — ``cursor_param`` is sent only after the first page; the
   guard ``repeated_cursor`` fires when ``next_cursor == cursor`` (same
   token twice) or ``next_cursor == previous_cursor`` (cycle).
-* ``page`` — ``page_param`` increments by 1 each iteration.
+* ``page`` — ``page_param`` increments by 1 each iteration. When the spec
+  sets ``total_path`` and the response carries no next token, the
+  interpreter keeps fetching while fewer records than the advertised
+  total have arrived (tokenless page pagination); without ``total_path``
+  a missing next token stops after the first page.
 
 ``stop_when`` guards (all are names, never expressions):
 

@@ -153,6 +153,7 @@ def fingerprint_pagination_shape(
             "limit_param": pag.get("limit_param"),
             "next_path": pag.get("next_path"),
             "items_path": pag.get("items_path"),
+            "total_path": pag.get("total_path"),
             "stop_when": stop_when_sorted,
             "pages_fetched": pages_fetched if pages_fetched is not None else 0,
             "stop_reason": stop_reason,

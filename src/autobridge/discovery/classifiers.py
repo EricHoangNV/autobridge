@@ -305,7 +305,11 @@ class DateSemanticsClassification:
 _DATE_FIELD_SEMANTICS: dict[str, str] = {
     "arrival_date": "property_local_date",
     "departure_date": "property_local_date",
+    "startdate": "property_local_date",
+    "enddate": "property_local_date",
     "business_date": "business_date",
+    "businessdate": "business_date",
+    "servicedate": "business_date",
     "posted_at": "utc_instant",
     "updated_at": "utc_instant",
     "created_at": "utc_instant",

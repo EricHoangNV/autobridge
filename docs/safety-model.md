@@ -108,7 +108,7 @@ scenarios via fake transports and proves the engine never imports
 For each scenario the catalog lists the *primary* failed check. Secondary
 consequences (e.g. `no_loss` caused by a 429 truncation) are filtered so
 `failed_checks` exactly matches `expected.failed_checks` from the YAML.
-`tests/e2e/test_01_simulators_and_oracle.py` asserts this for all 14 scenarios.
+`tests/e2e/test_01_simulators_and_oracle.py` asserts this for all 15 scenarios.
 
 ## 4. Scenario catalog (14, plan §2.8)
 
@@ -137,8 +137,11 @@ intentionally wrong `net→total_amount` mapping that the verifier must reject).
 
 ## 5. Simulators
 
-* **AtlasPMS** — clean OpenAPI 3.1, bearer auth, offset pagination, descriptive
-  statuses. Used for the first zero-inference connector.
+* **AtlasPMS** — method-style REST (`getReservations` / `getTransactions` /
+  `getHotels` under `/api/v1.3`), `x-api-key` auth, `pageNumber`/`pageSize`
+  pagination with a `success/data/count/total` envelope, JSON-number money,
+  zone-less `America/New_York` date-times, `canceled` (1 L) statuses. Used
+  for the first zero-inference connector.
 * **HarborPMS** — messy Markdown narrative docs (one wrong pagination example,
   one undocumented `GET /reservations/{id}/folios` endpoint), cursor
   pagination with a repeated-cursor bug on even requests, nested folios,

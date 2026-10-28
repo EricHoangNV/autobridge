@@ -488,7 +488,8 @@ def test_read_docs_file_harbor_real() -> None:
     assert iface.doc_type == "openapi"
     assert len(iface.operations) >= 4
     assert iface.auth is not None
-    assert iface.auth.kind == "bearer"
+    assert iface.auth.kind == "api_key_header"
+    assert iface.auth.header_name == "x-api-key"
     for op in iface.operations:
         assert op.provenance is not None
         assert op.provenance.line >= 1

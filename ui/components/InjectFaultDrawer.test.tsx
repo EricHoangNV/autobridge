@@ -51,4 +51,11 @@ describe("InjectFaultDrawer", () => {
     const select = screen.getByTestId("inject-fault-scenario") as HTMLSelectElement;
     expect(select.textContent).toContain("invalid_patch_trap");
   });
+
+  it("offers page_to_cursor alongside the legacy offset_to_cursor (REQ-019)", () => {
+    render(<InjectFaultDrawer defaultOpen />);
+    const select = screen.getByTestId("inject-fault-scenario") as HTMLSelectElement;
+    expect(select.textContent).toContain("page_to_cursor");
+    expect(select.textContent).toContain("offset_to_cursor");
+  });
 });

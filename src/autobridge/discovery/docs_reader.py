@@ -133,6 +133,40 @@ class InterfaceDescription:
 _OPENAPI_VERSION_RE = re.compile(r"^\s*3\.\d+")
 
 
+def _resolve_response_properties(schema_ref: dict[str, Any], components: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a response schema to a flat properties dict.
+
+    Follows ``$ref`` into ``#/components/schemas/<Name>`` and merges
+    ``allOf`` branches (envelope + payload pattern). Returns {} when
+    nothing resolvable is found.
+    """
+    schemas = components.get("schemas", {}) if isinstance(components.get("schemas"), dict) else {}
+
+    def _lookup(ref: str) -> dict[str, Any]:
+        if not ref.startswith("#/components/schemas/"):
+            return {}
+        node = schemas.get(ref.rsplit("/", 1)[-1], {})
+        return node if isinstance(node, dict) else {}
+
+    def _collect(node: dict[str, Any], depth: int = 0) -> dict[str, Any]:
+        if depth > 3 or not isinstance(node, dict):
+            return {}
+        if "$ref" in node and isinstance(node["$ref"], str):
+            return _collect(_lookup(node["$ref"]), depth + 1)
+        merged: dict[str, Any] = {}
+        all_of = node.get("allOf")
+        if isinstance(all_of, list):
+            for branch in all_of:
+                if isinstance(branch, dict):
+                    merged.update(_collect(branch, depth + 1))
+        props = node.get("properties")
+        if isinstance(props, dict):
+            merged.update(props)
+        return merged
+
+    return _collect(schema_ref)
+
+
 def _is_openapi_dict(data: dict[str, Any]) -> bool:
     v = data.get("openapi", "")
     return isinstance(v, str) and bool(_OPENAPI_VERSION_RE.match(v))
@@ -254,7 +288,7 @@ def parse_openapi_dict(
                 pprov = Provenance(source=source, line=pline, snippet=_snippet_for_line(raw_lines, pline))
                 params.append(ParamDescription(name=pname, location=ploc, schema_type=stype, required=req, description=desc, provenance=pprov))
 
-            # response fields from 200 schema
+            # response fields from 200 schema (resolve $ref / allOf envelopes)
             resp_fields: list[ResponseField] = []
             responses = op.get("responses", {}) if isinstance(op.get("responses"), dict) else {}
             ok200 = responses.get("200", {}) if isinstance(responses.get("200"), dict) else {}
@@ -263,6 +297,8 @@ def parse_openapi_dict(
             schema_ref = app_json.get("schema", {}) if isinstance(app_json.get("schema"), dict) else {}
             # inline properties
             props = schema_ref.get("properties", {}) if isinstance(schema_ref.get("properties"), dict) else {}
+            if not props:
+                props = _resolve_response_properties(schema_ref, components)
             for fname, fdef in props.items():
                 ftype = str(fdef.get("type", "")) if isinstance(fdef, dict) else ""
                 fdesc = str(fdef.get("description", "")) if isinstance(fdef, dict) else ""

@@ -1,7 +1,11 @@
 """P1.W6.2 — 5 scenarios wired end to end (gross_to_net etc.).
 
-Verifies:
-- gross_to_net → Degraded with money_invariant via gross_sum
+Verifies (REQ-019: Atlas serves the Cloudbeds-style wire, so the fakes serve
+presented records with page pagination and no simulator-side gross_sum):
+- gross_to_net → sync Complete on self-consistent net values (no independent
+  evidence on the wire); the verifier flags money_mismatch and the ladder
+  escalates without patching (DIRECTIVES §1: semantic drift without
+  independent evidence is never patched)
 - tz_boundary_shift → Degraded with business_date_invariant
 - status_vocab_change → Blocked with unknown_enum
 - endpoint_removed → Blocked with endpoint_not_found, ladder escalate no patch
@@ -26,29 +30,42 @@ def _load_spec(vendor: str = "atlaspms") -> dict:
 
 
 def _fake_client_with_gross(mutated, baseline):
-    from decimal import Decimal as D
+    """Fake client serving presented Cloudbeds-wire records with page pagination.
 
-    res_gross = sum(D(r["total_amount"]) for r in baseline["reservations"])
-    fol_gross = sum(D(f["amount"]) for f in baseline["folios"])
+    ``baseline`` is unused for the wire (kept for signature compatibility):
+    the documented envelope carries no independent gross reference, so the
+    engine judges self-consistency and the verifier judges truth.
+    """
+    from simulators.atlaspms.app import to_wire_reservation, to_wire_transaction
+
+    del baseline
+    wire_res = [to_wire_reservation(r) for r in mutated["reservations"]]
+    wire_fol = [to_wire_transaction(r) for r in mutated["folios"]]
 
     class C:
         def get(self, path, params=None, headers=None, json_body=None):
             key = path.strip("/").split("?")[0]
-            if "reservations" in key:
-                data = mutated["reservations"]
-                offset = int(params.get("offset", 0)) if params else 0
-                limit = int(params.get("limit", 50)) if params else 50
-                sliced = data[offset : offset + limit]
-                nxt = offset + limit if offset + limit < len(data) else None
-                return {"data": sliced, "total": len(data), "next_offset": nxt, "limit": limit, "offset": offset, "gross_sum": format(res_gross, ".2f")}
-            if "folios" in key:
-                data = mutated["folios"]
-                offset = int(params.get("offset", 0)) if params else 0
-                limit = int(params.get("limit", 50)) if params else 50
-                sliced = data[offset : offset + limit]
-                nxt = offset + limit if offset + limit < len(data) else None
-                return {"data": sliced, "total": len(data), "next_offset": nxt, "limit": limit, "offset": offset, "gross_sum": format(fol_gross, ".2f")}
-            return {"data": []}
+            params = params or {}
+            try:
+                page_number = max(1, int(params.get("pageNumber", 1)))
+            except (TypeError, ValueError):
+                page_number = 1
+            try:
+                page_size = max(1, min(100, int(params.get("pageSize", 50))))
+            except (TypeError, ValueError):
+                page_size = 50
+
+            def page_of(data):
+                total = len(data)
+                start = (page_number - 1) * page_size
+                sliced = data[start : start + page_size]
+                return {"success": True, "data": sliced, "count": len(sliced), "total": total}
+
+            if key.endswith("getReservations"):
+                return page_of(wire_res)
+            if key.endswith("getTransactions"):
+                return page_of(wire_fol)
+            return {"success": True, "data": [], "count": 0, "total": 0}
 
     return C()
 
@@ -62,13 +79,18 @@ def test_gross_to_net_degraded_money_invariant():
     mut = apply_dataset_mutations(ds, "gross_to_net")
     client = _fake_client_with_gross(mut, ds)
     summary = execute_sync(spec, client)
-    assert summary["outcome"] == "Degraded"
-    assert "money_invariant" in summary["unmet_criteria"]
-    cls = classify_sync(summary)
-    assert cls.drift_class == "SEMANTIC_VALUE_DRIFT"
+    # No independent gross reference travels on the documented wire, so the
+    # self-consistent net values sync Complete; the verifier (ground truth)
+    # flags the semantic drift and the ladder escalates without patching.
+    assert summary["outcome"] == "Complete", f"got {summary['outcome']} {summary['unmet_criteria']}"
+    from verifier.oracle import oracle_verdict
+
+    verdict, _, failed = oracle_verdict("gross_to_net", spec)
+    assert verdict == "fail"
+    assert any(f["name"] == "money_mismatch" for f in failed)
     # Ladder should escalate (no independent evidence)
     ctrl = RepairController()
-    res = ctrl.handle(spec=spec, drift_class=cls.drift_class, signals=[])
+    res = ctrl.handle(spec=spec, drift_class="SEMANTIC_VALUE_DRIFT", signals=[])
     assert res.decision == "escalate"
     assert res.candidate_patch is None
 

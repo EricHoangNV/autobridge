@@ -1,8 +1,9 @@
-"""P1.W2.3: AtlasPMS clean OpenAPI 3.1 docs, bearer, offset, clear statuses, readyz."""
+"""REQ-019: AtlasPMS Cloudbeds-style surface — x-api-key, page pagination, envelope, JSON numbers."""
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -12,7 +13,8 @@ from simulators.atlaspms.app import app as atlas_app
 from simulators.common.helpers import check_auth
 from simulators.common.state import set_scenario
 
-AUTH = {"Authorization": "Bearer test-token"}
+AUTH = {"x-api-key": "test-token"}
+BEARER = {"Authorization": "Bearer test-token"}
 
 
 def test_atlas_healthz_and_readyz_ok() -> None:
@@ -48,29 +50,29 @@ def test_atlas_openapi_json_is_3_1_and_clean() -> None:
     assert data["openapi"] == "3.1.0"
     assert "info" in data
     assert data["info"]["title"] == "AtlasPMS API"
-    # bearer auth present
-    assert "bearerAuth" in data["components"]["securitySchemes"]
-    sch = data["components"]["securitySchemes"]["bearerAuth"]
-    assert sch["type"] == "http"
-    assert sch["scheme"] == "bearer"
-    # global security
-    assert data["security"] == [{"bearerAuth": []}]
-    # paths include clean endpoints
-    assert "/reservations" in data["paths"]
-    assert "/properties" in data["paths"]
-    assert "/folios" in data["paths"]
-    # offset pagination params on reservations
-    params = {p["name"] for p in data["paths"]["/reservations"]["get"]["parameters"]}
-    assert "limit" in params
-    assert "offset" in params
-    assert "cursor" not in params  # clean means offset only
-    # responses mention offset pagination
-    schema = data["paths"]["/reservations"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-    assert "total" in schema["properties"]
-    assert "next_offset" in schema["properties"]
-    # clear statuses enum
-    res_schema = data["components"]["schemas"]["Reservation"]
-    assert res_schema["properties"]["status"]["enum"] == ["confirmed", "checked_in", "checked_out", "cancelled", "no_show"]
+    # x-api-key auth present (OAuth2 accepted as alternative)
+    schemes = data["components"]["securitySchemes"]
+    assert "ApiKey" in schemes
+    sch = schemes["ApiKey"]
+    assert sch["type"] == "apiKey"
+    assert sch["name"] == "x-api-key"
+    assert sch["in"] == "header"
+    # paths are the versioned method-style surface
+    assert "/api/v1.3/getReservations" in data["paths"]
+    assert "/api/v1.3/getHotels" in data["paths"]
+    assert "/api/v1.3/getTransactions" in data["paths"]
+    assert "/api/v1.3/getReservation" in data["paths"]
+    assert "/api/v1.3/getGuest" in data["paths"]
+    # page pagination params on the list method
+    params = {p["name"] for p in data["paths"]["/api/v1.3/getReservations"]["get"]["parameters"]}
+    assert "pageNumber" in params
+    assert "pageSize" in params
+    assert "limit" not in params
+    assert "offset" not in params
+    assert "cursor" not in params  # page means page only
+    # status enum uses the documented spelling (single-l canceled)
+    item = data["components"]["schemas"]["ReservationItem"]
+    assert item["properties"]["status"]["enum"] == ["not_confirmed", "confirmed", "canceled", "checked_in", "checked_out", "no_show"]
 
 
 def test_atlas_openapi_yaml_and_spec_alias() -> None:
@@ -103,49 +105,42 @@ def test_atlas_docs_static_served() -> None:
     assert resp.json() == on_disk
 
 
-def test_atlas_bearer_auth_required() -> None:
+def test_atlas_api_key_auth_required() -> None:
     set_scenario("baseline", 10)
     client = TestClient(atlas_app)
     # no header -> 401
-    resp = client.get("/reservations?limit=2")
+    resp = client.get("/api/v1.3/getReservations?pageSize=2")
     assert resp.status_code == 401
     assert resp.json()["detail"]["code"] == "unauthorized"
-    # invalid prefix
-    resp2 = client.get("/reservations?limit=2", headers={"Authorization": "Invalid"})
-    assert resp2.status_code == 401
-    # empty token after Bearer
-    resp3 = client.get("/reservations?limit=2", headers={"Authorization": "Bearer "})
-    assert resp3.status_code == 401
-    resp3b = client.get("/reservations?limit=2", headers={"Authorization": "Bearer    "})
-    assert resp3b.status_code == 401
-    # valid -> 200
-    resp_ok = client.get("/reservations?limit=2", headers=AUTH)
-    assert resp_ok.status_code == 200
-    # properties also requires auth
-    assert client.get("/properties").status_code == 401
-    assert client.get("/properties", headers=AUTH).status_code == 200
-    # folios requires auth
-    assert client.get("/folios?limit=2").status_code == 401
-    assert client.get("/folios?limit=2", headers=AUTH).status_code == 200
+    # Bearer alternative accepted (OAuth2)
+    assert client.get("/api/v1.3/getReservations?pageSize=2", headers=BEARER).status_code == 200
+    # valid x-api-key -> 200
+    assert client.get("/api/v1.3/getReservations?pageSize=2", headers=AUTH).status_code == 200
+    # every method requires auth
+    assert client.get("/api/v1.3/getHotels").status_code == 401
+    assert client.get("/api/v1.3/getHotels", headers=AUTH).status_code == 200
+    assert client.get("/api/v1.3/getTransactions?pageSize=2").status_code == 401
+    assert client.get("/api/v1.3/getTransactions?pageSize=2", headers=AUTH).status_code == 200
+    assert client.get("/api/v1.3/getGuest?reservationID=x").status_code == 401
     # get by id requires auth
-    rid = client.get("/reservations?limit=1", headers=AUTH).json()["data"][0]["reservation_id"]
-    assert client.get(f"/reservations/{rid}").status_code == 401
-    assert client.get(f"/reservations/{rid}", headers=AUTH).status_code == 200
-    # get folio by id requires auth
-    cid = client.get("/folios?limit=1", headers=AUTH).json()["data"][0]["charge_id"]
-    assert client.get(f"/folios/{cid}").status_code == 401
-    assert client.get(f"/folios/{cid}", headers=AUTH).status_code == 200
+    rid = client.get("/api/v1.3/getReservations?pageSize=1", headers=AUTH).json()["data"][0]["reservationID"]
+    assert client.get(f"/api/v1.3/getReservation?reservationID={rid}").status_code == 401
+    assert client.get(f"/api/v1.3/getReservation?reservationID={rid}", headers=AUTH).status_code == 200
+    # getGuest by reservationID
+    resp_g = client.get(f"/api/v1.3/getGuest?reservationID={rid}", headers=AUTH)
+    assert resp_g.status_code == 200
+    assert "firstName" in resp_g.json()["data"]
 
 
-def test_atlas_bearer_fault_overrides() -> None:
-    # Even with valid bearer, token_expired still 401 with its own code
+def test_atlas_auth_fault_overrides() -> None:
+    # Even with a valid key, token_expired still 401 with its own code
     set_scenario("token_expired", 10)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations?limit=2", headers=AUTH)
+    resp = client.get("/api/v1.3/getReservations?pageSize=2", headers=AUTH)
     assert resp.status_code == 401
     assert resp.json()["detail"]["code"] == "token_expired"
     set_scenario("token_revoked", 10)
-    resp2 = client.get("/reservations?limit=2", headers=AUTH)
+    resp2 = client.get("/api/v1.3/getReservations?pageSize=2", headers=AUTH)
     assert resp2.status_code == 403
     assert resp2.json()["detail"]["code"] == "token_revoked"
 
@@ -170,70 +165,102 @@ def test_atlas_helpers_check_auth_require_bearer() -> None:
     assert exc2.value.status_code == 401  # type: ignore[attr-defined]
 
 
-def test_atlas_offset_pagination_shape() -> None:
+def test_atlas_page_pagination_shape() -> None:
     set_scenario("baseline", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations?limit=5&offset=0", headers=AUTH)
+    resp = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=5", headers=AUTH)
     assert resp.status_code == 200
     body = resp.json()
+    assert body["success"] is True
     assert body["total"] == 30
-    assert body["limit"] == 5
-    assert body["offset"] == 0
-    assert body["next_offset"] == 5
+    assert body["count"] == 5
     assert len(body["data"]) == 5
-    # next page
-    resp2 = client.get("/reservations?limit=5&offset=5", headers=AUTH)
-    assert resp2.json()["offset"] == 5
+    # no cursor/offset/next keys on the page surface
+    assert "next_cursor" not in body
+    assert "next_offset" not in body
+    assert "cursor" not in body
+    assert "offset" not in body
+    # next page differs
+    resp2 = client.get("/api/v1.3/getReservations?pageNumber=2&pageSize=5", headers=AUTH)
     assert resp2.json()["data"] != body["data"]
-    # last page next_offset null
-    resp_last = client.get("/reservations?limit=100&offset=0", headers=AUTH)
-    assert resp_last.json()["next_offset"] is None
-    # folios also offset
-    resp_f = client.get("/folios?limit=5&offset=0", headers=AUTH)
-    assert "next_offset" in resp_f.json()
+    # last page is short; past-the-end page is empty
+    resp_last = client.get("/api/v1.3/getReservations?pageNumber=7&pageSize=5", headers=AUTH)
+    assert resp_last.json()["count"] == 0
+    assert resp_last.json()["data"] == []
+    # transactions are page-paginated too
+    resp_f = client.get("/api/v1.3/getTransactions?pageNumber=1&pageSize=5", headers=AUTH)
+    assert resp_f.json()["success"] is True
     assert "next_cursor" not in resp_f.json()
-    # ensure no cursor alias leaks
-    for key in body:
-        assert key != "next_cursor"
-        assert key != "cursor"
 
 
-def test_atlas_clear_statuses() -> None:
+def test_atlas_statuses_and_money_numbers() -> None:
     set_scenario("baseline", 42)
     client = TestClient(atlas_app)
-    resp = client.get("/reservations?limit=100", headers=AUTH)
+    resp = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=100", headers=AUTH)
     statuses = {r["status"] for r in resp.json()["data"]}
-    assert statuses.issubset({"confirmed", "checked_in", "checked_out", "cancelled", "no_show"})
+    assert statuses.issubset({"not_confirmed", "confirmed", "canceled", "checked_in", "checked_out", "no_show"})
     assert len(statuses) >= 2  # deterministic seed should have multiple
-    # folios amounts are decimal strings
-    resp_f = client.get("/folios?limit=20", headers=AUTH)
+    # money arrives as JSON numbers (unquoted in the raw body), never strings
+    raw = resp.text
+    assert re.search(r'"balance":\s*-?[0-9]+(\.[0-9]+)?', raw), "balance must be a JSON number"
+    assert '"balance": "' not in raw
+    resp_f = client.get("/api/v1.3/getTransactions?pageNumber=1&pageSize=20", headers=AUTH)
     for rec in resp_f.json()["data"]:
-        amt = rec["amount"]
-        assert "." in amt
-        # should be valid decimal with 2dp
-        from decimal import Decimal
-
-        d = Decimal(amt)
-        assert d.as_tuple().exponent == -2
+        assert isinstance(rec["amount"], (int, float))
+        assert not isinstance(rec["amount"], bool)
+    assert re.search(r'"amount":\s*-?[0-9]+(\.[0-9]+)?', resp_f.text)
+    # camelCase wire names, no snake_case leaks on the surface
+    assert resp.json()["data"][0]["reservationID"]
+    assert "reservation_id" not in resp.text
 
 
 def test_atlas_filter_and_get_by_id() -> None:
     set_scenario("baseline", 42)
     client = TestClient(atlas_app)
-    props = client.get("/properties", headers=AUTH).json()["data"]
-    pid = props[0]["property_id"]
-    resp = client.get(f"/reservations?property_id={pid}&limit=100", headers=AUTH)
+    props = client.get("/api/v1.3/getHotels", headers=AUTH).json()["data"]
+    pid = props[0]["propertyID"]
+    assert props[0]["propertyCurrency"][0]["currencyCode"]
+    resp = client.get(f"/api/v1.3/getReservations?propertyID={pid}&pageSize=100", headers=AUTH)
     for r in resp.json()["data"]:
-        assert r["property_id"] == pid
-    # folio filter
-    rid = client.get("/reservations?limit=1", headers=AUTH).json()["data"][0]["reservation_id"]
-    resp_f = client.get(f"/folios?reservation_id={rid}&limit=100", headers=AUTH)
+        assert r["propertyID"] == pid
+    # transaction filter
+    rid = client.get("/api/v1.3/getReservations?pageSize=1", headers=AUTH).json()["data"][0]["reservationID"]
+    resp_f = client.get(f"/api/v1.3/getTransactions?reservationID={rid}&pageSize=100", headers=AUTH)
     if resp_f.json()["data"]:
         for f in resp_f.json()["data"]:
-            assert f["reservation_id"] == rid
-    # 404 for missing
-    assert client.get("/reservations/DOES_NOT_EXIST", headers=AUTH).status_code == 404
-    assert client.get("/folios/DOES_NOT_EXIST", headers=AUTH).status_code == 404
+            assert f["reservationID"] == rid
+    # status filter
+    resp_s = client.get("/api/v1.3/getReservations?status=canceled&pageSize=100", headers=AUTH)
+    for r in resp_s.json()["data"]:
+        assert r["status"] == "canceled"
+    # single get by id
+    assert client.get("/api/v1.3/getReservation?reservationID=DOES_NOT_EXIST", headers=AUTH).status_code == 404
+    one = client.get(f"/api/v1.3/getReservation?reservationID={rid}", headers=AUTH)
+    assert one.status_code == 200
+    assert one.json()["data"]["reservationID"] == rid
+    assert isinstance(one.json()["data"]["total"], (int, float))
+    # transactions 404 is covered by empty page (no by-id route); missing guest 404
+    assert client.get("/api/v1.3/getGuest?reservationID=DOES_NOT_EXIST", headers=AUTH).status_code == 404
+
+
+def test_atlas_page_to_cursor_fault() -> None:
+    set_scenario("page_to_cursor", 42)
+    client = TestClient(atlas_app)
+    resp = client.get("/api/v1.3/getReservations?pageNumber=1&pageSize=5", headers=AUTH)
+    body = resp.json()
+    assert body["success"] is True
+    assert "next_cursor" in body
+    assert body["next_cursor"] is not None
+    # legacy page params ignored: same first page as cursor start
+    assert len(body["data"]) == 5
+
+
+def test_atlas_old_routes_removed() -> None:
+    set_scenario("baseline", 42)
+    client = TestClient(atlas_app)
+    assert client.get("/reservations", headers=AUTH).status_code == 404
+    assert client.get("/folios", headers=AUTH).status_code == 404
+    assert client.get("/properties", headers=AUTH).status_code == 404
 
 
 def test_atlas_docs_missing_returns_404(monkeypatch) -> None:  # type: ignore[no-untyped-def]

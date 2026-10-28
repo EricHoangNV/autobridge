@@ -26,9 +26,19 @@
 
   // Realistic example values by field name, so example responses read like real data.
   const EXAMPLES = {
-    property_id: "prop-001", name: "Grand Plaza", timezone: "America/New_York", currency: "USD",
-    reservation_id: "RES-000042-prop-001-0000", guest_name: "Ada Lovelace", charge_id: "CHG-000042-RES-000042-prop-001-0000-00",
-    description: "Room charge", code: "unauthorized", message: "Missing or invalid Bearer token",
+    property_id: "prop-001", propertyID: "prop-001", propertyName: "Grand Plaza",
+    propertyTimezone: "America/New_York", name: "Grand Plaza", timezone: "America/New_York", currency: "USD",
+    currencyCode: "USD", reservation_id: "RES-000042-prop-001-0000", reservationID: "RES-000042-prop-001-0000",
+    guest_name: "Ada Lovelace", guestName: "Ada Lovelace", firstName: "Ada", lastName: "Lovelace",
+    email: "ada.lovelace@example.com", guestEmail: "ada.lovelace@example.com",
+    guestID: "G-RES-000042-prop-001-0000", charge_id: "CHG-000042-RES-000042-prop-001-0000-00",
+    transactionID: "CHG-000042-RES-000042-prop-001-0000-00",
+    startDate: "2026-10-26", endDate: "2026-10-28", dateCreated: "2026-10-26 08:00:00",
+    dateModified: "2026-10-26 12:00:00", transactionDateTime: "2026-10-26 14:30:00",
+    businessDate: "2026-10-26", serviceDate: "2026-10-26",
+    adults: "2", children: "0", balance: 200.0, total: 200.0, amount: 100.0,
+    description: "Room charge", sourceName: "Direct",
+    code: "unauthorized", message: "Missing x-api-key header",
   };
 
   function sample(spec, s, depth, key) {
@@ -101,8 +111,15 @@
       });
       const ok = Object.entries(o.op.responses || {}).find(([c]) => c[0] === "2");
       const okSchema = ok && resolve(spec, ok[1]).content && resolve(spec, ok[1]).content["application/json"].schema;
-      const query = (o.op.parameters || []).filter((p) => p.in === "query" && p.name === "limit").length ? "?limit=10" : "";
-      const curl = "curl " + server + o.path.replace(/\{(\w+)\}/g, "RES-000042-prop-001-0000") + query + " \\\n  -H 'Authorization: Bearer $ATLAS_API_KEY'";
+      const names = (o.op.parameters || []).filter((p) => p.in === "query").map((p) => p.name);
+      let query = "";
+      if (names.includes("pageNumber") || names.includes("pageSize")) query = "?pageNumber=1&pageSize=10";
+      else if (names.includes("limit")) query = "?limit=10";
+      const schemes = (spec.components && spec.components.securitySchemes) || {};
+      const hasApiKey = Object.values(schemes).some((s) => s && s.type === "apiKey");
+      const hasBearer = Object.values(schemes).some((s) => s && s.type === "http" && s.scheme === "bearer");
+      const authFlag = hasApiKey ? " \\\n  -H 'x-api-key: $ATLAS_API_KEY'" : hasBearer ? " \\\n  -H 'Authorization: Bearer $ATLAS_API_KEY'" : "";
+      const curl = "curl " + server + o.path.replace(/\{(\w+)\}/g, "RES-000042-prop-001-0000") + query + authFlag;
       main.push(
         '<section class="op" id="' + esc(id) + '"><div class="op-doc">' +
           '<h2><span class="m m-' + o.method + '">' + o.method.toUpperCase() + '</span><span class="path">' + esc(o.path) + "</span></h2>" +
