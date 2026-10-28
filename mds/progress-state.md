@@ -18,11 +18,12 @@ REQ-019 done (sbx1 2026-10-28): Atlas serves the method-style hotel PMS surface 
   - REQ-001…REQ-019 + REQ-017 + REQ-018 all DONE (REQ-019: method-style Atlas surface)
   - P2.S1.1 … P2.S7.1 DONE (LegacyStay, Edge target, DiscoveryResult import, MCP Guardian, OpenAI provider, Richer UI, CLI)
   - AR-2-1 … AR-2-6 + AR-1-1 … AR-1-5 (residual) all code-fixed (Cycle 2 re-verification pending owner)
-- Tests: 2385 pass / 0 fail (autobridge 91.43%, verifier 93.78%, simulators 96.21%) + ui 148 pass; lint + typecheck green
+  - REQ-020 sub-step A IN PROGRESS (sbx1 2026-10-28): sim-meridian (POST/JSON, body auth, Limitation cursor, customers/orderItems/configuration) + meridian-openapi.yaml + guides-first portal + compose/local/smoke wiring + vocabulary_guard before-refusal (item 4, generally) + e2e before-pin (live green)
+- Tests: 2406 pass / 0 fail (autobridge 91.47% / 2021, verifier 93.78% / 97, simulators 96.08% / 288) + ui 148 pass; lint + typecheck green
 - Stack: local mode verified (sbx1 no-Docker sandbox, 2026-10-28): local-up 12/12 readyz, smoke OK (local), demo 6/6 (5 live), test_01/02/03/04/05 live green; readyz green
 
 ## Next tasks
-0. **REQ-020** — [ ] OPEN (owner priority 2026-10-28: Meridian after Cloudbeds shape; needs REQ-019 done, REQ-021 item 2 for step 4)
+0. **REQ-020** — [>] IN PROGRESS sbx1 (sub-step A merged: simulator + docs portal + before-refusal; remaining: 5a schema+runtime, 5b discovery, 5c joins, 6 faults+after, 7 demo)
 1. **P1.W10.3** — [~] OWNER: confirm CI green on main with demo step, record labelled demo (docs/demo.md)
 2. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching committed verifier/hidden_cases/heldout/SHA256SUMS (codeable REQ-007 flow done 2026-10-27)
 3. Code Review Cycle 2 re-verification (all FAIL items code-fixed)

@@ -887,3 +887,55 @@ Reference read first: getReservations/getReservation/getGuest/getHotels pages + 
 Files: simulators/atlaspms/app.py (rewritten surface + exact-Decimal JSON encoder), simulators/docs/atlas{,-pms}-openapi.{yaml,json} (regenerated), devportal openapi.js (x-api-key curl), faults.py + page_to_cursor.yaml (15 scenarios), repair rule page_to_cursor + registry, spec Pagination.total_path + schema regen, runtime tokenless-page (total_reached stop), discovery (op names, page params/total/next from docs evidence, wire-name aliases, canceled->cancelled, api_key_header), oracle (page_to_cursor + case-insensitive field match) + checks primary map, reference spec + build-report signatures (atlas + harbor recomputed: model gained total_path), demo.py (page fake, step3, step1 ensure-then-get fix), verifier hidden_cases untouched.
 Decisions: (1) zone-less datetimes rendered in America/New_York for every property (documented quirk; engine timezone_source static NY round-trips exactly; UTC assumption is the trap); (2) currency via propertyID enum_map (only v1-declarative per-property source; unknown property Blocks); (3) not_confirmed unmapped -> Blocked, never guessed; (4) fault cursor mode omits total (real cursor listings have none; keeps old-spec truncation to 1 page); (5) gross_to_net now syncs Complete self-consistently (no gross_sum on the documented wire) and is caught by the verifier (money_mismatch) -> escalate L4, never patched; (6) rate limit 10 rps NOT enforced (would flake tests; fault scenario covers 429); (7) step1 live ensure-then-get fixes fresh-DB demo (pre-existing REQ-016 interaction).
 Gates: make test green (autobridge 91.43% 2018 pass, verifier 93.78% 97 pass, simulators 96.21% 270 pass, ui 148 pass); lint+typecheck+ui-typecheck green; local-up + smoke + demo 6/6 (5 live) + e2e test_01/02/03/04/05/s1/s2/s3/s5 green (no Docker in sandbox; e2e-ui Playwright not runnable here, component tests green). Heldout manifest byte-identical; bench-heldout refuses without HELDOUT_DIR by design (owner seeds pending, P1.W2.8).
+
+### REQ-020 sub-step A — MeridianPMS simulator + docs portal + v1 before-refusal (sbx1 2026-10-28)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Status: sub-step A merged; items 5a/5b/5c/6/7 remain open for follow-up claims.
+
+What landed:
+- `simulators/meridianpms/app.py` (+ `__init__.py` stub): POST-only JSON-body API —
+  `POST /api/connector/v1/{reservations,customers,orderItems}/getAll/2023-06-06` + `configuration/get/2023-06-06`.
+  Body auth (`ClientToken`/`AccessToken`/`Client`; missing → 401, wrong → 403, documented), `Limitation`
+  `{Count 1..1000, Cursor}` with the exact cursor contract (Cursor = last id, null only on empty page; unknown
+  cursor restarts), `EnterpriseIds`/`ServiceIds`/`ReservationIds`/`CustomerIds`/`AccountIds`/`OrderItemIds` filters
+  (max 1000 → 400 `too_many_ids`), `States` filter, `UpdatedUtc` interval cap 3 months (→ 400
+  `interval_too_long`). Reservations carry no name/money (join via `AccountId` → customers, order items with
+  exact `NetValue + TaxValues == GrossValue` Decimals, no floats); UTC `Z` instants; configuration returns
+  enterprise time zone + currency from the seeded generator. Fault switchboard (rate_limit/transient/auth/endpoint_removed)
+  via the shared helpers; pagination-shape catalog scenarios are ignored, never crash. `/healthz`, `/readyz`
+  (docs check), `/developers` (guides-first portal), `/docs` static mount, `/_meridian_docs` alias, wrong-version
+  paths → 404.
+- `simulators/docs/meridian-openapi.yaml` (single source, Mews-swagger style) and
+  `simulators/devportal/meridian.html` (REQ-020.3: top bar with product switcher + ⌘K search + light/dark toggle;
+  Guides + Operations sidebar; per-operation POST path, request/response tables with expandable nested objects,
+  tabbed cURL/JS/Python samples with tokens in the body, example responses, "Uses pagination" / "Max interval 3
+  months" / deprecation callouts, "On this page" rail, feedback footer, last-updated date; hash routing, one HTML
+  file, no external fonts/CDNs — offline).
+- Wiring: `compose.yaml` `sim-meridian` (vendor-net + admin-net, 8116 public via bind var, 127.0.0.1:8117 admin);
+  `scripts/local-up.sh` (+ `MERIDIAN_BASE_URL`), `local-down.sh`, `wait_readyz.sh`, `smoke.sh` (services list +
+  sandbox→public up / sandbox→admin down / ui down probes). `tests/e2e/conftest.py` ports + `SIM_SERVICES`
+  (+reset coverage). README vendor table + `docs/architecture.md` service/network rows.
+- Before-refusal (item 4, done generally): with the engine unchanged, `build_draft_spec` on the Meridian docs
+  did NOT fail — it invented GET operations with hallucinated cursor params (`success: True`). Fixed generally,
+  not for Meridian: new `vocabulary_guard` stage in `build_draft_spec` — when docs describe zero GET operations,
+  return `success=False` with degradation_reason "operations need POST with a JSON body and body-field auth; not
+  expressible in ConnectorSpec v1", no draft spec (no release persisted), trace stage `vocabulary_guard`, 0 model
+  calls. Harbor (GET) still builds. Pinned by `test_build_post_only_docs_refuses_with_named_reason`
+  (bootstrap), `test_spec_v1_cannot_express_post_with_body_auth` (spec), and `tests/e2e/test_meridian_before.py`
+  (in-process refusal + live surface when the stack is up). `test_engine_never_references_meridian` guard added
+  (grep finds no "meridian" in `src/autobridge`).
+- Verified: full `make test` green (autobridge 91.47%/2021, verifier 93.78%/97, simulators 96.08%/288 incl.
+  meridian app 95%, ui 148); `make lint`, `make typecheck` green; e2e before-file live green in this sandbox
+  (Docker available: fixture brought the stack up incl. real sim-meridian, 5-item page + cursor asserted).
+
+Decisions/gotchas:
+- YAML `version: 2023-06-06` must be quoted — unquoted parses as a date and `/developers/source` (yaml→JSON)
+  500s. Caught by the new devportal test.
+- FastAPI path-param names must match the route template exactly: renaming `rest`→`_rest` for ARG001 broke
+  the catch-all with 422 (param seen as missing query arg). Kept the name + `_ = (rest, body)` use.
+- `tests/unit/test_simulators_meridian.py` imports engine spec models nowhere (simulators gate); the v1 pin
+  lives in `test_autobridge_spec.py` + bootstrap test file instead.
+- Stale `.local/ACTIVE` + dead pids predate this run (another loop's local-up); e2e used the Docker path.
+
+Not in this sub-step (follow-ups): 5a spec schema v2 (POST + body template, body_fields auth, body-cursor
+pagination, joins) + runtime, 5b discovery (classifiers/hypotheses/probes), 5c joins, 6 (bootstrap-then-verify
++ ≥2 fault scenarios + bench note), 7 (demo step + docs/demo.md), `POST /demo/inject-fault` target map entry.

@@ -2451,3 +2451,19 @@ Next: REQ-014 → REQ-015 → REQ-016 (owner priority), then REQ-019 → REQ-020
 - Currency via propertyID enum_map (only v1-declarative per-property source); unknown property Blocks.
 - Rate limit 10 rps modeled only by the fault scenario (real enforcement would flake tests).
 - Gates: make test green (autobridge 91.43%, verifier 93.78%, simulators 96.21%, ui 148 pass); local-up+smoke+demo 6/6+e2e green (no Docker in sandbox); heldout manifest byte-identical.
+
+## 2026-10-28 11:20 UTC — REQ-020 sub-step A merged (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Claim: `Claim REQ-020 (sbx1)` + sub-step A commit, both on origin/main after rebase (below).
+
+Delivered: sim-meridian simulator (POST/JSON, body auth, Limitation cursor, customers/orderItems/configuration
+joins, UTC instants, fault switchboard) on 8116/8117; meridian-openapi.yaml single source + guides-first offline
+portal; compose/local-up/down/readyz/smoke + e2e conftest wiring; README + architecture tables. Item 4
+before-refusal done generally: bootstrap invented GET ops for the POST-only docs, so added a vendor-neutral
+`vocabulary_guard` (zero GET ops → success=False, named reason, no draft spec, 0 model calls); Harbor unaffected.
+Pinned by unit tests + tests/e2e/test_meridian_before.py (live green: real sim-meridian page + cursor asserted).
+
+Gates: make test 2406 pass (autobridge 91.47%/2021, verifier 93.78%/97, simulators 96.08%/288) + ui 148; lint,
+typecheck green. Engine grep-clean of "meridian" (guard test).
+
+Remaining for REQ-020: 5a (spec v2 schema+runtime), 5b (discovery), 5c (joins), 6 (after-bootstrap + 2 fault
+scenarios), 7 (demo step). REQUESTS.MD stays IN_PROGRESS.
