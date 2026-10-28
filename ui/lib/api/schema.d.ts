@@ -799,6 +799,11 @@ export interface components {
              * @default baseline
              */
             scenario_id: string;
+            /**
+             * Spec Vocabulary
+             * @description ConnectorSpec vocabulary the build may use (REQ-021 item 2). Resolves to SPEC_VOCABULARY env, else v1: v1 refuses POST/body-auth docs deterministically at 0 model calls; v2 compiles them.
+             */
+            spec_vocabulary?: ("v1" | "v2") | null;
             /** Vendor */
             vendor?: string | null;
             /** Verifier Url */
@@ -1388,6 +1393,11 @@ export interface components {
              * @description Release to sync; defaults to active
              */
             release_id?: string | null;
+            /**
+             * Spec Vocabulary
+             * @description Cap the runtime vocabulary for this sync (REQ-021 item 2). A v2 release synced under a v1 pin ends Blocked with a named reason. Defaults to the release's build vocabulary, else the runtime default.
+             */
+            spec_vocabulary?: ("v1" | "v2") | null;
         };
         /** SyncResponse */
         SyncResponse: {

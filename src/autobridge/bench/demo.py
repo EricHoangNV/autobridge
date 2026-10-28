@@ -547,8 +547,11 @@ def step2_unfamiliar_api(seed: int, live: bool, base_url: str) -> dict[str, Any]
         vendor="HarborPMS",
         base_url_override="https://api.harborpms.example.com",
     )
+    from autobridge.config import spec_vocabulary_default  # noqa: PLC0415
+
     evidence = {
         "seed": seed,
+        "spec_vocabulary": spec_vocabulary_default(),
         "doc_type": iface.doc_type,
         "operations": [f"{op.method} {op.path}" for op in iface.operations],
         "auth_kind": iface.auth.kind if iface.auth else None,

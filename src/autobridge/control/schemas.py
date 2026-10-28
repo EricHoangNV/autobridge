@@ -252,6 +252,12 @@ class BuildRequest(BaseModel):
     credential_ref: str | None = None
     scenario_id: str = Field(default="baseline")
     verifier_url: str | None = None
+    spec_vocabulary: Literal["v1", "v2"] | None = Field(
+        default=None,
+        description="ConnectorSpec vocabulary the build may use (REQ-021 item 2). "
+        "Resolves to SPEC_VOCABULARY env, else v1: v1 refuses POST/body-auth docs "
+        "deterministically at 0 model calls; v2 compiles them.",
+    )
 
     model_config = {"extra": "allow"}
 
@@ -266,6 +272,12 @@ class BuildResponse(BaseModel):
 class SyncRequest(BaseModel):
     release_id: str | None = Field(default=None, description="Release to sync; defaults to active")
     checkpoint: dict[str, Any] | None = None
+    spec_vocabulary: Literal["v1", "v2"] | None = Field(
+        default=None,
+        description="Cap the runtime vocabulary for this sync (REQ-021 item 2). "
+        "A v2 release synced under a v1 pin ends Blocked with a named reason. "
+        "Defaults to the release's build vocabulary, else the runtime default.",
+    )
 
 
 class SyncResponse(BaseModel):

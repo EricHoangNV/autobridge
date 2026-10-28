@@ -48,7 +48,7 @@ def execute_build(
     llm_budget: Any | None = None,
     verifier_url: str | None = None,
     scenario_id: str = "baseline",
-    spec_vocabulary: str = "v1",
+    spec_vocabulary: str | None = None,
 ) -> dict[str, Any]:
     """Run bootstrap pipeline and optional verifier check.
 
@@ -57,6 +57,8 @@ def execute_build(
     verified, verifier_response (if called), evidence_payloads.
 
     This function does NOT touch the DB — callers create releases.
+    ``spec_vocabulary`` ``None`` resolves to the ``SPEC_VOCABULARY`` env
+    default, else ``"v1"``.
     """
     from autobridge.discovery.bootstrap import build_draft_spec
 
@@ -309,7 +311,7 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
     base_url_override = inputs.get("base_url_override") or inputs.get("base_url")
     verifier_url = inputs.get("verifier_url") or os.environ.get("VERIFIER_URL")
     scenario_id = inputs.get("scenario_id", "baseline")
-    spec_vocabulary = inputs.get("spec_vocabulary", "v1")
+    spec_vocabulary = inputs.get("spec_vocabulary")
 
     # Optional probe/budget wiring (for date ambiguity resolution tests)
     probe_executor = inputs.get("probe_executor")
@@ -460,12 +462,13 @@ def bootstrap_and_create_release(
     vendor: str | None = None,
     base_url_override: str | None = None,
     scenario_id: str = "baseline",
-    spec_vocabulary: str = "v1",
+    spec_vocabulary: str | None = None,
 ) -> tuple[Any, Any, dict[str, Any]]:
     """Helper for tests/e2e: bootstrap docs and create a release.
 
     Returns (connector, release, build_out).
-    Caller owns commit.
+    Caller owns commit. ``spec_vocabulary`` ``None`` resolves to the
+    ``SPEC_VOCABULARY`` env default, else ``"v1"``.
     """
     from autobridge.control.models import BuildRun, Connector  # noqa: PLC0415
     from autobridge.engine.releases import create_release  # noqa: PLC0415

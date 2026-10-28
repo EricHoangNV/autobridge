@@ -197,4 +197,42 @@ describe("NewConnectorForm", () => {
     render(<NewConnectorForm />);
     expect(screen.getByTestId("cancel-link")).toHaveAttribute("href", "/connectors");
   });
+
+  it("pins spec_vocabulary v1 by default and shows it on success", async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conn-v1" }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ build_run_id: "b1", job_id: "j1" }) } as Response);
+
+    render(<NewConnectorForm />);
+    expect((screen.getByTestId("radio-vocabulary-v1") as HTMLInputElement).checked).toBe(true);
+    typeInto(screen.getByTestId("input-name"), "Vocab Default");
+    typeInto(screen.getByTestId("input-base-url"), "http://sim-atlas:8000");
+    typeInto(screen.getByTestId("input-docs-text"), "docs");
+
+    fireEvent.click(screen.getByTestId("submit-build"));
+    await waitFor(() => expect(screen.getByTestId("submit-success")).toBeInTheDocument());
+
+    const buildBody = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string);
+    expect(buildBody.spec_vocabulary).toBe("v1");
+    expect(screen.getByTestId("submit-vocabulary").textContent).toContain("vocabulary v1");
+  });
+
+  it("sends spec_vocabulary v2 when selected", async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conn-v2" }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ build_run_id: "b2", job_id: "j2" }) } as Response);
+
+    render(<NewConnectorForm />);
+    fireEvent.click(screen.getByTestId("radio-vocabulary-v2"));
+    typeInto(screen.getByTestId("input-name"), "Vocab V2");
+    typeInto(screen.getByTestId("input-base-url"), "http://sim-atlas:8000");
+    typeInto(screen.getByTestId("input-docs-text"), "docs");
+
+    fireEvent.click(screen.getByTestId("submit-build"));
+    await waitFor(() => expect(screen.getByTestId("submit-success")).toBeInTheDocument());
+
+    const buildBody = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string);
+    expect(buildBody.spec_vocabulary).toBe("v2");
+    expect(screen.getByTestId("submit-vocabulary").textContent).toContain("vocabulary v2");
+  });
 });

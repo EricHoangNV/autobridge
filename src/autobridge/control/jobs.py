@@ -219,21 +219,25 @@ class JobRunner:
         release_id: str,
         checkpoint: dict[str, Any] | None = None,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        spec_vocabulary: str | None = None,
     ) -> str:
         """Queue a sync: the SyncRun row is created by the handler at run time."""
         self._check_budget(max_attempts)
         with self._sessions() as session:
             if session.get(ConnectorRelease, release_id) is None:
                 raise JobError(f"ConnectorRelease {release_id!r} not found")
+            payload: dict[str, Any] = {
+                "release_id": release_id,
+                "checkpoint": dict(checkpoint or {}),
+            }
+            if spec_vocabulary is not None:
+                payload["spec_vocabulary"] = spec_vocabulary
             job = Job(
                 kind="sync",
                 run_id=None,
                 state="queued",
                 max_attempts=max_attempts,
-                payload={
-                    "release_id": release_id,
-                    "checkpoint": dict(checkpoint or {}),
-                },
+                payload=payload,
             )
             session.add(job)
             session.commit()

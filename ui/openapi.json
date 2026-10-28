@@ -134,6 +134,22 @@
             "title": "Scenario Id",
             "type": "string"
           },
+          "spec_vocabulary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "v1",
+                  "v2"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ConnectorSpec vocabulary the build may use (REQ-021 item 2). Resolves to SPEC_VOCABULARY env, else v1: v1 refuses POST/body-auth docs deterministically at 0 model calls; v2 compiles them.",
+            "title": "Spec Vocabulary"
+          },
           "vendor": {
             "anyOf": [
               {
@@ -1653,6 +1669,22 @@
             ],
             "description": "Release to sync; defaults to active",
             "title": "Release Id"
+          },
+          "spec_vocabulary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "v1",
+                  "v2"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cap the runtime vocabulary for this sync (REQ-021 item 2). A v2 release synced under a v1 pin ends Blocked with a named reason. Defaults to the release's build vocabulary, else the runtime default.",
+            "title": "Spec Vocabulary"
           }
         },
         "title": "SyncRequest",

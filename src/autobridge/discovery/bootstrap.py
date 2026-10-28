@@ -1310,7 +1310,7 @@ def build_draft_spec(
     provider: Any | None = None,
     llm_budget: Any | None = None,
     http_client_factory: Any | None = None,
-    spec_vocabulary: str = "v1",
+    spec_vocabulary: str | None = None,
 ) -> BootstrapResult:
     """Build draft spec from docs text (docs → draft spec → compile → visible tests).
 
@@ -1339,6 +1339,10 @@ def build_draft_spec(
     Returns:
         BootstrapResult with draft_spec, validation, degradation if ambiguous.
     """
+    if spec_vocabulary is None:
+        from autobridge.config import spec_vocabulary_default  # noqa: PLC0415
+
+        spec_vocabulary = spec_vocabulary_default()
     if spec_vocabulary not in ("v1", "v2"):
         raise ValueError(f"spec_vocabulary must be 'v1' or 'v2', got {spec_vocabulary!r}")
     trace: list[dict[str, Any]] = []

@@ -35,6 +35,48 @@ from autobridge.runtime.mapping import map_records_to_entities
 DEFAULT_SYNC_MAX_TOTAL_DELAY_S = 300.0
 
 
+def _vocabulary_number(value: Any) -> int | None:
+    """Parse a vocabulary/spec version (``"v1"``/``"V2"``/``1``/``2``) to a number."""
+    text = str(value or "").strip().lower().removeprefix("v")
+    return int(text) if text.isdigit() else None
+
+
+def resolve_sync_vocabulary(
+    session: Any,
+    release: Any,
+    requested: str | None = None,
+) -> str:
+    """Pin capping the runtime vocabulary for a sync (REQ-021 item 2).
+
+    Precedence: explicit request pin, then the release's provenance build
+    vocabulary (``BuildRun.inputs["spec_vocabulary"]`` — the pin the spec
+    was built with), then the runtime maximum (everything the engine
+    understands). The ``SPEC_VOCABULARY`` env default governs *builds*;
+    a sync never narrows an existing release below what it was built with
+    unless the operator pins it explicitly.
+    """
+    if requested in ("v1", "v2"):
+        return requested
+    build_vocab: str | None = None
+    try:
+        provenance_id = getattr(release, "provenance_build_run_id", None)
+        if provenance_id is not None:
+            from autobridge.control.models import BuildRun  # noqa: PLC0415
+
+            build = session.get(BuildRun, provenance_id)
+            if build is not None and isinstance(build.inputs, dict):
+                candidate = build.inputs.get("spec_vocabulary")
+                if candidate in ("v1", "v2"):
+                    build_vocab = candidate
+    except Exception:
+        build_vocab = None
+    if build_vocab is not None:
+        return build_vocab
+    from autobridge.config import runtime_max_vocabulary  # noqa: PLC0415
+
+    return runtime_max_vocabulary()
+
+
 def _fingerprint_config(spec: dict[str, Any]) -> dict[str, bool]:
     """Re-export for back-compat tests (delegates to drift.fingerprint)."""
     return _fp.fingerprint_config(spec)
@@ -426,6 +468,55 @@ def run_sync_handler(
     if spec_loader is not None:
         # Test hook: allow spec override
         spec_dict = spec_loader(spec_dict)
+
+    # REQ-021 item 2: pinned vocabulary caps the runtime. A spec whose
+    # spec_version exceeds the pin refuses deterministically — Blocked with
+    # a named reason, before any HTTP — so no v2 construct executes under a
+    # v1 pin. Unknown/missing versions fail closed (DIRECTIVES §4).
+    pin = resolve_sync_vocabulary(ctx.session, release, payload.get("spec_vocabulary"))
+    pin_number = _vocabulary_number(pin)
+    spec_number = _vocabulary_number(
+        spec_dict.get("spec_version") if isinstance(spec_dict, dict) else None
+    )
+    if spec_number is None:
+        run = create_sync_run_row(
+            session=ctx.session,
+            release_id=release_id,
+            outcome="Blocked",
+            unmet_criteria=["unknown_spec_version"],
+            data_readiness={},
+            records_observed={},
+            fingerprint_id="",
+            checkpoint={},
+            invariant_results=[],
+        )
+        ctx.run_id = run.id
+        return {
+            "sync_run_id": run.id,
+            "outcome": "Blocked",
+            "unmet_criteria": ["unknown_spec_version"],
+            "fingerprint_id": "",
+        }
+    if pin_number is not None and spec_number > pin_number:
+        reason = f"vocabulary_{pin}_cannot_execute_spec_v{spec_number}"
+        run = create_sync_run_row(
+            session=ctx.session,
+            release_id=release_id,
+            outcome="Blocked",
+            unmet_criteria=[reason],
+            data_readiness={},
+            records_observed={},
+            fingerprint_id="",
+            checkpoint={},
+            invariant_results=[],
+        )
+        ctx.run_id = run.id
+        return {
+            "sync_run_id": run.id,
+            "outcome": "Blocked",
+            "unmet_criteria": [reason],
+            "fingerprint_id": "",
+        }
 
     # Resolve http client
     if http_client_factory is not None:

@@ -45,11 +45,17 @@ export function NewConnectorForm() {
   const [docsText, setDocsText] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
+  const [vocabulary, setVocabulary] = useState<"v1" | "v2">("v1");
 
   // UI state
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [result, setResult] = useState<{ connectorId: string; buildRunId?: string; jobId?: string } | null>(null);
+  const [result, setResult] = useState<{
+    connectorId: string;
+    buildRunId?: string;
+    jobId?: string;
+    vocabulary: "v1" | "v2";
+  } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const effectiveCredentialRef = useCustomCredential ? customCredential.trim() : credentialRef;
@@ -135,6 +141,7 @@ export function NewConnectorForm() {
       // Docs payload priority: fileContent > docsText > docsUrl
       const buildBody: Record<string, unknown> = {
         scenario_id: "baseline",
+        spec_vocabulary: vocabulary,
       };
       if (fileContent) {
         buildBody.docs_text = fileContent;
@@ -154,7 +161,7 @@ export function NewConnectorForm() {
       if (!buildRes.ok) {
         const body = await buildRes.text();
         // Connector was created; surface as partial success with error
-        setResult({ connectorId: created.id });
+        setResult({ connectorId: created.id, vocabulary });
         throw new Error(`Build start failed (${buildRes.status}): ${body} — connector ${created.id} was created`);
       }
 
@@ -163,6 +170,7 @@ export function NewConnectorForm() {
         connectorId: created.id,
         buildRunId: buildResult.build_run_id,
         jobId: buildResult.job_id,
+        vocabulary,
       });
       setSubmitState("done");
     } catch (err) {
@@ -392,6 +400,36 @@ export function NewConnectorForm() {
           ) : null}
         </fieldset>
 
+        {/* Spec vocabulary (REQ-021 item 2) */}
+        <fieldset>
+          <legend className={FIELD_LABEL}>Spec vocabulary</legend>
+          <div className="mt-2 flex flex-wrap gap-2.5">
+            {(["v1", "v2"] as const).map((v) => (
+              <label
+                key={v}
+                className={`flex cursor-pointer items-center gap-2.5 border-[1.5px] px-4 py-2.5 font-mono text-[15px] ${
+                  vocabulary === v ? "border-ink text-ink" : "border-off text-ink-2"
+                }`}
+              >
+                <input
+                  data-testid={`radio-vocabulary-${v}`}
+                  type="radio"
+                  name="spec-vocabulary"
+                  value={v}
+                  checked={vocabulary === v}
+                  onChange={() => setVocabulary(v)}
+                  className="h-4 w-4 accent-live"
+                />
+                {v}
+              </label>
+            ))}
+          </div>
+          <span className={FIELD_HINT}>
+            v1 refuses unfamiliar API styles deterministically (0 model calls); v2 additionally compiles POST
+            with a JSON body, body-field auth and body-cursor pagination.
+          </span>
+        </fieldset>
+
         {/* Submit */}
         <div className="flex flex-wrap items-center gap-4 border-t border-rule pt-6">
           <button
@@ -436,8 +474,8 @@ export function NewConnectorForm() {
       {submitState === "done" && result ? (
         <div data-testid="submit-success" className="mt-6 border border-ink bg-band px-5 py-4 text-[15px] text-ink">
           <p className="font-bold">Connector created and build started.</p>
-          <p className="mt-1 font-mono text-sm text-ink-2">
-            Connector {result.connectorId}
+          <p className="mt-1 font-mono text-sm text-ink-2" data-testid="submit-vocabulary">
+            Connector {result.connectorId} · vocabulary {result.vocabulary}
             {result.jobId ? <> · job {result.jobId}</> : null}
           </p>
           <div className="mt-3 flex flex-wrap gap-4">

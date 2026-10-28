@@ -90,3 +90,29 @@ def small_model() -> str:
 def model_price_per_million(model: str) -> tuple[str, str] | None:
     """Published (input, output) USD per 1M tokens for *model*, if known."""
     return MODEL_PRICES_PER_MILLION.get((model or "").strip())
+
+
+#: ConnectorSpec vocabulary versions the engine understands (REQ-021 item 2).
+SPEC_VOCABULARIES = ("v1", "v2")
+
+
+def runtime_max_vocabulary() -> str:
+    """Newest vocabulary the runtime executes (cap for sync pins)."""
+    return SPEC_VOCABULARIES[-1]
+
+
+def spec_vocabulary_default() -> str:
+    """Default build vocabulary (env ``SPEC_VOCABULARY``, else ``"v1"``).
+
+    ``"v1"`` keeps the safe refusal: docs that need POST/body-auth (or any
+    other v2-only construct) stop at the deterministic vocabulary guard
+    with 0 model calls instead of compiling a half-working spec. Builds and
+    syncs pin ``"v2"`` explicitly when the docs need it; the UI and
+    ``make demo`` show which vocabulary each build used.
+    """
+    raw = (os.environ.get("SPEC_VOCABULARY", "") or "").strip() or "v1"
+    if raw not in SPEC_VOCABULARIES:
+        raise ValueError(
+            f"SPEC_VOCABULARY must be one of {list(SPEC_VOCABULARIES)}, got {raw!r}"
+        )
+    return raw

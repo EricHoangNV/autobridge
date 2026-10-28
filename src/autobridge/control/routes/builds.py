@@ -209,6 +209,11 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
 
     # Use connector's base_url as fallback for bootstrap placeholder
     base_url_fb = body.base_url_override or conn.base_url or (body.model_extra.get("base_url") if body.model_extra else None)  # type: ignore[union-attr]
+    # REQ-021 item 2: pinned vocabulary — request field, else SPEC_VOCABULARY
+    # env, else v1 (safe refusal of POST/body-auth docs at 0 model calls).
+    from autobridge.config import spec_vocabulary_default  # noqa: PLC0415
+
+    spec_vocabulary = body.spec_vocabulary or spec_vocabulary_default()
     inputs: dict[str, Any] = {
         "docs_text": docs_text,
         "docs_source": body.docs_path or body.docs_url or "inline",
@@ -218,6 +223,7 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
         "base_url_override": base_url_fb,
         "scenario_id": body.scenario_id,
         "verifier_url": body.verifier_url or os.environ.get("VERIFIER_URL"),
+        "spec_vocabulary": spec_vocabulary,
     }
     # Include extra fields
     if body.model_extra:
@@ -314,7 +320,9 @@ def trigger_sync(connector_id: str, body: SyncRequest, db: Session = Depends(get
     runner = _get_runner(db)
     checkpoint = body.checkpoint or {}
     try:
-        job_id = runner.submit_sync(release_id=release_id, checkpoint=checkpoint)
+        job_id = runner.submit_sync(
+            release_id=release_id, checkpoint=checkpoint, spec_vocabulary=body.spec_vocabulary
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
