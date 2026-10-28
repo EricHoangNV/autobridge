@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020. Do these before any
+Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2). Do these before any
 remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
 sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
 
@@ -181,6 +181,41 @@ Wanted:
    safely → vocabulary extended once → same docs connect"), with the evidence each half shows.
 8. Gates as REQ-019, README vendor table updated. This is the largest REQ in the queue: split it into claimable
    sub-steps in the build note (4, 5a schema+runtime, 5b discovery, 5c joins, 6, 7) and merge each one green.
+
+### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
+Status: OPEN
+Owner: every demo scenario must run the same way every time, including REQ-020's "before" refusal after the vocabulary
+has been extended, and the demo must show that the frontier model is called only when cheaper rungs cannot handle the
+error. Today: `POST /demo/reset` (`src/autobridge/control/routes/demo.py`) resets only sim-atlas and sim-harbor; the L0
+knowledge cache, connectors, releases, runs and budgets survive, so a second run differs (L0 hit, existing release).
+`ANTHROPIC_API_KEY` is empty in the owner's `.env`, so no live frontier call is possible yet.
+Wanted:
+1. **Full reset.** `POST /demo/reset` and `make demo-reset` return the system to a known first-run state: every
+   simulator (Atlas, Harbor, LegacyStay, Meridian when it exists) to baseline, the L0 knowledge cache (in-process and
+   persisted) emptied, demo connectors with their releases, runs, drift events, approvals and budgets removed (or a fresh
+   database), and the model-usage ledger archived per demo session rather than mixed across runs. Idempotent. Test: run
+   a scenario, reset, run it again, and assert identical outcome, rung, and token counts.
+2. **Pinned vocabulary.** A per-build setting (request field and env default, e.g. `spec_vocabulary: v1 | v2`) that
+   limits discovery and the runtime to a vocabulary version. REQ-020's "before" runs with v1 and must refuse with
+   `Blocked`; "after" runs with v2 and connects. Both are repeatable forever after v2 ships. The UI and `make demo` show
+   which vocabulary a build used, so the demo never pretends v2 does not exist. The refusal itself costs 0 frontier and
+   0 small-model tokens: detecting "needs POST with body auth" is deterministic.
+3. **Why each rung was used.** Every build and repair run records each rung it tried (L0 → L4) with a one-line reason
+   for moving up (e.g. "L0 miss: no known fix for vendor+delta", "L1: no rule precondition matched", "L2 confidence
+   0.41 < 0.70", "budget exhausted"), linked to its `ModelCall` rows (tier, purpose, tokens, estimated cost). The repair
+   page shows it as the climb (DIRECTION.md signature), and `make demo` prints one table per run:
+   scenario | rung that resolved it | model calls | small tokens | frontier tokens | why it escalated.
+4. **Scenario matrix test.** `tests/e2e/test_model_usage_matrix.py` declares, for every fault scenario, the expected
+   highest rung (e.g. `offset_to_cursor`, `rename_guest_id`, `cursor_repeat_token`, `nested_path_shift` → L0/L1, 0 model
+   calls; `rate_limit_429`, `transient_503` → no patch, 0 calls; `gross_to_net` semantic drift → must not be fixed
+   below L3, escalates; the refusal → 0 calls). It fails if a scenario calls the frontier when it should not, or skips a
+   rung it should have tried. Runs against the live stack (REQ-010 style) and in-process.
+5. **Reliable frontier calls in the demo.** Two modes, chosen by env: `live` (a real frontier provider; model ids in
+   config, never in code) and `replay` (responses recorded from a live run, stored redacted under `tests/fixtures/` or
+   `demo/recordings/`, replayed deterministically by prompt hash; a missing recording fails loudly). The UI and
+   `make demo` label replayed responses as replayed. Default: `live` when a frontier key is configured, else `replay`.
+   Owner to choose the live provider (Anthropic key, or Meta Muse through an OpenAI-compatible provider); note the
+   choice in the build note and `.env.example`.
 
 ### REQ-008 — `make bench` writes an all-zero scorecard from the host (2026-10-28)
 Status: DONE (2026-10-28) — harness auto-selects host URLs outside container + Makefile bench targets pass --control-api-url/--verifier-url host ports; pre-scorecard probe of /healthz and zero-tool-calls guard exit non-zero naming URL; tests: host URL selection + probe/guard. Real bench run skipped (no compose in sandbox).
