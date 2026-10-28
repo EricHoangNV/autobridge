@@ -2,9 +2,12 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-28): REQ-018 first (UI is down), then REQ-013, then REQ-021, then REQ-017, then REQ-014 → REQ-015 → REQ-016, then REQ-019 → REQ-020 (REQ-020 step 4 needs REQ-021 item 2), then REQ-022, then REQ-024 → REQ-025 (both before the Nov 3 run), with REQ-023 (demo plan) applied as each of those lands. Do these before any
-remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no Docker and no
-sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is present.
+Owner priority (2026-10-28, updated 19:40): finish the REQ-020 sub-step in progress, then **REQ-021 next, before
+anything else** (it has been skipped twice; REQ-024 and REQ-025 depend on its Muse frontier provider, reset and
+model-usage table), then REQ-020 step 7 → REQ-022 → REQ-024 → REQ-025, with REQ-023 (demo plan) applied as each lands.
+Do these before any remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no
+Docker and no sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is
+present.
 
 ### REQ-017 — Run the demo without Docker (2026-10-28)
 Status: DONE (2026-10-28) — make local-up/down (same host ports, ./local db/logs/pids), LocalProcessTarget in local mode via runtime_mode() honoring DOCKER_HOST, /readyz runtime_mode+network_isolation, UI LOCAL badge, smoke skips w/ note, e2e reuses green stack + local-aware edge test, README No-Docker + safety-model §12; verified live incl. DOCKER_HOST=broken acceptance cycle.
