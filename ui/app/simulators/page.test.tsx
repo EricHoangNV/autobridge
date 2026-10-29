@@ -61,6 +61,13 @@ describe("SimulatorsPage", () => {
       "href",
       "http://localhost:8118/developers",
     );
+    // The label is the URL itself, never the URL with /developers doubled.
+    expect(screen.getByTestId("simulators-docs-sim-atlas")).toHaveTextContent(
+      "localhost:8105/developers",
+    );
+    expect(screen.getByTestId("simulators-docs-sim-fias-pabx")).toHaveTextContent(
+      "localhost:8118/developers",
+    );
     expect(screen.getByTestId("simulators-port-sim-fias-pabx")).toHaveTextContent("8118");
   });
 

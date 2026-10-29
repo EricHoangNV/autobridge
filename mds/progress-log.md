@@ -2959,3 +2959,6 @@ Full `make test` green: 2898 pass (2397/122/379), gates 90.42/94.49/91.72%,
 lint + typecheck green. No e2e (no serving surface yet). Next: sub-step B
 (beacon client + serving + make targets + docs), or owner picks REQ-023.
 Merged to main.
+
+## 2026-10-29 — REQ-022 final owner check DONE (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Fixed both items from the owner check on 6a294fd8: (1) `test_s2_edge_target.py` polls `/edge/agents` until `grand-plaza-pabx` shows `link_up` (`_wait_cloud_link_up`, 25 s ≈ 2 heartbeats) at test start and at the final assert, instead of a single read that raced the 10 s agent heartbeat; (2) simulators index docs label no longer appends `/developers` to a URL that already ends in it, label asserted in `page.test.tsx`. Also fixed the suite-red W5.7 guard: `bench/ablation.py` (REQ-024) reads checked-in reference specs for arm starting specs — added a confining carve-out (mentioning lines must contain `reference/`; imports/hidden-fixtures still forbidden), same pattern as the existing `hidden_cases` bench exception; verified pre-existing on clean main via stash. Learning #31. Verified on keyed local stack: owner repro 14 passed, full e2e 158 passed/2 skipped, make test (2397+122+379+158) + lint + typecheck + ui-typecheck green. Stack taken down after. REQ-022 moved to Resolved.

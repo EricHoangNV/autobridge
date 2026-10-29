@@ -43,7 +43,7 @@ function SimulatorRow({ sim }: { sim: SimulatorInfo }) {
               rel="noreferrer"
               className="hover:text-ink hover:underline"
             >
-              {sim.developers_url.replace(/^https?:\/\//, "")}/developers
+              {sim.developers_url.replace(/^https?:\/\//, "")}
             </a>{" "}
             <span title={sim.docs_source}>(source: {sim.docs_source})</span>
           </dd>

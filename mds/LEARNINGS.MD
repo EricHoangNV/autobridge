@@ -293,3 +293,11 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The ablation case library first hardcoded scenario ids, spec ids and docs paths in `src/autobridge/bench/ablation.py`; the guard failed on the vendor names — the same failure mode as the LegacyStay reset-registry incident (solved via `config/demo_targets.yaml`).
 - The fix: `config/ablation_cases.yaml` holds every vendor-specific string (spec ids, docs paths, field names, scenario ids); engine code only implements generic loaders/builders dispatched by `kind` fields, with all runtime values read from the file. `Dockerfile.engine` already ships `config/`, so nothing else changed.
 - **Rule:** Any new bench/demo mapping that names a vendor goes in `config/` data with generic engine dispatch — never as literals in `src/autobridge`, not even as dict keys or function names (the guard strips `#` comments but not docstrings).
+
+## 31. A cloud view fed by heartbeats must be polled, never read once — and a guard carve-out must confine, not exempt
+
+**Context:** REQ-022 final owner check (2026-10-29): `test_s2_edge_target` read `/edge/agents` once and saw no `link_up` right after the fault file's teardown had waited for the PABX link; plus a W5.7 guard failure on `src/autobridge/bench/ablation.py`.
+
+- The agent reports link state via heartbeat every 10 s, so the cloud's view lags the real link by up to one interval. A teardown that waits for the device-side link plus a test that reads the cloud view once still races the next heartbeat. Fix: poll the cloud view with a timeout bounded by ~2 heartbeat intervals, at the start (inherit-settled) and at the assert.
+- The W5.7 `generated/connectors` guard flagged the ablation harness reading checked-in reference specs. The reference specs are public build artifacts, not hidden fixtures — but the fix was not to exempt bench/; the carve-out asserts every mentioning line also mentions `reference/`, keeping the bootstrap-honesty property while allowing the harness path (same pattern as the existing `hidden_cases` bench carve-out).
+- **Rule:** Any assertion on heartbeat-fed state polls with a timeout of ~2 intervals; any new bench filesystem read gets a confining carve-out (path + structural assertions), never a blanket exemption.

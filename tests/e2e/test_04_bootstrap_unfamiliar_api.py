@@ -257,6 +257,19 @@ def test_workspace_has_no_path_to_verifier_or_simulators() -> None:
                 assert text.count("generated/connectors") <= 6, f"{pyfile} mentions generated/connectors too often"
                 assert 'open("generated' not in text and "open('generated" not in text, f"{pyfile} opens generated/connectors file"
                 assert 'Path("generated' not in text and "Path('generated" not in text, f"{pyfile} Path(generated) read"
+            elif pyfile.parent.name == "bench" and pyfile.parent.parent.name == "autobridge":
+                # Bench-harness exception (REQ-024 ablation arms start from the
+                # checked-in reference specs plus a case-file delta; mirrors the
+                # hidden_cases carve-out below and DIRECTIVES §2): reference
+                # specs are public build artifacts, never hidden fixtures.
+                # Reads stay confined to <connector>/reference/spec.yaml;
+                # verifier/simulators imports stay forbidden via the top-40
+                # check above, hidden fixtures via the heldout loop below.
+                for line in text.splitlines():
+                    if "generated/connectors" in line:
+                        assert "reference" in line, (
+                            f"{pyfile} reads generated/connectors outside reference/: {line.strip()}"
+                        )
             else:
                 # Other engine files must not mention it at all
                 raise AssertionError(f"{pyfile} mentions generated/connectors — forbidden outside bootstrap guard")

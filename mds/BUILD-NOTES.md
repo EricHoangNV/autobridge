@@ -1780,3 +1780,18 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
   eval-freeze`/`bench-beacon`/`verify-beacon`/`beacon-eval`, docs
   "Beacon evaluation", then rehearsals (owner/CI, needs network). Held-out
   files + SHA256SUMS untouched.
+
+### REQ-022 final owner check (2026-10-29, sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+Claim: REQ-022 owner check on 6a294fd8 — (1) e2e heartbeat wait, (2) simulators docs label. Plus one pre-existing suite-red fix required by the merge gate.
+Files:
+- tests/e2e/test_s2_edge_target.py: new `_wait_cloud_link_up(timeout=25)` polling `/edge/agents` until `grand-plaza-pabx` shows `link_up` (cloud learns state only via 10 s heartbeat; bounded ~2 intervals + margin). Called at the start of `test_agent_live_command_and_postings` (inherit-settled after the fault file) and replacing the final single-shot assertion. Fault-file teardowns already waited via `_wait_agent_link_live` (kept).
+- ui/app/simulators/page.tsx:46: docs label was `developers_url` minus scheme plus a hardcoded `/developers` → every row read `host:port/developers/developers`. Label is now the URL minus scheme.
+- ui/app/simulators/page.test.tsx: asserts both docs labels equal `localhost:<port>/developers` (href unchanged).
+- tests/e2e/test_04_bootstrap_unfamiliar_api.py: W5.7 `generated/connectors` guard now carves out `src/autobridge/bench/` the way it already carves out `hidden_cases`: any mentioning line must also mention `reference/` (confines reads to `<connector>/reference/spec.yaml`; public build artifacts, never hidden fixtures; import/hidden-case checks untouched). Needed because REQ-024 sub-step B's `bench/ablation.py` reads reference specs for arm starting specs and the suite was red on clean main (verified via stash: single-test repro fails without my changes).
+Verification (keyed local stack, `.env` with all 4 secrets, `make local-up` all readyz green):
+- Owner repro `test_fias_faults.py + test_s2::test_agent_live_command_and_postings`: 14 passed.
+- Full `make e2e`: 158 passed, 2 skipped (pre-existing local-mode skips), 0 failed.
+- `make test`: autobridge 2397, verifier 122, simulators 379 passed; UI 158 passed (gates ≥90% hold, exit 0).
+- `make lint` (incl. import-linter), `make typecheck`, `make ui-typecheck green.
+Decisions/gotchas: first ran pytest without `load_dotenv.sh` → admin-reset fixture failed on all sims (token missing); always run e2e via `make e2e` env. Ruff B011: no `assert False` — raise AssertionError. No directives violations (§5/§7 apply; trust boundary kept: no new imports, no hidden-fixture access).

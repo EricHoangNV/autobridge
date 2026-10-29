@@ -295,6 +295,31 @@ def _stack_reachable(url: str) -> bool:
         return False
 
 
+def _wait_cloud_link_up(timeout: float = 25.0) -> None:
+    """Poll /edge/agents until the cloud sees the agent link up.
+
+    The cloud learns the link state only from the agent's heartbeat
+    (HEARTBEAT_INTERVAL_S = 10), so a single read right after a previous
+    file's teardown can still show a redial in progress. Bounded by ~2
+    heartbeat intervals plus margin (REQ-022 owner check 2026-10-29).
+    """
+    from tests.e2e.conftest import control_headers  # noqa: PLC0415
+
+    deadline = time.monotonic() + timeout
+    last: list[dict[str, Any]] = []
+    while time.monotonic() < deadline:
+        try:
+            last = httpx.get("http://localhost:8101/edge/agents",
+                             headers=control_headers(), timeout=15.0).json()["agents"]
+        except (httpx.HTTPError, KeyError, ValueError):
+            last = []
+        if any(a.get("agent_id") == "grand-plaza-pabx" and a.get("link_up") in (1, True)
+               for a in last):
+            return
+        time.sleep(2.0)
+    raise AssertionError(f"cloud never reported grand-plaza-pabx link_up: {last}")
+
+
 def test_agent_live_command_and_postings(e2e_stack: str) -> None:
     """Live agent: enqueue WR via control, see the result + postings drain."""
     assert e2e_stack
@@ -305,6 +330,9 @@ def test_agent_live_command_and_postings(e2e_stack: str) -> None:
 
     if not _stack_reachable("http://localhost:8120/healthz"):
         pytest.skip("edge-relay not reachable live")
+    # The previous file may have left the link in redial; the cloud learns
+    # it is back only via the next heartbeat, so wait instead of reading once.
+    _wait_cloud_link_up()
     da, ti = _future_wire()
     try:
         r = httpx.post("http://localhost:8101/edge/commands",
@@ -333,9 +361,9 @@ def test_agent_live_command_and_postings(e2e_stack: str) -> None:
                          headers=control_headers(), timeout=15.0).json()["postings"]
     assert len(postings) >= 1
     assert postings[0]["record_type"] == "PS"
-    agents = httpx.get("http://localhost:8101/edge/agents",
-                       headers=control_headers(), timeout=15.0).json()["agents"]
-    assert any(a["agent_id"] == "grand-plaza-pabx" and a["link_up"] in (1, True) for a in agents)
+    # Read via the heartbeat view, which can lag a redial by one interval:
+    # poll instead of asserting on a single sample.
+    _wait_cloud_link_up()
     # No inbound execution port, live either.
     gone = httpx.post("http://localhost:8114/execute", json={"spec": {}, "operation": "x"},
                       timeout=15.0)
