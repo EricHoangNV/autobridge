@@ -6,7 +6,7 @@ Owner priority (2026-10-29 17:00): **REQ-029 next**, before any other open item,
 this run can close Code Review Cycle 2.
 
 ### REQ-029 — Close the last review gaps before the audit: worker release gate, docs_path builds (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 09:57)
+Status: IN_PROGRESS (sbx1 2026-10-29 — CODE DONE: worker gate via control proxy + require-flag, docs_path 422, tests + demo 8/8 green; remaining: Muse Wonder audit validate run)
 Context: owner re-checked every Code Review Cycle 2 finding against main (2026-10-29): AR-1-1, AR-1-3, AR-1-4,
 AR-1-5 and AR-2-1…AR-2-6 are fixed in code. Two gaps remain; fix both so the audit (validate run with Muse Wonder,
 queued after this run) has nothing to re-open. The verdict line in FEEDBACKS is the auditor's to change, not yours.

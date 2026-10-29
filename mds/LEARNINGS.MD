@@ -408,3 +408,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Same incident class as #42: the bench derive path lacked the build-probe annotation the live path relies on, so unmapped wire keys flooded `added` and renames classified as REMOVED/TYPE_CHANGE. Scoping the detection copy to baseline-observed wire keys (derived from responses only) fixed classification with no change to the repair inputs.
 
 **Rule:** A cache key must include every dimension the hit decision depends on (vendor, drift class, observed delta); when the observation is empty there is nothing to match, so skip — never store, never look up. And any evidence annotation the live path depends on must be reproducible on the bench path from observation, or the two paths classify the same fault differently.
+
+---
+
+## 45. Fail-closed env flags need a conftest scrub or they leak into unit tests
+
+**Context:** REQ-029 (2026-10-29): `create_release` gained a `CONTROL_URL` proxy fallback and an `AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1` fail-closed branch, both read from ambient env. Unit tests assume gate-skip when no URL is passed — a developer shell with `CONTROL_URL` exported would silently route every gate at a phantom proxy.
+
+- Fixed by deleting `VERIFIER_URL` / `CONTROL_URL` / `AUTOBRIDGE_REQUIRE_VERIFIER_GATE` / `AUTOBRIDGE_CONTROL_TOKEN` in the existing autouse hermeticity fixture (`tests/unit/conftest.py`); tests that need them set them explicitly via `monkeypatch` (fixture setup runs first, so explicit sets win).
+- Same file already scrubs DNS; env is the same class of impurity. The dotenv-loader blank-handling test (`test_demo_env_default_treats_blank_as_unset`) already assumed a clean shell and now gets it guaranteed.
+
+**Rule:** Any production behavior keyed off ambient env gets a matching `delenv` in the unit conftest; tests opt in explicitly. Never let the developer's shell change what a unit test asserts.

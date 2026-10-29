@@ -3287,3 +3287,28 @@ Gotchas: restarting the stack mid-task is required after engine/sim/catalog edit
 - R4's false-Complete is the first wrong>0 in 5 rehearsals and the inverse of the REQ-028 item-2 shape (there warm<cold via L0 replay; here cold==warm but both worse than no_knowledge on 2 instances). Do NOT tune mid-rehearsal; flagged as a candidate REQ-028 follow-up after the owner keyed rerun (built-in knowledge turning a silent rename/truncation into Complete instead of Blocked/degraded).
 - Remaining for REQ-025: live frontier numbers (needs `FRONTIER_API_KEY`), the real frozen run (owner, `make beacon-eval`). Rehearsal quota (5+) met.
 - Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+## REQ-029 — Close the last review gaps before the audit
+**Date:** 2026-10-29
+**Ref:** REQUESTS.MD REQ-029 (Code Review Cycle 2 residual: AR-1-2 worker gate, docs_path placeholder builds)
+
+**What was done:**
+- Worker release gate fail-closed: new control `POST /internal/verify` proxy; engine verifies through it when no direct `VERIFIER_URL` (Compose worker); `AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1` on control+worker (compose + local-up) blocks persistence with no reachable verifier; passed gates mint `verification_report_id` stored on the release.
+- docs_path-only builds are 422 (`docs_path is an identifier only; send docs_text (or docs_url)`); CLI fails fast instead of sending a placeholder; reference-spec guard kept first.
+- 16 new tests (proxy endpoint 5, proxy client/gate 8 incl. fail-closed branches, worker build handler 3); 5 existing tests updated to the new contract; unit conftest scrubs gate env vars.
+- Docs: `docs/safety-model.md` §7/§7.1; compose worker comment rewritten; OpenAPI + UI client regenerated.
+
+**Key decisions:**
+- Proxy-through-control over deferring jobs as `awaiting_verification`: no new job lifecycle, one new endpoint, worker needs only `CONTROL_URL` + existing control token; repair path inherits via `_maybe_verify`.
+- Library default (no env) still skips the gate so the 1000+ existing unit-test persists keep working; deployed stacks opt into fail-closed explicitly — plus conftest scrub so no dev shell changes unit behavior (learning #45).
+- Report id is minted engine-side per passed gate (verifier returns no id); release carries it so the REQ's "carries the verification report id" test is a real assertion.
+
+**Files changed:**
+- `src/autobridge/control/routes/internal.py` (new), `src/autobridge/control/app.py`, `src/autobridge/control/routes/builds.py`, `src/autobridge/control/schemas.py`, `src/autobridge/engine/verification.py`, `src/autobridge/engine/releases.py`, `src/autobridge/engine/build_run.py`, `src/autobridge/cli.py`
+- `compose.yaml`, `scripts/local-up.sh`, `docs/safety-model.md`, `ui/openapi.json`, `ui/lib/api/schema.d.ts`
+- `tests/unit/conftest.py`, `tests/unit/test_autobridge_internal_verify.py` (new), `tests/unit/test_autobridge_verification_gate.py`, `tests/unit/test_autobridge_engine_build_run.py`, `tests/unit/test_autobridge_build_docs_guard.py`, `tests/unit/test_autobridge_control_api_extended.py`, `tests/unit/test_autobridge_cli.py`
+- `mds/LEARNINGS.MD` (#45)
+
+**Notes for next iteration:**
+- Remaining: the Muse Wonder audit validate run (queued after this run); FEEDBACKS verdict line is the auditor's, not this run's.
+- `make up` (Compose) run left to owner/CI — only `docker compose config` validated here; local stack verified (`make demo` 8/8, e2e subsets green). L3-live demo numbers still need `FRONTIER_API_KEY` (owner step, unchanged).
