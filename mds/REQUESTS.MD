@@ -109,7 +109,7 @@ the funnel, 1 model call, the rejected proposal and the question), the approve p
 after-approve progress, the PABX panel.
 
 ### REQ-033 — UI-first demo, part D: README "How to run the demo", docs, UI e2e journeys (2026-10-29)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-29 16:35)
 Depends on REQ-031 and REQ-032.
 1. **README.md "How to run the demo"**, short enough to follow while recording: start (`make local-up` or `make up`);
    `make demo-reset && make demo-seed`, open `http://localhost:8107`, wait until every connector shows ● Working; then
