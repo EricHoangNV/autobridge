@@ -8,17 +8,24 @@
 #   admin-net    control <-> simulator admin API (8001, W2.2) ONLY
 #   edge-net     edge-worker <-> edge-relay (cloud command queue) +
 #                edge-worker <-> sim-fias-pabx (REQ-022; FIAS TCP dial-out
-#                to the host, public docs on 8000, admin on 8001
-#                loopback-only). The agent is outbound-only: it polls the
-#                relay and dials nothing else; the PABX dials the agent.
+#                to the host, public docs on 8000) + the
+#                sim-fias-pabx-admin sidecar (REQ-034: a dumb :8001 pipe so
+#                control reaches sim-fias-pabx:8001 for /demo/reset +
+#                inject-fault; the :8000 data plane stays edge-net only and
+#                unreachable from control). The agent is outbound-only: it
+#                polls the relay and dials nothing else; the PABX dials the
+#                agent.
 #
 # Negative checks enforced by attachment (asserted in `make smoke`):
 #   runtime-sandbox has no route to verifier-net / admin-net
 #   (sandbox -/-> verifier fixtures, sandbox -/-> simulator admin)
 #   ui is on engine-net only (ui -/-> simulators, ui -/-> verifier)
 #   worker is on engine-net only (no verifier / simulator-admin route)
-#   control has no route to edge-net (control -/-> sim-fias-pabx, REQ-022;
-#   control reaches the agent only via the edge-relay queue on engine-net)
+#   control has no route to edge-net (control -/-> sim-fias-pabx:8000,
+#   REQ-022; control reaches the agent only via the edge-relay queue on
+#   engine-net; control reaches the FIAS *admin* :8001 through the
+#   sim-fias-pabx-admin sidecar on admin-net — `make smoke` asserts
+#   exactly that split: :8001 up, :8000 down)
 #   edge-worker has no route to vendor-net / verifier-net / admin-net
 #   (edge -/-> cloud sims, edge -/-> verifier, edge -/-> simulator admin)
 #   edge-relay initiates no connections at all (dumb authenticated pipe)
@@ -276,6 +283,9 @@ services:
   # dials OUT to the integration host (FIAS_HOST:FIAS_PORT); nothing dials
   # in. Public HTTP (docs page) is loopback-published like the other sims;
   # the admin API stays literal loopback (AR-1-4 residual).
+  # REQ-034: control reaches the FIAS admin API through the
+  # sim-fias-pabx-admin sidecar below (same :8001, admin-net alias), never
+  # directly — this container keeps no admin-net route at all.
   sim-fias-pabx:
     build:
       context: ./simulators
@@ -288,13 +298,58 @@ services:
       FIAS_HOST: edge-worker
       FIAS_PORT: 5010
     networks:
-      - edge-net
+      edge-net:
+        # Plain service-name alias resolves on edge-net as always; the
+        # -edge name gives the sidecar an unambiguous edge-net-only
+        # target (its own admin-net alias must never resolve to itself).
+        aliases:
+          - sim-fias-pabx-edge
     ports:
       - "${AUTOBRIDGE_BIND_HOST:-127.0.0.1}:8118:8000"
       # AR-1-4 residual: simulator admin APIs never follow
       # AUTOBRIDGE_BIND_HOST — loopback-only even on a LAN-exposed stack.
       - "127.0.0.1:8119:8001"
     healthcheck: *healthcheck-py
+
+  # REQ-034: admin-port forwarder for the FIAS PABX. The FIAS container
+  # cannot join admin-net itself (Docker publishes a dual-homed
+  # container's host ports through one endpoint, which would orphan the
+  # :8118 docs page or expose the :8000 data plane to control), so this
+  # dumb TCP pipe (:8001 -> sim-fias-pabx-edge:8001 over edge-net) carries
+  # the sim-fias-pabx DNS alias on admin-net ONLY. Control's
+  # POST /demo/reset + /demo/inject-fault proxy therefore reaches
+  # sim-fias-pabx:8001 via admin-net while the data plane (:8000, edge-net)
+  # stays unreachable from control. No host ports: the host keeps using
+  # :8119 straight to the FIAS container. The pipe inspects no bytes;
+  # X-Admin-Network / X-Admin-Token are enforced by the FIAS admin app.
+  # The target name MUST be edge-net-only: pointing it at the shared
+  # alias would make the pipe dial itself (forwarding fork-bomb).
+  sim-fias-pabx-admin:
+    build:
+      context: ./simulators
+      dockerfile: Dockerfile
+    command: ["python", "-m", "simulators.admin_fwd"]
+    environment:
+      FORWARD_LISTEN_PORT: 8001
+      FORWARD_TARGET_HOST: sim-fias-pabx-edge
+      FORWARD_TARGET_PORT: 8001
+    networks:
+      admin-net:
+        aliases:
+          - sim-fias-pabx
+      edge-net: {}
+    healthcheck:
+      # Liveness of the pipe itself; end-to-end (control -> FIAS admin) is
+      # asserted live by `make smoke` with admin headers.
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import socket; s = socket.create_connection(('127.0.0.1', 8001), timeout=3); s.close()\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   # P2.S4.1 MCP Guardian: mock HotelTools V1/V2 + compatibility gateway
   # (engine trust zone, engine-net only; no verifier/simulator route).

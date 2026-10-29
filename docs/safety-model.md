@@ -331,7 +331,11 @@ vendor-net   runtime-sandbox ↔ sim-atlas/sim-harbor :8000
 verifier-net control ↔ verifier, bench ↔ verifier
 admin-net    control ↔ sim admin :8001 (+ host 8109/8110 for e2e)
 edge-net     edge-worker (on-premise agent) ↔ edge-relay :8000 +
-             edge-worker ↔ sim-fias-pabx (FIAS TCP dial-out to the host :5010)
+             edge-worker ↔ sim-fias-pabx (FIAS TCP dial-out to the host :5010;
+             REQ-034: control reaches the FIAS admin :8001 through the
+             sim-fias-pabx-admin sidecar, a dumb :8001 pipe with the
+             sim-fias-pabx DNS alias on admin-net only; the :8000 data
+             plane stays edge-net only and unreachable from control)
 ```
 
 No `internal: true` — host ports are required for `make smoke`/`make e2e`.

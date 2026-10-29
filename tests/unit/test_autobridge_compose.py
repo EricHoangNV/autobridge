@@ -28,6 +28,7 @@ EXPECTED_SERVICES = {
     "sim-legacystay",
     "sim-meridian",
     "sim-fias-pabx",
+    "sim-fias-pabx-admin",
     "edge-worker",
     "edge-relay",
     "mcp-hotel",
@@ -48,6 +49,7 @@ EXPECTED_ATTACHMENT = {
     "sim-legacystay": {"vendor-net", "admin-net"},
     "sim-meridian": {"vendor-net", "admin-net"},
     "sim-fias-pabx": {"edge-net"},
+    "sim-fias-pabx-admin": {"edge-net", "admin-net"},
     "edge-worker": {"edge-net"},
     "edge-relay": {"edge-net", "engine-net"},
     "mcp-hotel": {"engine-net"},
@@ -149,7 +151,11 @@ def test_worker_is_engine_net_only(compose: dict) -> None:
 def test_edge_network_isolated(compose: dict) -> None:
     """REQ-022 B: the agent + PABX live only on edge-net; the relay bridges
     edge-net/engine-net as a dumb queue; control never touches edge-net."""
+    # REQ-034: the FIAS *data plane* stays edge-only; control reaches its
+    # admin API (:8001) through the sim-fias-pabx-admin sidecar, a dumb
+    # TCP pipe that carries the sim-fias-pabx DNS alias on admin-net only.
     assert set(compose["services"]["sim-fias-pabx"]["networks"]) == {"edge-net"}
+    assert set(compose["services"]["sim-fias-pabx-admin"]["networks"]) == {"edge-net", "admin-net"}
     assert set(compose["services"]["edge-worker"]["networks"]) == {"edge-net"}
     assert set(compose["services"]["edge-relay"]["networks"]) == {"edge-net", "engine-net"}
     for svc in ("control", "worker", "runtime-sandbox", "verifier", "ui", "bench", "mcp-hotel"):
@@ -159,6 +165,35 @@ def test_edge_network_isolated(compose: dict) -> None:
     for svc in ("sim-fias-pabx",):
         assert "vendor-net" not in set(compose["services"][svc]["networks"]), svc
         assert "admin-net" not in set(compose["services"][svc]["networks"]), svc
+
+
+def test_fias_admin_sidecar_is_a_dumb_pipe(compose: dict) -> None:
+    """REQ-034: the sidecar forwards :8001 without touching bytes.
+
+    Static preconditions: same simulator image, an override command running
+    the stdlib forwarder (no app code), target = the FIAS container over
+    edge-net, the sim-fias-pabx alias on admin-net ONLY (so edge-net DNS
+    still resolves the FIAS container itself), and no published host ports
+    (the host keeps using :8119 straight to FIAS).
+    """
+    svc = compose["services"]["sim-fias-pabx-admin"]
+    assert svc["build"] == compose["services"]["sim-fias-pabx"]["build"]
+    assert svc["command"] == ["python", "-m", "simulators.admin_fwd"]
+    env = svc.get("environment", {})
+    assert env.get("FORWARD_TARGET_HOST") == "sim-fias-pabx-edge"
+    assert str(env.get("FORWARD_TARGET_PORT")) == "8001"
+    assert str(env.get("FORWARD_LISTEN_PORT")) == "8001"
+    nets = svc["networks"]
+    assert set(nets) == {"admin-net", "edge-net"}
+    assert nets["admin-net"].get("aliases") == ["sim-fias-pabx"]
+    assert not (nets.get("edge-net") or {}).get("aliases"), (
+        "sidecar must not alias on edge-net: edge DNS must resolve FIAS itself"
+    )
+    assert "ports" not in svc, "sidecar publishes no host ports"
+    # The target name is edge-net-only: it must never resolve to the
+    # sidecar itself (self-dial fork-bomb), so FIAS carries it on edge-net.
+    fias_nets = compose["services"]["sim-fias-pabx"]["networks"]
+    assert "sim-fias-pabx-edge" in (fias_nets.get("edge-net") or {}).get("aliases", [])
 
 
 def test_host_ports_unique(compose: dict) -> None:

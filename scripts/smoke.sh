@@ -60,6 +60,21 @@ probe() {
   fi
 }
 
+# GET probe with extra headers (the admin API 403s bare probes, so the
+# plain probe() would report a reachable admin port as "down").
+# $1=service $2=url $3=python dict literal of headers $4=want ("up"/"down")
+probe_headers() {
+  local svc="$1" url="$2" headers="$3" want="$4"
+  local runner="python -c \"import urllib.request; req=urllib.request.Request('$url', headers=$headers); print(urllib.request.urlopen(req, timeout=5).status)\""
+  if docker compose exec -T "$svc" sh -c "$runner" >/dev/null 2>&1; then
+    [ "$want" = "up" ] || fail "$svc can reach $url (must be unreachable)"
+    echo "  ok $svc -> $url reachable (expected)"
+  else
+    [ "$want" = "down" ] || fail "$svc cannot reach $url (must be reachable)"
+    echo "  ok $svc -/-> $url unreachable (expected)"
+  fi
+}
+
 # POST probe: attempt an admin write from inside a service container.
 # $1=service $2=url $3=python dict literal of headers $4=want ("up"/"down")
 probe_post() {
@@ -109,8 +124,21 @@ probe edge-relay http://verifier:8000/healthz down
 probe edge-relay http://sim-atlas:8001/healthz down
 probe edge-relay http://sim-fias-pabx:8001/healthz down
 
-echo ">> smoke: simulator admin writes need authorization, not just the published header (AR-1-1)"
-# A vendor-net peer with no headers must always be rejected on admin writes.
+echo ">> smoke: FIAS admin reachable from control on admin-net only (REQ-034)"
+# The FIAS data plane (:8000, edge-net only) stays unreachable from control
+# — asserted "down" above. Its admin listener (:8001) MUST be reachable
+# from control through the sim-fias-pabx-admin sidecar (which carries the
+# sim-fias-pabx DNS alias on admin-net), or /demo/reset + /demo/inject-fault
+# cannot touch FIAS.
+# The admin API 403s bare probes, so send the admin headers (plus the
+# token when one is configured — forward-compatible with REQ-035).
+ADMIN_HDR="{'X-Admin-Network': 'admin-net'}"
+if [ -n "${SIM_ADMIN_TOKEN:-}" ]; then
+  ADMIN_HDR="{'X-Admin-Network': 'admin-net', 'X-Admin-Token': '${SIM_ADMIN_TOKEN}'}"
+fi
+probe_headers control http://sim-fias-pabx:8001/healthz "$ADMIN_HDR" up
+
+echo ">> smoke: simulator admin writes need authorization, not just the published header (AR-1-1)"# A vendor-net peer with no headers must always be rejected on admin writes.
 probe_post runtime-sandbox http://sim-atlas:8001/admin/reset "{}" down
 if [ -n "${SIM_ADMIN_TOKEN:-}" ]; then
   # With the token configured, the published X-Admin-Network header alone

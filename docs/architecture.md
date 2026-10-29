@@ -40,7 +40,7 @@ Design principles (plan §1):
 | `sim-harbor` | `simulators` | `simulators.harborpms.app:app` | simulator | 8106 | HarborPMS synthetic vendor (messy docs, quirks) + admin API |
 | `sim-legacystay` | `simulators` | `simulators.legacystay.app:app` | simulator | 8111 | LegacyStay synthetic vendor Phase 2 (offset, strict Bearer, throttle, nullable chaos) + admin API |
 | `sim-meridian` | `simulators` | `simulators.meridianpms.app:app` | simulator | 8116 | MeridianPMS synthetic vendor REQ-020 (Mews-style POST/JSON, body auth, Limitation cursor, UTC instants) + admin API |
-| `sim-fias-pabx` | `simulators` | `simulators.fias_pabx.app:app` | simulator | 8118 | FIAS PABX simulator REQ-022 sub-step A (on-premise exchange over TCP: dials the host, admin API; edge-net only) |
+| `sim-fias-pabx` | `simulators` | `simulators.fias_pabx.app:app` | simulator | 8118 | FIAS PABX simulator REQ-022 sub-step A (on-premise exchange over TCP: dials the host, admin API; edge-net only — control reaches its admin via the sim-fias-pabx-admin sidecar, REQ-034) |
 | `mcp-hotel` | `mcp_stretch` | `mcp_stretch.app:app` | engine | 8115 | MCP Guardian Phase 2 (mock HotelTools V1→V2 + compatibility gateway, pinned-consumer replay) |
 | `ui` | `ui` | Node stub → Next.js 15 (W7) | user | 8107 | Screens over the control plane (connectors, repairs, knowledge, simulators) |
 | `bench` | `bench` | `bench.app:app` | engine | 8108 | Matched-budget harness (AutoBridge vs baseline) |
@@ -77,7 +77,7 @@ on the compose networks is unchanged.
 engine-net   — control, worker, runtime-sandbox, ui, bench, mcp-hotel
 vendor-net   — runtime-sandbox ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian public API (8000)
 verifier-net — control ↔ verifier, bench ↔ verifier
-admin-net    — control ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian admin API (8001, W2.2)
+admin-net    — control ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian admin API (8001, W2.2), plus the sim-fias-pabx-admin sidecar (REQ-034: a dumb :8001 pipe to the FIAS admin, aliased sim-fias-pabx on admin-net only)
 edge-net     — edge-worker ↔ edge-relay (cloud command queue, :8000) + edge-worker ↔ sim-fias-pabx (REQ-022 B: the agent listens on TCP :5010, the PABX dials out to the host; public docs :8000, admin :8001 loopback-only). The agent is outbound-only: no inbound port from the cloud.
 ```
 
@@ -90,7 +90,7 @@ probes asserted in `scripts/smoke.sh` and statically in
 - `runtime-sandbox` has no route to `verifier-net` or `admin-net`
 - `ui` is on `engine-net` only
 - `worker` is on `engine-net` only
-- REQ-022 B: `edge-worker` (the on-premise agent) and `sim-fias-pabx` live on `edge-net` only; `edge-relay` bridges edge-net/engine-net as a dumb authenticated queue; `control`, `runtime-sandbox`, `ui` and the cloud sims have no route to edge-net
+- REQ-022 B: `edge-worker` (the on-premise agent) and `sim-fias-pabx` live on `edge-net` only; `edge-relay` bridges edge-net/engine-net as a dumb authenticated queue; `control`, `runtime-sandbox`, `ui` and the cloud sims have no route to edge-net (REQ-034: control reaches the FIAS admin `:8001` through the `sim-fias-pabx-admin` sidecar on `admin-net`; the `:8000` data plane stays edge-only so `control -/-> sim-fias-pabx:8000` still holds)
 
 Positive probes guard against a blanket outage masquerading as isolation:
 

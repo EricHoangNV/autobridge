@@ -171,7 +171,8 @@ Also note for REQ-036 item 5 (AR-4-3): `RepairController._handle_semantic_climb`
 count to `run_frontier_climb`, never a default `1`; the L3 gate assertion must test a counted number.
 
 ### REQ-034 — Directive: §2 fault injection — FIAS admin unreachable from control in Compose; /demo/reset and /demo/inject-fault fail for sim-fias-pabx (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 11:15)
+Status: DONE (sbx1 2026-10-29)
+Resolution: admin-forwarder sidecar `sim-fias-pabx-admin` (dumb TCP :8001 pipe, stdlib `simulators/admin_fwd.py` with self-dial guard) on admin-net + edge-net, carrying the `sim-fias-pabx` DNS alias on admin-net only; FIAS target `sim-fias-pabx-edge` (edge-only alias). FIAS stays edge-only, host ports and local mode untouched. Verified: 4 acceptance e2e green on `make up` AND `make local-up`, `POST /demo/reset` FIAS targets 200, `make smoke` (new control→:8001 up / :8000 down checks) green, `make demo` 8/8, full gates (lint/typecheck/test 90.30/91.49/90.48 + ui 160) green. Owner note: a same-container dual-home bind was tried first and reverted — Docker publishes a dual-homed container's host ports through one endpoint, orphaning :8118 or exposing :8000; the sidecar keeps every existing host path byte-identical.
 **Owner decision (2026-10-29): option (a).** Give the FIAS simulator's admin listener a route on admin-net only, so
 control reaches `sim-fias-pabx:8001` for reset and inject; the FIAS data plane (`:8000` and the PABX link) stays on
 edge-net and unreachable from control (keep `scripts/smoke.sh`'s control -/-> sim-fias-pabx:8000 check and add a check

@@ -3339,3 +3339,29 @@ Gotchas: restarting the stack mid-task is required after engine/sim/catalog edit
 **Notes for next iteration:**
 - Agent: opencode meta/muse-wonder-1.0 (escalation)
 - Owner decides REQ-034 before keyed Compose gates (REQ-027/029, P1.W10.3 CI confirmation) can go green; full make e2e remains the owner's run
+
+## REQ-034 — FIAS admin reachable from control in Compose
+**Date:** 2026-10-29
+**Ref:** REQUESTS REQ-034 (Code Review Cycle 4 AR-4-1); owner decision: option (a)
+
+**What was done:**
+- Added `sim-fias-pabx-admin` sidecar to `compose.yaml`: same simulators image running `python -m simulators.admin_fwd`, a dumb stdlib TCP pipe `:8001 -> sim-fias-pabx-edge:8001` over edge-net, on admin-net + edge-net with the `sim-fias-pabx` DNS alias on admin-net only. FIAS stays edge-only; host ports and local mode unchanged.
+- New `simulators/admin_fwd.py` with fail-closed self-dial guard; new `tests/unit/test_simulators_admin_fwd.py` (7 tests, loopback-only).
+- `scripts/smoke.sh`: `probe_headers` helper + positive control→FIAS-admin check (token-aware); kept all negative checks.
+- Updated compose static tests (`test_autobridge_compose.py`: sidecar attachment/alias/no-ports/dumb-pipe assertions) and docs (`safety-model.md` §9, `architecture.md`).
+- Reverted an abandoned first approach (dual-homed FIAS with interface-bound :8000) after proving Docker publishes dual-homed host ports through one endpoint.
+
+**Key decisions:**
+- Sidecar over same-container dual-homing: the container networking worked but host :8118 (used by e2e + wait_readyz) DNATs to the admin endpoint deterministically; the sidecar keeps every host path identical and needs no engine/demo changes (service DNS just resolves).
+- Target name `sim-fias-pabx-edge` (edge-only alias on FIAS) instead of the shared alias, plus a runtime self-dial guard: the first attempt self-dialed via the admin-net alias into a 37k-thread fork-bomb (see LEARNINGS #46).
+
+**Files changed:**
+- `compose.yaml` — sidecar service, FIAS edge alias, header comments
+- `simulators/admin_fwd.py` — new forwarder
+- `tests/unit/test_simulators_admin_fwd.py` — new tests
+- `tests/unit/test_autobridge_compose.py` — sidecar expectations
+- `scripts/smoke.sh` — `probe_headers` + REQ-034 positive check
+- `docs/safety-model.md`, `docs/architecture.md` — topology wording
+
+**Verification:**
+- 4 acceptance e2e green on `make up` and `make local-up`; `/demo/reset` FIAS targets 200; `make smoke` green; `make demo` 8/8 (Compose); lint + typecheck green; `make test` green (90.30/91.49/90.48 + ui 160).

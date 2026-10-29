@@ -419,3 +419,15 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Same file already scrubs DNS; env is the same class of impurity. The dotenv-loader blank-handling test (`test_demo_env_default_treats_blank_as_unset`) already assumed a clean shell and now gets it guaranteed.
 
 **Rule:** Any production behavior keyed off ambient env gets a matching `delenv` in the unit conftest; tests opt in explicitly. Never let the developer's shell change what a unit test asserts.
+
+---
+
+## 46. A forwarding sidecar must never resolve its target to itself
+
+**Context:** REQ-034 (Code Review Cycle 4, AR-4-1): a TCP-forwarding sidecar for the FIAS admin port initially pointed at a hostname that, on one of its own networks, resolved to the sidecar itself via a DNS alias.
+
+- Every accepted connection spawned a handler that connected back into the sidecar's own listener, which spawned another handler — an exponential fork-bomb (37k threads, then `can't start new thread` and container death within seconds).
+- The failure mode is total and fast: the container dies before any probe can diagnose it, and the logs show only a thread-exhaustion cascade plus upstream connection resets.
+- Fixed two ways: (1) the target name is edge-net-only while the alias lives on admin-net only, so the target can never resolve to self; (2) a `_self_dial_target` guard compares the route's source address against every address the target resolves to (same IP *and* same port) and refuses loudly instead of connecting.
+
+**Rule:** Any proxy/forwarder must prove its target is not itself before connecting — compare resolved target addresses against the local route source for the same port, and fail closed with a loud log when they overlap.
