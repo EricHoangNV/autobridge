@@ -2947,3 +2947,15 @@ REQ-024 stays IN_PROGRESS for sub-step B (ablation arms, opencode driver, prereg
 **Notes for next iteration:**
 - REQ-024 stays IN_PROGRESS: remaining are owner steps (live frontier numbers need `FRONTIER_API_KEY`; single Nov 3 held-out run). Owner re-runs `HELDOUT_DIR=~/autobridge-heldout python3 scripts/heldout_leak_audit.py` on the host — expected `OK, 0 hits`, exit 0
 - Then REQ-025 beacon; REQ-023 demo plan applied as each lands
+
+## 2026-10-29 00:40 UTC — REQ-025 sub-step A (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+Claimed REQ-025 (only codeable OPEN request not owner-blocked; REQ-021/024
+wait on owner key/capture/run). Shipped items 1–2: `simulators/common/
+faultgen.py` + `verifier/beacon.py` + 46 unit/property tests. Two real
+generator bugs found and fixed by the round-trip sweep (code_list keyed by
+record id destroyed the baseline; nesting unwrapped in the wrong order).
+Full `make test` green: 2898 pass (2397/122/379), gates 90.42/94.49/91.72%,
+lint + typecheck green. No e2e (no serving surface yet). Next: sub-step B
+(beacon client + serving + make targets + docs), or owner picks REQ-023.
+Merged to main.

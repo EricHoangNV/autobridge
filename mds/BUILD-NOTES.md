@@ -1737,3 +1737,46 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Owner ran the audi
 Fix (`scripts/heldout_leak_audit.py`): tokens are now only `(raw, bytes)` + `(nonce, bytes)` — manifest hashes are never searched; every manifest copy (working tree, worktrees, git history) is excluded by content via `_is_manifest_blob` and counted (`public_manifest_files` is now computed, was hardcoded 1); stdout + `--write` JSON carry per-kind counts (`hits_by_kind: {raw, nonce}`) so a FAIL says what leaked. Scorecard untouched (tolerant reader, extra keys ignored). `docs/benchmark.md` leak-audit paragraph rewritten to the new behavior.
 Tests (`tests/unit/test_autobridge_bench_leak_audit.py`, 20 pass): new `test_audit_manifest_quote_in_transcript_passes` (hashes quoted → OK, kinds zeroed), `test_audit_worktree_manifest_copy_excluded` (worktree SHA256SUMS copy → OK + excluded ≥ 1), `test_audit_hit_kinds_reported_per_kind` (nonce in transcript + raw bytes in project file → FAIL with exact kinds in result, stdout and JSON, secrets absent); history-hit test now asserts `git-blobs` kind `nonce: 1`. Gotcha found while writing the test: transcripts live inside the project tree, so a transcript leak counts in both sources (project `notes.md` raw + transcript nonce → project kinds `{raw: 1, nonce: 1}`) — correct, both see it.
 Gates: full `make test` green (autobridge 2397/90.41%, verifier 109/93.78%, simulators 346/90.46%, ui 158), lint (incl. import-linter) + typecheck green. No e2e file covers this owner-run stdlib script (grep: no `leak_audit` in tests/e2e); hermetic unit tests (temp git repos, no network/DNS) are its coverage. Expected on owner host after pull: `OK, 0 hits`, exit 0.
+
+### REQ-025 sub-step A — beacon fault generator + answer keys + reference solver (sbx1 2026-10-29)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD REQ-025 items 1–2.
+- New: `simulators/common/faultgen.py` (~1050 lines). Eval-seed derivation
+  (`sha256(randomness || "|autobridge-eval-v1")`), per-instance seeds
+  (`sha256(eval_seed || index_be8)`), 9 families (rename, nesting,
+  pagination, code_list, semantic, dates, transport_auth, fias_layout,
+  fias_link) across 5 vendors (round-robin, so n>=5 covers all vendors).
+  Families + parameter pools fixed in code; only parameters come from the
+  seed. `materialize()` shows the served shape (mutated dataset and/or
+  behaviour contract); `inverse_canonicalize()` byte-recovers the baseline
+  for every repair instance (the constructive solvability proof).
+- New: `verifier/beacon.py` (answer keys with counts/money-totals/shape-hash
+  only, never fixture rows; `reference_solve()` reaching the expected class
+  on every instance; `accepted_outcomes_for()` — plain semantic scaling also
+  accepts `degraded_question`, mirroring the gross_to_net precedent;
+  `grade_arm_outcome()` pure predicate, unknown outcomes fail closed).
+- Design decisions worth keeping: (1) code_list mutation is keyed by the
+  ORIGINAL status (per-status assignment) — an early version keyed the new
+  code by record id and destroyed the baseline (caught by the round-trip
+  sweep, fixed); (2) gross_net serves exact Decimal (up to 4dp, no
+  quantize) so inversion is exact — money stays Decimal end to end, never
+  float; 2dp holds on repaired canonical output; (3) `unknown_code` records
+  surface only on a deterministic record slice, so the escalation trigger is
+  really present; (4) verifier imports `simulators.common.faultgen` via
+  `import ... as` form (the `from X import Y` form trips the
+  trust-boundary AST test, which matches `simulators.common.` with dot).
+- Tests: `tests/unit/test_simulators_faultgen.py` (33: determinism,
+  round-robin, pool bounds, announced==served for all families,
+  1000-instance (200 seeds x 5) byte-identical round-trip sweep, error
+  branches) + `tests/unit/test_verifier_beacon.py` (13: 500-instance solver
+  sweep, aggregates-only keys, grading matrix, fail-closed helpers).
+  Module coverage standalone: faultgen 95%+, beacon 100%.
+- Gates: `make lint` (ruff + import-linter) green, `make typecheck` green,
+  full `make test` green (autobridge 2397/90.42%, verifier 122/94.49%,
+  simulators 379/91.72%, ui 158). No e2e file: nothing serves/climbs yet;
+  the beacon run (owner one-shot `make bench-beacon`) is sub-step B.
+- Remaining for REQ-025 (sub-step B): beacon client (drand fetch + pinned
+  pure-Python BLS12-381 verify over `pedersen-bls-chained`, fail closed),
+  simulator serving of beacon instances (admin/behaviour hook), `make
+  eval-freeze`/`bench-beacon`/`verify-beacon`/`beacon-eval`, docs
+  "Beacon evaluation", then rehearsals (owner/CI, needs network). Held-out
+  files + SHA256SUMS untouched.
