@@ -378,3 +378,24 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - `test_get_connector_detail` set `os.environ["HARBOR_API_KEY"]` directly and never deleted it. When random order ran it before the activation tests, their syncs passed auth and attempted real HTTP to `localhost:8106` (DNS trip → teardown error); otherwise the syncs Blocked pre-HTTP on the missing credential and everything was green. Same tests, same code — order decided the gate.
 - Diagnosis path: replay the failing `--randomly-seed`, instrument the guard to print a stack on trip (temporary conftest hack, reverted after), read the httpx→sync→build chain, then notice the passing runs never reach HTTP at all (pre-HTTP auth failure, still HTTP 200 so assertions pass).
 - **Rule:** `monkeypatch.setenv` (auto-reverted) for every test env var, no exceptions; direct `os.environ` writes are a gate flake waiting for a seed. When a teardown-only failure is order-dependent, suspect leaked process-global state (env, lru_cache, module attrs) before suspecting the failing test.
+---
+
+## 42. Detector evidence speaks wire names; specs speak canonical names — resolve, don't assume
+
+**Context:** REQ-027 sub-step 5 (2026-10-29): the live rename chain escalated while the in-process rename test passed.
+
+- The in-process test hand-built deltas with canonical field names (`guest_name`); the live detector derives `missing`/`added` from observed wire keys (`guestName`). The `rename_field` rule looked the wire key up among canonical field names, found nothing, and escalated — a name-space mismatch invisible to every hand-built test.
+- Root fix has two halves: (a) the rule resolves a reference through the spec's path top-keys to the single canonical field (ambiguous shared envelopes resolve to nothing); (b) the detector scopes coverage to wire keys the build actually saw, so phantom mappings and perennial unmapped keys never reach the rule.
+
+**Rule:** Any rule consuming detector-derived signals must accept wire-space references and resolve them to canonical spec names, with ambiguity failing closed; unit tests must cover the wire-space form, not only hand-built canonical evidence.
+
+---
+
+## 43. Redacted transcripts must never feed logic assertions in drivers
+
+**Context:** REQ-027 demo steps 3/7 (2026-10-29): redaction added after the last green 8/8 truncated depth > 3 to an ellipsis, so `provenance_repair_run_id` lookups and `refused_vocabularies` predicates silently compared against `"…"` and failed.
+
+- The transcript record (redacted, bounded) and the logic read (raw, complete) are different artifacts. Sharing one body between them breaks the first assertion that looks deeper than the truncation depth — always on reused state, never on a fresh DB, so it escapes first-run verification.
+- Fixed with a separate raw GET seam for logic reads (`_control_get_raw`); the transcript keeps the redacted record. Tests stub both seams.
+
+**Rule:** In any driver that both logs API traffic and asserts on it, assertions read unredacted bodies; redaction applies to the logged copy only.

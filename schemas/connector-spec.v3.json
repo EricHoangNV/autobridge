@@ -401,6 +401,22 @@
           },
           "title": "Joins",
           "type": "array"
+        },
+        "observed_wire_keys": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Wire keys observed at build probe (names only)",
+          "title": "Observed Wire Keys"
         }
       },
       "required": [

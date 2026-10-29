@@ -2013,3 +2013,28 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 ### REQ-027 gate flake: HARBOR_API_KEY leak (sbx1 2026-10-29)
 Intermittent `make test` teardown errors (DNS trips in activation tests) root-caused to a direct `os.environ["HARBOR_API_KEY"]` assignment in `test_get_connector_detail` with no cleanup: order-dependent, flipped syncs from pre-HTTP Blocked to real HTTP. Fixed with `monkeypatch.setenv`; failing seed 3092249606 verified green. Pre-existing, unrelated to this iteration's changes.
 Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+### REQ-027 sub-step 5 — per-scenario live e2e + rename repair on detector evidence (sbx1 2026-10-29)
+
+**Claim:** one live test per known-repair scenario (item 5) plus the engine work to make the chain hold them.
+
+**Found live (local stack, `make local-up`):**
+- Baseline sync of a docs-built Atlas connector opened a `SCHEMA_RENAME` drift + L4 escalation on a HEALTHY vendor: the docs build maps `currency -> $.currency`, which the wire never serves. Every baseline sync littered drift/repairs and polluted per-connector `/drift` assertions.
+- `rename_guest_id` live escalated (rung 4, 0 tokens) while in-process tests passed: detector evidence carries wire keys (`guestName`), the `rename_field` rule only matched canonical names (`guest_name`); plus the 1-missing/1-added heuristics drowned in the phantom `currency` + 5 perennial unmapped keys.
+- `cursor_repeat_token`, `status_vocab_change` (escalate, never guesses mapping), `token_expired` (Blocked, no response, no drift — correct per owner no-response rule), `rate_limit_429`/`transient_503` (retries absorb; Complete, quiet) all behaved per spec already.
+- Demo step 7 poll + step 3 candidate lookup were broken by `_redact_body` (depth > 3 → `"…"`): the poll predicate could never match `refused_vocabularies`, and `provenance_repair_run_id` lookups never matched. Broken since a62013dc (after the last green 8/8). Also step 3 used `releases[-1]` as the inject-again base, which is a prior run's candidate on a reused connector (explicit activation 422).
+
+**Changed:**
+- `src/autobridge/spec/models.py` + `schemas/connector-spec.v3.json`: `EntitySpec.observed_wire_keys` (optional, names only); stripped from the signature when empty so old releases keep byte-identical signatures.
+- `src/autobridge/engine/build_run.py`: `observe_wire_shape()` probes one first page per entity op through the draft spec's own source (fail-soft; non-HTTP skipped; short timeouts + overall budget); `execute_build(..., probe_wire_shape=False)` default off, threaded through `run_build_handler` inputs. Unit tests calling `execute_build` directly are unaffected and stay offline.
+- `src/autobridge/control/routes/builds.py`: opt-in via request body extras (`probe_wire_shape`, no schema change — `BuildRequest.extra == "allow"` + existing forwarding).
+- `bench/demo.py`: `_live_build_and_poll` sets the flag; `_control_get_raw` raw seam for logic reads (`_live_latest_repair/drift`, `_live_candidate_for_repair`, `_live_knowledge`); step 3 uses this run's build `release_id` as the inject-again base.
+- `src/autobridge/drift/signals.py`: annotation-aware `_observe_wire_schema` (coverage ∩ observed; novel = wire − covered − observed; legacy path unchanged when unannotated).
+- `src/autobridge/repair/rules/rename_field.py`: wire-key → canonical resolution (`_canonical_field_for`, ambiguous → None), used by delta/extra/wire paths, precondition and patch pointer.
+- `tests/e2e/test_027_live_chain.py`: 9 tests — page_to_cursor + blocked (kept), rename (full heal cycle), cursor_repeat (bounded Degraded documented), offset alias, status/token/transport specified behaviors.
+- `tests/unit`: rule wire-name tests (incl. ambiguous-envelope), detector annotation tests (baseline quiet, rename 1:1 end to end, legacy-noise pin), probe tests (mock transport, fail-soft×3), signature stability test; demo unit tests stub the raw seam.
+- `docs/connector-spec.md` §2.4: `observed_wire_keys` bullet.
+
+**Verified (local stack, unkeyed):** `tests/e2e/test_027_live_chain.py` 9/9; adjacent e2e (03/02/05/matrix/knowledge) 59/59; `make demo` 8/8 TWICE in a row; UI knowledge spec 2/2; `make test` green (autobridge 90.40% / verifier 91.49% / simulators 90.50%, UI 160); lint + typecheck green. Post-demo `/knowledge`: atlaspms v1, meridianpms v2 + v1-refused, PABX edge v3, page_to_cursor reused entry; L3 labelled skipped (no key) as designed.
+**Not covered here:** keyed-stack re-verification (FRONTIER_API_KEY live L3 numbers, Nov 3 held-out) — owner/CI steps; Meridian/FIAS rename live paths (same rule fix applies, not yet driven live).
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>

@@ -219,6 +219,17 @@ Keyed by canonical name (`Reservation`, `FolioCharge` in v1; PascalCase).
   The canary monitor `GET`s the operation with `max_pages=1`.
 * `health.fingerprint` — `keys | types | pagination_shape` toggles for the
   `fingerprint_id` hash (see `src/autobridge/engine/sync_run.py`).
+* `observed_wire_keys` (optional, per entity) — top-level wire keys the build
+  probe saw the vendor serve (names only, never values). A docs build maps
+  every known canonical field, including ones the wire never serves; without
+  this annotation every healthy sync opens a phantom `SCHEMA_RENAME` drift.
+  Detection scopes coverage to served mappings and ignores perennial
+  unmapped keys, so a real rename arrives as one missing + one added key
+  and the `rename_field` rule fires at L1 with 0 model calls. Recorded by
+  opt-in (`probe_wire_shape` on the build request; the demo and the REQ-027
+  live tests opt in, unit tests stay offline). Absent = legacy behavior.
+  Excluded from the release signature when empty, so old releases keep
+  byte-identical signatures.
 
 ## 3. Pagination
 

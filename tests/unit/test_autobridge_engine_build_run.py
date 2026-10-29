@@ -421,3 +421,120 @@ def test_run_build_handler_refusal_records_no_release(tmp_path: Path) -> None:
         assert s.query(ConnectorRelease).count() == 0
         assert any(t.get("stage") == "vocabulary_guard" for t in br.ladder_trace)
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# REQ-027: wire-shape probe (observed_wire_keys)
+# ---------------------------------------------------------------------------
+
+
+def _probe_draft_spec() -> dict:
+    """Minimal valid draft spec with one list operation and one entity."""
+    return {
+        "spec_version": 1,
+        "connector": {"id": "probe", "vendor": "probe"},
+        "source": {
+            "base_url": "http://probe.test",
+            "auth": {"type": "api_key_header", "credential_ref": "PROBE_API_KEY", "header_name": "x-api-key"},
+            "timezone_source": {"kind": "static", "value": "UTC"},
+        },
+        "operations": {
+            "list_things": {
+                "method": "GET",
+                "path": "/things",
+                "params": {},
+                "pagination": {
+                    "strategy": "page",
+                    "page_param": "page",
+                    "limit_param": "limit",
+                    "items_path": "$.data",
+                    "total_path": "$.total",
+                    "stop_when": ["empty_page"],
+                },
+            }
+        },
+        "entities": {
+            "Thing": {
+                "from": "list_things",
+                "key": "$.id",
+                "fields": {
+                    "thing_id": {"path": "$.id"},
+                    "name": {"path": "$.name"},
+                    "phantom": {"path": "$.never_served"},
+                },
+            }
+        },
+        "capabilities": {"read": ["Thing"]},
+        "health": {"canary": {"every": "60s", "operation": "list_things"}},
+    }
+
+
+def _probe_factory(records: list) -> object:  # type: ignore[no-untyped-def]
+    """httpx client factory serving *records* as a page envelope."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("x-api-key") == "probe-secret"
+        payload = {"success": True, "data": records, "count": len(records), "total": len(records)}
+        return httpx.Response(200, json=payload)
+
+    transport = httpx.MockTransport(handler)
+
+    def factory(**kw: object) -> httpx.Client:  # type: ignore[no-untyped-def]
+        return httpx.Client(transport=transport, timeout=kw.get("timeout", 5))  # type: ignore[arg-type]
+
+    return factory
+
+
+def test_observe_wire_shape_records_served_keys(monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """Probe records served top keys (mapped + unmapped), never values."""
+    import json
+
+    from autobridge.engine.build_run import observe_wire_shape
+
+    monkeypatch.setenv("PROBE_API_KEY", "probe-secret")
+    records = [
+        {"id": "T1", "name": "one", "extra_unmapped": "x"},
+        {"id": "T2", "name": "two", "extra_unmapped": "y"},
+    ]
+    shape = observe_wire_shape(
+        _probe_draft_spec(), client_factory=_probe_factory(records), overall_budget_s=10.0
+    )
+    assert shape == {"Thing": ["extra_unmapped", "id", "name"]}
+    assert "never_served" not in shape["Thing"]
+    # No values leak into the shape: only key names.
+    assert "probe-secret" not in json.dumps(shape)
+    assert "one" not in json.dumps(shape)
+
+
+def test_observe_wire_shape_fail_soft() -> None:
+    """Invalid spec, missing creds, or unreachable vendor all yield {}."""
+    from autobridge.engine.build_run import observe_wire_shape
+
+    assert observe_wire_shape({}) == {}
+    assert observe_wire_shape({"spec_version": 1}) == {}
+    # Missing credential: AuthError inside the probe, no network touched.
+    spec = _probe_draft_spec()
+    assert observe_wire_shape(spec, client_factory=_probe_factory([])) == {}
+    # Unreachable vendor with a tiny budget fails fast and empty.
+    import os
+
+    os.environ["PROBE_API_KEY"] = "probe-secret"
+    try:
+        unreachable = _probe_draft_spec()
+        unreachable["source"]["base_url"] = "http://127.0.0.1:9"
+        assert observe_wire_shape(unreachable, timeout_s=0.5, overall_budget_s=2.0) == {}
+    finally:
+        del os.environ["PROBE_API_KEY"]
+
+
+def test_observe_wire_shape_skips_non_http() -> None:
+    """EVENT/feed operations are never probed over HTTP."""
+    from autobridge.engine.build_run import observe_wire_shape
+
+    spec = _probe_draft_spec()
+    spec["operations"]["list_things"]["method"] = "EVENT"
+    spec["operations"]["list_things"]["feed"] = {"via": "relay", "record": "$.x"}
+    del spec["operations"]["list_things"]["path"]
+    # Invalid EVENT shape still fails soft (load fails or op skipped).
+    assert observe_wire_shape(spec) == {}

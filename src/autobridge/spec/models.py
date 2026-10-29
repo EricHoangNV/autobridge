@@ -453,6 +453,14 @@ class EntitySpec(_Strict):
     #: Declarative joins (spec v2): enrich base records from other
     #: operations by key before field mapping runs.
     joins: list[JoinSpec] = Field(default_factory=list)
+    #: Wire-shape observation (REQ-027): top-level wire keys served for this
+    #: entity's records at build-probe time. ``None`` (default) means the
+    #: build did not probe, and detection falls back to spec-path coverage
+    #: only. Key names only, never values — safe for releases and evidence.
+    observed_wire_keys: list[str] | None = Field(
+        default=None,
+        description="Wire keys observed at build probe (names only)",
+    )
 
     @field_validator("key")
     @classmethod
@@ -1162,6 +1170,11 @@ def signature_canonical_data(data: Mapping[str, Any]) -> dict[str, Any]:
                 continue
             if not entity.get("joins") and "joins" in entity:
                 del entity["joins"]
+            # Wire-shape observations are build-provenance metadata: two
+            # builds of the same mappings (one probed, one not) share a
+            # signature so learned knowledge applies to both.
+            if not entity.get("observed_wire_keys") and "observed_wire_keys" in entity:
+                del entity["observed_wire_keys"]
             fields = entity.get("fields")
             if isinstance(fields, dict):
                 for field in fields.values():

@@ -408,6 +408,11 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
     monkeypatch.setattr(demo_mod, "_control_call", fake_call)
+    # Logic reads use the raw seam (the transcript record stays redacted).
+    monkeypatch.setattr(
+        demo_mod, "_control_get_raw",
+        lambda base_url, path: fake_call(base_url, "GET", path).get("body"),
+    )
     # Hermetic: this stub stack speaks service DNS regardless of host markers.
     monkeypatch.setattr(demo_mod, "_stack_is_local", lambda: False)
     report = run_demo(seed=0, control_url="http://control:8101")
@@ -844,7 +849,15 @@ def test_poll_knowledge_profile_waits_for_convergence(monkeypatch: Any) -> None:
         body = bodies[min(len(seen) - 1, len(bodies) - 1)]
         return {"method": method, "path": path, "status": 200, "body": body}
 
+    raw_seen: list[str] = []
+
+    def fake_raw(base_url: str, path: str) -> Any:
+        _ = base_url
+        raw_seen.append(path)
+        return bodies[min(len(raw_seen) - 1, len(bodies) - 1)]
+
     monkeypatch.setattr(demo_mod, "_control_call", fake_call)
+    monkeypatch.setattr(demo_mod, "_control_get_raw", fake_raw)
     calls: list[dict[str, Any]] = []
     profile = demo_mod._poll_knowledge_profile(
         "http://127.0.0.1:9",
@@ -871,7 +884,12 @@ def test_poll_knowledge_profile_returns_last_on_timeout(monkeypatch: Any) -> Non
             "body": {"connectors": [{"name": "meridianpms", "vocabulary": "", "refused_vocabularies": []}]},
         }
 
+    def _timeout_raw(base_url: Any, path: str) -> Any:
+        _ = (base_url, path)
+        return {"connectors": [{"name": "meridianpms", "vocabulary": "", "refused_vocabularies": []}]}
+
     monkeypatch.setattr(demo_mod, "_control_call", _timeout_call)
+    monkeypatch.setattr(demo_mod, "_control_get_raw", _timeout_raw)
     calls: list[dict[str, Any]] = []
     profile = demo_mod._poll_knowledge_profile(
         "http://127.0.0.1:9", calls, "meridianpms",

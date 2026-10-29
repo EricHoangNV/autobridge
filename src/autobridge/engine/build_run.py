@@ -29,6 +29,78 @@ def _now_trace_entry(stage: str, **extra: Any) -> dict[str, Any]:
     return {"stage": stage, "ts": time.time(), **extra}
 
 
+def observe_wire_shape(
+    draft_spec: dict[str, Any],
+    *,
+    timeout_s: float = 8.0,
+    max_total_delay_s: float = 20.0,
+    overall_budget_s: float = 25.0,
+    max_records_per_entity: int = 50,
+    client_factory: Any | None = None,
+) -> dict[str, list[str]]:
+    """Probe the vendor for each entity's served wire keys.
+
+    Fetches one first page per entity operation through the draft spec's
+    own source (same auth/base_url the syncs will use) and returns
+    ``{entity: sorted served top-level wire keys}``. Key names only, never
+    values — safe for releases, evidence and logs.
+
+    Fail-soft: non-HTTP transports, missing credentials, unreachable
+    vendors, empty pages and slow probes all yield ``{}`` (or a partial
+    map), and detection falls back to spec-path coverage. Callers must
+    still validate the annotated spec before storing it.
+    ``client_factory`` is a test seam (httpx mock transport); production
+    callers leave it unset.
+    """
+    from autobridge.runtime.http import HttpClient  # noqa: PLC0415
+    from autobridge.runtime.interpreter import execute_spec_dict  # noqa: PLC0415
+    from autobridge.spec.models import load_spec_from_dict  # noqa: PLC0415
+
+    try:
+        spec = load_spec_from_dict(draft_spec)
+    except Exception:
+        return {}
+    if getattr(spec.source, "protocol", "http") != "http":
+        return {}
+    try:
+        client = HttpClient(
+            base_url=spec.source.base_url,
+            auth=spec.source.auth,
+            retry=spec.source.rate_limit.retry,
+            timeout_s=timeout_s,
+            max_total_delay_s=max_total_delay_s,
+            client_factory=client_factory,
+        )
+    except Exception:
+        return {}
+    shape: dict[str, list[str]] = {}
+    deadline = time.monotonic() + overall_budget_s
+    for entity_name, ent_spec in (spec.entities or {}).items():
+        if time.monotonic() > deadline:
+            break
+        op_name = getattr(ent_spec, "from_operation", None)
+        if not isinstance(op_name, str) or not op_name:
+            continue
+        op_spec = (spec.operations or {}).get(op_name)
+        if op_spec is None or getattr(op_spec, "feed", None) is not None:
+            continue
+        if getattr(op_spec, "method", "GET") == "EVENT" or not getattr(op_spec, "path", ""):
+            continue
+        try:
+            result = execute_spec_dict(
+                draft_spec, op_name, http_client=client, max_pages=1
+            )
+        except Exception:  # noqa: BLE001 — one bad op never blocks the rest
+            continue
+        keys: set[str] = set()
+        for rec in (result.records or [])[:max_records_per_entity]:
+            if isinstance(rec, dict):
+                keys.update(k for k in rec if isinstance(k, str))
+        if keys:
+            shape[entity_name] = sorted(keys)
+    return shape
+
+
 # ---------------------------------------------------------------------------
 # Core build execution (DB-agnostic except for release creation)
 # ---------------------------------------------------------------------------
@@ -49,6 +121,7 @@ def execute_build(
     verifier_url: str | None = None,
     scenario_id: str = "baseline",
     spec_vocabulary: str | None = None,
+    probe_wire_shape: bool = False,
 ) -> dict[str, Any]:
     """Run bootstrap pipeline and optional verifier check.
 
@@ -59,6 +132,11 @@ def execute_build(
     This function does NOT touch the DB — callers create releases.
     ``spec_vocabulary`` ``None`` resolves to the ``SPEC_VOCABULARY`` env
     default, else ``"v1"``.
+    ``probe_wire_shape`` fetches one first page per entity operation from
+    the live vendor and records the served wire keys on each entity
+    (``observed_wire_keys``), so later drift detection can tell a rename
+    from a build over-mapping. Fail-soft: any probe failure leaves the
+    draft spec unannotated. Off by default; the control build route opts in.
     """
     from autobridge.discovery.bootstrap import build_draft_spec
 
@@ -91,6 +169,41 @@ def execute_build(
 
     if not result.success or result.draft_spec is None:
         return out
+
+    # REQ-027: wire-shape probe. Records what the vendor actually serves
+    # (key names only) so drift detection later distinguishes a rename
+    # from mappings the wire never served. Fail-soft by design.
+    if probe_wire_shape and isinstance(result.draft_spec, dict):
+        try:
+            shape = observe_wire_shape(result.draft_spec)
+        except Exception as exc:  # noqa: BLE001 — probe never fails a build
+            shape = {}
+            out["trace"].append(_now_trace_entry("wire_shape", error=type(exc).__name__, skipped=True))
+        if shape:
+            annotated = 0
+            entities = result.draft_spec.get("entities")
+            if isinstance(entities, dict):
+                for ent_name, keys in shape.items():
+                    ent_spec = entities.get(ent_name)
+                    if isinstance(ent_spec, dict) and keys:
+                        ent_spec["observed_wire_keys"] = list(keys)
+                        annotated += 1
+            try:
+                from autobridge.spec.models import load_spec_from_dict  # noqa: PLC0415
+
+                load_spec_from_dict(result.draft_spec)
+            except Exception:  # noqa: BLE001 — annotation must never break a build
+                for ent_spec in (entities.values() if isinstance(entities, dict) else []):
+                    if isinstance(ent_spec, dict):
+                        ent_spec.pop("observed_wire_keys", None)
+                annotated = 0
+            out["trace"].append(
+                _now_trace_entry(
+                    "wire_shape",
+                    entities={name: len(keys) for name, keys in shape.items()},
+                    annotated=annotated,
+                )
+            )
 
     # Optional verifier HTTP check (when Docker stack is up)
     if verifier_url:
@@ -316,6 +429,8 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
     # Optional probe/budget wiring (for date ambiguity resolution tests)
     probe_executor = inputs.get("probe_executor")
     probe_budget = inputs.get("probe_budget")
+    # REQ-027: wire-shape probe records served keys at build time (fail-soft).
+    probe_wire_shape = bool(inputs.get("probe_wire_shape", False))
 
     build_out = execute_build(
         docs_text,
@@ -331,6 +446,7 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
         verifier_url=verifier_url,
         scenario_id=scenario_id,
         spec_vocabulary=spec_vocabulary,
+        probe_wire_shape=probe_wire_shape,
     )
 
     # Evidence

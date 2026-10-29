@@ -249,6 +249,86 @@ def test_rename_field_patch_empty_without_info() -> None:
     assert generate_patch(ctx) == []
 
 
+# rename_field with live wire-key evidence (REQ-027: detector-derived
+# inputs carry wire names like ``guestName``, not canonical ``guest_name``).
+
+
+def test_rename_field_precondition_true_via_wire_names() -> None:
+    """Wire-key delta (guestName -> guestIdentifier) resolves canonical field."""
+    from autobridge.repair.rules.rename_field import precondition
+
+    spec = _load_spec("atlaspms")
+    delta = _delta_with_types("Reservation", "guestName", "guestIdentifier")
+    ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
+    assert precondition(ctx) is True
+
+
+def test_rename_field_patch_shape_via_wire_names() -> None:
+    """Wire names still patch the canonical field path to the new wire key."""
+    from autobridge.repair.rules.rename_field import generate_patch
+
+    spec = _load_spec("atlaspms")
+    delta = _delta_with_types("Reservation", "guestName", "guestIdentifier")
+    ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
+    patch = generate_patch(ctx)
+    assert patch == [
+        {
+            "op": "replace",
+            "path": "/entities/Reservation/fields/guest_name/path",
+            "value": "$.guestIdentifier",
+        }
+    ]
+    result = apply_patch(spec, patch)
+    assert result["entities"]["Reservation"]["fields"]["guest_name"]["path"] == "$.guestIdentifier"
+
+
+def test_rename_field_precondition_true_via_wire_signal() -> None:
+    """keys_changed wire hint (missing/added wire keys) fires the rule."""
+    from autobridge.repair.rules.rename_field import precondition
+
+    spec = _load_spec("atlaspms")
+    ctx = RepairContext(
+        spec=spec,
+        drift_class="SCHEMA_RENAME",
+        signals=[
+            {
+                "kind": "keys_changed",
+                "operation": "list_reservations",
+                "details": {
+                    "entity": "Reservation",
+                    "missing": ["guestName"],
+                    "added": [{"key": "guestIdentifier", "sample": "Guest 1", "type": "str"}],
+                },
+            }
+        ],
+    )
+    assert precondition(ctx) is True
+
+
+def test_rename_field_wire_key_ambiguous_envelope_no_fire() -> None:
+    """A shared-envelope top key never resolves to a canonical field."""
+    import copy
+
+    from autobridge.repair.rules.rename_field import _canonical_field_for, precondition
+
+    spec = _load_spec("atlaspms")
+    ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME")
+    assert _canonical_field_for(ctx, "Reservation", "guestName") == "guest_name"
+    assert _canonical_field_for(ctx, "Reservation", "guest_name") == "guest_name"
+    assert _canonical_field_for(ctx, "Reservation", "no_such_key") is None
+    assert _canonical_field_for(ctx, "NoEntity", "guestName") is None
+    # Two fields under one envelope top key: unresolvable, rule stays quiet.
+    ambiguous = copy.deepcopy(spec)
+    fields = ambiguous["entities"]["Reservation"]["fields"]
+    fields["nested_a"] = {"path": "$.envelope.a"}
+    fields["nested_b"] = {"path": "$.envelope.b"}
+    actx = RepairContext(spec=ambiguous, drift_class="SCHEMA_RENAME")
+    assert _canonical_field_for(actx, "Reservation", "envelope") is None
+    delta = _delta_with_types("Reservation", "envelope", "envelope2")
+    actx2 = RepairContext(spec=ambiguous, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
+    assert precondition(actx2) is False
+
+
 # ---------------------------------------------------------------------------
 # offset_to_cursor
 # ---------------------------------------------------------------------------

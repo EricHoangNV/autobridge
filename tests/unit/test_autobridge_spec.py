@@ -1009,3 +1009,30 @@ def test_v1_signature_ignores_defaulted_v2_keys() -> None:
     assert spec_signature(padded) == spec_signature(dumped)
     assert signature_canonical_data(padded) == signature_canonical_data(dumped)
     assert "body" not in signature_canonical_data(padded)["operations"]["list_reservations"]
+
+
+def test_observed_wire_keys_accepted_but_signature_stable() -> None:
+    """REQ-027: build-probe annotation validates; defaults never perturb signatures."""
+    from autobridge.spec.models import load_spec_from_dict, signature_canonical_data
+    from autobridge.spec.registry import spec_signature
+
+    dumped = spec_to_json_data(harbor_spec())
+    probed = copy.deepcopy(dumped)
+    probed["entities"]["Reservation"]["observed_wire_keys"] = ["id", "name", "status"]
+    loaded = load_spec_from_dict(probed)
+    assert loaded.entities["Reservation"].observed_wire_keys == ["id", "name", "status"]
+    # Set annotation is spec content: it changes the signature (content hash).
+    assert spec_signature(probed) != spec_signature(dumped)
+    # But an empty/default annotation strips, so old reference releases and
+    # new unprobed dumps keep byte-identical signatures.
+    unprobed = copy.deepcopy(dumped)
+    unprobed["entities"]["Reservation"]["observed_wire_keys"] = None
+    assert spec_signature(unprobed) == spec_signature(dumped)
+    assert signature_canonical_data(unprobed) == signature_canonical_data(dumped)
+    empty = copy.deepcopy(dumped)
+    empty["entities"]["Reservation"]["observed_wire_keys"] = []
+    assert spec_signature(empty) == spec_signature(dumped)
+    # Round-trip through the JSON schema file accepts the annotation.
+    from autobridge.spec.models import validate_against_schema_file
+
+    validate_against_schema_file(probed)

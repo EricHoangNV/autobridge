@@ -611,6 +611,31 @@ def _control_call(base_url: str, method: str, path: str, payload: dict[str, Any]
     return record
 
 
+def _control_get_raw(base_url: str, path: str) -> Any:
+    """GET a control-plane path and return the RAW parsed body for logic reads.
+
+    ``_control_call`` redacts depth > 3 to an ellipsis for the transcript,
+    which destroys logic fields like ``provenance_repair_run_id`` or
+    ``refused_vocabularies`` entries. Assertions and lookups use this;
+    the transcript keeps the redacted ``_control_call`` record.
+    """
+    import httpx  # noqa: PLC0415
+
+    url = base_url.rstrip("/") + path
+    try:
+        with httpx.Client(timeout=10) as client:
+            _extra: dict[str, Any] = {}
+            if _h := control_headers():
+                _extra["headers"] = _h
+            r = client.request("GET", url, **_extra)
+            try:
+                return r.json()
+            except Exception:
+                return {}
+    except Exception:
+        return {}
+
+
 def _live_ensure_connector(base_url: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Idempotent live connector create: reuse the existing one by name."""
     calls = [_control_call(base_url, "GET", "/connectors")]
@@ -1078,7 +1103,12 @@ def _live_build_and_poll(
     The job result carries the bootstrap outcome (``success``, ``release_id``,
     ``degradation_reason``): a refused vocabulary still answers HTTP 200 with
     ``success: False`` and no release, which the caller asserts on.
+
+    REQ-027: every live demo build probes served wire keys (fail-soft) so
+    drift detection is scoped to wire keys the vendor actually served.
     """
+    payload = dict(payload)
+    payload.setdefault("probe_wire_shape", True)
     build_rec = _control_call(base_url, "POST", f"/connectors/{connector_id}/build", payload)
     calls.append(build_rec)
     build_body = build_rec.get("body") if isinstance(build_rec.get("body"), dict) else {}
@@ -1105,15 +1135,16 @@ def _step_live_ensure_active_release(
     payload: dict[str, Any] = {"docs_text": docs_text}
     if spec_vocabulary is not None:
         payload["spec_vocabulary"] = spec_vocabulary
-    _live_build_and_poll(base_url, connector_id, payload, calls)
+    build_result = _live_build_and_poll(base_url, connector_id, payload, calls)
+    # The release THIS build produced (never releases[-1]: on a reused
+    # connector that row belongs to an earlier run's repair candidate,
+    # which explicit activation rightly refuses with 422).
+    build_release_id = build_result.get("release_id")
+    if not isinstance(build_release_id, str) or not build_release_id:
+        return None
     detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
     calls.append(detail)
     detail_body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
-    releases = detail_body.get("releases") if isinstance(detail_body, dict) else []
-    build_release_id = None
-    if isinstance(releases, list) and releases:
-        last = releases[-1]
-        build_release_id = str(last.get("id")) if isinstance(last, dict) else None
     active_id = detail_body.get("active_release_id") if isinstance(detail_body, dict) else None
     if build_release_id and active_id != build_release_id:
         calls.append(_control_call(base_url, "POST", f"/connectors/{connector_id}/releases/{build_release_id}/activate", {}))
@@ -1143,7 +1174,7 @@ def _live_latest_repair(
     """Newest repair row for a connector (the list endpoint orders newest first)."""
     repair_rec = _control_call(base_url, "GET", f"/repairs?connector_id={connector_id}")
     calls.append(repair_rec)
-    repair_body: Any = repair_rec.get("body")
+    repair_body: Any = _control_get_raw(base_url, f"/repairs?connector_id={connector_id}")
     if isinstance(repair_body, list) and repair_body and isinstance(repair_body[0], dict):
         return dict(repair_body[0])
     return {}
@@ -1155,8 +1186,8 @@ def _live_latest_drift(
     """Newest drift row for a connector (the list endpoint orders newest first)."""
     drift_rec = _control_call(base_url, "GET", f"/drift?connector_id={connector_id}")
     calls.append(drift_rec)
-    drift_body = drift_rec.get("body")
-    if isinstance(drift_body, list) and drift_body and isinstance(drift_body[0], dict):
+    drift_body = _control_get_raw(base_url, f"/drift?connector_id={connector_id}")
+    if isinstance(drift_body, list) and isinstance(drift_body[0], dict):
         return dict(drift_body[0])
     return {}
 
@@ -1169,7 +1200,7 @@ def _live_candidate_for_repair(
         return None
     detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
     calls.append(detail)
-    detail_body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
+    detail_body = _control_get_raw(base_url, f"/connectors/{connector_id}")
     releases = detail_body.get("releases") if isinstance(detail_body, dict) else []
     if isinstance(releases, list):
         for rel in releases:
@@ -1192,11 +1223,17 @@ def _live_approve_repair(
 
 
 def _live_knowledge(base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """Current /knowledge body (entries + connector profiles)."""
-    rec = _control_call(base_url, "GET", "/knowledge")
-    calls.append(rec)
-    body = rec.get("body")
-    return dict(body) if isinstance(body, dict) else {}
+    """Current /knowledge body (entries + connector profiles).
+
+    Logic reads (poll predicates, reuse counts) need the RAW body:
+    ``_control_call`` redacts depth > 3 to an ellipsis, which turns
+    ``refused_vocabularies: ["v1"]`` into ``["…"]`` and can never satisfy
+    a membership predicate. The transcript still records the redacted
+    ``_control_call`` (same shape as every other call).
+    """
+    calls.append(_control_call(base_url, "GET", "/knowledge"))
+    raw = _control_get_raw(base_url, "/knowledge")
+    return dict(raw) if isinstance(raw, dict) else {}
 
 
 def _poll_knowledge_profile(
@@ -1270,20 +1307,14 @@ def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
     if connector_id is None:
         _assert_live(calls, "connector atlaspms id", False, "no connector id from ensure calls")
         return {"connector_id": None}
-    _step_live_ensure_active_release(
+    _step_result = _step_live_ensure_active_release(
         base_url, connector_id, "simulators/docs/atlas-openapi.yaml", calls,
         spec_vocabulary="v1",
     )
-    # The pre-patch release the inject-again leg reactivates: the newest
-    # release right after the docs build (before any repair candidate).
-    base_release_id: str | None = None
-    _detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
-    calls.append(_detail)
-    _detail_body = _detail.get("body") if isinstance(_detail.get("body"), dict) else {}
-    _releases = _detail_body.get("releases") if isinstance(_detail_body, dict) else []
-    if isinstance(_releases, list) and _releases:
-        _last = _releases[-1]
-        base_release_id = str(_last.get("id")) if isinstance(_last, dict) and _last.get("id") else None
+    # The pre-patch release the inject-again leg reactivates: the release
+    # this run's docs build just produced (never the newest release row,
+    # which on a reused connector belongs to an earlier run's repair).
+    base_release_id: str | None = _step_result
     sync_result = _step_live_sync_terminal(base_url, connector_id, calls)
     _assert_live(
         calls, "baseline sync Complete", sync_result.get("outcome") == "Complete",

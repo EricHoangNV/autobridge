@@ -3191,3 +3191,16 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 **Notes for next iteration:**
 - Pre-existing flake, not caused by this iteration's changes; the fix removes it for all future runs
 Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+## REQ-027 sub-step 5 code — per-scenario live e2e + detector/rename/build-probe fixes (sbx1 2026-10-29)
+
+**Ref:** REQUESTS.MD REQ-027 items 2/3/5; owner priority REQ-027 first.
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+Did (all on the local stack, unkeyed):
+- Probed every Atlas fault scenario live. Found: healthy baselines opened SCHEMA_RENAME drift + L4 escalation (docs build over-maps `currency`, never served); rename escalated (wire-vs-canonical name-space mismatch + multi-key noise); cursor_repeat/status/token/rate-limit/transient already per spec.
+- Engine: `EntitySpec.observed_wire_keys` + build wire-shape probe (opt-in via build body extras; unit tests stay offline) + annotation-aware detector + wire-resolving `rename_field` rule. Baseline now quiet; rename heals live (propose rename_field, rung 1, 0 tokens, approve → Complete).
+- `tests/e2e/test_027_live_chain.py`: 9 live tests green. Adjacent e2e 59 green. `make demo` 8/8 twice in a row; UI knowledge spec 2/2; post-demo `/knowledge` shows v1/v2+v1-refused/v3 + reused entry.
+- Also fixed two demo regressions from redaction (raw seam for logic reads) and step-3 base-release staleness (use this build's release id).
+- `make test` green (90.40/91.49/90.50 + UI 160); lint + typecheck green. Learnings #42/#43 appended.
+
+Remaining: owner keyed-stack verification (FRONTIER live numbers, L3 reasoning line on keyed run, Nov 3 held-out) + keyed `make demo` 8/8 twice + sub-step 6 honest bench rerun.

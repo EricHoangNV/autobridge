@@ -231,6 +231,11 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
         "scenario_id": body.scenario_id,
         "verifier_url": body.verifier_url or os.environ.get("VERIFIER_URL"),
         "spec_vocabulary": spec_vocabulary,
+        # REQ-027: wire-shape probe records served keys at build time
+        # (fail-soft). Opt-in via the request body (``BuildRequest`` allows
+        # extras): the demo and e2e pass ``probe_wire_shape: true``; unit
+        # tests stay offline by default.
+        "probe_wire_shape": bool((body.model_extra or {}).get("probe_wire_shape", False)),
     }
     # Include extra fields
     if body.model_extra:

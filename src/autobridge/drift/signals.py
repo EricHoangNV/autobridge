@@ -544,6 +544,29 @@ def _type_name_of(value: Any) -> str:
     return type(value).__name__
 
 
+def _observed_wire_keys(spec: Any, entity: str) -> set[str] | None:
+    """Build-probe wire keys for *entity*, or None when unprobed.
+
+    REQ-027: a build that probed the vendor records the served top-level
+    wire keys on each entity (``observed_wire_keys``). Detection uses them
+    to tell a vendor rename (served-then-gone key) from a build over-mapping
+    (spec path the wire never served) and genuinely new keys from perennial
+    unmapped ones. Specs without the annotation keep legacy behavior.
+    """
+    if not isinstance(spec, dict):
+        return None
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return None
+    ent_spec = entities.get(entity)
+    if not isinstance(ent_spec, dict):
+        return None
+    observed = ent_spec.get("observed_wire_keys")
+    if not isinstance(observed, list) or not observed:
+        return None
+    return {k for k in observed if isinstance(k, str)}
+
+
 def _observe_wire_schema(
     spec: Any,
     operation_results: dict[str, Any],
@@ -556,6 +579,11 @@ def _observe_wire_schema(
     observed wire record, so a healthy baseline (wire carries what the spec
     maps) emits nothing. Added wire keys come with truncated sample values
     so rules can propose the new path deterministically.
+
+    When the entity carries a build-probe ``observed_wire_keys`` annotation,
+    coverage is scoped to mappings the vendor actually served at build time
+    (phantom mappings never fire), and perennial unmapped keys the probe saw
+    are excluded from ``added`` (only genuinely new keys are reported).
     """
     signals: list[DriftSignal] = []
     if not isinstance(spec, dict) or not isinstance(operation_results, dict):
@@ -574,16 +602,21 @@ def _observe_wire_schema(
         covered = _spec_field_top_keys(spec, entity)
         if not covered:
             continue
+        observed = _observed_wire_keys(spec, entity)
+        effective_covered = covered & observed if observed is not None else covered
+        if not effective_covered:
+            continue
         wire_keys: set[str] = set()
         for rec in wire_records[:_WIRE_ADDED_SAMPLE_RECORDS]:
             wire_keys.update(k for k in rec if isinstance(k, str))
         for rec in wire_records[_WIRE_ADDED_SAMPLE_RECORDS:]:
             wire_keys.update(k for k in rec if isinstance(k, str))
-        missing = sorted(k for k in covered if k not in wire_keys)
+        missing = sorted(k for k in effective_covered if k not in wire_keys)
         if not missing:
             continue
+        novel = wire_keys - covered if observed is None else wire_keys - covered - observed
         added: list[dict[str, Any]] = []
-        for key in sorted(wire_keys - covered):
+        for key in sorted(novel):
             sample: Any = None
             for rec in wire_records[:_WIRE_ADDED_SAMPLE_RECORDS]:
                 if key in rec:
@@ -611,6 +644,7 @@ def _observe_wire_schema(
                     "missing": missing,
                     "added": added,
                     "wire_evidence": "records",
+                    **({"observed_wire_keys": sorted(observed)} if observed is not None else {}),
                 },
                 source_run_id=source_run_id,
             )
