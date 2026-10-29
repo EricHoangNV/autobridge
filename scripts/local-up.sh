@@ -55,6 +55,17 @@ export HARBOR_BASE_URL="http://localhost:8106"
 export LEGACYSTAY_BASE_URL="http://localhost:8111"
 export MERIDIAN_BASE_URL="http://localhost:8116"
 export EDGE_RELAY_URL="http://localhost:8120"
+# REQ-027 owner check (sim keys by default): every simulator credential a
+# demo sync uses gets a working demo value unless the operator set a real
+# one (.env / explicit env wins via ${VAR:-default}). Atlas/Harbor/
+# LegacyStay accept any non-empty key; Meridian checks its documented pair
+# (simulators/meridianpms/app.py). These are simulator demo values, not
+# secrets — never real vendor credentials.
+export ATLAS_API_KEY="${ATLAS_API_KEY:-sim-demo-key}"
+export HARBOR_API_KEY="${HARBOR_API_KEY:-sim-demo-key}"
+export LEGACYSTAY_API_KEY="${LEGACYSTAY_API_KEY:-sim-demo-key}"
+export MERIDIAN_CLIENT_TOKEN="${MERIDIAN_CLIENT_TOKEN:-meridian-client-token}"
+export MERIDIAN_ACCESS_TOKEN="${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}"
 export EDGE_RELAY_DB="$LOCAL_DIR/edge_relay.db"
 export EDGE_STORE_PATH="$LOCAL_DIR/edge_agent.db"
 # Persist the effective env for local-down diagnostics (values only used

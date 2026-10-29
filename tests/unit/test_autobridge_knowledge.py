@@ -240,7 +240,7 @@ def test_knowledge_connector_refused_vocabulary(tmp_path: pathlib.Path) -> None:
     try:
         with factory() as s:
             conn = Connector(
-                name="meridianpms", base_url="http://localhost:8116", credential_ref="MERIDIAN_CLIENT_TOKEN",
+                name="meridianpms", base_url="http://localhost:8116", credential_ref="MERIDIAN_API_KEY",
                 target_entities=["Reservation"], runtime_target={"kind": "local_process"},
             )
             s.add(conn)

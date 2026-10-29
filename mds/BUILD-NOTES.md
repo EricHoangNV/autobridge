@@ -1985,3 +1985,19 @@ Gates: make lint, make typecheck, make ui-typecheck green; make test green
 NOT live-verified here (no keyed stack in sbx1): owner runs keyed
 `make local-up && make e2e && make demo` and `make up` variants.
 Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+### REQ-027 sim demo keys by default (sbx1 2026-10-29)
+Same task: owner check after sub-step 4 (on 15bd357d, landed on main as
+4088cf0f while this work was on branch). Item 1: every simulator credential
+a demo sync uses ships a working demo value — `scripts/local-up.sh` exports
+`KEY=${KEY:-demo}` (explicit env wins), `compose.yaml` passes the same
+defaults to control + worker, `.env.example` documents the demo values.
+Keys: ATLAS/HARBOR/LEGACYSTAY `sim-demo-key` (sims accept any non-empty
+key), MERIDIAN pair = the sim's documented values. Fresh-clone guard:
+`tests/unit/test_autobridge_sim_demo_keys.py` pins local-up + compose +
+.env.example + sim VALID_* agreement. Also fixed live step 7 connector
+`credential_ref` to `MERIDIAN_API_KEY` (passing `MERIDIAN_CLIENT_TOKEN` as
+the override derived `MERIDIAN_CLIENT_TOKEN_CLIENT_TOKEN` body refs and
+would 401 the sync). Items 2 (L3 output room / reasoning tokens) and 3
+(Harbor money-invariant inference) left open — frontier-provider territory.
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)

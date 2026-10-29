@@ -1996,7 +1996,7 @@ def _step7_live(docs_text: str, base_url: str, calls: list[dict[str, Any]]) -> d
             "name": "meridianpms",
             "vendor_docs_ref": MERIDIAN_DOCS_SOURCE,
             "base_url": "http://sim-meridian:8000",
-            "credential_ref": "MERIDIAN_CLIENT_TOKEN",
+            "credential_ref": "MERIDIAN_API_KEY",
             "target_entities": ["Reservation", "FolioCharge"],
         },
     )

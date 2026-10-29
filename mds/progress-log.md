@@ -3112,3 +3112,22 @@ Sub-step 4 (demo steps on the live chain) plus the fixes for the owner check aft
 **Notes for next iteration:**
 - Needs owner keyed-stack verification: `make local-up && make demo` 8/8, then `/knowledge` shows atlaspms v1, meridianpms v2 (v1 refused), PABX edge v3, page_to_cursor entry reused≥1; run the new UI spec against it
 - After that lands: REQ-027 sub-steps 5-6 (live e2e per scenario + honest bench rerun), then REQ-023 video-cut update
+
+## REQ-027 sim demo keys by default — code complete
+**Date:** 2026-10-29
+**Ref:** REQUESTS.MD REQ-027 owner check after sub-step 4 (on 15bd357d, main 4088cf0f), item 1
+
+**What was done:**
+- `scripts/local-up.sh`, `compose.yaml` (control + worker) and `.env.example` ship working demo values for ATLAS/HARBOR/LEGACYSTAY/MERIDIAN keys (`:-` defaults, explicit env wins)
+- New offline guard `tests/unit/test_autobridge_sim_demo_keys.py` (4 tests) pins the contract incl. Meridian pair == sim VALID_* constants
+- Fixed step-7 live connector to `credential_ref: MERIDIAN_API_KEY` so the v2 body-field refs derive correctly
+
+**Key decisions:**
+- Meridian is the only sim validating exact values, so its defaults are the documented pair (public in-repo constants, not secrets); everything else takes `sim-demo-key`
+- L3 output-room/reasoning-tokens and Harbor money-invariant inference deliberately left for the next iteration (frontier-provider work, different surface)
+
+**Files changed:**
+- `scripts/local-up.sh`, `compose.yaml`, `.env.example`, `tests/unit/test_autobridge_sim_demo_keys.py`, `bench/demo.py` (step-7 credential_ref)
+
+**Notes for next iteration:**
+- Same keyed-stack verification covers this: fresh `.env` from `.env.example`, no manual exports, `make local-up && make e2e && make demo` green

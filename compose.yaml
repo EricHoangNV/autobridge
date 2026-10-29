@@ -53,6 +53,14 @@ services:
       # before persisting (gate-before-persist). Control has a verifier-net
       # route, so this default works on the stock stack.
       VERIFIER_URL: ${VERIFIER_URL:-http://verifier:8000}
+      # REQ-027: simulator demo keys by default (.env / explicit env wins).
+      # The sims accept these values, so a fresh clone syncs green without
+      # exporting keys first. Demo values only — never real credentials.
+      ATLAS_API_KEY: ${ATLAS_API_KEY:-sim-demo-key}
+      HARBOR_API_KEY: ${HARBOR_API_KEY:-sim-demo-key}
+      LEGACYSTAY_API_KEY: ${LEGACYSTAY_API_KEY:-sim-demo-key}
+      MERIDIAN_CLIENT_TOKEN: ${MERIDIAN_CLIENT_TOKEN:-meridian-client-token}
+      MERIDIAN_ACCESS_TOKEN: ${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}
       # REQ-021 item 5: frontier/small model access for the engine. Only the
       # key names travel in config; values stay in .env / the host env and
       # are never logged, stored or returned by the API.
@@ -92,6 +100,13 @@ services:
       FRONTIER_BASE_URL: ${FRONTIER_BASE_URL:-}
       FRONTIER_MODEL: ${FRONTIER_MODEL:-}
       SMALL_MODEL: ${SMALL_MODEL:-}
+      # REQ-027: same simulator demo-key defaults as control: sync jobs
+      # executed here authenticate the same way.
+      ATLAS_API_KEY: ${ATLAS_API_KEY:-sim-demo-key}
+      HARBOR_API_KEY: ${HARBOR_API_KEY:-sim-demo-key}
+      LEGACYSTAY_API_KEY: ${LEGACYSTAY_API_KEY:-sim-demo-key}
+      MERIDIAN_CLIENT_TOKEN: ${MERIDIAN_CLIENT_TOKEN:-meridian-client-token}
+      MERIDIAN_ACCESS_TOKEN: ${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}
     networks:
       - engine-net
     ports:

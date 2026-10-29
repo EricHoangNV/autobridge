@@ -7,7 +7,7 @@ Owner priority (2026-10-29 10:40, supersedes the list below): **REQ-027 first.**
 describe the REQ-027 demo, so finish REQ-023 after REQ-027 lands (or update it then).
 
 ### REQ-027 — Auto-detect + auto-heal end to end on the live stack, and a demo that proves it (2026-10-29)
-Status: IN_PROGRESS (sbx1 2026-10-29 — knowledge-page check code DONE on branch; remaining: owner keyed-stack run: make demo 8/8, /knowledge lists atlaspms v1 + meridianpms v2/refused-v1 + PABX edge v3 + reused entry, UI spec green)
+Status: IN_PROGRESS (sbx1 2026-10-29 — knowledge-page check + sim-keys defaults code DONE on branch; remaining: owner keyed-stack run (make demo 8/8, /knowledge state, UI spec), then L3 output-room + Harbor money-invariant inference)
 Why: it is the product's headline claim and today only FIAS (demo step 8) shows it. Owner checks on the host
 (2026-10-29, main at f61274b8, keyed local stack):
 - After REQ-024's honest fix (a62013dc) every engine arm escalates with 0 fixes: the detector output does not carry
