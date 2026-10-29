@@ -1929,3 +1929,28 @@ hypotheses/drift class/yield count in bench/demo.py.
 Files: bench/demo.py, bench/record_frontier.py,
 src/autobridge/repair/ladder.py, tests/fixtures/replay/gross_to_net.json,
 tests/unit/test_autobridge_demo.py, docs/demo.md.
+
+### REQ-027 owner check after sub-step 3 (sbx1, 2026-10-29) — fixed before merge
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+Owner ran the control path on the keyed local stack and found: (1) docs-built
+Atlas spec unusable (base_url ${ATLAS_BASE_URL} unset, wrong paths when built
+via docs_path, truncated vendor); (2) Blocked http_error syncs with zero
+responses opened SEMANTIC_VALUE_DRIFT + L4 repairs. Fixed:
+(a) compile_spec uses an explicit base_url_override verbatim (the connector
+record is already mode-normalized per sub-step 1; placeholder derivation
+kept only when no override is given — FIAS/placeholder tests unchanged);
+control build defaults vendor to the connector name (docs-derived titles
+kept for direct bootstrap calls); new unit pin on the override test.
+(b) detect_and_repair_after_sync returns drift_found False with reason
+no_vendor_response when the summary carries zero raw pages and zero
+records (transport failures WITH response bodies still detect — 503 test).
+(c) tests/e2e/test_027_live_chain.py: the exact owner sequence against the
+live stack (create -> build from docs_text -> baseline Complete -> inject
+page_to_cursor -> repair row page_to_cursor/rung 1/0 tokens -> approve ->
+resync Complete; built spec paths + concrete base_url asserted; no
+reference spec) plus a Blocked-no-response test asserting empty drift and
+repair rows. Skips without Docker like every other live e2e file.
+Also made test_sync_with_release hermetic (127.0.0.1:9; the verbatim fix
+means built specs now really dial, tripping the no-DNS guard on
+localhost).
