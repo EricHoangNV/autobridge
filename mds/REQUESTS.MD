@@ -391,7 +391,7 @@ scenario | vendor | expected outcome | rung | model calls | REQ), `make demo` ru
 entry has a scenario file, an e2e test and a row in REQ-021's model-usage matrix.
 
 ### REQ-024 — Make the held-out claim checkable, and prove the engine beats an untrained frontier model (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 22:48; sub-step A merged, sub-step B code-complete 2026-10-28: opencode default, 5 arms, metrics + CI, curve, prereg, bench wiring; remaining: live frontier numbers with FRONTIER_API_KEY + Nov 3 held-out run)
+Status: IN_PROGRESS (sbx1 since 2026-10-28 22:48; sub-step A merged, sub-step B code-complete 2026-10-28: opencode default, 5 arms, metrics + CI, curve, prereg, bench wiring; leak-audit false-positive fix merged 2026-10-29; remaining: live frontier numbers with FRONTIER_API_KEY + Nov 3 held-out run)
 Owner: "Ralph never saw the held-out data" and "AutoBridge beats a frontier model on its own because the engine knows
 more" must be things a judge can check, not things we say. Never read, print, move or regenerate the private seeds;
 never touch `verifier/hidden_cases/heldout/SHA256SUMS`. Everything below that needs the seed files is a script the

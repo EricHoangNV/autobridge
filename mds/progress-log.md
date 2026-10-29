@@ -2922,3 +2922,28 @@ REQ-024 stays IN_PROGRESS for sub-step B (ablation arms, opencode driver, prereg
 **Notes for next iteration:**
 - REQ-024 stays IN_PROGRESS: live frontier capture needs `FRONTIER_API_KEY` (owner step) and the single Nov 3 held-out run; then REQ-025 beacon
 - Watch: `test_replay_postings_resend_same_pno` flaked twice under full-suite load (passes alone/as-file/both trees) — same load-sensitive class as the documented edge-agent flake
+
+## REQ-024 owner check — leak audit false-positive fix (manifest hashes are public)
+**Date:** 2026-10-29
+**Ref:** REQUESTS.MD REQ-024 owner check after sub-step A (audit always FAILs on public-manifest hashes)
+
+**What was done:**
+- `scripts/heldout_leak_audit.py` no longer searches manifest sha256 hashes (public by design) — tokens are raw file bytes (`raw`) and nonce (`nonce`) only; seed ints stay unsearched (raw bytes cover them), `id` is public (filename)
+- Every manifest copy excluded by content (`_is_manifest_blob`) in working-tree, worktree and git-blob scans, with computed `public_manifest_files` exclusion counts (was a hardcoded 1 plus a path exclusion that missed worktree copies)
+- Per-kind reporting: `scan_bytes` returns the matched kind (longest-first, raw wins); every source carries `hits_by_kind: {raw, nonce}` in the `--write` JSON and `(raw: n, nonce: m)` on its stdout line, so a FAIL says what leaked; secrets still never printed or serialized (tests assert)
+- `docs/benchmark.md` leak-audit paragraph rewritten to the fixed behavior
+- 3 new unit tests + 1 extended assertion (20/20 in file): manifest quote in transcript passes, worktree manifest copy excluded, nonce/raw hits fail with exact kinds in result/stdout/JSON
+
+**Key decisions:**
+- Kept the scorecard renderer untouched: it reads only hits/totals and ignores the new `hits_by_kind` keys, so old `_leak_audit.json` files still render; per-kind detail lives where the owner asked (audit stdout + JSON)
+- Kept `scan_working_tree`/`scan_git_blobs` content exclusion even though hash tokens are gone (defense in depth + exclusion reporting the owner asked to keep)
+- Did not run e2e: no `tests/e2e` file references the audit script (it is owner-run with `HELDOUT_DIR`); hermetic unit tests are its coverage
+
+**Files changed:**
+- `scripts/heldout_leak_audit.py` — token model, per-kind scan results, content-based manifest exclusion everywhere, output/JSON format
+- `tests/unit/test_autobridge_bench_leak_audit.py` — 3 new tests, 1 extended assertion
+- `docs/benchmark.md` — leak-audit section
+
+**Notes for next iteration:**
+- REQ-024 stays IN_PROGRESS: remaining are owner steps (live frontier numbers need `FRONTIER_API_KEY`; single Nov 3 held-out run). Owner re-runs `HELDOUT_DIR=~/autobridge-heldout python3 scripts/heldout_leak_audit.py` on the host — expected `OK, 0 hits`, exit 0
+- Then REQ-025 beacon; REQ-023 demo plan applied as each lands
