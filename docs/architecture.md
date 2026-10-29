@@ -219,6 +219,25 @@ are different names, so `cursor_param` is never taken from the wire.
 Ambiguous evidence (several added keys) stays unclaimed: no guessing, the
 drift falls back to the previous classification and escalates.
 
+### 4.2 Sync detects and repairs inline (REQ-027 sub-step 3, plan §2.5)
+
+Every worker sync (and `POST /connectors/{id}/sync`, which runs the worker
+inline) feeds its summary to `engine/detect_repair.py`: signals from the
+observed responses, `classify`, a persisted `DriftEvent` (`open`), then
+`RepairController.handle_from_signals` with detector-derived inputs only —
+no drift class, delta, hypotheses or yield count from anywhere else. A
+`Complete` sync with wire-contradiction signals is still drift (silent
+shape change, e.g. records dropping to zero with no invariant failure).
+The ladder persists the `RepairRun` (rung, rule id, zero model usage,
+ladder trace); a proposed patch becomes a candidate release
+(`provenance_repair_run_id` set, verifier-gated when `VERIFIER_URL` is
+configured, fail-closed otherwise) awaiting operator approval, after which
+the next sync runs the new spec. The L0 key is a spec-previous/wire-current
+delta (`pagination_details`/`types_details`, names only — never samples),
+so repeats hit L0 while a different drift does not; a `None` delta is never
+cached, so nothing is ever keyed content-free. Detection never fails the
+sync: its errors are row data on the result, not exceptions.
+
 ## 5. ConnectorSpec v1/v2 (plan §2.4)
 
 A connector is a strict YAML document validated by `src/autobridge/spec/models.py`

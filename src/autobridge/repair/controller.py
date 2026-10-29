@@ -176,7 +176,11 @@ class RepairController:
             session.add(run)
             session.flush()
             # Cache successful propose patches for L0 future hits
-            if result.decision == "propose" and result.candidate_patch:
+            # Cache successful propose patches for L0 future hits. A None delta
+            # has no content to key on (every drift would share one key), so
+            # it is never cached: without a delta the ladder re-derives from
+            # signals every time instead of risking a wrong-patch L0 hit.
+            if result.decision == "propose" and result.candidate_patch and fingerprint_delta is not None:
                 with contextlib.suppress(Exception):
                     self.knowledge_cache.put(
                         vendor_val,

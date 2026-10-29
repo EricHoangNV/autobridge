@@ -580,9 +580,33 @@ def run_sync_handler(
         invariant_results=summary.get("invariant_results", []),
     )
     ctx.run_id = run.id
-    return {
+
+    # REQ-027 sub-step 3: the live chain. Every sync detects drift from its
+    # own summary (observed responses only) and repairs it deterministically:
+    # DriftEvent + RepairRun + candidate release are persisted here, so the
+    # worker path and POST /sync (which runs the worker inline) both feed
+    # GET /drift and GET /repairs. Detection never fails the sync.
+    detection: dict[str, Any] = {"drift_found": False}
+    try:
+        from autobridge.engine.detect_repair import detect_and_repair_after_sync  # noqa: PLC0415
+
+        connector_id = release.connector_id if release is not None else ""
+        detection = detect_and_repair_after_sync(
+            ctx.session,
+            connector_id=connector_id,
+            release_id=release_id,
+            spec_dict=spec_dict,
+            summary=summary,
+            sync_run_id=run.id,
+        )
+    except Exception as exc:  # noqa: BLE001 — detection failures are row data
+        detection = {"drift_found": False, "detection_error": f"{type(exc).__name__}: {exc}"[:500]}
+
+    out: dict[str, Any] = {
         "sync_run_id": run.id,
         "outcome": summary["outcome"],
         "unmet_criteria": summary["unmet_criteria"],
         "fingerprint_id": summary["fingerprint_id"],
     }
+    out.update(detection)
+    return out
