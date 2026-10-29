@@ -49,7 +49,7 @@ INVALID_PATCH_TRAPS: list[dict[str, Any]] = [
     {
         "id": "rename_guest_id_stale_path",
         "scenario_id": "rename_guest_id",
-        "drift_class": "FIELD_RENAME",
+        "drift_class": "SCHEMA_RENAME",
         "description": "Keeps old guest_name path even though field was renamed; plausible if assuming alias.",
         "marker": "guest_identifier",
         "target_field": "guest_name",

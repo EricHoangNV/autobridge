@@ -42,10 +42,10 @@ def _fixed_runners(ab_ms: float = 10.0, bl_ms: float = 20.0):
     """Deterministic runners (fixed elapsed) so canonical bytes can match."""
 
     def ab(inp: HarnessInputs) -> ArmResult:
-        return ArmResult(arm="autobridge", inputs=inp, success=True, elapsed_ms=ab_ms)
+        return ArmResult(arm="autobridge", inputs=inp, ran=True, elapsed_ms=ab_ms)
 
     def bl(inp: HarnessInputs) -> ArmResult:
-        return ArmResult(arm="baseline", inputs=inp, success=True, elapsed_ms=bl_ms)
+        return ArmResult(arm="baseline", inputs=inp, ran=True, elapsed_ms=bl_ms)
 
     return ab, bl
 
@@ -115,7 +115,7 @@ def test_reproducible_divergent_outcomes_raise() -> None:
     ok_ab, ok_bl = _fixed_runners()
 
     def failing_ab(inp: HarnessInputs) -> ArmResult:
-        return ArmResult(arm="autobridge", inputs=inp, success=False, elapsed_ms=10.0, error="boom")
+        return ArmResult(arm="autobridge", inputs=inp, ran=False, elapsed_ms=10.0, error="boom")
 
     r1 = run_harness(cfg, autobridge_runner=ok_ab, baseline_runner=ok_bl)
     r2 = run_harness(cfg, autobridge_runner=failing_ab, baseline_runner=ok_bl)

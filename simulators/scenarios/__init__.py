@@ -24,7 +24,7 @@ _SCENARIOS_DIR = pathlib.Path(__file__).parent
 _ALLOWED_DRIFT_CLASSES = frozenset(
     {
         "none",
-        "FIELD_RENAME",
+        "SCHEMA_RENAME",
         "PAGINATION_CHANGE",
         "PAGINATION_BUG",
         "RATE_LIMIT",

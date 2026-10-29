@@ -1,5 +1,5 @@
 id: meridian_state_renamed
-drift_class: FIELD_RENAME
+drift_class: SCHEMA_RENAME
 fixable: fixable
 visibility: dev
 vendor: meridian

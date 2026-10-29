@@ -129,7 +129,7 @@ with `"…"` (`bench/demo.py:735`). `/knowledge` → `connectors` (list) → pro
 `_assert_live` that reads nested values for the same trap. Gate: `make demo` 8/8 twice on a keyed local stack.
 
 ### REQ-028 — Benchmark-driven engine fixes (owner rehearsal 2026-10-29) (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 09:00)
+Status: IN_PROGRESS (sbx1 2026-10-29 — code DONE: 6/6 repairs verify 0 tokens, warm==cold E=1.0, scoped oneshot docs + arm availability + `ran` label, docs updated; remaining OWNER STEP: keyed `BENCH_TRIALS=1 make bench-ablation` for live frontier numbers (sandbox has no FRONTIER_API_KEY), then close)
 Priority: right after REQ-027 (the rename fix in progress there covers item 1).
 Owner decision (2026-10-29): **the benchmark runs in the sandbox** (OpenCode is there; the host has none). Provide one
 documented command that runs `make bench-ablation` (and later `make bench`) inside the sandbox against the stack, with

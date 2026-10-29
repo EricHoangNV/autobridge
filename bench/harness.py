@@ -380,7 +380,9 @@ class ArmResult:
         "autobridge_warm",
     ]
     inputs: HarnessInputs
-    success: bool
+    #: The arm ran to a decision. REQ-028: named ``ran``, not ``success`` —
+    #: it is NOT a verifier pass (see ``bench.scoring`` for grading).
+    ran: bool
     elapsed_ms: float = 0.0
     # Token / cost accounting (mirrors llm.Usage)
     input_tokens: int = 0
@@ -410,7 +412,7 @@ class ArmResult:
             "scenario_id": self.inputs.scenario_id,
             "trial": self.inputs.trial,
             "seed": self.inputs.seed,
-            "success": self.success,
+            "ran": self.ran,
             "elapsed_ms": self.elapsed_ms,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
@@ -690,7 +692,7 @@ def run_autobridge_arm(
     If *client* is given it is a ``httpx.Client`` or ``httpx.AsyncClient``
     (or any object with ``post``/``get``).  When ``None`` a new
     ``httpx.Client`` is created for ``control_api_url``.
-    On any error an :class:`ArmResult` with ``success=False`` is returned
+    On any error an :class:`ArmResult` with ``ran=False`` is returned
     (never raises), so the harness can score losses.
     """
     url = (control_api_url or inputs.control_api_url).rstrip("/")
@@ -698,7 +700,7 @@ def run_autobridge_arm(
     start = time.monotonic()
 
     # Try HTTP path only when a real client/url is reachable; otherwise
-    # return a synthetic success so unit tests without Docker stay green.
+    # return a synthetic ran so unit tests without Docker stay green.
     # The caller may pass a fake client that records calls.
     try:
         if client is not None:
@@ -730,24 +732,24 @@ def run_autobridge_arm(
                 return ArmResult(
                     arm="autobridge",
                     inputs=inputs,
-                    success=False,
+                    ran=False,
                     elapsed_ms=elapsed,
                     error=f"control API {resp.status_code}: {getattr(resp, 'text', '')[:500]}",
                 )
             return ArmResult(
                 arm="autobridge",
                 inputs=inputs,
-                success=True,
+                ran=True,
                 elapsed_ms=elapsed,
                 model="autobridge-ladder",
             )
         # No client — synthetic run (unit tests / dry-run mode).
-        # We still respect wall-clock by sleeping 0 and return success.
+        # We still respect wall-clock by sleeping 0 and return ran.
         elapsed = (time.monotonic() - start) * 1000.0
         return ArmResult(
             arm="autobridge",
             inputs=inputs,
-            success=True,
+            ran=True,
             elapsed_ms=elapsed,
             model="autobridge-synthetic",
         )
@@ -756,7 +758,7 @@ def run_autobridge_arm(
         return ArmResult(
             arm="autobridge",
             inputs=inputs,
-            success=False,
+            ran=False,
             elapsed_ms=elapsed,
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -810,7 +812,7 @@ def run_baseline_arm(
             return ArmResult(
                 arm=arm,  # type: ignore[arg-type]
                 inputs=inputs,
-                success=True,
+                ran=True,
                 elapsed_ms=elapsed,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -824,7 +826,7 @@ def run_baseline_arm(
         return ArmResult(
             arm=arm,  # type: ignore[arg-type]
             inputs=inputs,
-            success=True,
+            ran=True,
             elapsed_ms=elapsed,
             model="baseline-synthetic",
         )
@@ -834,7 +836,7 @@ def run_baseline_arm(
         return ArmResult(
             arm=arm,  # type: ignore[arg-type]
             inputs=inputs,
-            success=False,
+            ran=False,
             elapsed_ms=elapsed,
             error=err_msg[:1000],
         )
@@ -859,7 +861,7 @@ def run_baseline_via_llm_provider(
         return ArmResult(
             arm="baseline",
             inputs=inputs,
-            success=True,
+            ran=True,
             elapsed_ms=elapsed,
             model="baseline-llm-fallback-synthetic",
         )
@@ -884,7 +886,7 @@ def run_baseline_via_llm_provider(
         return ArmResult(
             arm="baseline",
             inputs=inputs,
-            success=True,
+            ran=True,
             elapsed_ms=elapsed,
             input_tokens=comp.usage.input_tokens,
             output_tokens=comp.usage.output_tokens,
@@ -898,7 +900,7 @@ def run_baseline_via_llm_provider(
         return ArmResult(
             arm="baseline",
             inputs=inputs,
-            success=False,
+            ran=False,
             elapsed_ms=elapsed,
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -954,14 +956,14 @@ def run_trial(
         ab_result = autobridge_runner(inputs_a)
         if not isinstance(ab_result, ArmResult):
             # Allow runners that return dict-like; coerce
-            ab_result = ArmResult(arm="autobridge", inputs=inputs_a, success=bool(ab_result))
+            ab_result = ArmResult(arm="autobridge", inputs=inputs_a, ran=bool(ab_result))
     else:
         ab_result = run_autobridge_arm(inputs_a)
 
     if baseline_runner is not None:
         bl_result = baseline_runner(inputs_b)
         if not isinstance(bl_result, ArmResult):
-            bl_result = ArmResult(arm="baseline", inputs=inputs_b, success=bool(bl_result))
+            bl_result = ArmResult(arm="baseline", inputs=inputs_b, ran=bool(bl_result))
     else:
         bl_result = run_baseline_arm(inputs_b)
 

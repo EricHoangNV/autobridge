@@ -1,5 +1,5 @@
 id: rename_guest_id
-drift_class: FIELD_RENAME
+drift_class: SCHEMA_RENAME
 fixable: fixable
 visibility: dev
 vendor: both

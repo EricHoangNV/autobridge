@@ -29,7 +29,12 @@ from autobridge.repair.escalation import (
     escalation_for_no_fix,
     escalation_from_budget_exhausted,
 )
-from autobridge.repair.knowledge import KnowledgeCache, cache_key
+from autobridge.repair.knowledge import (
+    NO_LEARN_CLASSES,
+    KnowledgeCache,
+    cache_key,
+    delta_has_content,
+)
 from autobridge.repair.registry import matching_rules
 
 # Drift classes that always escalate (no patch attempted)
@@ -1015,14 +1020,37 @@ def run_ladder(
             }
         )
     elif knowledge_cache is not None and fingerprint_delta is not None:
-        # Need vendor to key; if missing still try
-        cache_entry = knowledge_cache.lookup(vendor_val, fingerprint_delta)
+        # REQ-028: L0 fires only for a (vendor, drift class, observed delta)
+        # learned before. Transport/auth/capability classes never consult L0
+        # (no spec fix exists for them), and an empty delta (no observable
+        # change — every such drift shares one constant signature) never
+        # consults it either: a hit there would be a cross-scenario
+        # collision, not a learned fix.
+        skip_reason: str | None = None
+        if drift_class in NO_LEARN_CLASSES:
+            skip_reason = f"L0 never consults {drift_class}: no spec fix exists for this class"
+        elif not delta_has_content(fingerprint_delta):
+            skip_reason = "L0 never consults an empty delta: nothing observed to match a learned fix against"
+        if skip_reason is not None:
+            trace.append(
+                {
+                    "level": 0,
+                    "action": "knowledge_skip",
+                    "reason": skip_reason,
+                    "drift_class": drift_class,
+                    "vendor": vendor_val,
+                }
+            )
+            cache_entry = None
+        else:
+            # Need vendor to key; if missing still try
+            cache_entry = knowledge_cache.lookup(vendor_val, fingerprint_delta, drift_class=drift_class)
         if cache_entry is not None:
             trace.append(
                 {
                     "level": 0,
                     "action": "knowledge_hit",
-                    "reason": f"L0 cache hit for vendor {vendor_val} + delta {cache_key(vendor_val, fingerprint_delta)}",
+                    "reason": f"L0 cache hit for vendor {vendor_val} class {drift_class} + delta {cache_key(vendor_val, drift_class, fingerprint_delta)}",
                     "drift_class": drift_class,
                     "rule_id": cache_entry.rule_id,
                     "patch": cache_entry.patch,
@@ -1376,7 +1404,25 @@ def run_frontier_climb(
             }
         )
     elif knowledge_cache is not None and fingerprint_delta is not None:
-        entry = knowledge_cache.lookup(vendor_val, fingerprint_delta)
+        # REQ-028: same scoping as run_ladder — the class is part of the
+        # key, and empty deltas never consult L0.
+        skip_climb_l0: str | None = None
+        if drift_class in NO_LEARN_CLASSES:
+            skip_climb_l0 = f"L0 never consults {drift_class}: no spec fix exists for this class"
+        elif not delta_has_content(fingerprint_delta):
+            skip_climb_l0 = "L0 never consults an empty delta: nothing observed to match a learned fix against"
+        if skip_climb_l0 is not None:
+            attempts.append(
+                {
+                    "rung": 0,
+                    "action": "l0_skipped",
+                    "reason": skip_climb_l0,
+                    "calls": [],
+                }
+            )
+            entry = None
+        else:
+            entry = knowledge_cache.lookup(vendor_val, fingerprint_delta, drift_class=drift_class)
         if entry is not None:
             attempts.append(
                 {

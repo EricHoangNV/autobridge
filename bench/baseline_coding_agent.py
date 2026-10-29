@@ -1083,7 +1083,7 @@ class BaselineLLMDriver:
             )
         except Exception as exc:
             elapsed = (time.monotonic() - start) * 1000.0
-            # Surface as failed result via exception — harness catches and marks arm success=False
+            # Surface as failed result via exception — harness catches and marks arm ran=False
             raise ClaudeCliError(
                 f"BaselineLLMDriver failed: {type(exc).__name__}: {exc}",
                 stderr=str(exc),

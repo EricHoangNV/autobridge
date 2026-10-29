@@ -43,11 +43,58 @@ def delta_signature(delta: FingerprintDelta | dict[str, Any] | None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-def cache_key(vendor: str, delta: FingerprintDelta | dict[str, Any] | None) -> str:
-    """Key for L0 lookup: vendor + delta signature."""
+def cache_key(vendor: str, drift_class: str, delta: FingerprintDelta | dict[str, Any] | None) -> str:
+    """Key for L0 lookup: vendor + drift class + delta signature.
+
+    REQ-028: the class is part of the key so a fix learned for one drift
+    class can never fire on another (a no-patch drift matching a cached
+    delta must miss). Callers must pass the classifier's drift class.
+    """
     vendor_clean = (vendor or "unknown").strip().lower()
+    class_clean = (drift_class or "unknown").strip().upper()
     sig = delta_signature(delta)
-    return f"{vendor_clean}::{sig}"
+    return f"{vendor_clean}::{class_clean}::{sig}"
+
+
+def delta_has_content(delta: FingerprintDelta | dict[str, Any] | None) -> bool:
+    """True when *delta* carries an observed change worth keying on.
+
+    REQ-028: an empty delta (no flags, no details — e.g. a transport fault
+    that left no observable trace) has a constant signature shared by every
+    such drift, so it must never consult or populate L0: any hit on it
+    would be a cross-scenario collision, not a learned fix.
+    """
+    if delta is None:
+        return False
+    if isinstance(delta, FingerprintDelta):
+        return bool(
+            delta.fingerprint_changed
+            or delta.pagination_changed
+            or delta.keys_changed
+            or delta.types_changed
+            or delta.changed_entities
+            or delta.pagination_details
+            or delta.keys_details
+            or delta.types_details
+        )
+    if isinstance(delta, dict):
+        return any(v not in (None, False, [], {}, "") for v in delta.values())
+    return False
+
+
+#: Drift classes that never consult or populate L0 (REQ-028). Transport,
+#: auth and capability drifts carry no spec fix: learning or reusing a
+#: patch for them would poison unrelated scenarios. The ladder returns
+#: before L0 for these classes; this set pins the invariant explicitly.
+NO_LEARN_CLASSES = frozenset(
+    {
+        "RATE_LIMIT",
+        "TRANSIENT",
+        "AUTH_EXPIRED",
+        "AUTH_REVOKED",
+        "CAPABILITY_REMOVED",
+    }
+)
 
 
 def _canonical_patch(patch: list[dict[str, Any]] | None) -> str:
@@ -71,7 +118,8 @@ class KnowledgeEntry:
 class KnowledgeCache:
     """In-memory profile cache for L0 knowledge lookup.
 
-    Keyed by vendor + fingerprint delta signature (plan §2.5).
+    Keyed by vendor + drift class + fingerprint delta signature (plan
+    §2.5, REQ-028: the class is part of the key).
     The cache is process-local for W4.4; later it can be backed by DB
     (e.g. a ConnectorRelease lookup by spec_signature + drift_class).
     """
@@ -89,8 +137,8 @@ class KnowledgeCache:
         drift_class: str = "",
         confidence: float = 0.0,
     ) -> KnowledgeEntry:
-        """Store a successful patch for (vendor, delta). Returns the entry."""
-        key = cache_key(vendor, delta)
+        """Store a successful patch for (vendor, drift class, delta). Returns the entry."""
+        key = cache_key(vendor, drift_class, delta)
         entry = KnowledgeEntry(
             vendor=vendor,
             delta_key=key,
@@ -106,21 +154,35 @@ class KnowledgeCache:
         self,
         vendor: str,
         delta: FingerprintDelta | dict[str, Any] | None,
+        *,
+        drift_class: str = "",
     ) -> KnowledgeEntry | None:
-        """Return cached entry for (vendor, delta) or None on miss."""
-        key = cache_key(vendor, delta)
+        """Return cached entry for (vendor, drift class, delta) or None on miss."""
+        key = cache_key(vendor, drift_class, delta)
         return self._store.get(key)
 
-    def contains(self, vendor: str, delta: FingerprintDelta | dict[str, Any] | None) -> bool:
-        return cache_key(vendor, delta) in self._store
+    def contains(
+        self,
+        vendor: str,
+        delta: FingerprintDelta | dict[str, Any] | None,
+        *,
+        drift_class: str = "",
+    ) -> bool:
+        return cache_key(vendor, drift_class, delta) in self._store
 
-    def evict(self, vendor: str, delta: FingerprintDelta | dict[str, Any] | None) -> bool:
-        """Drop the entry for (vendor, delta). Returns True when one existed.
+    def evict(
+        self,
+        vendor: str,
+        delta: FingerprintDelta | dict[str, Any] | None,
+        *,
+        drift_class: str = "",
+    ) -> bool:
+        """Drop the entry for (vendor, drift class, delta). Returns True when one existed.
 
         AR-2-3: reject/rollback paths use this (via ``evict_patch``) so a
         human-rejected or rolled-back patch is never re-proposed at L0.
         """
-        return self._store.pop(cache_key(vendor, delta), None) is not None
+        return self._store.pop(cache_key(vendor, drift_class, delta), None) is not None
 
     def evict_patch(self, patch: list[dict[str, Any]] | None) -> int:
         """Drop every entry whose patch equals *patch*. Returns evicted count.
@@ -152,13 +214,15 @@ class KnowledgeCache:
         self,
         spec: dict[str, Any],
         delta: FingerprintDelta | dict[str, Any] | None,
+        *,
+        drift_class: str = "",
     ) -> KnowledgeEntry | None:
         vendor = ""
         try:
             vendor = spec.get("connector", {}).get("vendor", "") if isinstance(spec.get("connector"), dict) else ""
         except Exception:
             vendor = ""
-        return self.lookup(vendor or "unknown", delta)
+        return self.lookup(vendor or "unknown", delta, drift_class=drift_class)
 
     def put_for_spec(
         self,

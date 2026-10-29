@@ -205,7 +205,7 @@ def test_knowledge_learn_reuse_flow(tmp_path: pathlib.Path) -> None:
             ctrl2 = RepairController(knowledge_cache=KnowledgeCache())
             # First run populated a cache only in its own controller; emulate
             # the learned cache by seeding from the approved patch.
-            ctrl2.knowledge_cache.put("AtlasPMS", _page_delta(), result.candidate_patch, "page_to_cursor")
+            ctrl2.knowledge_cache.put("AtlasPMS", _page_delta(), result.candidate_patch, "page_to_cursor", drift_class="PAGINATION_CHANGE")
             result2 = ctrl2.handle(
                 spec=spec,
                 drift_class="PAGINATION_CHANGE",

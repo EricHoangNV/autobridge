@@ -142,24 +142,32 @@ hypotheses equal freshly engine-derived values). Deterministic first,
 models last: structural/auth/transport classes run zero model calls by
 construction.
 
-Honest scope (rehearsal finding 2026-10-29, `BENCH_TRIALS=1 make
-bench-ablation` on the local stack, published as losses): with no
-pre-diagnosed inputs the engine repairs 4/12 scenarios verified
-(`page_to_cursor`, `offset_to_cursor`, `cursor_repeat_token`,
-`meridian_cursor_renamed` — all 0 frontier tokens) and escalates the
-rest. Still open: Atlas `rename_guest_id` and Meridian
-`meridian_state_renamed` never repair (V=0, E=0 — the wire-shape
-evidence the rename rule needs is not yet derived on the bench
-path), and `autobridge_warm` is worse than cold on three scenarios
-(`rate_limit_429`, `transient_503`, `duplicate_late_records` — a
-learned fix reused on an unrelated drift: the L0 key is too coarse).
-Frontier arms did not run for real: `frontier_oneshot` fails loudly
-with `ReplayMissing` (no `FRONTIER_API_KEY`, no recording) and
-`frontier_agent` runs on the fake driver (rehearsal tokens only).
-The ladder shape is real — the engine genuinely observes each
-fault — and the gaps are engine work (detector evidence, L0 key
-scope), not bench masking: the old hand-fed deltas made repairs
-look solved that the running system cannot yet see.
+Honest scope (rehearsal 2026-10-29, `BENCH_TRIALS=1 make bench-ablation`
+on the keyed local stack, published as losses then fixed in REQ-028):
+AutoBridge cold repairs 6/6 repair scenarios verified (`page_to_cursor`,
+`offset_to_cursor`, `cursor_repeat_token`, `meridian_cursor_renamed`,
+`rename_guest_id`, `meridian_state_renamed` — all 0 frontier tokens, 0
+wrong patches) and warm is never worse than cold (verified and
+correct-escalation equal on every scenario); overall cold/warm
+V=0.500 E=1.000. Three REQ-028 fixes got here from the published gaps:
+(1) one drift taxonomy end to end — the catalog said `FIELD_RENAME`
+while the detector, ladder and `rename_field` rule speak `SCHEMA_RENAME`
+(plan §2.5); the bench derive path now scopes detection to the
+baseline-observed wire keys (the same scoping the live build probe
+provides), so both renames classify from wire evidence and verify with
+0 tokens; (2) L0 fires only on a matching (vendor, drift class,
+observed delta) — transport/auth/capability classes and empty deltas
+(which share one constant signature across scenarios) never consult or
+populate it, so a learned fix is never reused on an unrelated drift;
+(3) `frontier_oneshot` reads the one vendor docs file the engine arms
+read for the scenario (not the whole docs volume, which blew the shared
+20k budget before the model was called) — proven by a unit test that
+meters prompt size against the ceiling; it still needs a frontier key
+or a prompt-hash recording to run for real (see arm availability below).
+Still open: no frontier baseline ran for real in the sandbox (no
+`FRONTIER_API_KEY` there — `frontier_oneshot` fails loudly with
+`ReplayMissing`, `frontier_agent` runs on the fake driver); the owner
+reruns with the key after all REQ-027/REQ-028 fixes land.
 
 Metrics (`summarize_ablation`, per arm / per arm+scenario / overall, mean +
 95 % normal-approx interval, ≥5 trials): verified completion rate (verifier
@@ -171,9 +179,43 @@ per-run table (rung that resolved it, model calls, small/frontier tokens,
 why it escalated comes from the ladder trace).
 
 ```bash
-make bench-ablation   # all arms on the dev split, no stack needed (5 trials)
+make bench-ablation   # all arms on the dev split + learning curve (REQ-024 B)
 make bench            # scorecard first, then all ablation arms, then the learning curve
 ```
+
+The benchmark runs in the sandbox (owner decision 2026-10-29: OpenCode
+is there; the host has none). One documented command runs it against the
+stack with the same keys and budgets for every arm and writes results
+back to `experiments/`:
+
+```bash
+make local-up && BENCH_TRIALS=1 make bench-ablation   # or `make up` for the Compose stack
+```
+
+`make local-up` starts control/verifier/simulators as local processes
+(no Docker needed); the engine arms run in-process through the same
+code path either way, grading goes to the local verifier over HTTP, and
+the run prints one arm-availability line per arm up front (see below)
+plus the per-arm table at the end. The owner reruns this exact command
+(and later `make bench`) only after all REQ-027/REQ-028 fixes land —
+this is development rehearsal, not the pre-registered run.
+
+Arm availability (`describe_arm_availability`, printed at the start of
+every ablation run and stored on the summary): `frontier_oneshot` runs
+live when `FRONTIER_API_KEY` is set, else replays the committed
+recordings (a missing prompt-hash recording fails that scenario
+loudly, never invented), else the fake provider (offline rehearsal, 0
+tokens). `frontier_agent` needs the `opencode` CLI on PATH — the
+supported path is running the bench inside the sandbox; without it the
+harness uses `FakeOpenCodeDriver` and labels rows `fake-*` so rehearsal
+numbers are never mistaken for live ones. The three engine arms always
+run in-process.
+
+Row labels: the per-trial rows carry `ran` (the arm ran to a decision —
+propose/escalate, or a driver result), NOT a verifier pass. Whether a
+produced patch verifies is judged only by the verifier (`verified`,
+`correct_escalation` in the grades). A row with `ran: true` and
+`verified_completion: 0` is a loss, published as one.
 
 The learning curve (`run_learning_curve`, `experiments/learning_curve.md`)
 injects the same drift five times: the agent pays every repair; the
@@ -203,7 +245,7 @@ make bench                                    # dev split: scorecard, then all a
 BENCH_SCENARIOS=baseline BENCH_TRIALS=2 make bench
 BENCH_SEED=99 make bench                      # reproducible from seeds
 BENCH_NO_SCORE=1 make bench                   # harness JSONL only, skip scoring
-make bench-ablation                           # rehearsal without a stack (5 trials, unverified labels)
+make bench-ablation                           # all arms on the dev split + learning curve (needs the stack for grading: make local-up first)
 make bench-heldout                            # Nov 3 run: BENCH_VISIBILITY=heldout
 ```
 

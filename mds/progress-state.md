@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-027 sub-step 6 DONE in sbx1 (2026-10-29): honest bench rerun (`BENCH_TRIALS=1 make bench-ablation` on local stack, real verifier grades). Cold V=0.333 E=0.833, warm V=0.500 E=0.583, 0 frontier tokens, 0 wrong patches; 4/12 scenarios verify (page/offset/cursor-repeat/meridian_cursor_renamed). Open gaps published: rename_guest_id + meridian_state_renamed V=0, warm<cold on 3 scenarios, frontier arms not live. `docs/benchmark.md` caveats updated. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+REQ-028 code DONE in sbx1 (2026-10-29): 4/4 gaps fixed, bench rerun (`BENCH_TRIALS=1 make bench-ablation`, local stack, real verifier). Cold/warm V=0.500 E=1.000 (6/6 repairs verify, 0 tokens, 0 wrong patches; warm==cold everywhere). Remaining OWNER STEP: keyed rerun for live frontier numbers (`frontier_oneshot` needs `FRONTIER_API_KEY`; sandbox has none). Agent: opencode meta/muse-spark-1.3-contributor (escalation).
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
@@ -15,14 +15,15 @@ REQ-027 sub-step 6 DONE in sbx1 (2026-10-29): honest bench rerun (`BENCH_TRIALS=
   - REQ-024 leak-audit fix DONE (raw+nonce only, per-kind counts)
   - REQ-025 sub-step A DONE (faultgen, answer keys, reference solver, 1000+ sweeps)
   - REQ-025 sub-step B code DONE (remaining: owner/CI rehearsals 3-5, live frontier numbers, the real frozen run)
-  - REQ-027 sub-steps 1-6 DONE (sub-step 6: honest bench rerun recorded; remaining: owner keyed-stack demo verification)
+  - REQ-027 sub-steps 1-6 DONE (remaining: owner keyed-stack demo verification)
+  - REQ-028 code DONE (taxonomy SCHEMA_RENAME end to end, L0 class+delta scoping, oneshot per-vendor docs + arm availability, `ran` label; remaining: owner keyed rerun)
   - Edge readyz closed-store 500 fixed (honest degraded + regression test)
-- Tests: autobridge 90.4% (2525) / verifier 91.5% (134) / simulators 90.5% (396) + ui 160 pass; lint + typecheck + ui-typecheck green
-- Stack: local stack up in sbx1 (bench rerun green; keyed Compose run pending owner)
+- Tests: autobridge 90.4% (2534) / verifier 91.5% (134) / simulators 90.5% (396) + ui 160 pass; lint + typecheck + ui-typecheck + openapi-check green
+- Stack: local stack up in sbx1 (bench rerun green; e2e 17/17 on touched files with service-env tokens plumbed)
 
 ## Next tasks
-0. **REQ-027 iteration (VERIFY)** — owner: fresh `.env` from `.env.example`, keyed `make local-up && make e2e && make demo` 8/8, check L3 line shows reasoning split, /knowledge state (atlaspms v1, meridianpms v2/v1-refused, PABX edge v3, reused entry), run new UI spec; then merge
-1. **REQ-028** — OPEN: benchmark-driven engine fixes (rename evidence on bench path, L0 key scoping, frontier-arm reporting, `success` label); rerun bench and record table
+0. **REQ-028 (VERIFY)** — owner: keyed `BENCH_TRIALS=1 make bench-ablation` (or `make bench`), record frontier_oneshot/agent numbers in BUILD-NOTES; then merge/close
+1. **REQ-027 iteration (VERIFY)** — owner: fresh `.env` from `.env.example`, keyed `make local-up && make e2e && make demo` 8/8, check L3 line shows reasoning split, /knowledge state (atlaspms v1, meridianpms v2/v1-refused, PABX edge v3, reused entry), run new UI spec; then merge
 2. **REQ-021 remaining (owner step)** — owner runs `make record-frontier SCENARIO=gross_to_net` and commits the capture; live step-4 check on the owner's host
 3. **REQ-024 remaining (owner/CI steps)** — owner re-runs leak audit (expect OK); live frontier numbers need `FRONTIER_API_KEY`; single Nov 3 held-out run
 4. **REQ-025 remaining (owner/CI steps)** — 3+ more rehearsals before freeze; live frontier numbers; the real frozen run

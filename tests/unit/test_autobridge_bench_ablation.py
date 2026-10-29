@@ -109,7 +109,7 @@ def test_case_skips_non_http(monkeypatch: pytest.MonkeyPatch) -> None:
     doc = _yaml.safe_load(ab.CASES_PATH.read_text(encoding="utf-8")) or {}
     doc["cases"]["fias_record_layout_change"] = {
         "spec": {"kind": "generated", "connector": "atlaspms"},
-        "drift_class": "FIELD_RENAME",
+        "drift_class": "SCHEMA_RENAME",
         "delta": {"kind": "generic"},
         "extra": {},
         "expected": "repair",
@@ -152,7 +152,7 @@ def test_engine_cold_structural_derives_then_proposes_zero_tokens() -> None:
     assert any("wire_evidence" in (s.details or {}) for s in diag.signals)
     res = run_engine_arm(inputs, case, ablation="autobridge_cold", provider=FakeProvider())
     assert res.arm == "autobridge_cold"
-    assert res.success
+    assert res.ran
     assert res.frontier_tokens == 0
     assert res.input_tokens == 0
     assert res.spec is not None and res.spec["decision"] == "propose"
@@ -286,7 +286,7 @@ def test_ablation_trial_with_fake_runners() -> None:
 
     def _runner(arm: str) -> Any:
         def _run(inputs: Any) -> Any:
-            return ArmResult(arm=arm, inputs=inputs, success=True)  # type: ignore[arg-type]
+            return ArmResult(arm=arm, inputs=inputs, ran=True)  # type: ignore[arg-type]
 
         return _run
 
@@ -320,7 +320,7 @@ def test_grade_and_summarize() -> None:
         seed=inputs.seed,
         inputs=inputs,
         results={
-            arm: ArmResult(arm=arm, inputs=inputs, success=True, frontier_tokens=0)  # type: ignore[arg-type]
+            arm: ArmResult(arm=arm, inputs=inputs, ran=True, frontier_tokens=0)  # type: ignore[arg-type]
             for arm in ABLATION_ARMS
         },
     )
@@ -349,7 +349,7 @@ def test_grade_unreachable_verifier_never_guessed() -> None:
             "autobridge_cold": ArmResult(  # type: ignore[arg-type]
                 arm="autobridge_cold",
                 inputs=inputs,
-                success=True,
+                ran=True,
                 spec={"decision": "propose", "candidate_patch": []},
             )
         },
@@ -367,7 +367,7 @@ def test_grade_no_patch_outcome_classes() -> None:
     backoff = ArmResult(  # type: ignore[arg-type]
         arm="autobridge_cold",
         inputs=inputs,
-        success=True,
+        ran=True,
         spec={"decision": "propose", "candidate_patch": []},
     )
     trial = AblationTrialResult(
@@ -380,7 +380,7 @@ def test_grade_no_patch_outcome_classes() -> None:
     releaser = ArmResult(  # type: ignore[arg-type]
         arm="engine_no_knowledge",
         inputs=inputs,
-        success=True,
+        ran=True,
         spec={"decision": "propose", "candidate_patch": [{"op": "replace", "path": "/x", "value": 1}]},
     )
     trial2 = AblationTrialResult(
@@ -397,7 +397,7 @@ def test_ablation_trial_runner_exception_becomes_failed_arm() -> None:
         raise RuntimeError("boom")
 
     trial = run_ablation_trial(cfg, "page_to_cursor", 0, runners={"autobridge_cold": _boom})
-    assert trial.results["autobridge_cold"].success is False
+    assert trial.results["autobridge_cold"].ran is False
     assert "boom" in (trial.results["autobridge_cold"].error or "")
 
 
@@ -436,7 +436,7 @@ def test_summary_clamps_bounds() -> None:
     block = summary["per_arm"]["autobridge_cold"]
     assert block["frontier_tokens"]["ci95_lo"] == 0.0
     assert 0.0 <= block["correct_escalation_rate"]["mean"] <= 1.0
-    arm_result_check = ArmResult(arm="autobridge_cold", inputs=inputs, success=True)  # type: ignore[arg-type]
+    arm_result_check = ArmResult(arm="autobridge_cold", inputs=inputs, ran=True)  # type: ignore[arg-type]
     assert arm_result_check.arm == "autobridge_cold"
 
 
@@ -537,7 +537,7 @@ def test_derive_diagnostics_needs_no_case_labels() -> None:
     cfg = HarnessConfig()
     expectations = {
         "page_to_cursor": "PAGINATION_CHANGE",
-        "rename_guest_id": "SCHEMA_REMOVED",
+        "rename_guest_id": "SCHEMA_RENAME",
         "token_expired": "AUTH_EXPIRED",
         "gross_to_net": "SEMANTIC_VALUE_DRIFT",
         "status_vocab_change": "ENUM_NEW_VALUE",
@@ -570,3 +570,41 @@ def test_fault_serving_leaks_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _derive(case.spec, scenario_id="page_to_cursor", connector_id="atlaspms", seed=inputs.seed)
     for key in _faults._FAKE_ENV_DEFAULTS:
         assert _os.environ.get(key) is None, key
+
+
+def test_warm_never_worse_than_cold() -> None:
+    """REQ-028: on every dev HTTP scenario the warm arm decides exactly what
+    cold decides. A learned fix may only fire when the drift class and the
+    observed wire delta match what L0 learned from — so warm can reuse cold's
+    patch via L0 (same decision, same patch, same rule) but never invent a
+    patch cold would not propose, and never lose cold's escalation."""
+
+    cfg = HarnessConfig()
+    prov = ablation_provider("fake")
+    sids = ablation_scenarios()
+    warm = warm_knowledge(list(sids), provider=prov)
+    for sid in sids:
+        case = ablation_case_for_scenario(sid)
+        inputs = make_trial_inputs(cfg, sid, 0)
+        cold = run_engine_arm(inputs, case, ablation="autobridge_cold", provider=prov)
+        warmed = run_engine_arm(inputs, case, ablation="autobridge_warm", provider=prov, knowledge=warm)
+        cold_spec = cold.spec or {}
+        warm_spec = warmed.spec or {}
+        assert (warmed.decision if hasattr(warmed, "decision") else warm_spec.get("decision")) == (
+            cold.decision if hasattr(cold, "decision") else cold_spec.get("decision")
+        ), sid
+        assert warm_spec.get("candidate_patch") == cold_spec.get("candidate_patch"), (
+            f"{sid}: warm must never invent a patch cold would not propose"
+        )
+        assert warm_spec.get("rule_id") == cold_spec.get("rule_id"), sid
+
+
+def test_describe_arm_availability_names_every_arm() -> None:
+    """REQ-028: the bench says up front which arms can run and why."""
+    import bench.ablation as ab
+
+    rows = ab.describe_arm_availability()
+    assert [r["arm"] for r in rows] == list(ab.ABLATION_ARMS)
+    assert all(r["mode"] for r in rows)
+    for arm in ab.ENGINE_ARMS:
+        assert "in-process" in [r["mode"] for r in rows if r["arm"] == arm][0]

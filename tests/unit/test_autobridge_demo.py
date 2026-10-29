@@ -222,7 +222,7 @@ def test_step8_pabx_layout_repair_zero_frontier() -> None:
     assert step["status"] == "ok", step
     ev = step["evidence"]
     assert ev["fault"] == "fias_record_layout_change"
-    assert ev["drift_class"] == "FIELD_RENAME"
+    assert ev["drift_class"] == "SCHEMA_RENAME"
     assert ev["renamed_wire"] == {"TA": "TM"} and ev["added_wire"] == ["CX"]
     assert ev["baseline"] == {"layout": "v2", "outcome": "Complete", "amount": "12.50"}
     assert ev["stale_mapping_reads"] is None  # silent corruption: why handshake detection

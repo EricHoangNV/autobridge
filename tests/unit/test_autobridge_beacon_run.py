@@ -166,16 +166,16 @@ def test_canonical_to_records_mapping() -> None:
 def test_arm_outcome_mapping() -> None:
     from types import SimpleNamespace as _NS
 
-    propose = _NS(success=True, spec={"decision": "propose", "candidate_patch": [{"op": "add"}]})
+    propose = _NS(ran=True, spec={"decision": "propose", "candidate_patch": [{"op": "add"}]})
     assert beacon_run._arm_outcome_for(propose, True)["outcome"] == "Complete"
-    backoff = _NS(success=True, spec={"decision": "propose", "candidate_patch": []})
+    backoff = _NS(ran=True, spec={"decision": "propose", "candidate_patch": []})
     report = beacon_run._arm_outcome_for(backoff, False)
     assert report == {"outcome": "Complete", "patch_reached_release": False, "operator_question": False}
-    degraded = _NS(success=True, spec={"decision": "degraded", "candidate_patch": None})
+    degraded = _NS(ran=True, spec={"decision": "degraded", "candidate_patch": None})
     assert beacon_run._arm_outcome_for(degraded, False)["operator_question"] is True
-    escalated = _NS(success=True, spec={"decision": "escalate", "candidate_patch": None})
+    escalated = _NS(ran=True, spec={"decision": "escalate", "candidate_patch": None})
     assert beacon_run._arm_outcome_for(escalated, False)["outcome"] == "Blocked"
-    failed = _NS(success=False, spec=None)
+    failed = _NS(ran=False, spec=None)
     assert beacon_run._arm_outcome_for(failed, False)["outcome"] == "Blocked"
 
 
@@ -192,7 +192,7 @@ def test_run_instance_trial_offline_no_verifier() -> None:
     def fake_runner(inputs: Any) -> Any:
         from bench.harness import ArmResult as _ArmResult
 
-        return _ArmResult(arm="autobridge_cold", inputs=inputs, success=True, model="fake")
+        return _ArmResult(arm="autobridge_cold", inputs=inputs, ran=True, model="fake")
 
     grades, reports = beacon_run.run_instance_trial(
         protocol, EVAL_SEED_HEX, descriptor, 0, config=_Cfg(trials_per_scenario=1),

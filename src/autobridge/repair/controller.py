@@ -20,7 +20,13 @@ from typing import TYPE_CHECKING, Any
 from autobridge.control.models import DriftEvent, RepairRun
 from autobridge.drift.classifier import DriftClassification, classify
 from autobridge.repair.escalation import escalation_for_no_fix
-from autobridge.repair.knowledge import KnowledgeCache, delta_signature, get_default_cache
+from autobridge.repair.knowledge import (
+    NO_LEARN_CLASSES,
+    KnowledgeCache,
+    delta_has_content,
+    delta_signature,
+    get_default_cache,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -175,12 +181,19 @@ class RepairController:
             )
             session.add(run)
             session.flush()
-            # Cache successful propose patches for L0 future hits
-            # Cache successful propose patches for L0 future hits. A None delta
-            # has no content to key on (every drift would share one key), so
-            # it is never cached: without a delta the ladder re-derives from
-            # signals every time instead of risking a wrong-patch L0 hit.
-            if result.decision == "propose" and result.candidate_patch and fingerprint_delta is not None:
+            # Cache successful propose patches for L0 future hits. A None or
+            # empty delta has no content to key on (every such drift would
+            # share one constant key), so it is never cached: without an
+            # observed change the ladder re-derives from signals every time
+            # instead of risking a wrong-patch L0 hit. Transport/auth/
+            # capability classes never populate L0 either (REQ-028).
+            if (
+                result.decision == "propose"
+                and result.candidate_patch
+                and fingerprint_delta is not None
+                and drift_class not in NO_LEARN_CLASSES
+                and delta_has_content(fingerprint_delta)
+            ):
                 with contextlib.suppress(Exception):
                     self.knowledge_cache.put(
                         vendor_val,

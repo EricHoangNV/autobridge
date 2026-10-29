@@ -55,6 +55,73 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+def vendor_docs_loader(
+    docs_ref: str,
+    *,
+    completion_tokens: int = 4096,
+    reserve_tokens: int = 2000,
+    chars_per_token: int = 4,
+) -> Any:
+    """Docs loader scoped to one vendor's docs file (REQ-028).
+
+    The default :func:`load_docs_text` falls back to concatenating the whole
+    docs volume when a scenario subdir is absent — ~31k prompt tokens, over
+    the shared 20k ceiling, so ``frontier_oneshot`` died in
+    ``BudgetExhausted`` before calling the model. The ablation engine arms
+    read one vendor's docs file for the scenario's connector; this loader
+    reads that same file, so both sides see the same docs under the same
+    budget. The text is truncated to fit ``(token_ceiling -
+    completion_tokens - reserve_tokens)`` with a loud marker; the ceiling
+    comes from the trial inputs (matched budget), never raised for one arm.
+    When even the truncated file cannot fit, the arm reports
+    ``BudgetExhausted`` honestly (see :func:`run_one_shot_arm`) instead of
+    passing silently.
+    """
+
+    def _load(inputs: Any) -> str:
+        candidates: list[pathlib.Path] = []
+        try:
+            ref = docs_ref or str(getattr(inputs, "docs_ref", "") or "")
+        except Exception:
+            ref = docs_ref or ""
+        if ref:
+            candidates.append(pathlib.Path(ref))
+            try:
+                dv = str(getattr(inputs, "docs_volume", "") or "")
+            except Exception:
+                dv = ""
+            if dv:
+                candidates.append(pathlib.Path(dv) / pathlib.Path(ref).name)
+        text = ""
+        for path in candidates:
+            try:
+                if path.is_file():
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                    break
+            except Exception:
+                continue
+        if not text:
+            return ""
+        try:
+            ceiling = int(getattr(inputs, "token_ceiling", 0) or 0)
+        except Exception:
+            ceiling = 0
+        if ceiling > 0:
+            budget_chars = max(1000, (ceiling - completion_tokens - reserve_tokens) * chars_per_token)
+            if len(text) > budget_chars:
+                text = (
+                    text[:budget_chars]
+                    + f"\n\n[docs truncated for the shared budget: {len(text)} chars "
+                    f"exceed the per-arm docs allowance of {budget_chars} chars "
+                    f"(ceiling {ceiling} tokens minus {completion_tokens} completion "
+                    f"and {reserve_tokens} reserve); the arm reports BudgetExhausted "
+                    "honestly rather than raising the ceiling for one arm]"
+                )
+        return text
+
+    return _load
+
+
 def load_docs_text(
     inputs: Any,
     *,
@@ -366,7 +433,7 @@ class OneShotGenerator:
         via :func:`run_one_shot_arm`.
 
         Raises :class:`ClaudeCliError` on transport / budget failure so the
-        harness can mark the arm ``success=False`` uniformly.
+        harness can mark the arm ``ran=False`` uniformly.
         """
         _ = (cwd, timeout_s)  # kept for driver parity; wall-clock is via Budget
         self.calls.append({"prompt": prompt, "cwd": str(cwd) if cwd else None})
@@ -455,7 +522,7 @@ def run_one_shot_arm(
     Returns an :class:`bench.harness.ArmResult` with
     ``arm="one_shot"`` so the bench scorer can report it alongside
     ``autobridge`` and ``baseline``.  On any error an ``ArmResult`` with
-    ``success=False`` and ``error`` is returned (never raises except for
+    ``ran=False`` and ``error`` is returned (never raises except for
     programming errors).
 
     The Budget ceilings default to ``inputs.token_ceiling`` /
@@ -498,7 +565,7 @@ def run_one_shot_arm(
         return ArmResult(
             arm="one_shot",
             inputs=inputs,
-            success=True,
+            ran=True,
             elapsed_ms=elapsed,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
@@ -520,7 +587,7 @@ def run_one_shot_arm(
                 return ArmResult(
                     arm="one_shot",
                     inputs=inputs,
-                    success=False,
+                    ran=False,
                     elapsed_ms=elapsed,
                     error=f"{type(cause).__name__}: {cause}",
                     model=model or tier,
@@ -528,7 +595,7 @@ def run_one_shot_arm(
         return ArmResult(
             arm="one_shot",
             inputs=inputs,
-            success=False,
+            ran=False,
             elapsed_ms=elapsed,
             error=f"{type(exc).__name__}: {exc}"[:2000],
             model=model or tier,

@@ -113,7 +113,7 @@ def test_yaml_drift_classes_cover_plan_list() -> None:
     # All non-baseline scenarios must have unique intent; baseline is none
     drift_classes = {s.drift_class for s in load_all_scenarios()}
     # At least the core drift classes are present
-    assert "FIELD_RENAME" in drift_classes
+    assert "SCHEMA_RENAME" in drift_classes
     assert "PAGINATION_CHANGE" in drift_classes
     assert "RATE_LIMIT" in drift_classes
     assert "SEMANTIC_VALUE_DRIFT" in drift_classes
@@ -421,7 +421,7 @@ def test_loader_rejects_missing_key() -> None:
 
     base = {
         "id": "rename_guest_id",
-        "drift_class": "FIELD_RENAME",
+        "drift_class": "SCHEMA_RENAME",
         "fixable": "fixable",
         "visibility": "dev",
         "vendor": "both",
@@ -441,7 +441,7 @@ def test_loader_rejects_invalid_enums() -> None:
 
     base = {
         "id": "x",
-        "drift_class": "FIELD_RENAME",
+        "drift_class": "SCHEMA_RENAME",
         "fixable": "fixable",
         "visibility": "dev",
         "vendor": "both",
@@ -471,7 +471,7 @@ def test_loader_rejects_bad_types() -> None:
 
     base = {
         "id": "x",
-        "drift_class": "FIELD_RENAME",
+        "drift_class": "SCHEMA_RENAME",
         "fixable": "fixable",
         "visibility": "dev",
         "vendor": "both",
@@ -505,7 +505,7 @@ def test_loader_rejects_id_filename_mismatch() -> None:
 
     data = {
         "id": "other_id",
-        "drift_class": "FIELD_RENAME",
+        "drift_class": "SCHEMA_RENAME",
         "fixable": "fixable",
         "visibility": "dev",
         "vendor": "both",

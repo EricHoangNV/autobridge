@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+from typing import Any
 
 import pytest
 
@@ -448,7 +449,7 @@ def test_run_one_shot_arm_success() -> None:
     inp = _inputs()
     arm = run_one_shot_arm(inp, provider=prov)
     assert arm.arm == "one_shot"
-    assert arm.success is True
+    assert arm.ran is True
     assert arm.inputs == inp
     assert arm.spec == {"name": "spec1", "version": 1}
     assert arm.input_tokens == 10
@@ -462,7 +463,7 @@ def test_run_one_shot_arm_no_spec_dict() -> None:
     prov = _fake_provider("just some text with no yaml")
     inp = _inputs()
     arm = run_one_shot_arm(inp, provider=prov)
-    assert arm.success is True
+    assert arm.ran is True
     assert arm.spec is None
 
 
@@ -470,7 +471,7 @@ def test_run_one_shot_arm_default_budget_from_inputs() -> None:
     prov = _fake_provider("name: x\n", usage=Usage(input_tokens=2, output_tokens=3))
     inp = _inputs(token_ceiling=1000, wall_clock_s=10.0)
     arm = run_one_shot_arm(inp, provider=prov)
-    assert arm.success is True
+    assert arm.ran is True
     assert arm.frontier_tokens == 5
 
 
@@ -499,7 +500,7 @@ def test_run_one_shot_arm_failure_provider() -> None:
 
     inp = _inputs()
     arm = run_one_shot_arm(inp, provider=Bad())
-    assert arm.success is False
+    assert arm.ran is False
     assert "RuntimeError" in arm.error or "oops" in arm.error
 
 
@@ -508,7 +509,7 @@ def test_run_one_shot_arm_budget_exhausted() -> None:
     budget = Budget(max_frontier_tokens=10)
     inp = _inputs()
     arm = run_one_shot_arm(inp, provider=prov, budget=budget)
-    assert arm.success is False
+    assert arm.ran is False
     assert "BudgetExhausted" in arm.error
 
 
@@ -516,7 +517,7 @@ def test_run_one_shot_arm_docs_loader() -> None:
     prov = _fake_provider("name: docload\n")
     inp = _inputs(scenario_id="s1")
     arm = run_one_shot_arm(inp, provider=prov, docs_loader=lambda x: "DOCS " + x.scenario_id)
-    assert arm.success is True
+    assert arm.ran is True
     assert arm.spec == {"name": "docload"}
 
 
@@ -525,7 +526,7 @@ def test_run_one_shot_arm_with_explicit_budget() -> None:
     budget = Budget(max_frontier_tokens=100)
     inp = _inputs()
     arm = run_one_shot_arm(inp, provider=prov, budget=budget)
-    assert arm.success
+    assert arm.ran
     assert budget.frontier_tokens == 2
 
 
@@ -557,13 +558,13 @@ def test_run_trial_with_one_shot_custom_runners() -> None:
     cfg = HarnessConfig(seed=1)
 
     def ab_runner(inp):
-        return ArmResult(arm="autobridge", inputs=inp, success=True, model="ab")
+        return ArmResult(arm="autobridge", inputs=inp, ran=True, model="ab")
 
     def bl_runner(inp):
-        return ArmResult(arm="baseline", inputs=inp, success=True, model="bl")
+        return ArmResult(arm="baseline", inputs=inp, ran=True, model="bl")
 
     def os_runner(inp):
-        return ArmResult(arm="one_shot", inputs=inp, success=True, model="os")
+        return ArmResult(arm="one_shot", inputs=inp, ran=True, model="os")
 
     trial = run_trial_with_one_shot(cfg, "atlas_basic", 0, autobridge_runner=ab_runner, baseline_runner=bl_runner, one_shot_runner=os_runner)
     assert trial.autobridge.model == "ab"
@@ -575,7 +576,7 @@ def test_run_trial_with_one_shot_provider_override() -> None:
     cfg = HarnessConfig(seed=2)
     prov = _fake_provider("name: provider_spec\n")
     trial = run_trial_with_one_shot(cfg, "harbor_basic", 1, one_shot_provider=prov)
-    assert trial.one_shot.success is True
+    assert trial.one_shot.ran is True
     assert trial.one_shot.spec == {"name": "provider_spec"}
 
 
@@ -681,7 +682,7 @@ def test_harness_arm_literal_includes_one_shot() -> None:
     from bench.harness import ArmResult
 
     inp = _inputs()
-    arm = ArmResult(arm="one_shot", inputs=inp, success=True)
+    arm = ArmResult(arm="one_shot", inputs=inp, ran=True)
     assert arm.arm == "one_shot"
     assert arm.to_dict()["arm"] == "one_shot"
 
@@ -714,3 +715,36 @@ def test_reexport_via_fake_cli() -> None:
     assert bosp is build_one_shot_prompt
     assert esy is extract_spec_yaml
     assert rosa is run_one_shot_arm
+
+
+def test_oneshot_vendor_scoped_docs_fit_shared_budget() -> None:
+    """REQ-028: the whole-volume docs fallback blows the shared token
+    ceiling (the old ``frontier_oneshot`` failure); the ablation arm scopes
+    the prompt to the one vendor docs file the engine arms read, which fits.
+    A prompt-measuring fake (chars/4 usage, like a real provider accounts)
+    proves the mechanism without a frontier key."""
+    import bench.ablation as ab
+    from bench.one_shot import load_docs_text as _volume_docs
+    from bench.one_shot import run_one_shot_arm as _run
+    from bench.one_shot import vendor_docs_loader
+
+    def _metered(messages: Any, max_tokens: int = 4096, tier: str = "frontier", purpose: str = "", tools: Any = None) -> Completion:
+        _ = (max_tokens, tier, purpose, tools)  # metered by prompt size only
+        chars = sum(len(str(m.get("content", ""))) for m in messages)
+        return Completion(text="name: scoped\n", usage=Usage(input_tokens=chars // 4, output_tokens=50))
+
+    metered = FakeProvider(responses={"default": _metered}, frontier_model="fake-frontier", small_model="fake-small")
+    case = ab.ablation_case_for_scenario("rename_guest_id")
+    cfg = HarnessConfig()
+    inp = make_trial_inputs(cfg, "rename_guest_id", 0)
+    assert inp.token_ceiling == 20000
+    whole = _volume_docs(inp)
+    assert len(whole) > 50000, "volume fallback must concatenate the whole docs dir (the old failure)"
+    whole_arm = _run(inp, provider=FakeProvider(responses={"default": _metered}), docs_loader=lambda _i: whole)
+    assert whole_arm.ran is False
+    assert "BudgetExhausted" in (whole_arm.error or ""), whole_arm.error
+    assert "atlaspms-openapi" in case.docs_ref
+    scoped_arm = _run(inp, provider=metered, docs_loader=vendor_docs_loader(case.docs_ref))
+    assert scoped_arm.ran is True, scoped_arm.error
+    # The loader reads the same file the engine arms read for this connector.
+    assert "openapi" in vendor_docs_loader(case.docs_ref)(inp).lower() or len(vendor_docs_loader(case.docs_ref)(inp)) > 1000

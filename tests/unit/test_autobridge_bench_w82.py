@@ -356,7 +356,7 @@ def test_baseline_llm_driver_with_budget() -> None:
     budget = Budget(max_frontier_tokens=1000, max_calls=10, max_wall=60)
     d = BaselineLLMDriver(provider=provider, budget=budget, tier="frontier")
     res = d.run("hello")
-    assert res.text  # success
+    assert res.text  # ran
     assert budget.calls == 1
     assert budget.frontier_tokens == res.total_tokens
 
@@ -489,7 +489,7 @@ def test_harness_with_codex_driver_matched() -> None:
         seen_a.append(inp.budget_fields())
         from bench.harness import ArmResult
 
-        return ArmResult(arm="autobridge", inputs=inp, success=True)
+        return ArmResult(arm="autobridge", inputs=inp, ran=True)
 
     def bl_runner(inp):  # type: ignore[no-untyped-def]
         seen_b.append(inp.budget_fields())
@@ -501,7 +501,7 @@ def test_harness_with_codex_driver_matched() -> None:
         return ArmResult(
             arm="baseline",
             inputs=inp,
-            success=True,
+            ran=True,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
             model=result.model,
@@ -528,7 +528,7 @@ def test_harness_with_llm_fallback_matched() -> None:
         return ArmResult(
             arm="baseline",
             inputs=inp,
-            success=True,
+            ran=True,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
             frontier_tokens=result.total_tokens,
@@ -547,7 +547,7 @@ def test_run_baseline_arm_with_codex_driver() -> None:
     driver = FakeCodexDriver(default_text="codex baseline spec")
     result = run_baseline_arm(inp, driver=driver)
     assert result.arm == "baseline"
-    assert result.success is True
+    assert result.ran is True
     assert result.total_tokens == 30
     assert "baseline" in driver.last_prompt
 
@@ -559,7 +559,7 @@ def test_run_baseline_arm_with_llm_driver() -> None:
     driver = BaselineLLMDriver(provider=provider)
     result = run_baseline_arm(inp, driver=driver)
     assert result.arm == "baseline"
-    assert result.success is True
+    assert result.ran is True
     assert result.total_tokens == 30
 
 

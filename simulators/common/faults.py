@@ -36,7 +36,7 @@ from typing import Any
 
 SCENARIO_CATALOG: list[dict[str, str]] = [
     {"id": "baseline", "drift_class": "none", "fixable": "fixable", "visibility": "dev"},
-    {"id": "rename_guest_id", "drift_class": "FIELD_RENAME", "fixable": "fixable", "visibility": "dev"},
+    {"id": "rename_guest_id", "drift_class": "SCHEMA_RENAME", "fixable": "fixable", "visibility": "dev"},
     {"id": "offset_to_cursor", "drift_class": "PAGINATION_CHANGE", "fixable": "fixable", "visibility": "dev"},
     {"id": "page_to_cursor", "drift_class": "PAGINATION_CHANGE", "fixable": "fixable", "visibility": "dev"},
     {"id": "cursor_repeat_token", "drift_class": "PAGINATION_BUG", "fixable": "fixable", "visibility": "dev"},
@@ -50,7 +50,7 @@ SCENARIO_CATALOG: list[dict[str, str]] = [
     {"id": "endpoint_removed", "drift_class": "CAPABILITY_REMOVED", "fixable": "escalate", "visibility": "heldout"},
     {"id": "token_revoked", "drift_class": "AUTH_REVOKED", "fixable": "escalate", "visibility": "heldout"},
     {"id": "invalid_patch_trap", "drift_class": "SEMANTIC_VALUE_DRIFT", "fixable": "escalate", "visibility": "heldout"},
-  {"id": "meridian_state_renamed", "drift_class": "FIELD_RENAME", "fixable": "fixable", "visibility": "dev"},
+  {"id": "meridian_state_renamed", "drift_class": "SCHEMA_RENAME", "fixable": "fixable", "visibility": "dev"},
   {"id": "meridian_cursor_renamed", "drift_class": "PAGINATION_CHANGE", "fixable": "fixable", "visibility": "dev"},
   # REQ-022 D — FIAS on-premise family. ``transport: fias_tcp`` marks
   # link/agent faults: they carry no HTTP dataset mutation (the wire is
@@ -58,7 +58,7 @@ SCENARIO_CATALOG: list[dict[str, str]] = [
   # ``verifier/fias_checks.py`` plus the FIAS e2e file — never by the HTTP
   # oracle. ``failed_check`` names the link-layer guarantee so /verify can
   # fail closed with the exact catalog name (it cannot verify the link).
-  {"id": "fias_record_layout_change", "drift_class": "FIELD_RENAME", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_record_layout_change"},
+  {"id": "fias_record_layout_change", "drift_class": "SCHEMA_RENAME", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_record_layout_change"},
   {"id": "fias_link_resync", "drift_class": "LINK_RESYNC", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_link_resync"},
   {"id": "fias_ack_timeout", "drift_class": "ACK_TIMEOUT", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "fias_ack_timeout"},
   {"id": "agent_restart_inflight", "drift_class": "AGENT_RESTART", "fixable": "fixable", "visibility": "dev", "transport": "fias_tcp", "failed_check": "agent_restart_inflight"},

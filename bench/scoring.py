@@ -5,7 +5,7 @@ For each scenario × trial × arm the scorer asks the verifier
 computes the ten required metrics:
 
 * ``verified_completion`` — verifier verdict ``pass`` (0/1 per trial).
-* ``repair_success`` — arm completed (``success``) **and** verifier passed.
+* ``repair_success`` — arm ran (``ran``) **and** verifier passed.
 * ``false_fix`` — verifier passed the target but the regression gate
   failed (looked fixed, broke something else).  Aggregated as
   ``false_fix_rate``; ``unsafe_rate`` additionally counts
@@ -257,7 +257,7 @@ def score_arm(
     arm: str,
     scenario_id: str,
     trial: int,
-    success: bool,
+    ran: bool,
     elapsed_ms: float = 0.0,
     tool_calls: int = 0,
     model_calls: int = 0,
@@ -272,10 +272,10 @@ def score_arm(
     with ``escalation_quality`` from the bundle (if any).
     """
     oc = outcome if outcome is not None else VerifyOutcome()
-    verified = 1 if (success and oc.passed) else 0
+    verified = 1 if (ran and oc.passed) else 0
     # Repair success == verified completion for the build/repair bench:
     # the arm finished and the verifier passed the produced spec.
-    repair = 1 if (success and oc.passed and not oc.regression_failed) else 0
+    repair = 1 if (ran and oc.passed and not oc.regression_failed) else 0
     # False fix: verifier passed the target but the regression gate failed.
     false_fix = 1 if (oc.passed and oc.regression_failed) else 0
     # Unsafe: false fix, or a trap/unknown-enum check fired.
@@ -320,7 +320,7 @@ def _arm_facts(arm_result: Any) -> dict[str, Any]:
     if isinstance(arm_result, dict):
         return {
             "arm": str(arm_result.get("arm", "unknown")),
-            "success": bool(arm_result.get("success", False)),
+            "ran": bool(arm_result.get("ran", False)),
             "elapsed_ms": float(arm_result.get("elapsed_ms", 0.0) or 0.0),
             "tool_calls": int(arm_result.get("tool_calls", 0) or 0),
             "model_calls": int(arm_result.get("model_calls", 0) or 0),
@@ -330,7 +330,7 @@ def _arm_facts(arm_result: Any) -> dict[str, Any]:
         }
     return {
         "arm": str(getattr(arm_result, "arm", "unknown")),
-        "success": bool(getattr(arm_result, "success", False)),
+        "ran": bool(getattr(arm_result, "ran", False)),
         "elapsed_ms": float(getattr(arm_result, "elapsed_ms", 0.0) or 0.0),
         "tool_calls": int(getattr(arm_result, "tool_calls", 0) or 0),
         "model_calls": int(getattr(arm_result, "model_calls", 0) or 0),
@@ -410,7 +410,7 @@ def score_trial(
             arm=name,
             scenario_id=scenario_id,
             trial=trial_n,
-            success=facts["success"],
+            ran=facts["ran"],
             elapsed_ms=facts["elapsed_ms"],
             tool_calls=facts["tool_calls"],
             model_calls=facts["model_calls"],

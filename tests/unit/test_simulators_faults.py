@@ -99,7 +99,7 @@ def test_validate_scenario_id_empty() -> None:
 
 def test_drift_class_and_fixable() -> None:
     assert drift_class_for_scenario("baseline") == "none"
-    assert drift_class_for_scenario("rename_guest_id") == "FIELD_RENAME"
+    assert drift_class_for_scenario("rename_guest_id") == "SCHEMA_RENAME"
     assert is_fixable("rename_guest_id") is True
     assert is_fixable("endpoint_removed") is False
     assert is_fixable("token_revoked") is False

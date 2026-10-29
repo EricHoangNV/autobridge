@@ -37,8 +37,8 @@ def _inp(scenario: str = "baseline", trial: int = 0):
     return make_trial_inputs(cfg, scenario, trial)
 
 
-def _arm(arm: str, success: bool = True, **kw: Any) -> ArmResult:
-    return ArmResult(arm=arm, inputs=_inp(), success=success, **kw)  # type: ignore[arg-type]
+def _arm(arm: str, ran: bool = True, **kw: Any) -> ArmResult:
+    return ArmResult(arm=arm, inputs=_inp(), ran=ran, **kw)  # type: ignore[arg-type]
 
 
 def _pass_payload(**kw: Any) -> dict[str, Any]:
@@ -121,7 +121,7 @@ def test_escalation_missing_or_invalid() -> None:
 
 
 def test_score_arm_verified_zero_frontier() -> None:
-    s = score_arm(arm="autobridge", scenario_id="baseline", trial=0, success=True, frontier_tokens=0, cost_usd=Decimal("0.001"), outcome=VerifyOutcome(verdict="pass", score=1.0))
+    s = score_arm(arm="autobridge", scenario_id="baseline", trial=0, ran=True, frontier_tokens=0, cost_usd=Decimal("0.001"), outcome=VerifyOutcome(verdict="pass", score=1.0))
     assert (s.verified_completion, s.repair_success, s.zero_frontier) == (1, 1, 1)
     assert s.escalation_quality is None
     assert s.false_fix == 0 and s.unsafe == 0
@@ -130,26 +130,26 @@ def test_score_arm_verified_zero_frontier() -> None:
 
 
 def test_score_arm_failed_run_needs_escalation() -> None:
-    s = score_arm(arm="baseline", scenario_id="s", trial=0, success=False, outcome=VerifyOutcome(verdict="fail", score=0.0), escalation_bundle=None)
+    s = score_arm(arm="baseline", scenario_id="s", trial=0, ran=False, outcome=VerifyOutcome(verdict="fail", score=0.0), escalation_bundle=None)
     assert s.verified_completion == 0 and s.escalation_quality == 0.0
 
 
 def test_score_arm_false_fix_and_unsafe() -> None:
     oc = VerifyOutcome(verdict="pass", score=1.0, regression="fail")
-    s = score_arm(arm="baseline", scenario_id="s", trial=0, success=True, frontier_tokens=5, outcome=oc)
+    s = score_arm(arm="baseline", scenario_id="s", trial=0, ran=True, frontier_tokens=5, outcome=oc)
     assert s.false_fix == 1 and s.unsafe == 1 and s.repair_success == 0 and s.zero_frontier == 0
 
 
 def test_score_arm_unsafe_trap_check() -> None:
     oc = VerifyOutcome(verdict="fail", score=0.5, failed_checks=[{"name": "invalid_patch_trap", "count": 1}])
-    s = score_arm(arm="autobridge", scenario_id="s", trial=0, success=True, outcome=oc)
+    s = score_arm(arm="autobridge", scenario_id="s", trial=0, ran=True, outcome=oc)
     assert s.unsafe == 1 and s.false_fix == 0
 
 
 def test_score_arm_none_outcome_and_bad_cost() -> None:
-    s = score_arm(arm="x", scenario_id="s", trial=0, success=True, cost_usd="not-a-number", outcome=None)
+    s = score_arm(arm="x", scenario_id="s", trial=0, ran=True, cost_usd="not-a-number", outcome=None)
     assert s.verified_completion == 0 and s.cost_usd == Decimal("0")
-    s2 = score_arm(arm="x", scenario_id="s", trial=0, success=True, cost_usd=None, outcome=VerifyOutcome())
+    s2 = score_arm(arm="x", scenario_id="s", trial=0, ran=True, cost_usd=None, outcome=VerifyOutcome())
     assert s2.cost_usd == Decimal("0")
 
 
@@ -160,8 +160,8 @@ def _trial(ab_ok: bool = True, bl_ok: bool = False) -> TrialResult:
     inp = _inp()
     return TrialResult(
         scenario_id="baseline", trial=0, seed=inp.seed, inputs=inp,
-        autobridge=_arm("autobridge", success=ab_ok),
-        baseline=_arm("baseline", success=bl_ok),
+        autobridge=_arm("autobridge", ran=ab_ok),
+        baseline=_arm("baseline", ran=bl_ok),
         matched=True,
     )
 
@@ -169,7 +169,7 @@ def _trial(ab_ok: bool = True, bl_ok: bool = False) -> TrialResult:
 def test_score_trial_winner_and_losses() -> None:
     def fake_verify(_spec: Any, scenario_id: str) -> dict[str, Any]:
         return _pass_payload() if scenario_id == "baseline" else _fail_payload()
-    # autobridge success=True + pass; baseline success=False → fail
+    # autobridge ran=True + pass; baseline ran=False → fail
     scored = score_trial(_trial(True, False), fake_verify)
     assert scored["winner"] == "autobridge"
     assert scored["arms"]["autobridge"]["verified_completion"] == 1
@@ -182,7 +182,7 @@ def test_score_trial_false_fix_loss_note_and_bundles() -> None:
     inp = _inp()
     trial = TrialResult(
         scenario_id="baseline", trial=0, seed=inp.seed, inputs=inp,
-        autobridge=_arm("autobridge", success=True), baseline=_arm("baseline", success=True), matched=True,
+        autobridge=_arm("autobridge", ran=True), baseline=_arm("baseline", ran=True), matched=True,
     )
     scored = score_trial(trial, fake_verify, escalation_bundles={"autobridge": {"reason": "r", "question": "Which mapping is correct?"}})
     assert scored["arms"]["autobridge"]["false_fix"] == 1
@@ -195,7 +195,7 @@ def test_score_trial_unmatched_and_verify_raises() -> None:
     inp = _inp()
     trial = TrialResult(
         scenario_id="baseline", trial=0, seed=inp.seed, inputs=inp,
-        autobridge=_arm("autobridge", success=True), baseline=_arm("baseline", success=True),
+        autobridge=_arm("autobridge", ran=True), baseline=_arm("baseline", ran=True),
         matched=False, matched_error="mismatch",
     )
     scored = score_trial(trial, boom)
@@ -206,9 +206,9 @@ def test_score_trial_unmatched_and_verify_raises() -> None:
 def test_score_trial_dict_input_with_one_shot_and_tie() -> None:
     trial_dict: dict[str, Any] = {
         "scenario_id": "baseline", "trial": 1, "matched": True,
-        "autobridge": {"arm": "autobridge", "success": False, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": "not-a-dict"},
-        "baseline": {"arm": "baseline", "success": False, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
-        "one_shot": {"arm": "one_shot", "success": False, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 1, "frontier_tokens": 0, "cost_usd": None, "spec": None},
+        "autobridge": {"arm": "autobridge", "ran": False, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": "not-a-dict"},
+        "baseline": {"arm": "baseline", "ran": False, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
+        "one_shot": {"arm": "one_shot", "ran": False, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 1, "frontier_tokens": 0, "cost_usd": None, "spec": None},
     }
     scored = score_trial(trial_dict, lambda _spec, _sid: _fail_payload())
     assert scored["winner"] == "tie-none-verified"
@@ -218,8 +218,8 @@ def test_score_trial_dict_input_with_one_shot_and_tie() -> None:
 def test_score_trial_tie_verified() -> None:
     trial_dict: dict[str, Any] = {
         "scenario_id": "baseline", "trial": 0, "matched": True,
-        "autobridge": {"arm": "autobridge", "success": True, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
-        "baseline": {"arm": "baseline", "success": True, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
+        "autobridge": {"arm": "autobridge", "ran": True, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
+        "baseline": {"arm": "baseline", "ran": True, "elapsed_ms": 5, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
     }
     scored = score_trial(trial_dict, lambda _spec, _sid: _pass_payload())
     assert scored["winner"].startswith("tie-")
@@ -239,15 +239,15 @@ def _scored_trial(sid: str, trial: int, ab_pass: bool, bl_pass: bool) -> dict[st
     inp = _inp(sid, trial)
     t = TrialResult(
         scenario_id=sid, trial=trial, seed=inp.seed, inputs=inp,
-        autobridge=_arm("autobridge", success=True), baseline=_arm("baseline", success=True), matched=True,
+        autobridge=_arm("autobridge", ran=True), baseline=_arm("baseline", ran=True), matched=True,
     )
     # Score then force per-arm outcomes by patching via outcome override:
     _ = fake_verify
     scored = score_trial(t, lambda _spec, _s: _pass_payload() if (ab_pass or bl_pass) else _fail_payload())
     if not ab_pass:
-        scored["arms"]["autobridge"] = score_arm(arm="autobridge", scenario_id=sid, trial=trial, success=True, outcome=VerifyOutcome(verdict="fail"), escalation_bundle={"reason": "r", "question": "Which fix is right?"}).to_dict()
+        scored["arms"]["autobridge"] = score_arm(arm="autobridge", scenario_id=sid, trial=trial, ran=True, outcome=VerifyOutcome(verdict="fail"), escalation_bundle={"reason": "r", "question": "Which fix is right?"}).to_dict()
     if not bl_pass:
-        scored["arms"]["baseline"] = score_arm(arm="baseline", scenario_id=sid, trial=trial, success=False, outcome=VerifyOutcome(verdict="fail")).to_dict()
+        scored["arms"]["baseline"] = score_arm(arm="baseline", scenario_id=sid, trial=trial, ran=False, outcome=VerifyOutcome(verdict="fail")).to_dict()
     # Recompute winner/loss notes consistently
     from bench.scoring import _pick_winner  # noqa: PLC0415
 
@@ -274,8 +274,8 @@ def test_score_bench_end_to_end_with_objects() -> None:
     bench = BenchResult(config=cfg)
     bench.trials.append(TrialResult(
         scenario_id="baseline", trial=0, seed=inp.seed, inputs=inp,
-        autobridge=ArmResult(arm="autobridge", inputs=inp, success=True, frontier_tokens=0, cost_usd=Decimal("0.002"), tool_calls=2, model_calls=3),
-        baseline=ArmResult(arm="baseline", inputs=inp, success=True, frontier_tokens=100, cost_usd=Decimal("0.01"), tool_calls=0, model_calls=1),
+        autobridge=ArmResult(arm="autobridge", inputs=inp, ran=True, frontier_tokens=0, cost_usd=Decimal("0.002"), tool_calls=2, model_calls=3),
+        baseline=ArmResult(arm="baseline", inputs=inp, ran=True, frontier_tokens=100, cost_usd=Decimal("0.01"), tool_calls=0, model_calls=1),
         matched=True,
     ))
     card = score_bench(bench, lambda _spec, _sid: _pass_payload(), seed=None)
@@ -290,8 +290,8 @@ def test_score_bench_dict_input_and_bundles() -> None:
         "config": {"seed": 42},
         "trials": [{
             "scenario_id": "baseline", "trial": 0, "matched": True,
-            "autobridge": {"arm": "autobridge", "success": True, "elapsed_ms": 1, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
-            "baseline": {"arm": "baseline", "success": True, "elapsed_ms": 1, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
+            "autobridge": {"arm": "autobridge", "ran": True, "elapsed_ms": 1, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
+            "baseline": {"arm": "baseline", "ran": True, "elapsed_ms": 1, "tool_calls": 0, "model_calls": 0, "frontier_tokens": 0, "cost_usd": None, "spec": None},
         }],
     }
     card = score_bench(bench_dict, lambda _spec, _sid: _fail_payload(), escalation_bundles={"baseline:0": {"autobridge": {"reason": "r", "question": "What is correct?"}}})
@@ -327,8 +327,8 @@ def test_validate_schema_empty_arms_and_bad_trials() -> None:
 def test_validate_schema_arm_missing_metric_and_trial_missing_key() -> None:
     base = score_bench({"config": {"seed": 1}, "trials": [{
         "scenario_id": "s", "trial": 0, "matched": True,
-        "autobridge": {"arm": "autobridge", "success": True, "spec": None},
-        "baseline": {"arm": "baseline", "success": True, "spec": None},
+        "autobridge": {"arm": "autobridge", "ran": True, "spec": None},
+        "baseline": {"arm": "baseline", "ran": True, "spec": None},
     }]}, lambda _spec, _sid: _pass_payload())
     bad = {**base, "arms": {"autobridge": {"n": 1}}}
     with pytest.raises(AssertionError):
@@ -346,8 +346,8 @@ def _scorecard() -> dict[str, Any]:
         "config": {"seed": 11},
         "trials": [
             {"scenario_id": "baseline", "trial": 0, "matched": True,
-             "autobridge": {"arm": "autobridge", "success": True, "elapsed_ms": 3, "tool_calls": 1, "model_calls": 2, "frontier_tokens": 0, "cost_usd": "0.001", "spec": None},
-             "baseline": {"arm": "baseline", "success": False, "elapsed_ms": 9, "tool_calls": 0, "model_calls": 1, "frontier_tokens": 50, "cost_usd": "0.005", "spec": None}},
+             "autobridge": {"arm": "autobridge", "ran": True, "elapsed_ms": 3, "tool_calls": 1, "model_calls": 2, "frontier_tokens": 0, "cost_usd": "0.001", "spec": None},
+             "baseline": {"arm": "baseline", "ran": False, "elapsed_ms": 9, "tool_calls": 0, "model_calls": 1, "frontier_tokens": 50, "cost_usd": "0.005", "spec": None}},
         ],
     }
     return score_bench(bench_dict, lambda _spec, sid: _pass_payload() if sid == "baseline" else _fail_payload())
@@ -364,8 +364,8 @@ def test_render_markdown_no_losses_case() -> None:
     bench_dict: dict[str, Any] = {
         "config": {"seed": 1},
         "trials": [{"scenario_id": "s", "trial": 0, "matched": True,
-                    "autobridge": {"arm": "autobridge", "success": True, "spec": None},
-                    "baseline": {"arm": "baseline", "success": True, "spec": None}}],
+                    "autobridge": {"arm": "autobridge", "ran": True, "spec": None},
+                    "baseline": {"arm": "baseline", "ran": True, "spec": None}}],
     }
     card = score_bench(bench_dict, lambda _spec, _sid: _pass_payload())
     md = render_scorecard_markdown(card)

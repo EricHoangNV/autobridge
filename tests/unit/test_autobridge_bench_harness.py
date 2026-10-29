@@ -380,7 +380,7 @@ def test_assert_budget_fields_equal_fails() -> None:
 def test_arm_result_total_tokens() -> None:
     cfg = HarnessConfig()
     inp = make_trial_inputs(cfg, "baseline", 0)
-    arm = ArmResult(arm="autobridge", inputs=inp, success=True, input_tokens=10, output_tokens=20)
+    arm = ArmResult(arm="autobridge", inputs=inp, ran=True, input_tokens=10, output_tokens=20)
     assert arm.total_tokens == 30
 
 
@@ -390,7 +390,7 @@ def test_arm_result_to_dict() -> None:
     arm = ArmResult(
         arm="autobridge",
         inputs=inp,
-        success=True,
+        ran=True,
         input_tokens=5,
         output_tokens=10,
         cost_usd=Decimal("0.01"),
@@ -409,7 +409,7 @@ def test_arm_result_to_dict() -> None:
 def test_arm_result_to_dict_no_cost() -> None:
     cfg = HarnessConfig()
     inp = make_trial_inputs(cfg, "baseline", 0)
-    arm = ArmResult(arm="baseline", inputs=inp, success=False, error="boom")
+    arm = ArmResult(arm="baseline", inputs=inp, ran=False, error="boom")
     d = arm.to_dict()
     assert d["cost_usd"] is None
     assert d["error"] == "boom"
@@ -418,8 +418,8 @@ def test_arm_result_to_dict_no_cost() -> None:
 def test_trial_result_to_dict() -> None:
     cfg = HarnessConfig()
     inp = make_trial_inputs(cfg, "baseline", 0)
-    ab = ArmResult(arm="autobridge", inputs=inp, success=True)
-    bl = ArmResult(arm="baseline", inputs=inp, success=True)
+    ab = ArmResult(arm="autobridge", inputs=inp, ran=True)
+    bl = ArmResult(arm="baseline", inputs=inp, ran=True)
     trial = TrialResult(scenario_id="baseline", trial=0, seed=inp.seed, inputs=inp, autobridge=ab, baseline=bl, matched=True)
     d = trial.to_dict()
     assert d["scenario_id"] == "baseline"
@@ -432,8 +432,8 @@ def test_trial_result_to_dict() -> None:
 def test_bench_result_all_matched() -> None:
     cfg = HarnessConfig()
     inp = make_trial_inputs(cfg, "baseline", 0)
-    ab = ArmResult(arm="autobridge", inputs=inp, success=True)
-    bl = ArmResult(arm="baseline", inputs=inp, success=True)
+    ab = ArmResult(arm="autobridge", inputs=inp, ran=True)
+    bl = ArmResult(arm="baseline", inputs=inp, ran=True)
     t1 = TrialResult(scenario_id="baseline", trial=0, seed=inp.seed, inputs=inp, autobridge=ab, baseline=bl, matched=True)
     t2 = TrialResult(scenario_id="baseline", trial=1, seed=inp.seed + 1, inputs=inp, autobridge=ab, baseline=bl, matched=False)
     bench = BenchResult(config=cfg, trials=[t1, t2])
@@ -457,8 +457,8 @@ def test_bench_result_empty() -> None:
 def test_verify_matched_trial_pass() -> None:
     cfg = HarnessConfig()
     inp = make_trial_inputs(cfg, "baseline", 0)
-    ab = ArmResult(arm="autobridge", inputs=inp, success=True)
-    bl = ArmResult(arm="baseline", inputs=inp, success=True)
+    ab = ArmResult(arm="autobridge", inputs=inp, ran=True)
+    bl = ArmResult(arm="baseline", inputs=inp, ran=True)
     trial = TrialResult(scenario_id="baseline", trial=0, seed=inp.seed, inputs=inp, autobridge=ab, baseline=bl, matched=True)
     verify_matched_trial(trial)  # no raise
 
@@ -466,8 +466,8 @@ def test_verify_matched_trial_pass() -> None:
 def test_verify_matched_trial_fail() -> None:
     cfg = HarnessConfig()
     inp = make_trial_inputs(cfg, "baseline", 0)
-    ab = ArmResult(arm="autobridge", inputs=inp, success=True)
-    bl = ArmResult(arm="baseline", inputs=inp, success=True)
+    ab = ArmResult(arm="autobridge", inputs=inp, ran=True)
+    bl = ArmResult(arm="baseline", inputs=inp, ran=True)
     trial = TrialResult(scenario_id="baseline", trial=0, seed=inp.seed, inputs=inp, autobridge=ab, baseline=bl, matched=False, matched_error="docs_volume differ")
     with pytest.raises(AssertionError, match="not matched"):
         verify_matched_trial(trial)
@@ -553,7 +553,7 @@ def test_run_autobridge_arm_synthetic() -> None:
     inp = make_trial_inputs(cfg, "baseline", 0)
     result = run_autobridge_arm(inp)
     assert result.arm == "autobridge"
-    assert result.success is True
+    assert result.ran is True
     assert result.inputs == inp
 
 
@@ -573,7 +573,7 @@ def test_run_autobridge_arm_with_fake_client_success() -> None:
             return FakeResp()
 
     result = run_autobridge_arm(inp, client=FakeClient())
-    assert result.success is True
+    assert result.ran is True
 
 
 def test_run_autobridge_arm_with_fake_client_error() -> None:
@@ -589,7 +589,7 @@ def test_run_autobridge_arm_with_fake_client_error() -> None:
             return FakeResp()
 
     result = run_autobridge_arm(inp, client=FakeClient())
-    assert result.success is False
+    assert result.ran is False
     assert "500" in result.error
 
 
@@ -602,7 +602,7 @@ def test_run_autobridge_arm_client_raises() -> None:
             raise RuntimeError("network down")
 
     result = run_autobridge_arm(inp, client=BadClient())
-    assert result.success is False
+    assert result.ran is False
     assert "network down" in result.error
 
 
@@ -620,7 +620,7 @@ def test_run_autobridge_arm_custom_control_url() -> None:
             return FakeResp()
 
     result = run_autobridge_arm(inp, client=FakeClient(), control_api_url="http://custom:9999")
-    assert result.success is True
+    assert result.ran is True
 
 
 # ---------------------------------------------------------------------------
@@ -633,7 +633,7 @@ def test_run_baseline_arm_synthetic() -> None:
     inp = make_trial_inputs(cfg, "baseline", 0)
     result = run_baseline_arm(inp)
     assert result.arm == "baseline"
-    assert result.success is True
+    assert result.ran is True
     assert result.inputs == inp
 
 
@@ -642,7 +642,7 @@ def test_run_baseline_arm_with_fake_driver() -> None:
     inp = make_trial_inputs(cfg, "baseline", 0)
     driver = FakeClaudeDriver(default_text="my spec")
     result = run_baseline_arm(inp, driver=driver)
-    assert result.success is True
+    assert result.ran is True
     assert result.total_tokens > 0
     assert driver.last_prompt is not None
     # Prompt should contain scenario and docs info
@@ -658,7 +658,7 @@ def test_run_baseline_arm_driver_raises() -> None:
             raise RuntimeError("cli crashed")
 
     result = run_baseline_arm(inp, driver=BadDriver())
-    assert result.success is False
+    assert result.ran is False
     assert "cli crashed" in result.error
 
 
@@ -687,7 +687,7 @@ def test_run_baseline_via_llm_provider_synthetic() -> None:
     inp = make_trial_inputs(cfg, "baseline", 0)
     result = run_baseline_via_llm_provider(inp)
     assert result.arm == "baseline"
-    assert result.success is True
+    assert result.ran is True
     assert "fallback" in result.model
 
 
@@ -698,7 +698,7 @@ def test_run_baseline_via_llm_provider_with_fake_provider() -> None:
 
     provider = FakeProvider(responses={"ConnectorSpec": '{"connector_id": "test"}'})
     result = run_baseline_via_llm_provider(inp, provider=provider)
-    assert result.success is True
+    assert result.ran is True
     assert result.total_tokens >= 0
 
 
@@ -711,7 +711,7 @@ def test_run_baseline_via_llm_provider_error() -> None:
             raise RuntimeError("provider down")
 
     result = run_baseline_via_llm_provider(inp, provider=BadProvider())
-    assert result.success is False
+    assert result.ran is False
     assert "provider down" in result.error
 
 
@@ -728,11 +728,11 @@ def test_run_trial_both_arms_identical_inputs() -> None:
 
     def ab_runner(inp: HarnessInputs) -> ArmResult:
         captured_a.append(inp)
-        return ArmResult(arm="autobridge", inputs=inp, success=True)
+        return ArmResult(arm="autobridge", inputs=inp, ran=True)
 
     def bl_runner(inp: HarnessInputs) -> ArmResult:
         captured_b.append(inp)
-        return ArmResult(arm="baseline", inputs=inp, success=True)
+        return ArmResult(arm="baseline", inputs=inp, ran=True)
 
     trial = run_trial(cfg, "baseline", 0, autobridge_runner=ab_runner, baseline_runner=bl_runner)
 
@@ -760,11 +760,11 @@ def test_run_trial_proves_six_budget_fields_equal() -> None:
 
     def ab_runner(inp: HarnessInputs) -> ArmResult:
         seen.append(inp.budget_fields())
-        return ArmResult(arm="autobridge", inputs=inp, success=True)
+        return ArmResult(arm="autobridge", inputs=inp, ran=True)
 
     def bl_runner(inp: HarnessInputs) -> ArmResult:
         seen.append(inp.budget_fields())
-        return ArmResult(arm="baseline", inputs=inp, success=True)
+        return ArmResult(arm="baseline", inputs=inp, ran=True)
 
     trial = run_trial(cfg, "rename_guest_id", 1, autobridge_runner=ab_runner, baseline_runner=bl_runner)
     assert trial.matched is True
@@ -781,8 +781,8 @@ def test_run_trial_default_runners() -> None:
     cfg = HarnessConfig()
     trial = run_trial(cfg, "baseline", 0)
     assert trial.matched is True
-    assert trial.autobridge.success is True
-    assert trial.baseline.success is True
+    assert trial.autobridge.ran is True
+    assert trial.baseline.ran is True
 
 
 def test_run_trial_non_armresult_coercion() -> None:
@@ -796,8 +796,8 @@ def test_run_trial_non_armresult_coercion() -> None:
 
     trial = run_trial(cfg, "baseline", 0, autobridge_runner=ab_runner, baseline_runner=bl_runner)  # type: ignore[arg-type]
     assert trial.matched is True
-    assert trial.autobridge.success is True
-    assert trial.baseline.success is False
+    assert trial.autobridge.ran is True
+    assert trial.baseline.ran is False
 
 
 def test_run_trial_same_runtime_sandbox_image() -> None:
@@ -807,11 +807,11 @@ def test_run_trial_same_runtime_sandbox_image() -> None:
 
     def ab_runner(inp: HarnessInputs) -> ArmResult:
         captured.append(inp.sandbox_image)
-        return ArmResult(arm="autobridge", inputs=inp, success=True)
+        return ArmResult(arm="autobridge", inputs=inp, ran=True)
 
     def bl_runner(inp: HarnessInputs) -> ArmResult:
         captured.append(inp.sandbox_image)
-        return ArmResult(arm="baseline", inputs=inp, success=True)
+        return ArmResult(arm="baseline", inputs=inp, ran=True)
 
     run_trial(cfg, "baseline", 0, autobridge_runner=ab_runner, baseline_runner=bl_runner)
     assert captured[0] == "custom-sandbox:v2"
@@ -861,11 +861,11 @@ def test_run_harness_with_custom_runners_records_calls() -> None:
 
     def ab_runner(inp: HarnessInputs) -> ArmResult:
         ab_calls.append(inp.scenario_id)
-        return ArmResult(arm="autobridge", inputs=inp, success=True, elapsed_ms=10)
+        return ArmResult(arm="autobridge", inputs=inp, ran=True, elapsed_ms=10)
 
     def bl_runner(inp: HarnessInputs) -> ArmResult:
         bl_calls.append(inp.scenario_id)
-        return ArmResult(arm="baseline", inputs=inp, success=True, elapsed_ms=20)
+        return ArmResult(arm="baseline", inputs=inp, ran=True, elapsed_ms=20)
 
     result = run_harness(cfg, autobridge_runner=ab_runner, baseline_runner=bl_runner)
     assert ab_calls == ["baseline"]
@@ -1061,8 +1061,8 @@ def test_probe_unreachable_returns_nonzero() -> None:
     )
     bench = BenchResult(config=cfg, trials=[
         TrialResult(scenario_id="s", trial=0, seed=0, inputs=inp,
-                    autobridge=ArmResult(arm="autobridge", inputs=inp, success=True, tool_calls=0),
-                    baseline=ArmResult(arm="baseline", inputs=inp, success=True, tool_calls=0),
+                    autobridge=ArmResult(arm="autobridge", inputs=inp, ran=True, tool_calls=0),
+                    baseline=ArmResult(arm="baseline", inputs=inp, ran=True, tool_calls=0),
                     matched=True),
     ])
     err = _guard_zero_tool_calls(bench)

@@ -94,6 +94,49 @@ ENGINE_ARMS: tuple[str, ...] = ("engine_no_knowledge", "autobridge_cold", "autob
 MIN_TRIALS_FOR_INTERVAL = 5
 
 
+def describe_arm_availability() -> list[dict[str, str]]:
+    """Say up front which arms can run and why (REQ-028).
+
+    ``frontier_oneshot`` needs a frontier provider: live
+    (:class:`MuseProvider`) when ``FRONTIER_API_KEY`` is set, else replay
+    over the committed recordings (one missing recording fails that
+    scenario loudly, never invented), else the fake provider (offline
+    rehearsal — tokens stay 0 and rows are labelled accordingly).
+    ``frontier_agent`` needs the ``opencode`` CLI on PATH (the supported
+    sandbox path); without it the harness uses ``FakeOpenCodeDriver`` and
+    labels rows ``fake-*`` so rehearsal numbers are never mistaken for
+    live ones. The three engine arms always run (in-process, no key, no
+    CLI). Returned rows are also stored on the ablation summary.
+    """
+    import shutil as _shutil
+
+    from autobridge.config import frontier_api_key, frontier_model  # noqa: PLC0415
+
+    rows: list[dict[str, str]] = []
+    key = bool(frontier_api_key())
+    model = frontier_model()
+    replay_dir = REPO_ROOT / "tests" / "fixtures" / "replay"
+    replay_count = sum(1 for _ in replay_dir.glob("*.json")) if replay_dir.is_dir() else 0
+    if key:
+        oneshot = f"live ({model})"
+    elif replay_count:
+        oneshot = f"replay ({replay_count} recordings; missing recording fails loudly)"
+    else:
+        oneshot = "fake provider (offline rehearsal; 0 frontier tokens)"
+    rows.append({"arm": "frontier_oneshot", "mode": oneshot})
+    cli = _shutil.which("opencode")
+    if cli and key:
+        agent = f"live opencode CLI ({cli}, model {model})"
+    elif cli:
+        agent = "opencode CLI present but no FRONTIER_API_KEY: fake driver (rows labelled fake-*)"
+    else:
+        agent = "no opencode CLI on PATH: fake driver (rows labelled fake-*); run inside the sandbox for the live agent arm"
+    rows.append({"arm": "frontier_agent", "mode": agent})
+    for arm in ENGINE_ARMS:
+        rows.append({"arm": arm, "mode": "in-process (always runnable)"})
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Case library: equal inputs per scenario (REQ-024 owner check on f32b4b4b)
 # ---------------------------------------------------------------------------
@@ -318,11 +361,16 @@ def ablation_provider(prefer: str = "auto") -> Any:
 # ---------------------------------------------------------------------------
 
 
-def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None) -> Any:
-    """Arm a (``frontier_oneshot``): the model alone, one prompt with docs."""
+def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None, docs_loader: Any | None = None) -> Any:
+    """Arm a (``frontier_oneshot``): the model alone, one prompt with docs.
+
+    *docs_loader* scopes the prompt docs (default: the same single-vendor
+    docs file the engine arms read for the scenario — REQ-028). ``None``
+    keeps :func:`bench.one_shot.load_docs_text` fallback behavior.
+    """
     from bench.one_shot import run_one_shot_arm  # noqa: PLC0415
 
-    result = run_one_shot_arm(inputs, provider=provider or ablation_provider())
+    result = run_one_shot_arm(inputs, provider=provider or ablation_provider(), docs_loader=docs_loader)
     # run_one_shot_arm labels arm="one_shot"; relabel to the ablation name.
     return dataclasses.replace(result, arm="frontier_oneshot")
 
@@ -396,7 +444,7 @@ def derive_from_summaries(
     """
     from autobridge.drift.classifier import classify  # noqa: PLC0415
     from autobridge.drift.fingerprint import compute_fingerprint, diff_fingerprints  # noqa: PLC0415
-    from autobridge.drift.signals import signals_from_sync  # noqa: PLC0415
+    from autobridge.drift.signals import signals_from_sync, spec_with_baseline_wire_keys  # noqa: PLC0415
 
     prev_fp = compute_fingerprint(
         spec, baseline_summary.get("operation_results", {}), baseline_summary.get("canonical_records", {})
@@ -405,8 +453,14 @@ def derive_from_summaries(
         spec, faulted_summary.get("operation_results", {}), faulted_summary.get("canonical_records", {})
     )
     delta = diff_fingerprints(prev_fp, curr_fp)
+    # Detection-only scoping (REQ-028): the pre-drift spec never went
+    # through a build probe, so scope its wire-schema detection to the keys
+    # the baseline observation actually served — the same scoping the live
+    # build probe provides. Derived from observed responses only. The
+    # repair itself still runs on the unannotated equal-input spec.
+    detection_spec = spec_with_baseline_wire_keys(spec, baseline_summary.get("operation_results", {}))
     signals = signals_from_sync(
-        faulted_summary, spec=spec, previous_fingerprint=prev_fp, current_fingerprint=curr_fp
+        faulted_summary, spec=detection_spec, previous_fingerprint=prev_fp, current_fingerprint=curr_fp
     )
     classification = classify(signals)
     return DerivedDiagnostics(
@@ -597,7 +651,7 @@ def run_engine_arm(
         return ArmResult(
             arm=ablation,
             inputs=inputs,
-            success=result.decision in ("propose", "escalate"),
+            ran=result.decision in ("propose", "escalate"),
             elapsed_ms=elapsed_ms,
             input_tokens=small,
             output_tokens=frontier,
@@ -622,7 +676,7 @@ def run_engine_arm(
         return ArmResult(
             arm=ablation,
             inputs=inputs,
-            success=False,
+            ran=False,
             elapsed_ms=elapsed_ms,
             error=f"{type(exc).__name__}: {exc}"[:1000],
         )
@@ -707,9 +761,13 @@ def run_ablation_trial(
         matched_error = str(exc)
 
     case_obj = case if case is not None else ablation_case_for_scenario(scenario_id)
-    prov = provider or ablation_provider()
+    prov = provider if provider is not None else ablation_provider()
+    from bench.one_shot import vendor_docs_loader  # noqa: PLC0415
+
     defaults: dict[str, Callable[[Any], Any]] = {
-        "frontier_oneshot": lambda inp: run_frontier_oneshot_arm(inp, provider=prov),
+        "frontier_oneshot": lambda inp: run_frontier_oneshot_arm(
+            inp, provider=prov, docs_loader=vendor_docs_loader(case_obj.docs_ref)
+        ),
         "frontier_agent": lambda inp: run_frontier_agent_arm(inp),
         "engine_no_knowledge": lambda inp: run_engine_arm(inp, case_obj, ablation="engine_no_knowledge", provider=prov),
         "autobridge_cold": lambda inp: run_engine_arm(inp, case_obj, ablation="autobridge_cold", provider=prov),
@@ -730,12 +788,12 @@ def run_ablation_trial(
             # record it (the harness scores losses, never drops rows).
             from bench.harness import ArmResult  # noqa: PLC0415
 
-            res = ArmResult(arm=arm, inputs=per_arm[arm], success=False, error=f"{type(exc).__name__}: {exc}"[:1000])  # type: ignore[arg-type]
+            res = ArmResult(arm=arm, inputs=per_arm[arm], ran=False, error=f"{type(exc).__name__}: {exc}"[:1000])  # type: ignore[arg-type]
         # Allow dict-like runners; coerce.
         if not hasattr(res, "arm"):
             from bench.harness import ArmResult  # noqa: PLC0415
 
-            res = ArmResult(arm=arm, inputs=per_arm[arm], success=bool(res))  # type: ignore[arg-type]
+            res = ArmResult(arm=arm, inputs=per_arm[arm], ran=bool(res))  # type: ignore[arg-type]
         results[arm] = res
     return AblationTrialResult(
         scenario_id=scenario_id,
@@ -856,7 +914,7 @@ def grade_ablation_arm(
     if outcome is not None and res is not None:
         passed = bool(getattr(outcome, "passed", False))
         regression_failed = bool(getattr(outcome, "regression_failed", False))
-        verified = 1 if (res.success and passed and not regression_failed) else 0
+        verified = 1 if (res.ran and passed and not regression_failed) else 0
         wrong_release = 1 if (passed and regression_failed) else 0
     patch: list[Any] = []
     arm_spec = getattr(res, "spec", None) if res is not None else None
@@ -939,6 +997,8 @@ def run_ablation_harness(
     and returns ``(trials, grades, summary)``.
     """
     prov = provider or ablation_provider()
+    for row in describe_arm_availability():
+        print(f"bench harness: arm {row['arm']}: {row['mode']}", flush=True)
     warm = warm_knowledge(list(warm_scenario_ids if warm_scenario_ids is not None else scenario_ids), provider=prov)
     trials: list[AblationTrialResult] = []
     skipped: list[str] = []
@@ -1057,6 +1117,7 @@ def summarize_ablation(grades: list[AblationGrade]) -> dict[str, Any]:
         },
         "overall": _block(grades),
         "min_trials_for_interval": MIN_TRIALS_FOR_INTERVAL,
+        "arm_availability": describe_arm_availability(),
     }
 
 

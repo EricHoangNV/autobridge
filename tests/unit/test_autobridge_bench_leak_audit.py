@@ -284,8 +284,8 @@ def _bench_dict() -> dict[str, Any]:
         "config": {"seed": 11},
         "trials": [
             {"scenario_id": "baseline", "trial": 0, "matched": True,
-             "autobridge": {"arm": "autobridge", "success": True, "spec": None},
-             "baseline": {"arm": "baseline", "success": True, "spec": None}},
+             "autobridge": {"arm": "autobridge", "ran": True, "spec": None},
+             "baseline": {"arm": "baseline", "ran": True, "spec": None}},
         ],
     }
 

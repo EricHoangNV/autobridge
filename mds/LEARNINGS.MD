@@ -399,3 +399,12 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed with a separate raw GET seam for logic reads (`_control_get_raw`); the transcript keeps the redacted record. Tests stub both seams.
 
 **Rule:** In any driver that both logs API traffic and asserts on it, assertions read unredacted bodies; redaction applies to the logged copy only.
+
+## 44. An empty observation delta has a constant key — never learn or match on it
+
+**Context:** REQ-028 bench rehearsal (2026-10-29): `autobridge_warm` proposed verified patches on `rate_limit_429`/`transient_503` and lost `duplicate_late_records`' escalation. All four drifts derived an all-False fingerprint delta (transport faults leave no observable trace through the sync path), whose canonical signature is one constant string shared by every such drift — so a rename fix learned under one scenario hit verbatim on unrelated vendors' no-patch drifts.
+
+- The L0 key was `(vendor, delta-signature)` with no drift class; the class was stored on the entry but never consulted. Two compounding causes, both fixed: (a) the class is now part of the key; (b) an empty delta (and transport/auth/capability classes, explicitly) never consults or populates L0 — in `run_ladder`, `run_frontier_climb` and the controller populate guard alike.
+- Same incident class as #42: the bench derive path lacked the build-probe annotation the live path relies on, so unmapped wire keys flooded `added` and renames classified as REMOVED/TYPE_CHANGE. Scoping the detection copy to baseline-observed wire keys (derived from responses only) fixed classification with no change to the repair inputs.
+
+**Rule:** A cache key must include every dimension the hit decision depends on (vendor, drift class, observed delta); when the observation is empty there is nothing to match, so skip — never store, never look up. And any evidence annotation the live path depends on must be reproducible on the bench path from observation, or the two paths classify the same fault differently.

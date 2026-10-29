@@ -71,7 +71,7 @@ def test_knowledge_cache_put_and_lookup() -> None:
     assert entry.vendor == "AtlasPMS"
     assert entry.rule_id == "rename_field"
     assert cache.size() == 1
-    hit = cache.lookup("AtlasPMS", delta)
+    hit = cache.lookup("AtlasPMS", delta, drift_class="SCHEMA_RENAME")
     assert hit is not None
     assert hit.patch == patch
     assert hit.rule_id == "rename_field"
@@ -103,11 +103,18 @@ def test_knowledge_cache_delta_signature_deterministic() -> None:
 
 def test_knowledge_cache_key_includes_vendor() -> None:
     delta = _delta_types("Reservation", "a", "b")
-    k1 = cache_key("AtlasPMS", delta)
-    k2 = cache_key("HarborPMS", delta)
+    k1 = cache_key("AtlasPMS", "SCHEMA_RENAME", delta)
+    k2 = cache_key("HarborPMS", "SCHEMA_RENAME", delta)
     assert k1 != k2
-    k3 = cache_key("AtlasPMS", delta)
+    k3 = cache_key("AtlasPMS", "SCHEMA_RENAME", delta)
     assert k1 == k3
+
+
+def test_knowledge_cache_key_includes_drift_class() -> None:
+    """REQ-028: same vendor + delta but different class must miss."""
+    delta = _delta_types("Reservation", "a", "b")
+    assert cache_key("AtlasPMS", "SCHEMA_RENAME", delta) != cache_key("AtlasPMS", "RATE_LIMIT", delta)
+    assert cache_key("AtlasPMS", "SCHEMA_RENAME", delta) == cache_key("atlaspms", "schema_rename", delta)
 
 
 def test_knowledge_cache_clear() -> None:
@@ -221,7 +228,7 @@ def test_ladder_l0_invalid_cached_patch_falls_through() -> None:
     cache = KnowledgeCache()
     delta = _delta_types("Reservation", "guest_name", "guest_identifier")
     bad_patch = [{"op": "replace", "path": "/nonexistent", "value": "x"}]
-    cache.put(spec["connector"]["vendor"], delta, bad_patch, "rename_field")
+    cache.put(spec["connector"]["vendor"], delta, bad_patch, "rename_field", drift_class="SCHEMA_RENAME")
     res = run_ladder(spec, "SCHEMA_RENAME", fingerprint_delta=delta, knowledge_cache=cache)
     # Invalid cached patch should be skipped, L1 should succeed
     assert res.decision == "propose"
@@ -762,3 +769,104 @@ def test_controller_repair_job_handler_escalate_unknown() -> None:
     ctx2 = JobContext(job_id="j3", kind="repair", run_id=None, payload={}, attempt=1, session=s2, worker_id="w1")
     out2 = repair_job_handler(ctx2)
     assert out2["decision"] == "escalate"
+
+
+# ---------------------------------------------------------------------------
+# REQ-028: L0 scoping — drift class + observed delta, never for
+# transport/auth/capability classes or empty deltas
+# ---------------------------------------------------------------------------
+
+
+def _empty_delta() -> FingerprintDelta:
+    return FingerprintDelta(
+        fingerprint_changed=False,
+        pagination_changed=False,
+        keys_changed=False,
+        types_changed=False,
+        changed_entities=[],
+        pagination_details={},
+        keys_details={},
+        types_details={},
+    )
+
+
+def test_delta_has_content() -> None:
+    from autobridge.repair.knowledge import delta_has_content
+
+    assert delta_has_content(None) is False
+    assert delta_has_content({}) is False
+    assert delta_has_content(_empty_delta()) is False
+    assert delta_has_content({"fingerprint_changed": False}) is False
+    assert delta_has_content(_delta_types("Reservation", "a", "b")) is True
+    assert delta_has_content(_delta_pagination("op", "page", "cursor")) is True
+    assert delta_has_content({"fingerprint_changed": True}) is True
+
+
+def test_l0_misses_across_drift_classes() -> None:
+    """Same vendor + delta learned under SCHEMA_RENAME must miss for UNKNOWN."""
+    from autobridge.repair.knowledge import delta_has_content
+
+    assert delta_has_content(_delta_types("Reservation", "guest_name", "guest_identifier"))
+    spec = _load_spec()
+    cache = KnowledgeCache()
+    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    patch = [{"op": "replace", "path": "/entities/Reservation/fields/guest_name/path", "value": "$.guest_identifier"}]
+    cache.put("AtlasPMS", delta, patch, "rename_field", drift_class="SCHEMA_RENAME")
+    res = run_ladder(spec, "UNKNOWN", fingerprint_delta=delta, knowledge_cache=cache)
+    assert res.ladder_level_reached != 0, "L0 must not fire across drift classes"
+    actions = [t["action"] for t in res.ladder_trace]
+    assert "knowledge_hit" not in actions
+
+
+def test_l0_skips_empty_delta() -> None:
+    """An empty delta never consults L0 even when the store holds its key."""
+    from autobridge.repair.knowledge import cache_key as _ck
+
+    spec = _load_spec()
+    cache = KnowledgeCache()
+    delta = _empty_delta()
+    patch = [{"op": "replace", "path": "/a", "value": "b"}]
+    cache.put("AtlasPMS", delta, patch, "some_rule", drift_class="UNKNOWN")
+    assert _ck("AtlasPMS", "UNKNOWN", delta) in [e.delta_key for e in cache.all_entries()]
+    res = run_ladder(spec, "UNKNOWN", fingerprint_delta=delta, knowledge_cache=cache)
+    assert res.ladder_level_reached != 0, "L0 must not fire on an empty delta"
+    actions = [t["action"] for t in res.ladder_trace]
+    assert "knowledge_skip" in actions
+    assert "knowledge_hit" not in actions
+
+
+def test_l0_never_for_rate_limit_and_transient() -> None:
+    """RATE_LIMIT / TRANSIENT never consult L0 and stay backoff-only."""
+    spec = _load_spec()
+    cache = KnowledgeCache()
+    delta = _delta_pagination("list_reservations", "page", "cursor")
+    patch = [{"op": "replace", "path": "/a", "value": "b"}]
+    cache.put("AtlasPMS", delta, patch, "page_to_cursor", drift_class="RATE_LIMIT")
+    before = cache.size()
+    for drift_class in ("RATE_LIMIT", "TRANSIENT"):
+        res = run_ladder(
+            spec,
+            drift_class,
+            signals=[{"kind": "rate_limited" if drift_class == "RATE_LIMIT" else "transient_error", "details": {}}],
+            fingerprint_delta=delta,
+            knowledge_cache=cache,
+        )
+        assert res.decision == "propose"
+        assert res.candidate_patch == [] or res.backoff_only, f"{drift_class} must stay backoff-only"
+    assert cache.size() == before, "transport drifts must not populate L0"
+
+
+def test_controller_never_caches_no_learn_classes_or_empty_delta() -> None:
+    """Controller populate guard: NO_LEARN classes and empty deltas store nothing."""
+    cache, ctrl, SessionLocal = _make_controller_engine()
+    spec = _load_spec()
+    # RATE_LIMIT with a contentful delta proposes backoff-only (no patch to cache).
+    s = SessionLocal()
+    ctrl.handle(spec=spec, drift_class="RATE_LIMIT", fingerprint_delta=_delta_pagination("op", "page", "cursor"), session=s)
+    s.commit()
+    assert cache.size() == 0
+    # UNKNOWN with an empty delta escalates or proposes via rule without caching.
+    s2 = SessionLocal()
+    res2 = ctrl.handle(spec=spec, drift_class="UNKNOWN", fingerprint_delta=_empty_delta(), session=s2)
+    s2.commit()
+    assert cache.size() == 0, f"empty delta must not populate L0 (decision={res2.decision})"

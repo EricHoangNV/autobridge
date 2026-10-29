@@ -652,6 +652,56 @@ def _observe_wire_schema(
     return signals
 
 
+def spec_with_baseline_wire_keys(
+    spec: Any,
+    baseline_operation_results: Any,
+) -> Any:
+    """Detection-only copy of *spec* annotated with baseline wire keys.
+
+    REQ-028: the bench/beacon derive path observes a faulted sync against a
+    baseline sync, but the pre-drift spec it detects with never went
+    through a build probe — so ``_observe_wire_schema`` cannot tell a
+    vendor rename (served-then-gone key plus one genuinely new key) from
+    perennial unmapped keys, and renames classify as REMOVED/TYPE_CHANGE
+    instead of SCHEMA_RENAME. Annotating the detection copy with the keys
+    the baseline observation actually served gives detection the same
+    scoping the live build probe provides (``observed_wire_keys``):
+    ``missing`` is scoped to served mappings and ``added`` to genuinely
+    new keys. Derived from observed responses only — never from scenario
+    labels, catalogs or answer keys. The repair spec itself is untouched;
+    callers pass the original spec to the ladder and the verifier.
+
+    Fail-soft: entities with no baseline records stay unannotated (legacy
+    behavior), and a non-dict spec is returned unchanged.
+    """
+    import copy as _copy
+
+    if not isinstance(spec, dict):
+        return spec
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return spec
+    if not isinstance(baseline_operation_results, dict):
+        return spec
+    annotated = 0
+    out = _copy.deepcopy(spec)
+    out_entities = out.get("entities")
+    if not isinstance(out_entities, dict):
+        return spec
+    for ent_name in entities:
+        if not isinstance(ent_name, str):
+            continue
+        _, wire_records = _wire_records_for_entity(spec, baseline_operation_results, ent_name)
+        keys = sorted({k for rec in wire_records for k in rec if isinstance(k, str)})
+        if not keys:
+            continue
+        ent_spec = out_entities.get(ent_name)
+        if isinstance(ent_spec, dict):
+            ent_spec["observed_wire_keys"] = keys
+            annotated += 1
+    return out if annotated else spec
+
+
 def signals_from_sync(
     sync_summary: dict[str, Any],
     *,

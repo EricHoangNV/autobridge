@@ -3,7 +3,7 @@
 Four deterministic drift scenarios, each verified end-to-end (REQ-019:
 Atlas is page-paginated, so the pagination headline is page_to_cursor):
 
-  rename_guest_id      -> rename_field            (FIELD_RENAME)
+  rename_guest_id      -> rename_field            (SCHEMA_RENAME)
   page_to_cursor       -> page_to_cursor          (PAGINATION_CHANGE)
   cursor_repeat_token  -> page_to_cursor guard    (PAGINATION_CHANGE / repeated_cursor)
   nested_path_shift    -> nested_path_shift       (PAGINATION_CHANGE via items_path)

@@ -765,7 +765,7 @@ def _run_arm(
             # let /beacon/grade judge the outcome class.
             from bench.harness import ArmResult as _ArmResult
 
-            return _ArmResult(arm=arm, inputs=inputs, success=False,  # type: ignore[arg-type]
+            return _ArmResult(arm=arm, inputs=inputs, ran=False,  # type: ignore[arg-type]
                               error="no in-process engine spec for vendor (outcome-graded only)")
         if descriptor is None or eval_seed_hex is None:
             raise BeaconError(f"engine arm {arm!r} needs the public descriptor + eval seed to observe the instance")
@@ -790,7 +790,7 @@ def _run_arm(
 def _summarize_result(result: Any) -> dict[str, Any]:
     spec = getattr(result, "spec", None)
     return {
-        "success": bool(getattr(result, "success", False)),
+        "ran": bool(getattr(result, "ran", False)),
         "error": getattr(result, "error", None),
         "model": getattr(result, "model", None),
         "frontier_tokens": int(getattr(result, "frontier_tokens", 0) or 0),
@@ -844,7 +844,7 @@ def _arm_outcome_for(result: Any, has_records: bool) -> dict[str, Any]:
         return {"outcome": "Degraded", "patch_reached_release": False, "operator_question": True}
     if decision == "escalate":
         return {"outcome": "Blocked", "patch_reached_release": False, "operator_question": False}
-    if getattr(result, "success", False) and isinstance(spec, dict) and len(spec) > 0 and not patch:
+    if getattr(result, "ran", False) and isinstance(spec, dict) and len(spec) > 0 and not patch:
         # A produced full spec without a patch wrapper (oneshot frontier):
         # synced below when possible; the grade decides.
         return {"outcome": "Complete", "patch_reached_release": has_records, "operator_question": False}
