@@ -2,6 +2,31 @@
 
 ## Open Requests (read this section only)
 
+Owner priority (2026-10-29 17:00): **REQ-029 next**, before any other open item, so the Muse Wonder audit that follows
+this run can close Code Review Cycle 2.
+
+### REQ-029 — Close the last review gaps before the audit: worker release gate, docs_path builds (2026-10-29)
+Status: OPEN
+Context: owner re-checked every Code Review Cycle 2 finding against main (2026-10-29): AR-1-1, AR-1-3, AR-1-4,
+AR-1-5 and AR-2-1…AR-2-6 are fixed in code. Two gaps remain; fix both so the audit (validate run with Muse Wonder,
+queued after this run) has nothing to re-open. The verdict line in FEEDBACKS is the auditor's to change, not yours.
+1. **AR-1-2 residual: a worker-run build or repair persists a release without the verifier gate.** `compose.yaml`
+   (worker service, the "NOTE (AR-1-2)" comment) says the worker has no `VERIFIER_URL` and no verifier-net route, so
+   "a worker-executed build persists without a gate check only when control's inline execution did not claim the
+   job first". That is still an unverified release path. Fix fail-closed: no process may persist or activate a
+   release without a passing verdict. Either route the worker's verification through control (control already has
+   verifier-net), or have the worker leave the job pending/`awaiting_verification` for control to gate, and never
+   persist when no verifier is reachable. Same in local mode (`scripts/local-up.sh`). Tests: a worker-executed build
+   with the verifier unreachable persists no release and names the reason; with it reachable, the release carries
+   the verification report id. Update the compose comment and docs/safety-model.md.
+2. **`docs_path` builds silently compile placeholder docs.** Since the AR-2-2 fix, `POST /connectors/{id}/build`
+   with only `docs_path` sets `docs_text = f"docs from {body.docs_path}"` (`src/autobridge/control/routes/builds.py`
+   ~194–201) and builds a generic spec from that string (owner hit it: Atlas built with `/reservations` + offset
+   pagination). Return 422 with "docs_path is an identifier only; send docs_text (or docs_url)" instead, keep the
+   reference-spec guard, and make every caller (demo, UI, CLI `ab`, e2e, docs) send `docs_text`. If `docs_path` is
+   still wanted as a label, store it on the build as provenance only. Tests for the 422 and for each caller.
+Gates: `make test`, keyed `make local-up && make e2e && make demo` 8/8, `make up` likewise. Do not weaken guards.
+
 Owner priority (2026-10-29 10:40, supersedes the list below): **REQ-027 first.** Finish the iteration in progress
 (merge what is green), then REQ-027 before any other REQ, owner check or review item. REQ-023's demo script must
 describe the REQ-027 demo, so finish REQ-023 after REQ-027 lands (or update it then).
