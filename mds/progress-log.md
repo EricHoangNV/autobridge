@@ -3243,3 +3243,27 @@ Rerun table (BENCH_TRIALS=1, local stack, real verifier): cold/warm V=0.500 [0.2
 Checks: `make lint`, `make typecheck`, `make ui-typecheck`, `make openapi-check` green; `make test` green (autobridge 2534 pass 90.37%, verifier 134 pass 91.49%, simulators 396 pass 90.50%, ui 160 pass); e2e on touched workstreams green (knowledge_flow 2/2, test_03 6/6 incl. rename comment fix, test_027_live_chain 9/9, test_07 1/1 — with SIM_ADMIN_TOKEN/AUTOBRIDGE_CONTROL_TOKEN plumbed from the service env in this sandbox, tokens never printed or stored).
 
 Gotchas: restarting the stack mid-task is required after engine/sim/catalog edits (long-lived local processes import at startup — a stale verifier 500'd every rename grade with `unknown drift_class`); the e2e admin-reset 403s in sbx1 are env plumbing (services carry tokens the shell lacks), not regressions.
+
+## REQ-025 rehearsal 3 (round 6594400, 10 instances)
+**Date:** 2026-10-29
+**Ref:** REQ-025 item 6 (rehearsals on past rounds)
+
+**What was done:**
+- Ran `make bench-beacon REHEARSE=6594400` on the sbx1 local stack (stack was stale-down; `make local-down` + `make local-up` first, all services readyz green). Round verified against LoE mainnet (chain 8990e7a9…, scheme pedersen-bls-chained); eval_seed 599988b9…
+- 10 instances across atlas/harbor/legacystay/meridian/fias-pabx (dates, code_list, pagination, nesting, transport_auth, fias_layout); 50 grades (5 arms x 10).
+- Results: every arm V=0.2 E=0.2, 0 wrong patches, 0 frontier tokens on engine arms (frontier_agent 30 fake tokens). The 2 escalate-expected instances (meridian code_list, legacystay transport_auth) score on all arms; the 8 repair-expected novel-parameter instances end Blocked (patch=False, question=False) on every arm including engine arms — same signature as rehearsals 1-2, losses published as-is.
+- verify-repro byte-match: re-pushed all 10 instances to the sims, descriptors identical (`beacon verify: 10 instances match the published set`). Note: verify-repro needs `SIM_ADMIN_TOKEN` in env (source `scripts/load_dotenv.sh` or use make); without it the sim admin correctly 403s (AR-1-1).
+- Updated REQ-025 status (3 live rehearsals; rehearsals 4-5 remaining).
+
+**Key decisions:**
+- Round 6594400 chosen as safely-published (~1h old) via `bench.beacon_client round-for`; verified with `verify --round` before the run.
+- Record losses honestly per REQ-024 pre-registration (Blockeds on novel repair instances, consistent across all 3 rehearsals) rather than tuning anything mid-rehearsal.
+
+**Files changed:**
+- `experiments/beacon/rehearsals/6594400/{protocol.md,instances.json,grades.jsonl,summary.json}` — new rehearsal record
+- `mds/REQUESTS.MD` — REQ-025 status: 2 -> 3 live rehearsals
+- `mds/progress-state.md` — rehearsal 3 recorded
+
+**Notes for next iteration:**
+- Remaining for REQ-025: rehearsals 4-5 (any past rounds, same command), live frontier numbers (needs `FRONTIER_API_KEY`), the real frozen run (owner, `make beacon-eval`).
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation)
