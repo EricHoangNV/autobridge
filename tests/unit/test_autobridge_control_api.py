@@ -269,7 +269,9 @@ def test_sync_no_releases(client: Any) -> None:  # type: ignore[no-untyped-def]
 
 
 def test_sync_with_release(client: Any) -> None:  # type: ignore[no-untyped-def]
-    c = _create_connector(client, base_url="http://sim-harbor:8000")
+    # Literal unroutable IP: no real server, and no DNS lookup either
+    # (unit hermeticity guard). REQ-027 builds store it verbatim.
+    c = _create_connector(client, base_url="http://127.0.0.1:9")
     docs = "# HarborPMS API\n\nBase URL: http://sim-harbor:8000\n\nGET /reservations\n\nGET /folios\n"
     br = client.post(f"/connectors/{c['id']}/build", json={"docs_text": docs})
     assert br.status_code == 200

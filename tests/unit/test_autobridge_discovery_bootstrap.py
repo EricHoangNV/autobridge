@@ -203,6 +203,9 @@ def test_build_draft_spec_with_overrides() -> None:
     assert result.draft_spec["connector"]["id"] == "myconn"  # type: ignore[index]
     assert result.draft_spec["connector"]["vendor"] == "MyVendor"  # type: ignore[index]
     assert result.draft_spec["source"]["auth"]["credential_ref"] == "MY_KEY"  # type: ignore[index]
+    # REQ-027 owner check: an explicit override is the connector record's
+    # mode-correct address — stored verbatim, never placeholder-ized.
+    assert result.draft_spec["source"]["base_url"] == "http://localhost:8106"  # type: ignore[index]
 
 
 def test_build_draft_spec_empty_docs() -> None:

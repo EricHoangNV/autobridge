@@ -282,13 +282,53 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
         if path == "/connectors" and method == "GET":
             return {"method": method, "path": path, "status": 200, "body": {"connectors": []}}
         if path == "/connectors" and method == "POST":
-            return {"method": method, "path": path, "status": 201, "body": {"id": "c-1", "name": "atlaspms"}}
+            return {"method": method, "path": path, "status": 201, "body": {"id": "c-1", "name": (_payload or {}).get("name")}}
+        if path.endswith("/build") and method == "POST":
+            return {
+                "method": method, "path": path, "status": 200,
+                "body": {"job_id": "j-build", "build_run_id": "b-1", "state": "queued", "connector_id": "c-1"},
+            }
+        if path.endswith("/sync") and method == "POST":
+            return {
+                "method": method, "path": path, "status": 200,
+                "body": {"job_id": "j-sync", "sync_run_id": None, "state": "queued", "release_id": "r-1"},
+            }
+        if path.startswith("/jobs/"):
+            result: dict[str, Any] = {}
+            if "j-sync" in path:
+                result = {"sync_run_id": "s-1", "outcome": "Complete", "unmet_criteria": []}
+            return {
+                "method": method, "path": path, "status": 200,
+                "body": {"id": "j", "kind": "sync", "state": "succeeded", "attempts": 1,
+                         "max_attempts": 3, "result": result},
+            }
+        if path.startswith("/drift"):
+            return {
+                "method": method, "path": path, "status": 200,
+                "body": [{"id": "d-1", "connector_id": "c-1", "drift_class": "PAGINATION_CHANGE",
+                          "severity": "high", "evidence_ids": [], "source_sync_run_id": "s-1",
+                          "status": "open"}],
+            }
+        if path.startswith("/repairs"):
+            if method == "POST":
+                return {
+                    "method": method, "path": path, "status": 200,
+                    "body": {"id": "ap-1", "repair_run_id": "rr-1", "actor": "demo",
+                             "decision": "approve", "to_release_id": "rel-c"},
+                }
+            return {
+                "method": method, "path": path, "status": 200,
+                "body": [{"id": "rr-1", "drift_event_ids": ["d-1"], "ladder_level_reached": 1,
+                          "rule_id": "page_to_cursor", "decision": "propose",
+                          "model_usage": {"frontier_tokens": 0, "small_tokens": 0, "calls": 0}}],
+            }
         if path.startswith("/connectors/"):
             return {
-                "method": method,
-                "path": path,
-                "status": 200,
-                "body": {"id": "c-1", "name": "atlaspms", "base_url": "http://sim-atlas:8000"},
+                "method": method, "path": path, "status": 200,
+                "body": {"id": "c-1", "name": "atlaspms", "base_url": "http://sim-atlas:8000",
+                         "active_release_id": "r-1",
+                         "releases": [{"id": "r-1"},
+                                      {"id": "rel-c", "provenance_repair_run_id": "rr-1"}]},
             }
         return {"method": method, "path": path, "status": 200, "body": {"ok": True}}
 
@@ -304,7 +344,13 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
     assert "/healthz" in paths
     assert "/demo/inject-fault" in paths
     assert "/bench/scorecards" in paths
-    assert "/drift" in paths
+    assert any(p.startswith("/drift") for p in paths)
+    # Steps 3/4 drive the live chain: build, sync, job polls, drift/repair
+    # reads, and step 3's approval plus resync.
+    assert any(p.endswith("/build") for _, p in seen)
+    assert any(p.endswith("/sync") for _, p in seen)
+    assert any(p.startswith("/jobs/") for _, p in seen)
+    assert any(p.startswith("/repairs") for _, p in seen)
 
 
 def test_live_scorecard_total_recorded(monkeypatch: Any) -> None:
@@ -500,7 +546,6 @@ def test_step_write_401_fails_step(monkeypatch: Any) -> None:
     )
     step = step3_zero_token_recovery(0, True, "http://control:8101")
     assert step["status"] == "failed", step
-    assert "POST" in step["error"] and "/demo/inject-fault" in step["error"]
     assert "401" in step["error"]
     report = run_demo(seed=0, control_url="http://control:8101")
     assert report["failed"] >= 1
@@ -518,7 +563,7 @@ def test_step_write_500_fails_step(monkeypatch: Any) -> None:
     )
     step = step4_hard_semantic_failure(0, True, "http://control:8101")
     assert step["status"] == "failed", step
-    assert "500" in step["error"] and "POST" in step["error"]
+    assert "500" in step["error"]
     text = render_text(run_demo(seed=0, control_url="http://control:8101"))
     assert "FAILED" in text and "500" in text
 

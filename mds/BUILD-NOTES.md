@@ -1884,3 +1884,48 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 - Verified live numbers: faulted atlas page_to_cursor -> PAGINATION_CHANGE, L1 page_to_cursor rung 1, 0 tokens, candidate release; repeat -> L0 rung 0; approve -> resync Complete 30+85 records.
 - Tests: `tests/unit/test_autobridge_detect_repair.py` (8 tests: no-drift baseline, full propose/approve chain, L0 repeat, delta stability, rate-limit escalate, None-delta guard, handler inline, real served fault). Targeted suites green (111 + 8), lint/typecheck green, full `make test` green except one flaky simulators FIAS replay test (`test_replay_postings_resend_same_pno` fails under full-suite random order, passes alone and on file re-run; package untouched by this change).
 - Remaining: sub-steps 4 (demo steps 3-4 drive the chain), 5 (live e2e per scenario), 6 (honest bench rerun).
+
+### REQ-027 sub-step 4 — demo steps 3-4 drive the live chain (sbx1, 2026-10-29)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+Step 3 (page_to_cursor) and step 4 (gross_to_net) no longer hand-build
+anything: no RepairContext, no RULE_REGISTRY call, no hand-written
+hypotheses/drift class/yield count in bench/demo.py.
+
+- Step 3 in-process: reference Atlas spec + execute_sync against the
+  cursor-mode fake (cursor leaf, no total) -> Complete-but-silent sync;
+  signals -> PAGINATION_CHANGE; detect_and_repair_after_sync on
+  :memory: control DB (detector-derived inputs only) -> propose
+  page_to_cursor rung 1, 0 tokens; approve; resync with patched spec ->
+  Complete. Live: build from docs -> baseline sync Complete -> inject ->
+  sync -> assert drift row PAGINATION_CHANGE + repair row (propose,
+  page_to_cursor, rung<=1, 0 tokens) -> approve -> resync Complete.
+  Fail-loud ASSERT entries when the engine does not deliver.
+- Step 4 in-process: reference Harbor spec + net-mode fake (records 10%
+  below gross_sum meta) -> Degraded money_invariant; classifier ->
+  SEMANTIC_VALUE_DRIFT; enumerator on Harbor docs (24 -> 6 amount ->
+  wire-consistent net survivors); climbs most-specific field
+  (total_amount:net, yield 1) with the frontier given real redacted
+  evidence (spec excerpt, failing-records sample, docs Money section).
+  Ladder: L0 skipped (no wire-shape delta, explicit entry), L1 no match,
+  L2 skipped (1 survivor), L3 proposes the decoy (replay), trap rejects
+  invalid_patch_trap -> L4 one question. Live: faulted sync on the built
+  spec shows no drift (builder infers no money_invariant — recorded gap),
+  no new repair asserted; the climb demonstrates the instrumented path.
+- Ladder: run_frontier_climb gains optional evidence (L3 prompt block;
+  byte-identical messages when None) + explicit l0_skipped entry when a
+  cache is present but the detector derived no delta. The L3 yield<2 gate
+  is untouched (directive + guard tests pin it).
+- record_frontier.py climbs the same engine-derived inputs so the capture
+  matches the demo prompt. Replay fixture: new entry for the
+  detector-derived prompt (same synthetic decoy text); old hashes kept
+  for the matrix/hand-built prompts. docs/demo.md + CATALOGUE row: step 4
+  is 1 replay call now (frontier; L2 skipped).
+- Tests: 40 demo + 8 catalogue + 88 ladder/repair/bench + matrix
+  in-process 20 green; full make test green (autobridge 91% 2492,
+  verifier 91% 134, simulators 90% 396, ui 158); lint/typecheck clean.
+  e2e live-stack files cannot run in sbx1 (no compose; matrix live test
+  errors identically on base).
+Files: bench/demo.py, bench/record_frontier.py,
+src/autobridge/repair/ladder.py, tests/fixtures/replay/gross_to_net.json,
+tests/unit/test_autobridge_demo.py, docs/demo.md.

@@ -180,39 +180,70 @@ def _demo_dumps_exact(payload: Any) -> str:
     return encode(payload)
 
 
-def _atlas_fake_client() -> Any:
-    """Page-pagination fake serving the inline Atlas fixtures (method-style)."""
+def _atlas_fake_client(mode: str = "page") -> Any:
+    """Page-pagination fake serving the inline Atlas fixtures (method-style).
+
+    ``mode="cursor"`` mirrors the ``page_to_cursor`` simulator fault: the
+    vendor ignores the page params and serves a cursor envelope (a
+    non-null ``next_cursor`` leaf, no ``total``), so a spec that declares
+    ``strategy: page`` observes a wire contradiction. Later pages are
+    empty so the run terminates on ``empty_page``; the detector reads the
+    first page only.
+    """
     import httpx  # noqa: PLC0415
 
     from autobridge.runtime.http import HttpClient  # noqa: PLC0415
     from autobridge.spec.models import RetryPolicy  # noqa: PLC0415
 
+    if mode not in ("page", "cursor"):
+        raise ValueError(f"unknown atlas fake mode {mode!r}; expected 'page' or 'cursor'")
     reservations = _atlas_reservations()
     folios = _atlas_folios()
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        qp = dict(request.url.params)
+    def page_of(data: list[dict[str, Any]], total: int) -> httpx.Response:
+        payload = {"success": True, "data": data, "count": len(data), "total": total}
+        return httpx.Response(200, content=_demo_dumps_exact(payload).encode(), headers={"Content-Type": "application/json"})
 
-        def page_of(data: list[dict[str, Any]]) -> httpx.Response:
-            try:
-                page_number = max(1, int(qp.get("pageNumber", "1")))
-            except ValueError:
-                page_number = 1
-            try:
-                page_size = max(1, min(100, int(qp.get("pageSize", "50"))))
-            except ValueError:
-                page_size = 50
-            total = len(data)
-            start = (page_number - 1) * page_size
-            sliced = data[start : start + page_size]
-            payload = {"success": True, "data": sliced, "count": len(sliced), "total": total}
-            return httpx.Response(200, content=_demo_dumps_exact(payload).encode(), headers={"Content-Type": "application/json"})
+    def handler(request: httpx.Request) -> httpx.Response:
+        import base64 as _b64  # noqa: PLC0415
 
         if request.url.path == "/api/v1.3/getReservations":
-            return page_of(reservations)
-        if request.url.path == "/api/v1.3/getTransactions":
-            return page_of(folios)
-        return httpx.Response(404, json={"msg": "not found"})
+            data, total = reservations, len(reservations)
+        elif request.url.path == "/api/v1.3/getTransactions":
+            data, total = folios, len(folios)
+        else:
+            return httpx.Response(404, json={"msg": "not found"})
+        if mode == "cursor":
+            # The faulted vendor ignores the page params and serves its own
+            # fixed cursor pages (size 2): page one carries the cursor leaf
+            # with no total (the contradiction the detector fires on), and
+            # the repaired cursor spec terminates Complete on the chain.
+            qp = dict(request.url.params)
+            start = 0
+            token = qp.get("cursor")
+            if token:
+                try:
+                    start = int(_b64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode())
+                except Exception:
+                    start = 0
+            sliced = data[start : start + 2]
+            nxt = start + len(sliced)
+            more = bool(sliced) and nxt < total
+            nxt_token = _b64.urlsafe_b64encode(str(nxt).encode()).decode().rstrip("=") if more else None
+            payload = {"success": True, "data": sliced, "next_cursor": nxt_token}
+            return httpx.Response(200, content=_demo_dumps_exact(payload).encode(), headers={"Content-Type": "application/json"})
+        qp = dict(request.url.params)
+        try:
+            page_number = max(1, int(qp.get("pageNumber", "1")))
+        except ValueError:
+            page_number = 1
+        try:
+            page_size = max(1, min(100, int(qp.get("pageSize", "50"))))
+        except ValueError:
+            page_size = 50
+        start = (page_number - 1) * page_size
+        sliced = data[start : start + page_size]
+        return page_of(sliced, total)
 
     transport = httpx.MockTransport(handler)
 
@@ -265,8 +296,20 @@ def _harbor_folios() -> list[dict[str, Any]]:
     return rows
 
 
-def _harbor_fake_client() -> Any:
-    """Cursor-pagination fake serving the inline fixtures as Harbor would."""
+def _harbor_fake_client(mode: str = "gross") -> Any:
+    """Cursor-pagination fake serving the inline fixtures as Harbor would.
+
+    ``mode="net"`` mirrors the ``gross_to_net`` simulator fault: money
+    fields read 10% below the baseline (×0.9) while the page envelope
+    still carries the baseline ``gross_sum`` meta, so the reference
+    spec's ``money_invariant`` fails on observed responses only.
+    Baseline sums are computed from the fixture rows, never hard-coded.
+    """
+    if mode not in ("gross", "net"):
+        raise ValueError(f"unknown harbor fake mode {mode!r}; expected 'gross' or 'net'")
+
+    def net_str(amount: str) -> str:
+        return f"{(Decimal(amount) * Decimal('0.9')).quantize(Decimal('0.01')):f}"
 
     def encode(idx: int) -> str:
         return base64.urlsafe_b64encode(str(idx).encode()).decode().rstrip("=")
@@ -288,6 +331,12 @@ def _harbor_fake_client() -> Any:
     status_map = {"confirmed": "H1", "checked_in": "H2", "checked_out": "H3", "cancelled": "H4", "no_show": "H5"}
     reservations = [{**r, "status": status_map[r["status"]]} for r in _harbor_reservations()]
     folios = list(_harbor_folios())
+    if mode == "net":
+        reservations = [{**r, "total_amount": net_str(str(r["total_amount"]))} for r in reservations]
+        folios = [{**r, "amount": net_str(str(r["amount"]))} for r in folios]
+
+    def gross_sum(rows: list[dict[str, Any]], field: str) -> str:
+        return f"{sum((Decimal(str(r[field])) for r in rows), Decimal('0')).quantize(Decimal('0.01')):f}"
 
     def handler(request: httpx.Request) -> httpx.Response:
         qp = dict(request.url.params)
@@ -295,22 +344,26 @@ def _harbor_fake_client() -> Any:
         start = decode(qp.get("cursor"))
         if request.url.path == "/reservations":
             data, total = reservations, len(reservations)
+            baseline = gross_sum(_harbor_reservations(), "total_amount")
         elif request.url.path == "/folios":
             data, total = folios, len(folios)
+            baseline = gross_sum(_harbor_folios(), "amount")
         else:
             return httpx.Response(404, json={"msg": "not found"})
         sliced = data[start : start + limit]
         nxt = start + limit
-        return httpx.Response(
-            200,
-            json={
-                "data": sliced,
-                "total": total,
-                "limit": limit,
-                "cursor": qp.get("cursor"),
-                "next_cursor": encode(nxt) if nxt < total else None,
-            },
-        )
+        envelope: dict[str, Any] = {
+            "data": sliced,
+            "total": total,
+            "limit": limit,
+            "cursor": qp.get("cursor"),
+            "next_cursor": encode(nxt) if nxt < total else None,
+        }
+        if mode == "net":
+            # Baseline meta stays gross while records read net: the same
+            # contradiction the faulted simulator serves (observed only).
+            envelope["gross_sum"] = baseline
+        return httpx.Response(200, json=envelope)
 
     transport = httpx.MockTransport(handler)
 
@@ -836,133 +889,570 @@ def step2_unfamiliar_api(seed: int, live: bool, base_url: str) -> dict[str, Any]
     )
 
 
+def _poll_job_terminal(base_url: str, job_id: str, calls: list[dict[str, Any]], *, tries: int = 30) -> dict[str, Any] | None:
+    """Poll GET /jobs/{id} until terminal; every poll is a recorded call."""
+    import time as _time  # noqa: PLC0415
+
+    last: dict[str, Any] | None = None
+    for _ in range(tries):
+        rec = _control_call(base_url, "GET", f"/jobs/{job_id}")
+        calls.append(rec)
+        last = rec
+        body = rec.get("body")
+        state = body.get("state") if isinstance(body, dict) else None
+        if state in ("succeeded", "failed"):
+            return rec
+        _time.sleep(2.0)
+    calls.append(
+        {
+            "method": "ASSERT",
+            "path": f"/jobs/{job_id} terminal",
+            "status": "assertion-failed",
+            "error": f"job {job_id} not terminal after {tries} polls",
+        }
+    )
+    return last
+
+
+def _assert_live(calls: list[dict[str, Any]], label: str, condition: bool, detail: str) -> None:
+    """Fail the step loudly when the live engine did not do what the demo claims."""
+    if not condition:
+        calls.append({"method": "ASSERT", "path": label, "status": "assertion-failed", "error": detail})
+
+
 def step3_zero_token_recovery(seed: int, live: bool, base_url: str) -> dict[str, Any]:
-    """page_to_cursor drift: L0 miss → L1 rule patch, frontier_tokens == 0."""
-    from autobridge.repair.context import RepairContext  # noqa: PLC0415
-    from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
-    from autobridge.repair.registry import RULE_REGISTRY  # noqa: PLC0415
+    """page_to_cursor drift: the live chain, L0 miss → L1 rule, 0 tokens.
+
+    In-process runs the real chain on the reference release: a baseline
+    sync (``Complete``), a faulted sync against the cursor-mode fake, then
+    :func:`detect_and_repair_after_sync` on an in-memory control database —
+    drift classified by the detector, patch proposed by the controller from
+    detector-derived inputs only — then approval and a resync with the
+    repaired spec (``Complete``). Live does the same against the stack:
+    build, baseline sync, inject the fault, sync, assert on the drift row
+    and the repair row the engine wrote, approve, resync. Every input in
+    the step evidence names where it came from; nothing is hand-built.
+    """
+    from autobridge.engine.sync_run import execute_sync  # noqa: PLC0415
+    from autobridge.spec.models import load_spec_from_dict  # noqa: PLC0415
 
     spec = _load_reference_spec("atlaspms")
-    delta = {
-        "list_reservations": {"previous": {"strategy": "page"}, "current": {"strategy": "cursor"}},
-    }
-    cache = KnowledgeCache()
-    l0_hit = cache.lookup("atlas", delta)  # fresh cache: miss by construction
-    ctx = RepairContext.from_dict(spec, drift_class="PAGINATION_CHANGE", fingerprint_delta={"pagination_details": delta})
-    rule = RULE_REGISTRY["page_to_cursor"]
-    assert rule.precondition(ctx), "L1 rule precondition must hold for page→cursor drift"
-    patch = rule.generate_patch(ctx)
-    assert patch, "L1 rule must produce a JSON Patch"
+    load_spec_from_dict(spec)  # validates; raises on a bad spec
     calls: list[dict[str, Any]] = []
-    if live:
-        calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-atlas", "scenario_id": "page_to_cursor", "seed": seed}))
-        calls.append(_control_call(base_url, "GET", "/drift"))
-        calls.append(_control_call(base_url, "GET", "/repairs"))
-    attempts = [
-        {
-            "rung": 0,
-            "action": "knowledge_hit" if l0_hit else "knowledge_miss",
-            "reason": "L0 hit: cached page_to_cursor patch reused"
-            if l0_hit
-            else "L0 miss: no known fix for atlas+pagination delta",
-        }
-    ]
-    if not l0_hit:
+
+    baseline = execute_sync(spec, _atlas_fake_client())
+    assert baseline["outcome"] == "Complete", f"step 3 baseline unmet: {baseline.get('unmet_criteria')}"
+    faulted = execute_sync(spec, _atlas_fake_client(mode="cursor"))
+    faulted_records = dict(faulted.get("records_observed") or {})
+
+    from sqlalchemy import create_engine as _create_engine  # noqa: PLC0415
+    from sqlalchemy.orm import sessionmaker as _sessionmaker  # noqa: PLC0415
+
+    from autobridge.control.models import Base as _Base  # noqa: PLC0415
+    from autobridge.control.models import Connector as _Connector  # noqa: PLC0415
+    from autobridge.control.models import ConnectorRelease as _Release  # noqa: PLC0415
+    from autobridge.control.models import RepairRun as _RepairRun  # noqa: PLC0415
+    from autobridge.control.models import spec_signature as _signature  # noqa: PLC0415
+    from autobridge.engine.detect_repair import detect_and_repair_after_sync  # noqa: PLC0415
+    from autobridge.engine.releases import approve_release  # noqa: PLC0415
+    from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
+
+    engine = _create_engine("sqlite:///:memory:")
+    _Base.metadata.create_all(engine)
+    factory = _sessionmaker(bind=engine)
+    with factory() as session:
+        conn = _Connector(
+            name="atlaspms",
+            base_url="https://demo.invalid",
+            credential_ref="ATLAS_API_KEY",
+            target_entities=["Reservation"],
+        )
+        session.add(conn)
+        session.flush()
+        rel = _Release(connector_id=conn.id, version=1, spec=spec, signature=_signature(spec))
+        session.add(rel)
+        session.flush()
+        conn.active_release_id = rel.id
+        session.commit()
+        out = detect_and_repair_after_sync(
+            session,
+            connector_id=conn.id,
+            release_id=rel.id,
+            spec_dict=spec,
+            summary=faulted,
+            sync_run_id="demo-step3-faulted",
+            knowledge_cache=KnowledgeCache(),
+        )
+        assert out["drift_found"] is True, "detector must fire on the cursor envelope"
+        assert out["drift_class"] == "PAGINATION_CHANGE", out
+        assert out["decision"] == "propose" and out["rule_id"] == "page_to_cursor", out
+        assert out["ladder_level_reached"] == 1 and out["candidate_release_id"], out
+        assert out["model_usage"]["frontier_tokens"] == 0 and out["model_usage"]["small_tokens"] == 0, out
+        run_row = session.get(_RepairRun, out["repair_run_id"])
+        trace = [dict(e) for e in (run_row.ladder_trace if run_row is not None else [])]
+        patch = list(run_row.candidate_patch or []) if run_row is not None else []
+        session.commit()
+        candidate = session.get(_Release, out["candidate_release_id"])
+        assert candidate is not None
+        candidate_spec = dict(candidate.spec)
+        approval = approve_release(
+            session, repair_run_id=out["repair_run_id"], actor="demo",
+            from_release_id=rel.id, to_release_id=candidate.id, connector_id=conn.id,
+        )
+        assert approval.decision == "approve", approval.decision
+        session.commit()
+    resync = execute_sync(candidate_spec, _atlas_fake_client(mode="cursor"))
+    assert resync["outcome"] == "Complete", f"step 3 resync unmet: {resync.get('unmet_criteria')}"
+
+    attempts: list[dict[str, Any]] = []
+    for entry in trace:
+        if not isinstance(entry, dict):
+            continue
+        level_raw: Any = entry.get("level", entry.get("rung", -1))
+        level = level_raw if isinstance(level_raw, int) and not isinstance(level_raw, bool) else -1
         attempts.append(
             {
-                "rung": 1,
-                "action": "rule_applied",
-                "reason": "L1 page_to_cursor precondition matched; JSON Patch generated",
+                "rung": level,
+                "action": str(entry.get("action", "")),
+                "reason": str(entry.get("reason", "")),
             }
         )
+    evidence: dict[str, Any] = {
+        "drift_class": out["drift_class"],
+        "drift_class_source": "classifier on wire signals from the faulted sync summary (raw_pages only; never the scenario id)",
+        "delta_source": "build_detector_delta from the reference spec + wire signals (previous page shape vs observed cursor leaf)",
+        "rule_source": "controller.handle_from_signals with detector-derived inputs only",
+        "l0_knowledge": "miss",
+        "l1_rule": out["rule_id"],
+        "patch_ops": len(patch),
+        "patch": patch[:4],
+        "frontier_tokens": 0,
+        "model_usage_ledger": dict(out["model_usage"]),
+        "baseline_outcome": baseline["outcome"],
+        "baseline_records": dict(baseline.get("records_observed") or {}),
+        "faulted_outcome": faulted["outcome"],
+        "faulted_records": faulted_records,
+        "resync_outcome": resync["outcome"],
+        "resync_records": dict(resync.get("records_observed") or {}),
+        "drift_id": out["drift_id"],
+        "repair_run_id": out["repair_run_id"],
+        "candidate_release_id": out["candidate_release_id"],
+        "resolved_rung": "L1",
+        "rung_attempts": attempts,
+    }
+
+    if live:
+        live_evidence = _step3_live(seed, base_url, calls)
+        evidence["live"] = live_evidence
     return _finish_step(
         "Zero-token recovery — page_to_cursor via L1 rule",
-        {
-            "drift_class": "PAGINATION_CHANGE",
-            "l0_knowledge": "miss" if not l0_hit else "hit",
-            "l1_rule": rule.id,
-            "patch_ops": len(patch),
-            "patch": patch[:4],
-            "frontier_tokens": 0,
-            "resolved_rung": "L0" if l0_hit else "L1",
-            "rung_attempts": attempts,
-        },
+        evidence,
         calls,
     )
 
 
-def _gross_net_hypotheses() -> list[dict[str, Any]]:
-    """The documented gross/net pair (ids + priors feed the replay hashes).
+def _step_live_ensure_active_release(
+    base_url: str, connector_id: str, docs_path: str, calls: list[dict[str, Any]]
+) -> str | None:
+    """Build from docs text and activate the release (first build auto-activates)."""
+    docs_text = (REPO_ROOT / docs_path).read_text(encoding="utf-8")
+    build_rec = _control_call(base_url, "POST", f"/connectors/{connector_id}/build", {"docs_text": docs_text})
+    calls.append(build_rec)
+    build_body = build_rec.get("body") if isinstance(build_rec.get("body"), dict) else {}
+    job_id = build_body.get("job_id") if isinstance(build_body, dict) else None
+    if job_id:
+        _poll_job_terminal(base_url, str(job_id), calls)
+    detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
+    calls.append(detail)
+    detail_body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
+    releases = detail_body.get("releases") if isinstance(detail_body, dict) else []
+    build_release_id = None
+    if isinstance(releases, list) and releases:
+        last = releases[-1]
+        build_release_id = str(last.get("id")) if isinstance(last, dict) else None
+    active_id = detail_body.get("active_release_id") if isinstance(detail_body, dict) else None
+    if build_release_id and active_id != build_release_id:
+        calls.append(_control_call(base_url, "POST", f"/connectors/{connector_id}/releases/{build_release_id}/activate", {}))
+    return build_release_id
 
-    Kept identical to the matrix fixture: the L2/L3 recordings under
-    ``demo/recordings/gross_to_net.json`` are keyed by these prompts.
+
+def _step_live_sync_terminal(
+    base_url: str, connector_id: str, calls: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """POST a sync and poll the job; returns the job result (outcome, ...)."""
+    sync_rec = _control_call(base_url, "POST", f"/connectors/{connector_id}/sync", {})
+    calls.append(sync_rec)
+    sync_body = sync_rec.get("body") if isinstance(sync_rec.get("body"), dict) else {}
+    job_id = sync_body.get("job_id") if isinstance(sync_body, dict) else None
+    if not job_id:
+        return {}
+    job_rec = _poll_job_terminal(base_url, str(job_id), calls)
+    job_body = (job_rec or {}).get("body")
+    if isinstance(job_body, dict) and isinstance(job_body.get("result"), dict):
+        return dict(job_body["result"])
+    return {}
+
+
+def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """Live half of step 3: build, sync, inject, sync, assert, approve, resync."""
+    ensure_calls = _live_ensure_connector(
+        base_url,
+        {
+            "name": "atlaspms",
+            "vendor_docs_ref": "simulators/docs/atlas-openapi.yaml",
+            "base_url": "http://sim-atlas:8000",
+            "credential_ref": "ATLAS_API_KEY",
+            "target_entities": ["Reservation", "FolioCharge"],
+        },
+    )
+    calls.extend(ensure_calls)
+    connector_id = _connector_id_from_calls(ensure_calls, "atlaspms")
+    if connector_id is None:
+        _assert_live(calls, "connector atlaspms id", False, "no connector id from ensure calls")
+        return {"connector_id": None}
+    _step_live_ensure_active_release(
+        base_url, connector_id, "simulators/docs/atlas-openapi.yaml", calls
+    )
+    sync_result = _step_live_sync_terminal(base_url, connector_id, calls)
+    _assert_live(
+        calls, "baseline sync Complete", sync_result.get("outcome") == "Complete",
+        f"baseline sync outcome {sync_result.get('outcome')}: {sync_result.get('unmet_criteria')}",
+    )
+    calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-atlas", "scenario_id": "page_to_cursor", "seed": seed}))
+    _step_live_sync_terminal(base_url, connector_id, calls)
+    drift_rec = _control_call(base_url, "GET", f"/drift?connector_id={connector_id}")
+    calls.append(drift_rec)
+    drift_body = drift_rec.get("body")
+    drift_row = drift_body[0] if isinstance(drift_body, list) and drift_body else {}
+    if not isinstance(drift_row, dict):
+        drift_row = {}
+    _assert_live(
+        calls, "drift PAGINATION_CHANGE", drift_row.get("drift_class") == "PAGINATION_CHANGE",
+        f"latest drift row: {drift_row}",
+    )
+    repair_rec = _control_call(base_url, "GET", f"/repairs?connector_id={connector_id}")
+    calls.append(repair_rec)
+    repair_body: Any = repair_rec.get("body")
+    repair_row: dict[str, Any] = (
+        repair_body[0] if isinstance(repair_body, list) and repair_body and isinstance(repair_body[0], dict) else {}
+    )
+    model_usage_raw: Any = repair_row.get("model_usage")
+    usage: dict[str, Any] = model_usage_raw if isinstance(model_usage_raw, dict) else {}
+    _assert_live(
+        calls, "repair proposed by page_to_cursor with 0 tokens",
+        repair_row.get("decision") == "propose"
+        and repair_row.get("rule_id") == "page_to_cursor"
+        and int(usage.get("frontier_tokens", 0) or 0) == 0
+        and int(usage.get("small_tokens", 0) or 0) == 0,
+        f"latest repair row: {repair_row}",
+    )
+    repair_run_id = repair_row.get("id")
+    detail2 = _control_call(base_url, "GET", f"/connectors/{connector_id}")
+    calls.append(detail2)
+    detail2_body = detail2.get("body") if isinstance(detail2.get("body"), dict) else {}
+    releases2 = detail2_body.get("releases") if isinstance(detail2_body, dict) else []
+    candidate_id = None
+    if isinstance(releases2, list):
+        for rel in releases2:
+            if isinstance(rel, dict) and rel.get("provenance_repair_run_id") == repair_run_id:
+                candidate_id = rel.get("id")
+    if repair_run_id and candidate_id:
+        calls.append(
+            _control_call(
+                base_url, "POST", f"/repairs/{repair_run_id}/approve",
+                {"to_release_id": candidate_id, "connector_id": connector_id},
+            )
+        )
+        resync_result = _step_live_sync_terminal(base_url, connector_id, calls)
+        _assert_live(
+            calls, "resync Complete after approval", resync_result.get("outcome") == "Complete",
+            f"resync outcome {resync_result.get('outcome')}: {resync_result.get('unmet_criteria')}",
+        )
+    else:
+        _assert_live(calls, "candidate release for repair run", False, f"run {repair_run_id}: no candidate release found")
+    return {
+        "connector_id": connector_id,
+        "drift_class": drift_row.get("drift_class"),
+        "drift_id": drift_row.get("id"),
+        "repair_run_id": repair_run_id,
+        "rule_id": repair_row.get("rule_id"),
+        "ladder_level_reached": repair_row.get("ladder_level_reached"),
+        "model_usage": usage,
+        "candidate_release_id": candidate_id,
+    }
+
+
+def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """Live half of step 4: fault the built Harbor connector and record the engine.
+
+    The built spec carries no money_invariant (the builder does not infer
+    it), so the live faulted sync cannot show the semantic drift — the
+    step records that honestly (counts before/after, no new repair) and
+    the in-process climb above demonstrates the instrumented path on the
+    reference spec. If the engine ever does propose here, the new rows
+    are recorded and the no-new-repair assertion fails loud, forcing the
+    step to be updated to the new behavior.
     """
-    return [
+    ensure_calls = _live_ensure_connector(
+        base_url,
         {
-            "id": "gross_is_canonical",
-            "family": "amount",
-            "claim": "total_amount must stay gross",
-            "candidate_mapping_fragment": {"family": "amount", "field": "total_amount"},
-            "prior": 0.41,
-            "field": "total_amount",
+            "name": "harborpms",
+            "vendor_docs_ref": "simulators/docs/harborpms.md",
+            "base_url": "http://sim-harbor:8000",
+            "credential_ref": "HARBOR_API_KEY",
+            "target_entities": ["Reservation", "FolioCharge"],
         },
-        {
-            "id": "net_is_canonical",
-            "family": "amount",
-            "claim": "total_amount tracks net",
-            "candidate_mapping_fragment": {"family": "amount", "field": "total_amount"},
-            "prior": 0.39,
-            "field": "total_amount",
+    )
+    calls.extend(ensure_calls)
+    connector_id = _connector_id_from_calls(ensure_calls, "harborpms")
+    if connector_id is None:
+        _assert_live(calls, "connector harborpms id", False, "no connector id from ensure calls")
+        return {"connector_id": None}
+    _step_live_ensure_active_release(
+        base_url, connector_id, "simulators/docs/harborpms.md", calls
+    )
+    before_drift = _control_call(base_url, "GET", f"/drift?connector_id={connector_id}")
+    calls.append(before_drift)
+    before_repairs = _control_call(base_url, "GET", f"/repairs?connector_id={connector_id}")
+    calls.append(before_repairs)
+    n_drift_before = len(before_drift.get("body") or []) if isinstance(before_drift.get("body"), list) else 0
+    n_rep_before = len(before_repairs.get("body") or []) if isinstance(before_repairs.get("body"), list) else 0
+    calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-harbor", "scenario_id": "gross_to_net", "seed": seed}))
+    faulted_result = _step_live_sync_terminal(base_url, connector_id, calls)
+    after_drift = _control_call(base_url, "GET", f"/drift?connector_id={connector_id}")
+    calls.append(after_drift)
+    after_repairs = _control_call(base_url, "GET", f"/repairs?connector_id={connector_id}")
+    calls.append(after_repairs)
+    after_drift_body: Any = after_drift.get("body")
+    after_rep_body: Any = after_repairs.get("body")
+    drift_rows: list[Any] = after_drift_body if isinstance(after_drift_body, list) else []
+    rep_rows: list[Any] = after_rep_body if isinstance(after_rep_body, list) else []
+    n_drift_after = len(drift_rows)
+    n_rep_after = len(rep_rows)
+    _assert_live(
+        calls, "no new repair for the uninstrumented semantic fault",
+        n_rep_after == n_rep_before,
+        f"repairs before={n_rep_before} after={n_rep_after}: {rep_rows[:1]}",
+    )
+    return {
+        "connector_id": connector_id,
+        "faulted_sync_outcome": faulted_result.get("outcome"),
+        "faulted_sync_unmet": faulted_result.get("unmet_criteria"),
+        "drift_rows_before": n_drift_before,
+        "drift_rows_after": n_drift_after,
+        "repair_rows_before": n_rep_before,
+        "repair_rows_after": n_rep_after,
+        "gap": (
+            "built Harbor spec carries no money_invariant (the builder does not "
+            "infer it), so the live faulted sync cannot surface gross_to_net; "
+            "the climb above demonstrates the detector-derived path on the "
+            "instrumented reference spec"
+        ),
+    }
+
+
+# Strategies whose reading predicts the money invariant HOLDS (the observed
+# sum matches the gross baseline). When a sync fails money_invariant, these
+# readings are contradicted by the wire; "net" (below-baseline) survives.
+# A fixed domain mapping, not per-run input: the filter itself is computed
+# from the observed sync outcome.
+_HOLD_PREDICTING_STRATEGIES = frozenset({"gross", "tax_inclusive"})
+
+
+def _money_fields_of_spec(spec: dict[str, Any]) -> dict[str, str]:
+    """Entity -> money field for every money_invariant check in the spec."""
+    out: dict[str, str] = {}
+    for entity, ent_spec in (spec.get("entities") or {}).items():
+        if not isinstance(ent_spec, dict):
+            continue
+        for check in ent_spec.get("checks") or []:
+            kind = check.get("kind") if isinstance(check, dict) else getattr(check, "kind", None)
+            field = check.get("field") if isinstance(check, dict) else getattr(check, "field", None)
+            if kind == "money_invariant" and isinstance(field, str) and entity not in out:
+                out[str(entity)] = field
+    return out
+
+
+def _harbor_money_docs_excerpt() -> str:
+    """The Money section of the Harbor docs (evidence the engine may read)."""
+    text = (REPO_ROOT / "simulators" / "docs" / "harborpms.md").read_text(encoding="utf-8")
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.strip().lower() == "## money"), None)
+    if start is None:
+        return "\n".join(lines[:20])
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end]).strip()
+
+
+def _semantic_climb_inputs() -> dict[str, Any]:
+    """Engine-derived inputs for the gross_to_net climb (REQ-027 item 4).
+
+    Every value is computed from observed evidence, never hand-written:
+
+    * faulted sync: the reference Harbor spec against the net-mode fake
+      (records 10% below baseline, gross_sum meta on the wire) — Degraded
+      with money_invariant, like the faulted simulator;
+    * drift class: the classifier on that sync's wire signals;
+    * hypotheses: the engine's HypothesisEnumerator on the Harbor docs,
+      amount family for the spec's money fields;
+    * survivors: readings consistent with the observed invariant failure
+      (gross/tax_inclusive predict the invariant holds — contradicted);
+    * climbed: the most specific surviving field (longest field name;
+      the L3 patch targets one field, so the generic/shorter alias would
+      under-specify it); siblings are recorded, not hidden;
+    * evidence for L3: spec excerpt + failing-records sample + docs
+      excerpt, all extracted (redacted to money fields).
+    """
+    from autobridge.discovery.classifiers import classify_all  # noqa: PLC0415
+    from autobridge.discovery.docs_reader import read_docs_text  # noqa: PLC0415
+    from autobridge.discovery.hypotheses import HypothesisEnumerator  # noqa: PLC0415
+    from autobridge.drift.classifier import classify  # noqa: PLC0415
+    from autobridge.drift.signals import signals_from_sync  # noqa: PLC0415
+    from autobridge.engine.detect_repair import build_detector_delta  # noqa: PLC0415
+    from autobridge.engine.sync_run import execute_sync  # noqa: PLC0415
+
+    spec = _load_reference_spec("harborpms")
+    faulted = execute_sync(spec, _harbor_fake_client(mode="net"))
+    assert faulted["outcome"] == "Degraded", f"net sync must degrade: {faulted}"
+    assert "money_invariant" in (faulted.get("unmet_criteria") or []), faulted.get("unmet_criteria")
+    signals = signals_from_sync(faulted, spec=spec, source_run_id="demo-step4-faulted")
+    assert signals, "net sync must carry wire signals"
+    classification = classify(signals)
+    assert classification.drift_class == "SEMANTIC_VALUE_DRIFT", classification
+    delta = build_detector_delta(spec, signals)
+
+    docs_ref = "simulators/docs/harborpms.md"
+    iface = read_docs_text((REPO_ROOT / docs_ref).read_text(encoding="utf-8"), docs_ref)
+    doc_classification = classify_all(iface)
+    enumerated = HypothesisEnumerator().enumerate_all(iface, doc_classification)
+    money_fields = _money_fields_of_spec(spec)
+    assert money_fields, "reference spec must name money fields"
+    drifted = sorted({field for field in money_fields.values()})
+    amount_hyps = [h for h in enumerated if h.family == "amount" and (h.field or "") in drifted]
+    assert amount_hyps, "enumerator must yield amount readings for the money fields"
+    survivors = [h for h in amount_hyps if (h.strategy or "") not in _HOLD_PREDICTING_STRATEGIES]
+    assert survivors, "at least the net reading must survive the observed invariant failure"
+    # The climb proposes one field-targeted patch: climb the most specific
+    # surviving field (longest field name; a shorter alias would
+    # under-specify the patch target). Siblings are recorded, not hidden.
+    # The live-hypothesis count going into L2/L3 is therefore one.
+    ordered = sorted(survivors, key=lambda h: (-len(h.field or ""), h.id))
+    live_hyps = ordered[:1]
+    climbed = live_hyps[0]
+    siblings = [h.id for h in ordered[1:]]
+
+    entities = spec.get("entities") or {}
+    ent_name = next(
+        name for name, ent in entities.items()
+        if isinstance(ent, dict) and money_fields.get(name) == climbed.field
+    )
+    ent_spec = entities.get(ent_name) if isinstance(entities, dict) else {}
+    field_path = ""
+    if isinstance(ent_spec, dict):
+        fields = ent_spec.get("fields") or {}
+        field_spec = fields.get(climbed.field or "")
+        if isinstance(field_spec, dict):
+            field_path = str(field_spec.get("path") or "")
+    key_path = ""
+    if isinstance(ent_spec, dict):
+        key_path = str(ent_spec.get("key") or "")
+    key_field = key_path.removeprefix("$.")
+    canonical = (faulted.get("canonical_records") or {}).get(ent_name) or []
+    sample_rows = []
+    for rec in list(canonical)[:2]:
+        if isinstance(rec, dict):
+            sample_rows.append({k: str(rec.get(k)) for k in (key_field, climbed.field) if k and k in rec})
+    observed_sum = sum((Decimal(str(r.get(climbed.field))) for r in canonical if isinstance(r, dict) and r.get(climbed.field) is not None), Decimal("0"))
+    baseline_sum = ""
+    for pages in ((faulted.get("operation_results") or {}).values()):
+        raw_pages = getattr(pages, "raw_pages", None)
+        if raw_pages:
+            first = raw_pages[0] if isinstance(raw_pages[0], dict) else {}
+            if isinstance(first, dict) and first.get("gross_sum") is not None:
+                baseline_sum = str(first["gross_sum"])
+                break
+    evidence = {
+        "spec_excerpt": {
+            "entity": ent_name,
+            "field": climbed.field,
+            "path": field_path,
+            "money_check": {"kind": "money_invariant", "compare_to": "$.gross_sum"},
         },
-    ]
+        "records_sample": {
+            "rows": sample_rows,
+            "observed_sum": str(observed_sum),
+            "baseline_gross_sum": baseline_sum,
+        },
+        "docs_excerpt": _harbor_money_docs_excerpt()[:600],
+    }
+    return {
+        "spec": spec,
+        "faulted_summary": faulted,
+        "drift_class": classification.drift_class,
+        "drift_reason": classification.reason,
+        "signals_count": len(signals),
+        "fingerprint_delta": delta,
+        "enumerated_count": len(enumerated),
+        "amount_count": len(amount_hyps),
+        "money_fields": money_fields,
+        "survivor_ids": [h.id for h in ordered],
+        "sibling_ids": siblings,
+        "hypotheses": live_hyps,
+        "yield_count": len(live_hyps),
+        "evidence": evidence,
+        "docs_ref": docs_ref,
+    }
 
 
 def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[str, Any]:
-    """gross_to_net: the real L0 -> L1 -> L2 -> L3 climb, check, escalation.
+    """gross_to_net: detector-derived drift, real-evidence L3, check, escalation.
 
-    The ladder consults knowledge (miss), tries deterministic rules (none
-    match a semantic drift), ranks the gross/net readings with the small
-    model (0.41 < 0.70: not confident), calls the frontier model — live when
-    FRONTIER_API_KEY is set, else the redacted replay — and shows whatever
-    it proposed. The proposal is checked (live verifier verdict, else the
-    documented trap predicate): the known decoy (net_amount -> total_amount)
-    is rejected as invalid_patch_trap; anything else still ends Degraded
-    with one operator question, because a semantic drift is never patched
-    without the operator. Nothing is released either way. When no provider
-    and no recording exist, L3 is labelled skipped instead of invented.
+    The faulted sync (reference Harbor spec vs net-mode wire: records 10%
+    below the gross_sum meta) degrades on money_invariant; the classifier
+    names SEMANTIC_VALUE_DRIFT from the wire signals. Hypotheses come from
+    the engine's enumerator on the Harbor docs; wire-consistency keeps the
+    net readings, and the climb demonstrates the most specific one with the
+    frontier given real evidence (spec excerpt, failing-records sample,
+    docs excerpt — redacted). The proposal is checked (live verifier
+    verdict, else the documented trap predicate): the known decoy
+    (net_amount -> total_amount) is rejected as invalid_patch_trap;
+    anything else still ends Degraded with one operator question, because
+    a semantic drift is never patched without the operator. Nothing is
+    released either way. When no provider and no recording exist, L3 is
+    labelled skipped instead of invented.
     """
-    from autobridge.discovery.docs_reader import Provenance  # noqa: PLC0415
-    from autobridge.discovery.hypotheses import Hypothesis  # noqa: PLC0415
     from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
     from autobridge.repair.escalation import escalation_for_no_fix  # noqa: PLC0415
     from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
     from autobridge.repair.ladder import run_frontier_climb  # noqa: PLC0415
 
     provider, mode = resolve_frontier_provider()
-    hyps = [
-        Hypothesis(
-            id=h["id"],
-            family=h["family"],
-            claim=h["claim"],
-            candidate_mapping_fragment=dict(h["candidate_mapping_fragment"]),
-            prior=float(h["prior"]),
-            evidence_for=(Provenance(source="demo:gross_to_net", line=1, snippet="total_amount reads net"),),
-            field=h["field"],
-        )
-        for h in _gross_net_hypotheses()
-    ]
+    inp = _semantic_climb_inputs()
+    spec = inp["spec"]
+    evidence_sources = {
+        "spec": "generated/connectors/harborpms/reference/spec.yaml",
+        "faulted_sync": "execute_sync(reference spec, net-mode fake: records below gross_sum meta)",
+        "drift_class": f"classifier on {inp['signals_count']} wire signals ({inp['drift_reason']})",
+        "fingerprint_delta": "build_detector_delta from spec + wire signals (None: wire shape intact)",
+        "hypotheses": f"HypothesisEnumerator on {inp['docs_ref']} (amount family, {inp['enumerated_count']} enumerated -> {inp['amount_count']} for money fields {sorted(inp['money_fields'].values())})",
+        "wire_consistent_survivors": f"{inp['survivor_ids']} (gross/tax_inclusive predict the invariant holds — contradicted by the observed failure)",
+        "climbed": f"{inp['hypotheses'][0].id} (most specific surviving field; siblings: {inp['sibling_ids'] or 'none'})",
+        "yield_count": f"{inp['yield_count']} live hypothesis into L2/L3",
+        "l3_evidence": "spec excerpt + failing-records sample + docs Money section (extracted, redacted)",
+    }
     climb = run_frontier_climb(
-        spec={"spec_version": 1, "connector": {"id": "demo", "vendor": "harbor"}},
-        drift_class="SEMANTIC_VALUE_DRIFT",
-        hypotheses=hyps,
-        enumerator_yield_count=1,
+        spec=spec,
+        drift_class=inp["drift_class"],
+        hypotheses=list(inp["hypotheses"]),
+        enumerator_yield_count=inp["yield_count"],
         provider=provider,
         budget=Budget(),
         knowledge_cache=KnowledgeCache(),
-        fingerprint_delta={"semantic": "gross_to_net"},
+        fingerprint_delta=inp["fingerprint_delta"],
         vendor="harbor",
         scenario="gross_to_net",
         validate_against=_load_reference_spec("harborpms"),
+        evidence=dict(inp["evidence"]),
     )
     attempts = list(climb["attempts"])
     usage = dict(climb["usage"])
@@ -1067,9 +1557,15 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             f"raw response: {l3_raw_preview or '<empty>'}"
         )
     rejection_reason = " ".join(rejection_reason.split())
+    records_sample = inp["evidence"]["records_sample"]
+    try:
+        below_pct = (Decimal(str(records_sample["baseline_gross_sum"])) - Decimal(str(records_sample["observed_sum"]))) / Decimal(str(records_sample["baseline_gross_sum"])) * Decimal(100)
+        below_label = f"{below_pct:.0f}% below gross"
+    except Exception:
+        below_label = "below gross"
     bundle = escalation_for_no_fix(
-        "gross_to_net: net is 10% below gross; no deterministic rule maps net_amount safely",
-        evidence_ids=["sync-harbor-gross_to_net", "probe-harbor-amounts"],
+        f"gross_to_net: net is {below_label}; no deterministic rule maps net_amount safely",
+        evidence_ids=["demo-step4-faulted", "simulators/docs/harborpms.md#Money"],
         question="Harbor totals now read net instead of gross — should total_amount track $.gross_amount with the money transform, or is a new canonical field needed?",
     )
     attempts.append(
@@ -1080,12 +1576,18 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             "calls": [],
         }
     )
-    sample_money = Decimal("225.00")
-    assert isinstance(sample_money, Decimal) and sample_money.as_tuple().exponent == -2
+    sample_values = [
+        rec.get("total_amount")
+        for rec in ((inp["faulted_summary"].get("canonical_records") or {}).get("Reservation") or [])
+        if isinstance(rec, dict)
+    ]
+    assert sample_values, "faulted sync must observe reservation totals"
+    assert all(isinstance(v, Decimal) and v.as_tuple().exponent == -2 for v in sample_values), sample_values
     calls: list[dict[str, Any]] = []
     if live:
-        calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-harbor", "scenario_id": "gross_to_net", "seed": seed}))
-        calls.append(_control_call(base_url, "GET", "/drift"))
+        live_evidence = _step4_live(seed, base_url, calls)
+    else:
+        live_evidence = {"mode": "in-process evidence only (no live connector)"}
     from autobridge.llm.provider import Usage, estimate_cost  # noqa: PLC0415
 
     frontier_cost = estimate_cost(
@@ -1106,9 +1608,20 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     return _finish_step(
         "Hard semantic failure — gross_to_net rejected, escalated",
         {
-            "sync_outcome": "Degraded",
-            "unmet_criteria": ["money_invariant"],
-            "drift_class": "SEMANTIC_VALUE_DRIFT",
+            "sync_outcome": inp["faulted_summary"]["outcome"],
+            "unmet_criteria": list(inp["faulted_summary"].get("unmet_criteria") or []),
+            "drift_class": inp["drift_class"],
+            "drift_class_source": evidence_sources["drift_class"],
+            "input_sources": evidence_sources,
+            "derivation": {
+                "signals": inp["signals_count"],
+                "enumerated_hypotheses": inp["enumerated_count"],
+                "amount_hypotheses": inp["amount_count"],
+                "money_fields": inp["money_fields"],
+                "wire_consistent_survivors": inp["survivor_ids"],
+                "sibling_readings": inp["sibling_ids"],
+                "yield_count": inp["yield_count"],
+            },
             "decoy_patch_rejected": "invalid_patch_trap" if trapped else "no decoy proposed",
             "l3_proposal": proposal,
             "l3_model": l3_model,
@@ -1125,6 +1638,7 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             "resolved_rung": "L4 (escalated)",
             "rung_attempts": attempts,
             "why_escalated": rejection_reason,
+            "live": live_evidence,
             "model_usage_ledger": {
                 "calls": usage.get("calls", 0),
                 "small_tokens": usage.get("small_tokens", 0),
@@ -1539,7 +2053,7 @@ CATALOGUE: tuple[dict[str, Any], ...] = (
     # Semantic and data quality.
     {"scenario": "gross_to_net", "vendor": "both",
      "expected_outcome": "Degraded (money invariant) → full climb L0→L4; L3 rejected",
-     "rung": "L4 (via L0,L1,L2,L3)", "model_calls": "2 (replay: 1 small + 1 frontier)",
+     "rung": "L4 (via L0,L1,L2,L3)", "model_calls": "1 (replay: frontier; L2 skipped, one surviving reading)",
      "req": "REQ-021/023", "e2e": "tests/e2e/test_05_safety_and_semantic.py",
      "main_step": 4, "kind": "ladder-matrix"},
     {"scenario": "status_vocab_change", "vendor": "both",

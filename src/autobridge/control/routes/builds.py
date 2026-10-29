@@ -223,7 +223,9 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
         "docs_text": docs_text,
         "docs_source": body.docs_path or body.docs_url or "inline",
         "connector_id": connector_id,
-        "vendor": body.vendor,
+        # REQ-027 owner check: the built spec keeps the connector's name
+        # as vendor (derived titles truncate and drift from the record).
+        "vendor": body.vendor or conn.name,
         "credential_ref": body.credential_ref or conn.credential_ref,
         "base_url_override": base_url_fb,
         "scenario_id": body.scenario_id,

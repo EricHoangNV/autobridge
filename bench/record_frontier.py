@@ -20,8 +20,6 @@ import os
 import pathlib
 from typing import Any
 
-from autobridge.discovery.docs_reader import Provenance  # noqa: PLC0415
-from autobridge.discovery.hypotheses import Hypothesis  # noqa: PLC0415
 from autobridge.llm.provider import (  # noqa: PLC0415
     Budget,
     Completion,
@@ -30,7 +28,6 @@ from autobridge.llm.provider import (  # noqa: PLC0415
 )
 from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
 from autobridge.repair.ladder import run_frontier_climb  # noqa: PLC0415
-from bench.demo import _gross_net_hypotheses  # noqa: PLC0415 (shared climb fixture)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_OUT_DIR = REPO_ROOT / "demo" / "recordings"
@@ -74,22 +71,6 @@ class TappingProvider:
         return out
 
 
-def build_hypotheses() -> list[Hypothesis]:
-    prov = (Provenance(source="demo:gross_to_net", line=1, snippet="total_amount reads net"),)
-    return [
-        Hypothesis(
-            id=h["id"],
-            family="amount",
-            claim=h["claim"],
-            candidate_mapping_fragment=dict(h["candidate_mapping_fragment"]),
-            prior=float(h["prior"]),
-            evidence_for=prov,
-            field=h.get("field"),
-        )
-        for h in _gross_net_hypotheses()
-    ]
-
-
 def record_scenario(scenario: str, out_dir: pathlib.Path) -> dict[str, Any]:
     """Run the live climb and write the recording file. Returns a summary."""
     if scenario != "gross_to_net":
@@ -98,21 +79,27 @@ def record_scenario(scenario: str, out_dir: pathlib.Path) -> dict[str, Any]:
     if not api_key:
         raise SystemExit("record-frontier: FRONTIER_API_KEY is required (generate a dedicated Muse key)")
     from autobridge.config import frontier_model  # noqa: PLC0415
+    from bench.demo import _semantic_climb_inputs  # noqa: PLC0415 (shared engine-derived climb inputs)
 
     model = frontier_model()
     live = MuseProvider(api_key=api_key)
     tap = TappingProvider(live, model=model)
+    # Same detector-derived inputs the demo climbs (REQ-027 item 4): the
+    # capture matches the demo's prompt, never a hand-built one.
+    inp = _semantic_climb_inputs()
     climb = run_frontier_climb(
-        spec={"spec_version": 1, "connector": {"id": "demo", "vendor": "harbor"}},
-        drift_class="SEMANTIC_VALUE_DRIFT",
-        hypotheses=build_hypotheses(),
-        enumerator_yield_count=1,
+        spec=inp["spec"],
+        drift_class=inp["drift_class"],
+        hypotheses=list(inp["hypotheses"]),
+        enumerator_yield_count=inp["yield_count"],
         provider=tap,
         budget=Budget(),
         knowledge_cache=KnowledgeCache(),
-        fingerprint_delta={"semantic": scenario},
+        fingerprint_delta=inp["fingerprint_delta"],
         vendor="harbor",
         scenario=scenario,
+        validate_against=inp["spec"],
+        evidence=dict(inp["evidence"]),
     )
     if not tap.recordings:
         raise SystemExit("record-frontier: live climb made no model calls; nothing to record")

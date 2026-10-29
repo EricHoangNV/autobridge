@@ -1373,9 +1373,16 @@ def _compile_spec(
     # Ensure slug matches spec requirements
     cid = re.sub(r"[^a-z0-9_-]", "-", cid.lower()).strip("-") or "connector"
     ven = vendor or _derive_vendor(iface)
-    # Base URL placeholder
-    raw_base = base_url_override or iface.base_url or ""
-    base_placeholder = _derive_env_placeholder(raw_base, cid)
+    # Base URL: an explicit override is the connector record's address,
+    # already normalized to the mode this stack runs in (REQ-027), so it
+    # is stored verbatim — placeholder-izing it would point the release
+    # at an env var the stack may not set. Without an override, derive
+    # the portable ${NAME}_BASE_URL placeholder from the docs.
+    if base_url_override:
+        base = base_url_override
+    else:
+        raw_base = iface.base_url or ""
+        base = _derive_env_placeholder(raw_base, cid)
     cred_ref = _derive_credential_ref(cid, credential_ref)
 
     # Auth
@@ -1591,7 +1598,7 @@ def _compile_spec(
         "spec_version": spec_version,
         "connector": {"id": cid, "vendor": ven},
         "source": {
-            "base_url": base_placeholder,
+            "base_url": base,
             "auth": auth_spec,
             "rate_limit": {"max_rps": 5.0, "retry": {"statuses": [429, 503], "backoff": "exponential", "max_attempts": 5}},
             "timezone_source": timezone_source,

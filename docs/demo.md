@@ -203,7 +203,7 @@ has merged and its e2e test is green.
 | `page_to_cursor` | both | L1 rule patch, verified; reusable via L0 (step 3) | L1 | 0 | REQ-019/021 |
 | `cursor_repeat_token` | both | L1 rule + repeated_cursor loop guard | L1 | 0 | REQ-023 |
 | `fias_record_layout_change` | fias | Handshake detect + L1 mapping patch (step 8) | L1 | 0 | REQ-022 |
-| `gross_to_net` | both | Degraded → full climb L0→L4; L3 rejected (step 4) | L4 (via L0,L1,L2,L3) | 2 (replay: 1 small + 1 frontier) | REQ-021/023 |
+| `gross_to_net` | both | Degraded → full climb L0→L4; L3 rejected (step 4) | L4 (via L0,L1,L2,L3) | 1 (replay: frontier; L2 skipped, one surviving reading) | REQ-021/023 |
 | `status_vocab_change` | both | Escalate, never guess a mapping | L4 | 0 | REQ-023 |
 | `tz_boundary_shift` | both | Degraded + operator question | L4 | 0 | REQ-023 |
 | `duplicate_late_records` | both | Escalate (no dedup rule invented) | L4 | 0 | REQ-023 |

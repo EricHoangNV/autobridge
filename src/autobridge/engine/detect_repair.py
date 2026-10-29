@@ -21,6 +21,30 @@ import os
 from typing import Any
 
 
+def _summary_has_responses(summary: dict[str, Any]) -> bool:
+    """Whether the sync observed any vendor response (raw page or records).
+
+    REQ-027 owner check: a sync that never reached the vendor (connection
+    refused, DNS, unset placeholder) has no evidence of drift. Transport
+    failures that returned pages (429/503 bodies) still count as observed.
+    """
+    results = summary.get("operation_results")
+    if not isinstance(results, dict):
+        return False
+    for res in results.values():
+        if isinstance(res, dict):
+            raw_pages = res.get("raw_pages")
+            records = res.get("records")
+        else:
+            raw_pages = getattr(res, "raw_pages", None)
+            records = getattr(res, "records", None)
+        if isinstance(raw_pages, list) and raw_pages:
+            return True
+        if isinstance(records, list) and records:
+            return True
+    return False
+
+
 def _triples(signals: list[Any]) -> list[tuple[str | None, str | None, dict[str, Any]]]:
     """Normalize signals (objects or dicts) to (kind, operation, details)."""
     out: list[tuple[str | None, str | None, dict[str, Any]]] = []
@@ -170,6 +194,11 @@ def detect_and_repair_after_sync(
     from autobridge.repair.controller import RepairController
 
     outcome = summary.get("outcome") if isinstance(summary, dict) else None
+    if not _summary_has_responses(summary if isinstance(summary, dict) else {}):
+        # No vendor response, no drift evidence: a Blocked connectivity
+        # failure stays the sync's own outcome (recorded on the SyncRun),
+        # never a DriftEvent, never a repair. Fail closed, loudly visible.
+        return {"drift_found": False, "outcome": outcome, "reason": "no_vendor_response"}
     signals = signals_from_sync(
         summary, spec=spec_dict, source_run_id=sync_run_id
     )

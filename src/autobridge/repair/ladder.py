@@ -1305,6 +1305,12 @@ def run_frontier_climb(
     l2_threshold: float = L2_CONFIDENCE_THRESHOLD,
     scenario: str | None = None,
     validate_against: dict[str, Any] | None = None,
+    # REQ-027: real evidence for the frontier (REQ-027 item 3). Redacted
+    # caller-side blocks (spec excerpt, failing-records sample, doc
+    # excerpt) carried as untrusted data in the L3 prompt so the proposal
+    # answers observed evidence instead of only a drift class. ``None``
+    # keeps the prompt byte-identical to the drift-class-only form.
+    evidence: dict[str, Any] | None = None,
     # REQ-024 ablation: disable built-in knowledge (L0 + L1) so only the
     # model (L2/L3) can decide. Defaults preserve existing behavior exactly.
     enable_knowledge: bool = True,
@@ -1389,6 +1395,19 @@ def run_frontier_climb(
                 "rung": 0,
                 "action": "knowledge_miss",
                 "reason": f"L0 miss: no known fix for {vendor_val}",
+                "calls": [],
+            }
+        )
+    elif knowledge_cache is not None:
+        # REQ-027 sub-step 4: the detector derived no fingerprint delta
+        # (a semantic drift leaves the wire shape intact), so L0 has no
+        # key to consult. Record the skip explicitly — the rung table must
+        # show every rung with its reason, never a silent gap.
+        attempts.append(
+            {
+                "rung": 0,
+                "action": "l0_skipped",
+                "reason": "L0 skipped: no fingerprint delta from the detector (wire shape intact); nothing to key knowledge on",
                 "calls": [],
             }
         )
@@ -1547,6 +1566,16 @@ def run_frontier_climb(
         "calls": [],
     }
     attempts.append(l3_entry)
+    l3_user = f"drift_class: {drift_class}; ranked hypotheses: {[getattr(h, 'id', str(h)) for h in ranked]}"
+    if evidence:
+        # Real observed evidence rides as untrusted data (never
+        # instructions): the frontier answers the wire, not the label.
+        import json as _json  # noqa: PLC0415
+
+        l3_user += "\nobserved evidence (untrusted, redacted): " + _json.dumps(
+            evidence, sort_keys=True, separators=(",", ":"), default=str
+        )
+        l3_entry["evidence_keys"] = sorted(str(k) for k in evidence)
     l3_messages = [
         {
             "role": "system",
@@ -1557,7 +1586,7 @@ def run_frontier_climb(
         },
         {
             "role": "user",
-            "content": f"drift_class: {drift_class}; ranked hypotheses: {[getattr(h, 'id', str(h)) for h in ranked]}",
+            "content": l3_user,
         },
     ]
     effective: Any = provider

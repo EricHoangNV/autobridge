@@ -451,3 +451,84 @@ def test_real_served_fault_end_to_end() -> None:
         assert out["ladder_level_reached"] == 1
         assert out["model_usage"]["frontier_tokens"] == 0
         assert out["candidate_release_id"]
+
+
+# ---------------------------------------------------------------------------
+# REQ-027 owner check: no drift from a sync that got no response
+# ---------------------------------------------------------------------------
+
+
+def test_blocked_no_response_opens_no_drift() -> None:
+    """A Blocked sync with zero observed responses is a connectivity
+    failure, not drift: no DriftEvent, no RepairRun, outcome preserved."""
+    from autobridge.engine.sync_run import execute_sync
+
+    spec = yaml.safe_load(pathlib.Path("generated/connectors/atlaspms/reference/spec.yaml").read_text(encoding="utf-8"))
+    factory = _mem_factory()
+    conn_id, rel_id = _seed_connector(factory, spec)
+    import httpx as _httpx
+
+    def _refused(_spec_dict: dict[str, Any]) -> Any:
+        from autobridge.runtime.http import HttpClient
+        from autobridge.spec.models import RetryPolicy
+
+        def factory_fn(**_kw: Any) -> _httpx.Client:
+            def handler(_request: _httpx.Request) -> _httpx.Response:
+                raise _httpx.ConnectError("connection refused")
+            return _httpx.Client(transport=_httpx.MockTransport(handler))
+
+        return HttpClient(
+            "http://127.0.0.1:9",
+            retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=1),
+            client_factory=factory_fn,
+            sleep_fn=lambda _: None,
+        )
+
+    blocked = execute_sync(spec, _refused(spec))
+    assert blocked["outcome"] == "Blocked", blocked
+    assert not (blocked.get("operation_results") or {}), blocked.get("operation_results")
+    with factory() as s:
+        out = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=blocked, sync_run_id="sync-refused",
+            knowledge_cache=KnowledgeCache(),
+        )
+        assert out == {"drift_found": False, "outcome": "Blocked", "reason": "no_vendor_response"}, out
+        assert s.query(DriftEvent).count() == 0
+        assert s.query(RepairRun).count() == 0
+
+
+def test_blocked_with_error_pages_still_detects() -> None:
+    """Transport failures that returned pages (429 bodies) still detect:
+    the guard is about zero observed responses, not the Blocked outcome."""
+    spec = _page_spec()
+    factory = _mem_factory()
+    conn_id, rel_id = _seed_connector(factory, spec)
+    summary = {
+        "outcome": "Blocked",
+        "unmet_criteria": ["http_error"],
+        "data_readiness": {"freshness": "unknown", "completeness": "none"},
+        "fingerprint_id": "chain-blocked",
+        "operation_results": {
+            "list_reservations": OperationResult(
+                operation="list_reservations",
+                records=[],
+                pages_fetched=1,
+                raw_pages=[{"error": "http_error", "status": 503}],
+                stop_reason="http_error",
+            )
+        },
+        "records_observed": {"Reservation": 0},
+        "canonical_records": {},
+        "blocked_records": {},
+        "invariant_results": [],
+        "checkpoint_values": {},
+    }
+    with factory() as s:
+        out = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=summary, sync_run_id="sync-503",
+            knowledge_cache=KnowledgeCache(),
+        )
+        assert out["drift_found"] is True, out
+        assert s.query(DriftEvent).count() == 1
