@@ -115,7 +115,7 @@ after-approve progress, the PABX panel.
 Owner priority (2026-10-29 17:00): **REQ-029 next**, before any other open item, so the Muse Wonder audit that follows
 this run can close Code Review Cycle 2.
 ### REQ-029 — Close the last review gaps before the audit: worker release gate, docs_path builds (2026-10-29)
-Status: IN_PROGRESS (sbx1 2026-10-29 — CODE DONE: worker gate via control proxy + require-flag, docs_path 422, tests + demo 8/8 green; Muse Wonder audit validate run DONE 2026-10-29: both gaps re-verified fixed, Code Review Cycle 3 stays FAIL on the new REQ-034/REQ-035 findings — see mds/AUDIT.md; closing this item is the owner's call once REQ-034 is decided)
+Status: IN_PROGRESS (sbx1 since 2026-10-29 21:45 — close-out: REQ-034 decided+DONE, verifying gaps then closing; prior CODE DONE: worker gate via control proxy + require-flag, docs_path 422, tests + demo 8/8 green; Muse Wonder audit validate run DONE 2026-10-29: both gaps re-verified fixed, Code Review Cycle 3 stays FAIL on the new REQ-034/REQ-035 findings — see mds/AUDIT.md; closing this item is the owner's call once REQ-034 is decided)
 Context: owner re-checked every Code Review Cycle 2 finding against main (2026-10-29): AR-1-1, AR-1-3, AR-1-4,
 AR-1-5 and AR-2-1…AR-2-6 are fixed in code. Two gaps remain; fix both so the audit (validate run with Muse Wonder,
 queued after this run) has nothing to re-open. The verdict line in FEEDBACKS is the auditor's to change, not yours.
