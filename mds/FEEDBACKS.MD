@@ -5,13 +5,63 @@
 ### Security: Cycle 0 — (no review yet)
 - (awaiting first security review)
 
-### Code Review: Cycle 3 — FAIL (2026-10-29)
-- Daily directives audit re-verification (`3e4093b8..2cea2072`): AR-1-1…AR-1-5, AR-2-1…AR-2-6 and the REQ-029 worker-gate/docs_path gaps are fixed in code; audit fixed 4 residuals (Compose readyz misreporting local mode, hardcoded demo model id, unverified-release activation under the require-flag, CI missing openapi/ui-typecheck gates). Verdict stays FAIL on REQ-034: in Compose, control has no route to the FIAS simulator admin API, so `/demo/reset` + `/demo/inject-fault` fail for `sim-fias-pabx` and 4 live e2e tests are red on `make up`; plus REQ-035 (sim admin reachable from vendor-net, token-only, empty by default). See `mds/AUDIT.md` (2026-10-29).
-- test coverage: autobridge 90.33%, verifier 91.49%, simulators 90.50%; 2555+134+396 pytest and 160 Vitest tests passed (margins thin)
+### Code Review: Cycle 4 — FAIL (2026-10-29)
+- Daily Architecture Review (diff `2cea2072..005d69ed` + fixed trust-boundary checks): the audit's 4 residuals are verified in code (fail-closed activation `_require_verified_release`, `AUTOBRIDGE_RUNTIME=docker` pin, config model ids in demo pricing, CI openapi/ui-typecheck gates); AR-1-1…AR-2-6 stay resolved. FAIL on AR-4-1 (=REQ-034, recurring): `sim-fias-pabx` is edge-net only and control has no edge-net route, so `/demo/reset` + `/demo/inject-fault` cannot reach the FIAS admin API in Compose; AR-4-2 (=REQ-035, recurring): sim admin falls back to the published header-only check when `SIM_ADMIN_TOKEN` is empty (the default) and smoke counts a 403 as "unreachable".
+- test coverage: `make test` FAILED on first run (flaky `test_replay_postings_resend_same_pno`, passed on rerun; simulators 90.50% — margins thin); per-package totals not re-captured after the flake
 - type safety / lint: PASS (`make lint` incl. import-linter contracts, `make typecheck`, `make ui-typecheck`, `make openapi-check` all green)
 
 ### Product Review: Cycle 0 — (no review yet)
 - (awaiting first product review)
+
+---
+
+## Daily Architecture Review — AutoBridge (Code Review Cycle 4, 2026-10-29 Asia/Ho_Chi_Minh)
+
+**Verdict: FAIL** — no new Critical/High was introduced by the reviewed diff, and every Cycle 1/2 finding (AR-1-1…AR-1-5, AR-2-1…AR-2-6) plus the REQ-029 gaps remain resolved in code. The FAIL is carried by two recurring boundary items from Cycle 3 that are still open at HEAD: the FIAS demo/reset path is unreachable in the Compose topology (AR-4-1/REQ-034), and the simulator admin boundary degrades to a published static header whenever `SIM_ADMIN_TOKEN` is unset — which is the shipped default (AR-4-2/REQ-035). Both contradict DIRECTIVES §2 as written; neither is fixable by weakening the edge isolation or the reset assertions, so both still need an owner decision.
+
+**Reviewed commit / baseline and dirty-state scope.** Baseline: `2cea2072` (Code Review Cycle 3's re-verified head); reviewed HEAD `005d69ed` ("Audit 2026-10-29…", carries `Co-Authored-By: Muse Wonder 1.0` — a review-loop commit, not owner host work). Diff `2cea2072..005d69ed` is 12 files: the audit's four code residuals (`src/autobridge/engine/releases.py`, `bench/demo.py`, `compose.yaml`, `.github/workflows/ci.yml`), their unit tests, and bookkeeping (`mds/AUDIT.md`, `mds/REQUESTS.MD`, progress files, this file). Main checkout was clean (no staged/unstaged/untracked source changes) at review time; nothing was run or written there. Thursday daily review: diff + fixed critical-boundary checks (import/network isolation, verifier response shape, ladder budget/L3 gate, release approval/rollback, redaction), not the weekly full sweep. Review standard: DIRECTIVES Quick Reference and §§2/4/8 (`./directives-for.sh` for the touched paths).
+
+### Findings (ordered by severity)
+
+#### AR-4-1 — FIAS admin API unreachable from control in Compose; `/demo/reset` + `/demo/inject-fault` fail for `sim-fias-pabx` (High, recurring = REQ-034, confirmed by code inspection)
+
+- Evidence: `sim-fias-pabx` is attached to `edge-net` only (`compose.yaml:279-291`); control is deliberately not on `edge-net` (compose header comment `compose.yaml:20-22`; `scripts/smoke.sh` asserts control -/-> sim-fias-pabx), while the demo proxy resolves admin targets as `http://{id}:8001` (`src/autobridge/control/routes/demo.py:93-102`). The hostname cannot resolve from control, so both demo endpoints fail for the FIAS target in Compose mode (Cycle 3 verified this live on `make up`; this cycle re-verified the topology in code — live rerun is forbidden here).
+- Affected flow: demo reset/inject for FIAS, and the four live e2e tests named in REQ-034 (`test_03…zero_frontier`, `test_05…semantic_drift`, `test_model_usage_matrix…reset_repeatability`, `test_fias_faults…proxies_to_fias`) stay red on `make up` while passing in local mode — a mode split that hides exactly the topology the demo is supposed to prove.
+- Why safeguards don't prevent it: the isolation is intentional (DIRECTIVES §2, REQ-022); the gap is the missing sanctioned admin path, not a weak check. Remediation (DIRECTIVES §2, owner decision per REQ-034): (a) admin-net-only route for the FIAS admin listener without exposing its data plane, (b) route via the edge relay, or (c) documented mode split with a named verified reset path. Validation: the four tests green on both `make up` and `make local-up` with FIAS state provably back to baseline.
+
+#### AR-4-2 — Simulator admin auth degrades to the published static header when `SIM_ADMIN_TOKEN` is empty (the default); smoke counts 403 as "unreachable" (Medium, recurring = REQ-035, confirmed)
+
+- Evidence: `simulators/common/admin.py:56-83` (`_require_admin_network`) returns after the `X-Admin-Network: admin-net` header check when the env token is empty; `compose.yaml` and `scripts/local-up.sh` pass `${SIM_ADMIN_TOKEN:-}` and `.env.example` ships it empty, so a fresh-clone stack accepts the header — a string printed in this repo — from any vendor-net peer that can reach `sim:8001` (Cycle 3 showed `runtime-sandbox → sim-atlas:8001/healthz` answering 403, i.e. reachable). `scripts/smoke.sh:49-63` treats any HTTP error, including that 403, as "unreachable", so the negative check cannot distinguish "route blocked" from "rejected but reachable".
+- Impact: bounded (demo simulators, loopback-published ports), but DIRECTIVES §2 claims "no route to the simulator admin API"; as shipped it is an authorization boundary with an empty default secret. Remediation (DIRECTIVES §2, owner decision per REQ-035): non-empty labelled demo token by default, or move the listener off the vendor-reachable interface, or amend the directive/smoke wording; in all cases smoke must fail when an unauthorized write is *accepted*. Validation: fresh-clone (`cp .env.example .env`) smoke + a POST probe asserting rejection semantics, not mere reachability.
+
+#### AR-4-3 — L3 gate count is fabricated (`enumerator_yield_count=1`) when the caller passes none (Low, recurring = REQ-036 item 5, confirmed)
+
+- Evidence: `src/autobridge/repair/controller.py:245-255` calls `run_frontier_climb(..., enumerator_yield_count=1 if enumerator_yield_count is None else enumerator_yield_count)`; the ladder then asserts `< 2` (`src/autobridge/repair/ladder.py:259`) on a number nobody counted. The L3 gate therefore holds vacuously on this path rather than by enumeration. Impact is cost/discipline, not safety: the climb is budget-wrapped and its proposals are never auto-released. Remediation (DIRECTIVES §3): derive the count from the surviving hypotheses (as `run_frontier_climb` already filters) or require the caller to pass it; amend the §3 bullet to name the gating count. Validation: unit test asserting L3 is skipped when ≥2 hypotheses survive on the controller path.
+
+#### AR-4-4 — Flaky FIAS replay unit test makes `make test` non-deterministically red (Low, new, confirmed by execution)
+
+- Evidence: `tests/unit/test_simulators_fias_pabx.py::test_replay_postings_resend_same_pno` failed in this review's full `make test` run (`assert 7 == (6 + 2)` on `postings_sent`, `tests/unit/test_simulators_fias_pabx.py:665`) and passed on immediate rerun (file suite 42/42 green). The test races wall-clock deadlines (8 s pumps) against counter snapshots, so CI red/green depends on machine load. Remediation (DIRECTIVES §5): wait on the counter/condition instead of fixed deadlines, or poll `postings_sent` until it reaches the expected value before asserting. Validation: 20 consecutive runs of the file green.
+
+### Status of prior findings (re-verified at `005d69ed`)
+
+- **Resolved, still fixed:** AR-1-1 (token auth in `simulators/common/admin.py` — subject to AR-4-2's empty-default caveat), AR-1-2/REQ-029 (gate-before-persist + new `_require_verified_release` fail-closed activation at `src/autobridge/engine/releases.py:72-87,319`, covering approve and rollback; sync no longer falls back to an unapproved release, `src/autobridge/control/routes/builds.py:290-316`), AR-1-3 (provenance-bound approval), AR-1-4/REQ-012 (control-token guards on write routes; actor server-attributed from `AUTOBRIDGE_OPERATOR`, `src/autobridge/control/routes/repairs.py:99-101`), AR-1-5, AR-2-1 (`Retry-After` capped, `src/autobridge/runtime/http.py:58-60,312-315`), AR-2-2 (docs_url allowlist + docs_path 422-as-identifier, `builds.py:27-115,194-205`), AR-2-3/REQ-030 (`evict`/`evict_patch` in `src/autobridge/repair/knowledge.py:173-203`), AR-2-4/2-5/2-6 (HMAC edge signatures; lockfile-pinned images; `/readyz` 503 via `src/autobridge/health.py:39-57`). Verifier responses remain aggregate-only (`verifier/app.py:101-113` + leak guard); import-linter contracts kept (see checks).
+
+### Checks performed (isolated worktree `/tmp/autobridge-review4` at `005d69ed`; nothing run in the main checkout; no Compose/e2e/bench per the workspace rule)
+
+- `make lint` — PASS (ruff + import-linter, 2 contracts kept)
+- `make typecheck` — PASS (mypy, 118 files)
+- `make test` — FAIL (first run: 1 flaky failure, AR-4-4; simulators coverage 90.50%, gate met; targeted rerun of the failing test and its file PASS — recorded as flaky, not green)
+- `make ui-typecheck` — PASS
+- `make openapi-check` — PASS (50 paths, generated client in sync)
+- NOT RUN: `make smoke`, `make e2e`, `make bench`, any Docker/network probe — forbidden in this review. AR-4-1/AR-4-2 live behaviour rests on Cycle 3's `make up` verification plus this cycle's code re-verification.
+
+### Cost and idle-work evidence
+
+The reviewed diff adds no scheduler, timer or model call: demo pricing now reads model ids from config (`bench/demo.py`, DIRECTIVES §3) instead of a hardcoded id, and CI gained the two contract gates. No path in the diff triggers a paid call; the production repair path remains deterministic-first with L2/L3 only through `BudgetedProvider` (`src/autobridge/repair/ladder.py:203`), subject to AR-4-3's fabricated gate count. Idle work is unchanged from Cycle 3 (UI SWR polling + health checks); nothing in this diff grows it.
+
+### Verification gaps and confidence limits
+
+Not executed: live Compose reachability for AR-4-1/AR-4-2 (workspace rule; relies on Cycle 3's live run at unchanged topology), e2e/Playwright, bench runs, heldout contents (never opened). Not re-swept this cycle: MCP gateway, Edge target runtime, Postgres behaviour, two-worker contention — unchanged by the diff and covered at code level in Cycles 2–3 only. `make test` per-package counts were not re-captured after the AR-4-4 flake; coverage figure above is the simulators total printed by the failing run. Findings are code-confirmed unless labelled otherwise.
 
 ---
 
