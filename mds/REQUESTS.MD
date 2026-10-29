@@ -42,7 +42,7 @@ Tests: scheduler (interval, skip while busy, off when unset, never approves); pe
 and activity for each transition. Gates: `make test`, keyed `make local-up && make e2e && make demo` 8/8.
 
 ### REQ-031 — UI-first demo, part B: demo-seed, demo-break, demo-heal, build from docs in the UI (2026-10-29)
-Status: DONE (sbx1 2026-10-29) — demo-seed (4 connectors working, 0 tokens), demo-break (inject-only + one line), demo-heal (sims-only reset), build-from-sim-docs in UI (docs picker + 5-stage progress), docs-path-prefix fix, empty-entity drift quieted, EDGE_TOKEN derivation. Gates: make test (90.50/91.49/90.48%, ui 166), lint/typecheck/openapi-check/ui-typecheck green, local-up + e2e (09, 027, 04, meridian, knowledge, 03, fias) + demo 8/8 green unkeyed.
+Status: IN_PROGRESS (reopened by owner 2026-10-30: two owner checks below are open — (1) seed Harbor from its reference release so `gross_to_net` breaks live, (2) fix the reset/seed-vs-scheduler race and the scar drifts at the cause, no retry. Do them next, then mark DONE. Earlier: DONE (sbx1 2026-10-29) — demo-seed (4 connectors working, 0 tokens), demo-break (inject-only + one line), demo-heal (sims-only reset), build-from-sim-docs in UI (docs picker + 5-stage progress), docs-path-prefix fix, empty-entity drift quieted, EDGE_TOKEN derivation. Gates: make test (90.50/91.49/90.48%, ui 166), lint/typecheck/openapi-check/ui-typecheck green, local-up + e2e (09, 027, 04, meridian, knowledge, 03, fias) + demo 8/8 green unkeyed.)
 Depends on REQ-030.
 1. **`make demo-seed`**: from `make demo-reset`, creates the recording's connectors **through the control API only**
    (the calls the UI makes), each baseline-synced `Complete`: AtlasPMS (the reusable reference release), HarborPMS
