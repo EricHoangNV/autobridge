@@ -106,6 +106,34 @@ def _derive_env_placeholder(base_url: str, connector_id: str) -> str:
     return base_url
 
 
+def _with_docs_path(override: str, docs_base_url: str) -> str:
+    """Keep the docs' API path prefix on a connector-record host (REQ-031).
+
+    The connector record names *where* the stack runs (normalized per
+    stack mode, REQ-027); the docs name the path prefix (a docs
+    ``servers`` URL may carry one, e.g. ``/api/connector/v1``). An
+    override whose path is empty (or ``/``) gains the docs path; an
+    override that already carries a path, a placeholder or an
+    unparseable value is stored verbatim. Never imports simulator
+    packages — pure URL surgery.
+    """
+    if not override or not isinstance(override, str) or not docs_base_url:
+        return override
+    try:
+        over = urllib.parse.urlsplit(override)
+        docs = urllib.parse.urlsplit(docs_base_url)
+    except Exception:
+        return override
+    if over.scheme not in ("http", "https"):
+        return override
+    if (over.path or "/") != "/":
+        return override
+    docs_path = (docs.path or "").rstrip("/")
+    if not docs_path:
+        return override
+    return urllib.parse.urlunsplit((over.scheme, over.netloc, docs_path, "", ""))
+
+
 def _derive_credential_ref(connector_id: str, override: str | None = None) -> str:
     if override and re.match(r"^[A-Z][A-Z0-9_]{0,127}$", override):
         return override
@@ -1387,7 +1415,7 @@ def _compile_spec(
     # at an env var the stack may not set. Without an override, derive
     # the portable ${NAME}_BASE_URL placeholder from the docs.
     if base_url_override:
-        base = base_url_override
+        base = _with_docs_path(base_url_override, iface.base_url or "")
     else:
         raw_base = iface.base_url or ""
         base = _derive_env_placeholder(raw_base, cid)

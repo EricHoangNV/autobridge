@@ -77,6 +77,12 @@ export MERIDIAN_ACCESS_TOKEN="${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}"
 # an explicit value (.env / shell) always wins. Simulator demo value, not
 # a secret — never a real credential.
 export SIM_ADMIN_TOKEN="${SIM_ADMIN_TOKEN:-sim-admin-dev-token}"
+# REQ-031: the PABX edge release drains the edge relay through the relay's
+# operator endpoints, which expect AUTOBRIDGE_CONTROL_TOKEN (open when it
+# is unset). EDGE_TOKEN must carry that same value when a control token is
+# set, or any non-empty demo value otherwise; an explicit EDGE_TOKEN
+# always wins. Simulator demo value, not a secret.
+export EDGE_TOKEN="${EDGE_TOKEN:-${AUTOBRIDGE_CONTROL_TOKEN:-sim-demo-key}}"
 # REQ-030 item 1: the sync scheduler ticks every active connector on this
 # cadence (unset/empty/0 disables it). Demo value, not a secret.
 export AUTOBRIDGE_SYNC_INTERVAL_S="${AUTOBRIDGE_SYNC_INTERVAL_S:-10}"

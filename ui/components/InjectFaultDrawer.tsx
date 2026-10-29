@@ -8,10 +8,17 @@ import { apiBaseUrl as getBaseUrl } from "@/lib/api/base";
 const TARGET_OPTIONS = [
   { value: "sim-atlas", label: "AtlasPMS (sim-atlas)" },
   { value: "sim-harbor", label: "HarborPMS (sim-harbor)" },
-  { value: "atlas", label: "atlas" },
-  { value: "harbor", label: "harbor" },
+  { value: "sim-legacystay", label: "LegacyStay (sim-legacystay)" },
+  { value: "sim-meridian", label: "MeridianPMS (sim-meridian)" },
+  { value: "sim-fias-pabx", label: "FIAS PABX (sim-fias-pabx)" },
 ];
 
+// Runnable catalogue scenarios (REQ-031 item 2): exactly the list
+// `make demo-break SCENARIO=<id>` accepts (bench/demo_break.py,
+// itself derived from bench/demo.py CATALOGUE). `baseline` clears the
+// slot; everything else injects one fault and nothing else — the
+// scheduler and the engine do the rest, visibly. A python unit test
+// (tests/unit/test_autobridge_demo_break.py) keeps this list in sync.
 const SCENARIO_OPTIONS = [
   "baseline",
   "rename_guest_id",
@@ -24,9 +31,23 @@ const SCENARIO_OPTIONS = [
   "status_vocab_change",
   "endpoint_removed",
   "token_revoked",
+  "token_expired",
   "rate_limit_429",
   "transient_503",
   "invalid_patch_trap",
+  "duplicate_late_records",
+  "meridian_cursor_renamed",
+  "meridian_state_renamed",
+  "fias_record_layout_change",
+  "fias_link_resync",
+  "fias_ack_timeout",
+  "agent_restart_inflight",
+  "fias_duplicate_records",
+  "fias_oversize_frame",
+  "fias_record_flood",
+  "session_lost_with_command",
+  "stale_command",
+  "cloud_slow",
 ];
 
 // Scenarios the deterministic ladder is not expected to fix on its own:

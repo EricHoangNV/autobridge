@@ -497,3 +497,15 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The same flake explains "table already exists" during parallel/concurrent startups: treat a stale local `./autobridge.db` as disposable (delete + let lifespan recreate + migrate) rather than debugging it as a schema bug.
 
 **Rule:** On shared/sandbox filesystems, never diagnose a partial SQLite schema as a migration bug first — check for a failed file creation (readonly mid-write), rebuild from a tmp-built copy, and keep the migrator able to repair version skew in both directions.
+
+## 53. The connector record names the host, the docs name the path — join them at build time
+- A docs-built Meridian release synced Blocked (endpoint_not_found) on the live stack: the connector-record `base_url` override (normalized per stack mode) replaced the docs `servers` URL wholesale, dropping its `/api/connector/v1` path prefix, while the simulator only serves the prefixed routes.
+- Root cause: the REQ-027 owner fix stored the override verbatim, so host and path could never come from different sources.
+- Fixed in `bootstrap._with_docs_path`: an override with an empty/root path gains the docs URL's path; an override that already carries a path, a placeholder or an unparseable value is stored verbatim.
+- **Rule:** when two sources each own part of an address (record owns routability, docs own the path), merge them explicitly at the boundary instead of letting one clobber the other.
+
+## 54. An empty entity on a healthy sync is not drift — quiet it at the detector, not the classifier
+- The seeded PABX edge connector flipped to `error` seconds after seeding: every scheduler sync observed 0 RoomStatus records (idle feed between postings bursts), `zero_records` fired, the classifier fell through to UNKNOWN, and the ladder escalated to L4.
+- Root cause: no matcher owns lone `zero_records` on a Complete sync, so the fallthrough escalated a quiet feed. The Blocked+empty pattern (capability_removed) was never at risk — Blocked/Degraded always add their own signals.
+- Fixed in `detect_and_repair_after_sync`: all-signals-are-`zero_records` returns drift_found False with reason `empty_entities_on_healthy_sync` (verifying-sync retirement still applies).
+- **Rule:** a Complete sync that reached the vendor and contradicts nothing is the absence of evidence, not evidence of drift; fallthrough escalations must not fire on it.

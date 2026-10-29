@@ -2164,3 +2164,13 @@ Gates: `make test` green (autobridge 90.54% 2614 pass, verifier 91.49%, simulato
 matrix, knowledge_flow, 027, fias (all green) + `make demo` 8/8 with scheduler ticking. Keyed re-run (L3 live
 numbers, step-4 recording with a real call) is the owner step — no FRONTIER_API_KEY in sandbox.
 Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>
+
+### REQ-031 — UI-first demo, part B (sbx1 2026-10-29)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+- `make demo-seed` (bench/demo_seed.py): reset + 4 connectors through the control API only (atlaspms v1, harborpms v1, meridianpms v1-refused-then-v2, PABX edge v3), each baseline-synced Complete. End state asserted: 4 `working`, 0 model calls, no drift/repairs, knowledge empty.
+- `make demo-break SCENARIO=<id> [TARGET=<vendor>]` (bench/demo_break.py): one POST /demo/inject-fault, prints `broke <Display> with <scenario> — watch Repairs`. Targets resolve via config/demo_targets.yaml; defaults per catalogue vendor (semantic pair defaults to sim-harbor).
+- `make demo-heal [TARGET=<vendor>]` (bench/demo_heal.py): POST /demo/reset {"sims_only": true, "targets"?} — new server support clears sim slots (+ FIAS link extras) without touching connectors/runs/drift/repairs/knowledge/ledger.
+- Server: GET /demo/docs?target= serves the sim developers portal through the bridge (registry-derived URL, unknown → 404); reset gains DemoResetRequest{sims_only, targets}.
+- UI: InjectFaultDrawer offers the 27 catalogue scenarios + 5 canonical targets (python test keeps them in sync); new-connector page has a simulator-docs picker (fills docs_text + base URL, sends docs_text) and a 5-stage build progress (docs → draft → probes → result → release) from job + run-detail rows; v3 vocabulary radio; MERIDIAN_/LEGACYSTAY_API_KEY refs.
+- Engine fixes found live: (a) bootstrap `_with_docs_path` — connector-record override kept the host but dropped the docs `servers` path prefix (Meridian sync Blocked endpoint_not_found); (b) lone `zero_records` on a Complete sync no longer opens UNKNOWN drift (PABX idle RoomStatus escalated every tick); (c) EDGE_TOKEN demo default tracks AUTOBRIDGE_CONTROL_TOKEN when set (relay operator auth) in local-up.sh + compose + .env.example.
+- Gates: make test (autobridge 90.50%, verifier 91.49%, simulators 90.48%, ui 166), lint + typecheck + openapi-check + ui-typecheck green; local-up + e2e test_09/027/04/meridian/knowledge/03/fias + `make demo` 8/8 green unkeyed.

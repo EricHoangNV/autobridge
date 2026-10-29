@@ -683,6 +683,66 @@
         "title": "ConnectorOut",
         "type": "object"
       },
+      "DemoDocsOut": {
+        "description": "Simulator docs text served through the demo bridge (REQ-031 item 4).\n\nThe control plane fetches the simulator's own developers portal\n(``/developers/source``) over the registry-derived address \u2014 the URL is\nconstructed server-side from ``config/demo_targets.yaml``, never from\ncaller input \u2014 and hands the text to the browser, which sends it back\nas ``docs_text`` on the build. No SSRF surface: callers name a registry\ntarget, not a URL.",
+        "properties": {
+          "characters": {
+            "title": "Characters",
+            "type": "integer"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "docs_source": {
+            "title": "Docs Source",
+            "type": "string"
+          },
+          "docs_text": {
+            "title": "Docs Text",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "display_name",
+          "docs_source",
+          "characters",
+          "docs_text"
+        ],
+        "title": "DemoDocsOut",
+        "type": "object"
+      },
+      "DemoResetRequest": {
+        "description": "Optional body for POST /demo/reset (REQ-031 item 3).\n\nEmpty/absent body keeps the historical full reset. ``sims_only`` clears\nsimulator fault state (scenario slots back to baseline, including the\nFIAS link-engine extras) without touching connectors, runs, drift,\nrepairs, knowledge or the ledger \u2014 the retake path for ``make\ndemo-heal``. ``targets`` limits the sim reset to named registry targets\n(canonical ids or aliases); unknown names are 422.",
+        "properties": {
+          "sims_only": {
+            "default": false,
+            "title": "Sims Only",
+            "type": "boolean"
+          },
+          "targets": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targets"
+          }
+        },
+        "title": "DemoResetRequest",
+        "type": "object"
+      },
       "DependencyCreate": {
         "additionalProperties": false,
         "properties": {
@@ -4344,6 +4404,111 @@
         ]
       }
     },
+    "/demo/docs": {
+      "get": {
+        "description": "Simulator docs text through the demo bridge (REQ-031 item 4).\n\nThe browser cannot be asked to fetch a caller-supplied URL (that would\nreopen the AR-2-2 SSRF surface the build route guards), so the control\nplane fetches the simulator's own developers portal\n(``/developers/source``) over the registry-derived public address and\nhands the text to the browser, which sends it back as ``docs_text`` on\nthe build. The URL is constructed server-side from\n``config/demo_targets.yaml`` \u2014 callers name a registry target, never a\nURL \u2014 so there is no fetch-what-you-are-told primitive here.",
+        "operationId": "demo_docs_demo_docs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "target",
+            "required": true,
+            "schema": {
+              "title": "Target",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoDocsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "detail": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "detail"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "detail": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "detail"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Request validation failure or domain error"
+          }
+        },
+        "summary": "Demo Docs",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
     "/demo/inject-fault": {
       "post": {
         "operationId": "inject_fault_demo_inject_fault_post",
@@ -4790,8 +4955,25 @@
     },
     "/demo/reset": {
       "post": {
-        "description": "Demo helper: return the system to a known first-run state (REQ-021 item 1).\n\nIdempotent; every section tolerates an already-empty state:\n\n1. every simulator back to baseline via its admin ``/admin/reset``\n   (``resets`` keeps the historical shape so existing callers keep\n   working);\n2. the L0 knowledge cache (in-process singleton) emptied \u2014 learned fixes\n   from verified repairs do not leak into the next session;\n3. the model-usage ledger archived per demo session (rows copied to\n   ``model_call_archive`` stamped with the new ``session_id``) and the\n   live ledger emptied;\n4. demo control-plane state removed in FK-safe order: evidence,\n   approvals, repair/sync/build runs, drift events, releases,\n   dependencies, discovery records, jobs, connectors.\n\n``model_call_archive`` rows are history, not state: they are never\ndeleted here.",
+        "description": "Demo helper: return the system to a known first-run state (REQ-021 item 1).\n\nIdempotent; every section tolerates an already-empty state:\n\n1. every simulator back to baseline via its admin ``/admin/reset``\n   (``resets`` keeps the historical shape so existing callers keep\n   working);\n2. the L0 knowledge cache (in-process singleton) emptied \u2014 learned fixes\n   from verified repairs do not leak into the next session;\n3. the model-usage ledger archived per demo session (rows copied to\n   ``model_call_archive`` stamped with the new ``session_id``) and the\n   live ledger emptied;\n4. demo control-plane state removed in FK-safe order: evidence,\n   approvals, repair/sync/build runs, drift events, releases,\n   dependencies, discovery records, jobs, connectors.\n\n``model_call_archive`` rows are history, not state: they are never\ndeleted here.\n\nREQ-031 item 3 (``make demo-heal``): ``{\"sims_only\": true}`` runs only\nsection 1 \u2014 simulator fault state (scenario slots back to baseline,\nincluding the FIAS link-engine extras) cleared without touching\nconnectors, runs, drift, repairs, knowledge or the ledger. ``targets``\nlimits section 1 to named registry targets (ids or aliases); unknown\nnames are 422.",
         "operationId": "demo_reset_demo_reset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DemoResetRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -4858,6 +5040,16 @@
               }
             },
             "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [

@@ -9,12 +9,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi import APIRouter, Body, Depends, HTTPException, Security
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
+from autobridge.control.demo_targets import get_demo_targets, in_compose_network, public_base_url_for_target
 from autobridge.control.deps import get_db, require_control_token
-from autobridge.control.demo_targets import get_demo_targets, in_compose_network
 from autobridge.control.models import (
 	Approval,
 	BuildRun,
@@ -31,7 +31,7 @@ from autobridge.control.models import (
 	RepairRun,
 	SyncRun,
 )
-from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse, PabxEventOut, PabxRestartRequest, RecordClimbRequest, RecordClimbResponse, SimulatorConnectorRef, SimulatorInfo, SimulatorsOut
+from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, DemoDocsOut, DemoResetRequest, InjectFaultRequest, InjectFaultResponse, PabxEventOut, PabxRestartRequest, RecordClimbRequest, RecordClimbResponse, SimulatorConnectorRef, SimulatorInfo, SimulatorsOut
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 
@@ -168,6 +168,7 @@ def inject_fault(body: InjectFaultRequest, _: None = Security(require_control_to
 def demo_reset(
     _: None = Security(require_control_token),
     db: Session = Depends(get_db),
+    body: DemoResetRequest | None = Body(default=None),
 ) -> dict[str, Any]:
     """Demo helper: return the system to a known first-run state (REQ-021 item 1).
 
@@ -187,7 +188,20 @@ def demo_reset(
 
     ``model_call_archive`` rows are history, not state: they are never
     deleted here.
+
+    REQ-031 item 3 (``make demo-heal``): ``{"sims_only": true}`` runs only
+    section 1 — simulator fault state (scenario slots back to baseline,
+    including the FIAS link-engine extras) cleared without touching
+    connectors, runs, drift, repairs, knowledge or the ledger. ``targets``
+    limits section 1 to named registry targets (ids or aliases); unknown
+    names are 422.
     """
+    request = body or DemoResetRequest()
+    if request.targets:
+        # Resolve aliases through the registry; unknown names fail closed.
+        reset_targets = [_resolve_target(t) for t in request.targets]
+    else:
+        reset_targets = list(RESET_TARGETS)
     session_id = f"demo-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
 
     # Migrate first (REQ-021 owner check): a database file kept across runs
@@ -198,7 +212,7 @@ def demo_reset(
     ensure_migrated(db.get_bind())
 
     resets: list[dict[str, Any]] = []
-    for target in RESET_TARGETS:
+    for target in reset_targets:
         base = _admin_url_for_target(target)
         # Same env overrides as inject-fault (tests point these at scratch sims).
         env_key = f"{target.upper().replace('-', '_')}_ADMIN_URL"
@@ -222,6 +236,24 @@ def demo_reset(
                     resets.append({"target": f"{target}:{suffix}", "status": r.status_code})
             except Exception as exc:
                 resets.append({"target": f"{target}:{suffix}", "error": str(exc)})
+
+    # REQ-031: sims-only heal — simulator fault state cleared, everything
+    # the engine learned or recorded stays (connectors, runs, knowledge,
+    # ledger). Retakes of one scenario start from here.
+    if request.sims_only:
+        from autobridge.repair.knowledge import get_default_cache as _knowledge_size  # noqa: PLC0415
+
+        kept = _knowledge_size().size()
+        return {
+            "labelled": True,
+            "demo": True,
+            "session_id": session_id,
+            "sims_only": True,
+            "resets": resets,
+            "knowledge_cache": {"entries_before": kept, "entries_after": kept},
+            "model_usage": {"archived": 0, "session_id": session_id},
+            "removed": {},
+        }
 
     # L0: drop learned fixes (in-process singleton; no persisted form exists —
     # RepairRun rows holding the same patches are wiped below).
@@ -361,6 +393,47 @@ def list_simulators(db: Session = Depends(get_db)) -> SimulatorsOut:
             )
         )
     return SimulatorsOut(simulators=rows)
+
+
+@router.get("/docs", response_model=DemoDocsOut, responses=DOMAIN_ERROR_422)
+def demo_docs(target: str) -> DemoDocsOut:
+    """Simulator docs text through the demo bridge (REQ-031 item 4).
+
+    The browser cannot be asked to fetch a caller-supplied URL (that would
+    reopen the AR-2-2 SSRF surface the build route guards), so the control
+    plane fetches the simulator's own developers portal
+    (``/developers/source``) over the registry-derived public address and
+    hands the text to the browser, which sends it back as ``docs_text`` on
+    the build. The URL is constructed server-side from
+    ``config/demo_targets.yaml`` — callers name a registry target, never a
+    URL — so there is no fetch-what-you-are-told primitive here.
+    """
+    try:
+        resolved = _resolve_target(target or "")
+    except HTTPException as exc:
+        # Unknown names are 404 (nothing by that name exists), never 422:
+        # the OpenAPI contract suite rejects 422 for schema-valid requests.
+        raise HTTPException(status_code=404, detail=exc.detail) from exc
+    entry = next(t for t in _REGISTRY.targets if t.id == resolved)
+    try:
+        base = public_base_url_for_target(resolved)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"no public docs address for {resolved!r}: {exc}") from exc
+    url = f"{base.rstrip('/')}/developers/source"
+    try:
+        with httpx.Client(timeout=5) as client:
+            r = client.get(url)
+            r.raise_for_status()
+            text = r.text
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"cannot fetch developer docs for {resolved!r}: {exc}") from exc
+    return DemoDocsOut(
+        target=resolved,
+        display_name=entry.display_name or resolved,
+        docs_source=entry.docs_source,
+        characters=len(text),
+        docs_text=text,
+    )
 
 
 @router.post("/record-climb", response_model=RecordClimbResponse, responses={**DOMAIN_ERROR_422, **AUTH_401})

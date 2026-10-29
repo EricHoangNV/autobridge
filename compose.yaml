@@ -88,6 +88,12 @@ services:
       # REQ-022 B: cloud command queue for the on-premise agent (engine-net
       # DNS; the agent polls it outbound, control enqueues through it).
       EDGE_RELAY_URL: ${EDGE_RELAY_URL:-http://edge-relay:8000}
+      # REQ-031: the PABX edge release drains the relay through its
+      # operator endpoints, which expect AUTOBRIDGE_CONTROL_TOKEN (open
+      # when unset). When a control token is set, EDGE_TOKEN must carry
+      # the same value — export EDGE_TOKEN explicitly then (local-up
+      # derives this automatically). Simulator demo value, not a secret.
+      EDGE_TOKEN: ${EDGE_TOKEN:-sim-demo-key}
       # REQ-030 item 1: sync-scheduler tick in seconds (demo default 10;
       # unset/empty/0 disables the scheduler). Demo value, not a secret.
       AUTOBRIDGE_SYNC_INTERVAL_S: ${AUTOBRIDGE_SYNC_INTERVAL_S:-10}
@@ -133,6 +139,9 @@ services:
       LEGACYSTAY_API_KEY: ${LEGACYSTAY_API_KEY:-sim-demo-key}
       MERIDIAN_CLIENT_TOKEN: ${MERIDIAN_CLIENT_TOKEN:-meridian-client-token}
       MERIDIAN_ACCESS_TOKEN: ${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}
+      # REQ-031: same EDGE_TOKEN default as control (see its comment):
+      # must equal AUTOBRIDGE_CONTROL_TOKEN whenever that is set.
+      EDGE_TOKEN: ${EDGE_TOKEN:-sim-demo-key}
     networks:
       - engine-net
     ports:

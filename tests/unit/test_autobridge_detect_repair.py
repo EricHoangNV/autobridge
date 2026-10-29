@@ -200,6 +200,28 @@ def test_healthy_baseline_sync_detects_no_drift() -> None:
         assert s.query(RepairRun).count() == 0
 
 
+def test_empty_entity_on_healthy_sync_is_not_drift() -> None:
+    """REQ-031: a Complete sync that observed nothing for one entity (idle
+    PABX RoomStatus feed, a quiet hotel day) opens no drift and no repair.
+    The zero_records signal still exists for the Blocked pattern; only the
+    lone-signal Complete case is quieted."""
+    factory = _mem_factory()
+    spec = _page_spec()
+    conn_id, rel_id = _seed_connector(factory, spec)
+    summary = dict(_baseline_summary())
+    summary["records_observed"] = {"Reservation": 3, "RoomStatus": 0}
+    with factory() as s:
+        out = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=summary, sync_run_id="sync-quiet",
+        )
+        assert out["drift_found"] is False
+        assert out["outcome"] == "Complete"
+        assert out["reason"] == "empty_entities_on_healthy_sync"
+        assert s.query(DriftEvent).count() == 0
+        assert s.query(RepairRun).count() == 0
+
+
 # ---------------------------------------------------------------------------
 # The live chain: detect -> propose (L1) -> candidate -> approve
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout verify-heldout-reveal demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles edge-sign edge-check eval-freeze bench-beacon verify-beacon beacon-eval
+.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout verify-heldout-reveal demo demo-reset demo-seed demo-break demo-heal lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles edge-sign edge-check eval-freeze bench-beacon verify-beacon beacon-eval
 
 # ---- Docker ----
 up: edge-check
@@ -130,6 +130,19 @@ demo:
 demo-reset:
 	@echo ">> demo-reset: full reset to a known first-run state (REQ-021 item 1)"
 	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_reset
+
+demo-seed:
+	@echo ">> demo-seed: the recording's connectors via the control API (REQ-031)"
+	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_seed
+
+demo-break:
+	@echo ">> demo-break: inject one catalogued fault, nothing else (REQ-031)"
+	@if [ -z "$${SCENARIO:-}" ]; then echo "demo-break: SCENARIO is required (make demo-break SCENARIO=<id> [TARGET=<vendor>])" >&2; exit 2; fi
+	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_break
+
+demo-heal:
+	@echo ">> demo-heal: clear injected faults without a reset (REQ-031)"
+	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_heal
 
 record-frontier:
 	@echo ">> record-frontier: capture a live frontier climb (REQ-021 item 5; needs FRONTIER_API_KEY)"

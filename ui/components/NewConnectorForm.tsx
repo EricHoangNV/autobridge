@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useRef, type FormEvent } from "react";
+import { useState, useRef, useEffect, type FormEvent } from "react";
 
-const KNOWN_CREDENTIAL_REFS = ["ATLAS_API_KEY", "HARBOR_API_KEY", "ATLAS_BASE_URL", "HARBOR_BASE_URL"];
+const KNOWN_CREDENTIAL_REFS = ["ATLAS_API_KEY", "HARBOR_API_KEY", "MERIDIAN_API_KEY", "LEGACYSTAY_API_KEY", "ATLAS_BASE_URL", "HARBOR_BASE_URL"];
 const ENTITY_OPTIONS = ["Reservation", "FolioCharge"] as const;
 const BASE_URL_SUGGESTIONS = [
   "http://sim-atlas:8000",
@@ -25,6 +25,164 @@ export type CreateConnectorPayload = {
 
 type SubmitState = "idle" | "creating" | "building" | "done" | "error";
 
+type SimRow = {
+  id: string;
+  display_name: string;
+  docs_source: string;
+  developers_url: string;
+};
+
+/** Build progress (REQ-031 item 4): docs read → draft → probes → result → release.
+ *
+ * Polls the build job until terminal, then reads the persisted build run.
+ * Every stage renders stored rows (job result, build-run detail), never
+ * recomputed text.
+ */
+function BuildProgress({
+  connectorId,
+  jobId,
+  buildRunId,
+  docsChars,
+}: {
+  connectorId: string;
+  jobId?: string;
+  buildRunId?: string;
+  docsChars?: number;
+}) {
+  const [jobState, setJobState] = useState<string>("starting");
+  const [detail, setDetail] = useState<{
+    draft_spec?: Record<string, unknown> | null;
+    result?: Record<string, unknown>;
+    ladder_trace?: Array<Record<string, unknown>>;
+    inputs?: Record<string, unknown>;
+  } | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!jobId || !buildRunId) return;
+    let cancelled = false;
+    let polls = 0;
+    async function poll() {
+      const base = getBaseUrl().replace(/\/$/, "");
+      try {
+        const res = await fetch(`${base}/jobs/${encodeURIComponent(jobId as string)}`);
+        if (!res.ok) throw new Error(`job read failed (${res.status})`);
+        const job = (await res.json()) as { state?: string };
+        if (cancelled) return;
+        setJobState(String(job.state || "unknown"));
+        if (job.state === "succeeded" || job.state === "failed") {
+          const dres = await fetch(`${base}/runs/${encodeURIComponent(buildRunId as string)}/detail`);
+          if (!dres.ok) throw new Error(`build detail read failed (${dres.status})`);
+          const body = (await dres.json()) as { run?: typeof detail };
+          if (!cancelled) setDetail(body.run ?? null);
+          return;
+        }
+      } catch (err) {
+        if (!cancelled) setFailed(err instanceof Error ? err.message : String(err));
+        return;
+      }
+      polls += 1;
+      if (!cancelled && polls < 60) window.setTimeout(poll, 2000);
+      else if (!cancelled) setFailed("build job did not finish in time");
+    }
+    void poll();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, buildRunId]);
+
+  const result = detail?.result ?? {};
+  const draft = (detail?.draft_spec ?? null) as Record<string, unknown> | null;
+  const trace = Array.isArray(detail?.ladder_trace) ? detail.ladder_trace : [];
+  const stageNames = trace.map((t) =>
+    String(t.stage ?? t.action ?? t.rung ?? "?"),
+  );
+  const success = result.success === true;
+  const releaseId = typeof result.release_id === "string" ? result.release_id : null;
+
+  const stages: Array<{ key: string; title: string; body: string }> = [
+    {
+      key: "docs",
+      title: "Docs read",
+      body:
+        detail?.inputs && typeof detail.inputs.source === "string"
+          ? `${docsChars ?? "?"} chars · ${detail.inputs.source}`
+          : jobState === "starting"
+            ? "starting…"
+            : `${docsChars ?? "?"} chars sent`,
+    },
+    {
+      key: "draft",
+      title: "Draft",
+      body: detail
+        ? draft
+          ? `spec v${String((draft.spec_version as string) ?? "?")} · ${Object.keys((draft.operations as object) ?? {}).length} operations`
+          : "no draft (refused)"
+        : `job ${jobState}…`,
+    },
+    {
+      key: "probes",
+      title: "Probes",
+      body: detail
+        ? trace.length > 0
+          ? `${trace.length} trace stages: ${stageNames.slice(0, 8).join(" → ")}${stageNames.length > 8 ? " …" : ""}`
+          : "no probe stages recorded"
+        : `job ${jobState}…`,
+    },
+    {
+      key: "result",
+      title: "Result",
+      body: detail
+        ? success
+          ? result.verified === true
+            ? "verified by the hidden fixtures"
+            : "built (verifier did not gate this build)"
+          : String(result.degradation_reason || result.gate_blocked || "build failed")
+        : `job ${jobState}…`,
+    },
+    {
+      key: "release",
+      title: "Release",
+      body: detail
+        ? releaseId
+          ? `release ${releaseId}`
+          : "no release persisted"
+        : `job ${jobState}…`,
+    },
+  ];
+
+  return (
+    <div data-testid="build-progress" className="mt-4 border-t border-rule pt-4">
+      <p className="font-bold">Build progress</p>
+      {failed ? (
+        <p data-testid="build-progress-error" className="mt-1 text-[15px] text-stop">
+          {failed}
+        </p>
+      ) : null}
+      <ol className="mt-2 list-none space-y-2 p-0">
+        {stages.map((s, i) => (
+          <li key={s.key} data-testid={`build-stage-${s.key}`} className="flex gap-3 text-[15px]">
+            <span aria-hidden="true" className="font-mono font-bold text-ink-2">
+              {i + 1}.
+            </span>
+            <span>
+              <span className="font-bold">{s.title}.</span> <span className="text-ink-2">{s.body}</span>
+              {s.key === "release" && releaseId ? (
+                <span>
+                  {" "}
+                  <a data-testid="build-release-link" href={`/connectors/${connectorId}`} className="link">
+                    View connector
+                  </a>
+                </span>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 const FIELD_LABEL = "block text-[15px] font-bold text-ink";
 const FIELD_HINT = "mt-1.5 block text-sm text-ink-2";
 const TEXT_INPUT =
@@ -45,7 +203,83 @@ export function NewConnectorForm() {
   const [docsText, setDocsText] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
-  const [vocabulary, setVocabulary] = useState<"v1" | "v2">("v1");
+  // Spec vocabulary (REQ-021 item 2; REQ-022 C: v3 for framed/event docs)
+  const [vocabulary, setVocabulary] = useState<"v1" | "v2" | "v3">("v1");
+
+  // Simulator docs picker (REQ-031 item 4): the registry simulators from
+  // GET /demo/simulators. Choosing one loads the developers-portal text
+  // through the control plane (GET /demo/docs?target=) into the textarea,
+  // which the build then sends as docs_text — the browser never fetches a
+  // caller-supplied URL and the server never fetches one either.
+  const [simRows, setSimRows] = useState<SimRow[]>([]);
+  const [simDocsId, setSimDocsId] = useState("");
+  const [simDocsLoading, setSimDocsLoading] = useState(false);
+  const [simDocsError, setSimDocsError] = useState<string | null>(null);
+  const [simDocsInfo, setSimDocsInfo] = useState<{
+    display_name: string;
+    docs_source: string;
+    characters: number;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSims() {
+      try {
+        const base = getBaseUrl().replace(/\/$/, "");
+        const res = await fetch(`${base}/demo/simulators`);
+        if (!res.ok) return;
+        const body = (await res.json()) as { simulators?: SimRow[] };
+        if (!cancelled && Array.isArray(body.simulators)) setSimRows(body.simulators);
+      } catch {
+        // Picker stays empty; upload/paste/URL still work.
+      }
+    }
+    loadSims();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function chooseSimDocs(id: string) {
+    setSimDocsId(id);
+    setSimDocsError(null);
+    if (!id) {
+      setSimDocsInfo(null);
+      return;
+    }
+    const row = simRows.find((r) => r.id === id);
+    setSimDocsLoading(true);
+    try {
+      const base = getBaseUrl().replace(/\/$/, "");
+      const res = await fetch(`${base}/demo/docs?target=${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error(`docs load failed (${res.status})`);
+      const body = (await res.json()) as {
+        docs_text?: string;
+        display_name?: string;
+        docs_source?: string;
+        characters?: number;
+      };
+      const text = typeof body.docs_text === "string" ? body.docs_text : "";
+      if (!text) throw new Error("empty docs text");
+      setDocsText(text);
+      setFileContent(null);
+      setFileName(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      setSimDocsInfo({
+        display_name: body.display_name || row?.display_name || id,
+        docs_source: body.docs_source || row?.docs_source || "",
+        characters: body.characters ?? text.length,
+      });
+      if (!baseUrl.trim() && row?.developers_url) {
+        setBaseUrl(row.developers_url.replace(/\/developers\/?$/, ""));
+      }
+    } catch (err) {
+      setSimDocsError(err instanceof Error ? err.message : String(err));
+      setSimDocsInfo(null);
+    } finally {
+      setSimDocsLoading(false);
+    }
+  }
 
   // UI state
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
@@ -54,7 +288,8 @@ export function NewConnectorForm() {
     connectorId: string;
     buildRunId?: string;
     jobId?: string;
-    vocabulary: "v1" | "v2";
+    vocabulary: "v1" | "v2" | "v3";
+    docsChars?: number;
   } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -111,7 +346,7 @@ export function NewConnectorForm() {
       name: name.trim(),
       base_url: baseUrl.trim(),
       credential_ref: effectiveCredentialRef,
-      vendor_docs_ref: docsUrl.trim() || (fileName ? `file:${fileName}` : null),
+      vendor_docs_ref: docsUrl.trim() || simDocsInfo?.docs_source || (fileName ? `file:${fileName}` : null),
       target_entities: [...targetEntities],
       runtime_target: { kind: "local_process" },
     };
@@ -166,12 +401,13 @@ export function NewConnectorForm() {
       }
 
       const buildResult = (await buildRes.json()) as { build_run_id?: string; job_id?: string };
-      setResult({
-        connectorId: created.id,
-        buildRunId: buildResult.build_run_id,
-        jobId: buildResult.job_id,
-        vocabulary,
-      });
+    setResult({
+      connectorId: created.id,
+      buildRunId: buildResult.build_run_id,
+      jobId: buildResult.job_id,
+      vocabulary,
+      docsChars: (buildBody.docs_text as string | undefined)?.length ?? docsText.trim().length,
+    });
       setSubmitState("done");
     } catch (err) {
       setSubmitState("error");
@@ -220,6 +456,40 @@ export function NewConnectorForm() {
             Docs <span className="text-live" aria-hidden="true">*</span>
           </label>
           <div className="mt-2 grid grid-cols-1 gap-2.5">
+            {simRows.length > 0 ? (
+              <label className="block">
+                <span className={FIELD_HINT}>Or start from a simulator&apos;s developers portal</span>
+                <select
+                  data-testid="input-sim-docs"
+                  value={simDocsId}
+                  onChange={(e) => void chooseSimDocs(e.target.value)}
+                  disabled={simDocsLoading}
+                  className={TEXT_INPUT + " mt-0 appearance-none"}
+                >
+                  <option value="">Choose a simulator…</option>
+                  {simRows.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.display_name} ({r.docs_source})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {simDocsLoading ? (
+              <p data-testid="sim-docs-loading" className="font-mono text-xs text-ink-2">
+                Loading developers-portal docs…
+              </p>
+            ) : null}
+            {simDocsError ? (
+              <p data-testid="sim-docs-error" className={FIELD_ERROR}>
+                {simDocsError}
+              </p>
+            ) : null}
+            {simDocsInfo ? (
+              <p data-testid="sim-docs-info" className="font-mono text-xs text-ink-2">
+                {simDocsInfo.characters} chars from {simDocsInfo.display_name} developers portal
+              </p>
+            ) : null}
             <div className="flex items-center gap-2.5">
               <input
                 id="docs-url"
@@ -404,7 +674,7 @@ export function NewConnectorForm() {
         <fieldset>
           <legend className={FIELD_LABEL}>Spec vocabulary</legend>
           <div className="mt-2 flex flex-wrap gap-2.5">
-            {(["v1", "v2"] as const).map((v) => (
+            {(["v1", "v2", "v3"] as const).map((v) => (
               <label
                 key={v}
                 className={`flex cursor-pointer items-center gap-2.5 border-[1.5px] px-4 py-2.5 font-mono text-[15px] ${
@@ -426,7 +696,8 @@ export function NewConnectorForm() {
           </div>
           <span className={FIELD_HINT}>
             v1 refuses unfamiliar API styles deterministically (0 model calls); v2 additionally compiles POST
-            with a JSON body, body-field auth and body-cursor pagination.
+            with a JSON body, body-field auth and body-cursor pagination; v3 covers framed/event-driven docs
+            (FIAS PABX).
           </span>
         </fieldset>
 
@@ -478,6 +749,12 @@ export function NewConnectorForm() {
             Connector {result.connectorId} · vocabulary {result.vocabulary}
             {result.jobId ? <> · job {result.jobId}</> : null}
           </p>
+          <BuildProgress
+            connectorId={result.connectorId}
+            jobId={result.jobId}
+            buildRunId={result.buildRunId}
+            docsChars={result.docsChars}
+          />
           <div className="mt-3 flex flex-wrap gap-4">
             <a
               data-testid="success-view-connector"

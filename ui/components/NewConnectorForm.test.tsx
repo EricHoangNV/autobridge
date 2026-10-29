@@ -17,6 +17,42 @@ function selectOption(el: HTMLSelectElement, value: string) {
 
 const fetchMock = vi.fn();
 
+type RouteEntry = {
+  match: string;
+  ok?: boolean;
+  status?: number;
+  json?: unknown;
+  text?: string;
+};
+
+/** URL-routing fetch stub: the form fetches /demo/simulators on mount, so
+ * positional mockResolvedValueOnce queues shift. Routes match by URL
+ * substring instead. */
+function mockResponses(entries: RouteEntry[]) {
+  fetchMock.mockImplementation(async (url: unknown) => {
+    const u = String(url);
+    const e = entries.find((x) => u.includes(x.match));
+    if (!e) throw new Error(`unexpected fetch ${u}`);
+    const ok = e.ok ?? true;
+    return {
+      ok,
+      status: e.status ?? (ok ? 200 : 422),
+      json: async () => e.json ?? {},
+      text: async () => e.text ?? JSON.stringify(e.json ?? {}),
+    } as Response;
+  });
+}
+
+function simsRoute(rows: unknown[] = []) {
+  return { match: "/demo/simulators", json: { simulators: rows } };
+}
+
+function findCall(sub: string): [string, RequestInit] {
+  const hit = fetchMock.mock.calls.find(([url]) => String(url).includes(sub));
+  if (!hit) throw new Error(`no fetch call matching ${sub}: ${JSON.stringify(fetchMock.mock.calls.map((c) => c[0]))}`);
+  return hit as [string, RequestInit];
+}
+
 describe("NewConnectorForm", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -49,7 +85,10 @@ describe("NewConnectorForm", () => {
     expect(await screen.findByTestId("error-name")).toBeInTheDocument();
     expect(screen.getByTestId("error-base-url")).toBeInTheDocument();
     expect(screen.getByTestId("error-docs")).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The mount-time simulators fetch may fire; no connector/build write must.
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).includes("/connectors")),
+    ).toHaveLength(0);
   });
 
   it("validates base URL format", async () => {
@@ -93,15 +132,25 @@ describe("NewConnectorForm", () => {
   });
 
   it("creates connector then starts build on submit", async () => {
-    fetchMock
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ id: "conn-new-123" }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ build_run_id: "build-1", job_id: "job-1" }),
-      } as Response);
+    mockResponses([
+      simsRoute(),
+      { match: "/connectors/conn-new-123/build", json: { build_run_id: "build-1", job_id: "job-1" } },
+      { match: "/connectors", json: { id: "conn-new-123" } },
+      { match: "/jobs/", json: { state: "succeeded" } },
+      {
+        match: "/runs/",
+        json: {
+          kind: "build",
+          run: {
+            inputs: { source: "docs" },
+            draft_spec: { spec_version: 1, operations: { list_reservations: {} } },
+            ladder_trace: [{ stage: "probes" }],
+            result: { success: true, verified: true, release_id: "rel-1" },
+            model_usage: {},
+          },
+        },
+      },
+    ]);
 
     render(<NewConnectorForm />);
     typeInto(screen.getByTestId("input-name"), "Atlas Staging");
@@ -112,8 +161,7 @@ describe("NewConnectorForm", () => {
 
     await waitFor(() => expect(screen.getByTestId("submit-success")).toBeInTheDocument());
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [createUrl, createOpts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [createUrl, createOpts] = findCall("/connectors");
     expect(createUrl).toContain("/connectors");
     const createBody = JSON.parse(createOpts.body as string);
     expect(createBody.name).toBe("Atlas Staging");
@@ -121,7 +169,7 @@ describe("NewConnectorForm", () => {
     expect(createBody.credential_ref).toBe("ATLAS_API_KEY");
     expect(createBody.target_entities).toContain("Reservation");
 
-    const [buildUrl, buildOpts] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [buildUrl, buildOpts] = findCall("/connectors/conn-new-123/build");
     expect(buildUrl).toContain("/connectors/conn-new-123/build");
     const buildBody = JSON.parse(buildOpts.body as string);
     expect(buildBody.docs_text).toBe("Vendor docs content here");
@@ -130,9 +178,13 @@ describe("NewConnectorForm", () => {
   });
 
   it("uses build docs_url when no text or file", async () => {
-    fetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conn-2" }) } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ build_run_id: "b2", job_id: "j2" }) } as Response);
+    mockResponses([
+      simsRoute(),
+      { match: "/connectors/conn-2/build", json: { build_run_id: "b2", job_id: "j2" } },
+      { match: "/connectors", json: { id: "conn-2" } },
+      { match: "/jobs/", json: { state: "succeeded" } },
+      { match: "/runs/", json: { kind: "build", run: { result: { success: true } } } },
+    ]);
 
     render(<NewConnectorForm />);
     typeInto(screen.getByTestId("input-name"), "Harbor");
@@ -142,17 +194,16 @@ describe("NewConnectorForm", () => {
     fireEvent.click(screen.getByTestId("submit-build"));
     await waitFor(() => expect(screen.getByTestId("submit-success")).toBeInTheDocument());
 
-    const buildBody = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string);
+    const buildBody = JSON.parse(findCall("/connectors/conn-2/build")[1].body as string);
     expect(buildBody.docs_url).toBe("https://docs.example.com/api");
     expect(buildBody.docs_text).toBeUndefined();
   });
 
   it("shows error when create fails", async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: false,
-      status: 422,
-      text: async () => "invalid base_url",
-    } as Response);
+    mockResponses([
+      simsRoute(),
+      { match: "/connectors", ok: false, status: 422, text: "invalid base_url" },
+    ]);
 
     render(<NewConnectorForm />);
     typeInto(screen.getByTestId("input-name"), "Bad");
@@ -165,9 +216,11 @@ describe("NewConnectorForm", () => {
   });
 
   it("shows partial success when build fails after create", async () => {
-    fetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conn-partial" }) } as Response)
-      .mockResolvedValueOnce({ ok: false, status: 422, text: async () => "missing docs_text" } as Response);
+    mockResponses([
+      simsRoute(),
+      { match: "/connectors/conn-partial/build", ok: false, status: 422, text: "missing docs_text" },
+      { match: "/connectors", json: { id: "conn-partial" } },
+    ]);
 
     render(<NewConnectorForm />);
     typeInto(screen.getByTestId("input-name"), "Partial");
@@ -199,9 +252,13 @@ describe("NewConnectorForm", () => {
   });
 
   it("pins spec_vocabulary v1 by default and shows it on success", async () => {
-    fetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conn-v1" }) } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ build_run_id: "b1", job_id: "j1" }) } as Response);
+    mockResponses([
+      simsRoute(),
+      { match: "/connectors/conn-v1/build", json: { build_run_id: "b1", job_id: "j1" } },
+      { match: "/connectors", json: { id: "conn-v1" } },
+      { match: "/jobs/", json: { state: "succeeded" } },
+      { match: "/runs/", json: { kind: "build", run: { result: { success: true } } } },
+    ]);
 
     render(<NewConnectorForm />);
     expect((screen.getByTestId("radio-vocabulary-v1") as HTMLInputElement).checked).toBe(true);
@@ -212,15 +269,19 @@ describe("NewConnectorForm", () => {
     fireEvent.click(screen.getByTestId("submit-build"));
     await waitFor(() => expect(screen.getByTestId("submit-success")).toBeInTheDocument());
 
-    const buildBody = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string);
+    const buildBody = JSON.parse(findCall("/connectors/conn-v1/build")[1].body as string);
     expect(buildBody.spec_vocabulary).toBe("v1");
     expect(screen.getByTestId("submit-vocabulary").textContent).toContain("vocabulary v1");
   });
 
   it("sends spec_vocabulary v2 when selected", async () => {
-    fetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conn-v2" }) } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ build_run_id: "b2", job_id: "j2" }) } as Response);
+    mockResponses([
+      simsRoute(),
+      { match: "/connectors/conn-v2/build", json: { build_run_id: "b2", job_id: "j2" } },
+      { match: "/connectors", json: { id: "conn-v2" } },
+      { match: "/jobs/", json: { state: "succeeded" } },
+      { match: "/runs/", json: { kind: "build", run: { result: { success: true } } } },
+    ]);
 
     render(<NewConnectorForm />);
     fireEvent.click(screen.getByTestId("radio-vocabulary-v2"));
@@ -231,8 +292,117 @@ describe("NewConnectorForm", () => {
     fireEvent.click(screen.getByTestId("submit-build"));
     await waitFor(() => expect(screen.getByTestId("submit-success")).toBeInTheDocument());
 
-    const buildBody = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string);
+    const buildBody = JSON.parse(findCall("/connectors/conn-v2/build")[1].body as string);
     expect(buildBody.spec_vocabulary).toBe("v2");
     expect(screen.getByTestId("submit-vocabulary").textContent).toContain("vocabulary v2");
+  });
+
+  it("loads Harbor docs from the simulator picker and sends docs_text", async () => {
+    const harborDocs = "# HarborPMS API (messy wiki)";
+    mockResponses([
+      {
+        match: "/demo/simulators",
+        json: {
+          simulators: [
+            {
+              id: "sim-harbor",
+              display_name: "HarborPMS",
+              docs_source: "simulators/docs/harbor.md",
+              developers_url: "http://localhost:8106/developers",
+            },
+          ],
+        },
+      },
+      {
+        match: "/demo/docs",
+        json: {
+          target: "sim-harbor",
+          display_name: "HarborPMS",
+          docs_source: "simulators/docs/harbor.md",
+          characters: harborDocs.length,
+          docs_text: harborDocs,
+        },
+      },
+      { match: "/connectors/conn-h/build", json: { build_run_id: "bh", job_id: "jh" } },
+      { match: "/connectors", json: { id: "conn-h" } },
+      { match: "/jobs/", json: { state: "succeeded" } },
+      {
+        match: "/runs/",
+        json: {
+          kind: "build",
+          run: {
+            inputs: { source: "simulators/docs/harbor.md" },
+            draft_spec: { spec_version: 1, operations: { list_reservations: {}, list_folios: {} } },
+            ladder_trace: [{ stage: "classify" }, { stage: "probes" }],
+            result: { success: true, verified: true, release_id: "rel-h" },
+            model_usage: {},
+          },
+        },
+      },
+    ]);
+
+    render(<NewConnectorForm />);
+    await waitFor(() => expect(screen.getByTestId("input-sim-docs")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("input-sim-docs"), { target: { value: "sim-harbor" } });
+
+    await waitFor(() => expect(screen.getByTestId("sim-docs-info")).toBeInTheDocument());
+    expect(screen.getByTestId("sim-docs-info").textContent).toContain("HarborPMS developers portal");
+    expect((screen.getByTestId("input-docs-text") as HTMLTextAreaElement).value).toBe(harborDocs);
+    // Sandbox base URL suggested from the simulator's developers URL.
+    expect((screen.getByTestId("input-base-url") as HTMLInputElement).value).toBe("http://localhost:8106");
+
+    typeInto(screen.getByTestId("input-name"), "HarborPMS");
+    selectOption(screen.getByTestId("input-credential-ref"), "HARBOR_API_KEY");
+    fireEvent.click(screen.getByTestId("submit-build"));
+    await waitFor(() => expect(screen.getByTestId("submit-success")).toBeInTheDocument());
+
+    const [, createOpts] = findCall("/connectors");
+    expect(JSON.parse(createOpts.body as string).vendor_docs_ref).toBe("simulators/docs/harbor.md");
+    const [, buildOpts] = findCall("/connectors/conn-h/build");
+    const buildBody = JSON.parse(buildOpts.body as string);
+    expect(buildBody.docs_text).toBe(harborDocs);
+    expect(buildBody.docs_url).toBeUndefined();
+  });
+
+  it("shows docs → draft → probes → result → release after the build starts", async () => {
+    mockResponses([
+      simsRoute(),
+      { match: "/connectors/conn-p/build", json: { build_run_id: "bp", job_id: "jp" } },
+      { match: "/connectors", json: { id: "conn-p" } },
+      { match: "/jobs/", json: { state: "succeeded" } },
+      {
+        match: "/runs/",
+        json: {
+          kind: "build",
+          run: {
+            inputs: { source: "docs" },
+            draft_spec: { spec_version: 1, operations: { list_reservations: {} } },
+            ladder_trace: [{ stage: "classify" }, { stage: "probes" }, { stage: "verify" }],
+            result: { success: true, verified: true, release_id: "rel-p" },
+            model_usage: {},
+          },
+        },
+      },
+    ]);
+
+    render(<NewConnectorForm />);
+    typeInto(screen.getByTestId("input-name"), "Progress");
+    typeInto(screen.getByTestId("input-base-url"), "http://sim-atlas:8000");
+    typeInto(screen.getByTestId("input-docs-text"), "docs");
+    fireEvent.click(screen.getByTestId("submit-build"));
+
+    await waitFor(() => expect(screen.getByTestId("build-progress")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("build-stage-docs")).toBeInTheDocument());
+    expect(screen.getByTestId("build-stage-docs").textContent).toContain("Docs read");
+    expect(screen.getByTestId("build-stage-draft").textContent).toContain("spec v1");
+    expect(screen.getByTestId("build-stage-probes").textContent).toContain("3 trace stages");
+    expect(screen.getByTestId("build-stage-result").textContent).toContain("verified");
+    expect(screen.getByTestId("build-stage-release").textContent).toContain("release rel-p");
+    expect(screen.getByTestId("build-release-link")).toHaveAttribute("href", "/connectors/conn-p");
+  });
+
+  it("offers spec_vocabulary v3 for framed docs", () => {
+    render(<NewConnectorForm />);
+    expect(screen.getByTestId("radio-vocabulary-v3")).toBeInTheDocument();
   });
 });

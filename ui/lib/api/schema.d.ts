@@ -206,6 +206,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/demo/docs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Demo Docs
+         * @description Simulator docs text through the demo bridge (REQ-031 item 4).
+         *
+         *     The browser cannot be asked to fetch a caller-supplied URL (that would
+         *     reopen the AR-2-2 SSRF surface the build route guards), so the control
+         *     plane fetches the simulator's own developers portal
+         *     (``/developers/source``) over the registry-derived public address and
+         *     hands the text to the browser, which sends it back as ``docs_text`` on
+         *     the build. The URL is constructed server-side from
+         *     ``config/demo_targets.yaml`` — callers name a registry target, never a
+         *     URL — so there is no fetch-what-you-are-told primitive here.
+         */
+        get: operations["demo_docs_demo_docs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/demo/inject-fault": {
         parameters: {
             query?: never;
@@ -321,6 +350,13 @@ export interface paths {
          *
          *     ``model_call_archive`` rows are history, not state: they are never
          *     deleted here.
+         *
+         *     REQ-031 item 3 (``make demo-heal``): ``{"sims_only": true}`` runs only
+         *     section 1 — simulator fault state (scenario slots back to baseline,
+         *     including the FIAS link-engine extras) cleared without touching
+         *     connectors, runs, drift, repairs, knowledge or the ledger. ``targets``
+         *     limits section 1 to named registry targets (ids or aliases); unknown
+         *     names are 422.
          */
         post: operations["demo_reset_demo_reset_post"];
         delete?: never;
@@ -1294,6 +1330,49 @@ export interface components {
             updated_at: string;
             /** Vendor Docs Ref */
             vendor_docs_ref?: string | null;
+        };
+        /**
+         * DemoDocsOut
+         * @description Simulator docs text served through the demo bridge (REQ-031 item 4).
+         *
+         *     The control plane fetches the simulator's own developers portal
+         *     (``/developers/source``) over the registry-derived address — the URL is
+         *     constructed server-side from ``config/demo_targets.yaml``, never from
+         *     caller input — and hands the text to the browser, which sends it back
+         *     as ``docs_text`` on the build. No SSRF surface: callers name a registry
+         *     target, not a URL.
+         */
+        DemoDocsOut: {
+            /** Characters */
+            characters: number;
+            /** Display Name */
+            display_name: string;
+            /** Docs Source */
+            docs_source: string;
+            /** Docs Text */
+            docs_text: string;
+            /** Target */
+            target: string;
+        };
+        /**
+         * DemoResetRequest
+         * @description Optional body for POST /demo/reset (REQ-031 item 3).
+         *
+         *     Empty/absent body keeps the historical full reset. ``sims_only`` clears
+         *     simulator fault state (scenario slots back to baseline, including the
+         *     FIAS link-engine extras) without touching connectors, runs, drift,
+         *     repairs, knowledge or the ledger — the retake path for ``make
+         *     demo-heal``. ``targets`` limits the sim reset to named registry targets
+         *     (canonical ids or aliases); unknown names are 422.
+         */
+        DemoResetRequest: {
+            /**
+             * Sims Only
+             * @default false
+             */
+            sims_only: boolean;
+            /** Targets */
+            targets?: string[] | null;
         };
         /** DependencyCreate */
         DependencyCreate: {
@@ -3156,6 +3235,63 @@ export interface operations {
             };
         };
     };
+    demo_docs_demo_docs_get: {
+        parameters: {
+            query: {
+                target: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoDocsOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
     inject_fault_demo_inject_fault_post: {
         parameters: {
             query?: never;
@@ -3422,7 +3558,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DemoResetRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3466,6 +3606,15 @@ export interface operations {
                     "application/json": {
                         detail: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

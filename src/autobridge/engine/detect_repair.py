@@ -268,6 +268,15 @@ def detect_and_repair_after_sync(
         # open: the fix is not verified yet.
         resolved = _resolve_verified_drifts(session, connector_id, release_id, summary)
         return {"drift_found": False, "outcome": outcome, "drifts_resolved": resolved}
+    if all(s.kind == "zero_records" for s in signals):
+        # An empty entity on a healthy sync is not drift (REQ-031): the
+        # PABX edge connector idles at zero RoomStatus records between
+        # postings bursts, and a quiet hotel day is not an incident.
+        # Blocked/Degraded outcomes always add their own signals, so this
+        # only quiets Complete syncs — the endpoint_removed pattern (zero
+        # records + Blocked) still fires through capability_removed.
+        resolved = _resolve_verified_drifts(session, connector_id, release_id, summary)
+        return {"drift_found": False, "outcome": outcome, "drifts_resolved": resolved, "reason": "empty_entities_on_healthy_sync"}
 
     classification = classify(signals)
     delta = build_detector_delta(spec_dict, signals)

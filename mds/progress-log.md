@@ -3470,3 +3470,6 @@ Files: bench/stack_mode.py (new), bench/demo.py, tests/e2e/conftest.py, scripts/
 - REQ-031/032/033 build on this (demo-seed/break/heal, repair page, README journeys).
 - Sandbox virtiofs quirk: creating new SQLite files in the worktree intermittently fails ("readonly database"); unit tests use tmp dirs (unaffected); if `make test` collection fails on `./autobridge.db`, delete it and rerun (lifespan recreates+migrates).
 Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>
+
+## 2026-10-29 15:40 UTC — REQ-031 DONE (sbx1, opencode meta/muse-spark-1.3-contributor (escalation))
+UI-first demo part B: `make demo-seed` (AtlasPMS/HarborPMS/MeridianPMS/PABX-edge baseline Complete, 4 working, 0 tokens), `make demo-break` (inject-only, one line; drawer offers the same 27 scenarios + 5 targets), `make demo-heal` (sims-only reset, DB intact), build-from-sim-docs in the UI (picker via GET /demo/docs + docs→draft→probes→result→release progress). Engine fixes: docs path-prefix join on record override, lone zero_records quieted, EDGE_TOKEN derivation. Gates: make test 2631+134+408/0 fail (90.50/91.49/90.48%, ui 166), lint/typecheck/openapi/ui-typecheck green, live e2e (09, 027, 04, meridian, knowledge, 03, fias) + demo 8/8 green unkeyed on local stack. Next: REQ-032 (owner priority chain REQ-031→REQ-032→REQ-033).

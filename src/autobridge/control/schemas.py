@@ -417,6 +417,39 @@ class SimulatorsOut(BaseModel):
     simulators: list[SimulatorInfo]
 
 
+class DemoResetRequest(BaseModel):
+    """Optional body for POST /demo/reset (REQ-031 item 3).
+
+    Empty/absent body keeps the historical full reset. ``sims_only`` clears
+    simulator fault state (scenario slots back to baseline, including the
+    FIAS link-engine extras) without touching connectors, runs, drift,
+    repairs, knowledge or the ledger — the retake path for ``make
+    demo-heal``. ``targets`` limits the sim reset to named registry targets
+    (canonical ids or aliases); unknown names are 422.
+    """
+
+    sims_only: bool = Field(default=False)
+    targets: list[str] | None = Field(default=None)
+
+
+class DemoDocsOut(BaseModel):
+    """Simulator docs text served through the demo bridge (REQ-031 item 4).
+
+    The control plane fetches the simulator's own developers portal
+    (``/developers/source``) over the registry-derived address — the URL is
+    constructed server-side from ``config/demo_targets.yaml``, never from
+    caller input — and hands the text to the browser, which sends it back
+    as ``docs_text`` on the build. No SSRF surface: callers name a registry
+    target, not a URL.
+    """
+
+    target: str
+    display_name: str
+    docs_source: str
+    characters: int
+    docs_text: str
+
+
 class RungCallOut(BaseModel):
     tier: str
     purpose: str

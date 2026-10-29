@@ -58,4 +58,35 @@ describe("InjectFaultDrawer", () => {
     expect(select.textContent).toContain("page_to_cursor");
     expect(select.textContent).toContain("offset_to_cursor");
   });
+
+  it("offers exactly the make demo-break scenario list (REQ-031 item 2)", () => {
+    render(<InjectFaultDrawer defaultOpen />);
+    const select = screen.getByTestId("inject-fault-scenario") as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    // Catalogue scenarios across all vendors, runnable via make demo-break.
+    for (const s of [
+      "meridian_cursor_renamed",
+      "meridian_state_renamed",
+      "fias_record_layout_change",
+      "fias_link_resync",
+      "agent_restart_inflight",
+      "duplicate_late_records",
+      "cloud_slow",
+    ]) {
+      expect(values).toContain(s);
+    }
+  });
+
+  it("offers the five canonical simulator targets and no aliases (REQ-031 item 2)", () => {
+    render(<InjectFaultDrawer defaultOpen />);
+    const select = screen.getByTestId("inject-fault-target") as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual([
+      "sim-atlas",
+      "sim-harbor",
+      "sim-legacystay",
+      "sim-meridian",
+      "sim-fias-pabx",
+    ]);
+  });
 });
