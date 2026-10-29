@@ -2,6 +2,47 @@
 
 ## Open Requests (read this section only)
 
+Owner priority (2026-10-29 10:40, supersedes the list below): **REQ-027 first.** Finish the iteration in progress
+(merge what is green), then REQ-027 before any other REQ, owner check or review item. REQ-023's demo script must
+describe the REQ-027 demo, so finish REQ-023 after REQ-027 lands (or update it then).
+
+### REQ-027 — Auto-detect + auto-heal end to end on the live stack, and a demo that proves it (2026-10-29)
+Status: OPEN
+Why: it is the product's headline claim and today only FIAS (demo step 8) shows it. Owner checks on the host
+(2026-10-29, main at f61274b8, keyed local stack):
+- After REQ-024's honest fix (a62013dc) every engine arm escalates with 0 fixes: the detector output does not carry
+  the evidence the L1 rules need (`page_to_cursor`, `rename_field`, ... never fire from a real sync).
+- Demo step 3 calls `RULE_REGISTRY["page_to_cursor"]` directly on a hand-built `RepairContext`; its live part only
+  injects the fault and lists `/drift` and `/repairs`, never asserting the engine found or fixed anything. Step 4
+  hands `run_frontier_climb` the drift class and hand-written hypotheses (`bench/demo.py` ~770–900).
+- In local mode the demo's Atlas connector (`base_url http://sim-atlas:8000`, a Compose hostname) syncs
+  **Blocked: http_error before any fault**; the simulator log shows no request. No sync → no drift → no repair.
+What to do:
+1. **Local addresses.** Connectors created by the demo, by builds and by the UI resolve to addresses that work in
+   the mode the stack runs in (local: `localhost:<public port>` from `config/demo_targets.yaml`; Compose: service
+   names). One place decides it; no Compose hostnames leak into local mode. Baseline sync of every demo connector is
+   `Complete` in both modes (`make local-up` and `make up`).
+2. **Detector carries the evidence.** A real sync against a faulted simulator produces a drift whose signals and
+   fingerprint delta hold what the classifier and L1 rules need (e.g. page→cursor: the old/new pagination shape and
+   the cursor field seen on the wire; renames: missing/added paths with sample values). Derive it from observed
+   responses only; never from the scenario id, the YAML or the answer key.
+3. **The live chain.** Inject fault → the worker's (or `POST /sync`) sync detects → `RepairController.handle` with
+   detector-derived inputs only → rule/ladder → verifier gate → repair visible in `/repairs` with rung, rule id and
+   model usage → approve → next sync `Complete`. Works for every known-repair scenario that has a rule
+   (page_to_cursor, offset_to_cursor, field renames, date/enum ones as applicable) with 0 model calls, and climbs to
+   L3/L4 only for the semantic ones (gross_to_net) with the frontier given real evidence (current spec, the failing
+   records, the relevant doc excerpt; redacted) instead of only a drift class.
+4. **Demo steps 3 and 4 drive the live chain** and assert on what the engine did (drift found by the detector, rule
+   id chosen by the controller, verifier verdict, tokens). No hand-built `RepairContext`, hypotheses, drift class or
+   yield count anywhere in `bench/demo.py`; hand-built inputs stay in unit tests only. Step output names where each
+   input came from.
+5. **e2e, no fakes:** one live test per known-repair scenario: inject → sync → repair proposed by the right rule →
+   approve → sync Complete; plus the semantic one escalating with a real L3 attempt. Keyed local stack and Compose.
+6. **Rerun the honest benchmark** (REQ-024 arms, offline rehearsal) and record the new numbers in
+   `experiments/` whatever they are; update REQ-025's caveat text if anything changed.
+Gates: `make test`, keyed `make local-up && make e2e && make demo` green, the same on `make up`. Do not weaken any
+guard test. Split into sub-steps (1 addresses, 2 detector, 3 chain, 4 demo, 5 e2e, 6 bench) and merge each green.
+
 Owner priority (2026-10-28, updated 19:40): fix the REQ-020 signature regression (owner check after sub-step 6) first, then **REQ-021 next,
 before anything else** (it has been skipped twice; REQ-024 and REQ-025 depend on its Muse frontier provider, reset and
 model-usage table), then REQ-020 step 7 → REQ-022 (with REQ-026, the per-test timeout, slotted in after the REQ-022 sub-step in progress) → REQ-024 → REQ-025, with REQ-023 (demo plan) applied as each lands.
