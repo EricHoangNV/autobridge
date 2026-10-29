@@ -72,6 +72,18 @@ baseline Complete → inject page_to_cursor → sync → `/repairs` shows `page_
 sync Complete), keyed local stack; it must not use the reference spec. Do this before sub-step 4, since the demo
 steps will drive exactly this path.
 
+**Owner check (2026-10-29, on 03d097d4): the knowledge page stays empty through the whole demo; fill it as part of
+sub-step 4.** `/knowledge` now shows each vocabulary version with "used by: <connectors>" (from `GET /knowledge`
+`connectors[].vocabulary`) and learned knowledge on the right. After a full keyed `make demo` (8/8 ok): learned
+knowledge is empty, the profiles read `atlaspms vocabulary ?` and `Harbor demo vocabulary ?`, Meridian (step 7) and
+the PABX connector (step 8) are not listed, so every version reads "no connector built on it yet". Fix:
+(1) every build, through the control API or the demo, records the vocabulary it compiled under on the connector
+profile (step 7's v1 attempt is a refused build: show it as refused, and v2 as the release in use); (2) the demo's
+repair steps approve their verified repairs through the API, so learned knowledge gets entries, and the "inject
+again" leg shows `times_reused` going up with 0 model calls; (3) after `make demo`, `/knowledge` lists atlaspms (v1),
+Meridian (v2) and the PABX connector (v3) under their versions, plus at least one learned entry. Add a UI e2e
+assertion for that state after the demo.
+
 ### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 19:10; matrix full-climb merged, remaining: owner record-frontier capture + live step-4 check)
 Owner: every demo scenario must run the same way every time, including REQ-020's "before" refusal after the vocabulary
