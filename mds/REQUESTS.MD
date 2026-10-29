@@ -19,6 +19,15 @@ runs in-process). Syncs run only when something calls `POST /sync`; there is no 
    local and Compose demo mode; off when unset). Skips a connector while a sync, build, repair or approval for it is
    running. Each sync runs the existing REQ-027 chain (detect → classify → ladder → verifier gate). Never approves.
 2. **No auto-apply.** Repairs keep waiting for an operator decision, as today.
+2b. **A fix is learned only once it is approved** (owner decision 2026-10-29). Today the L0 knowledge cache is filled
+   when the ladder *proposes* (`src/autobridge/repair/controller.py`, the propose path) and evicted on reject/rollback.
+   Change it: proposing caches nothing; `approve` (the real approve path, after the release is activated) writes the
+   entry, recording the approval id, actor and release id on it; reject caches nothing; rollback evicts as today
+   (AR-2-3). A proposal that is still waiting can never be reused at L0, by any connector. Everything that relied on
+   propose-time caching follows the rule: `make demo` approves through the API before its "inject again" leg; the
+   benchmark's `warm_knowledge` learns by approving its verified dev-split fixes through the same approve path, and
+   says so in the arm's provenance; the Knowledge page shows "learned from approval <id> by <actor>". Tests: propose
+   then re-run the same drift → L0 miss; approve then re-run → L0 hit; reject → miss; rollback after approve → miss.
 3. **Every step persists** as rows the UI reads: builds (including refused builds with their reason), syncs, drift
    events, repair runs with the full ladder trace per rung, the hypothesis derivation (counts and ids per stage:
    generated → family → wire-consistent → distinct), probes, every model call in the `ModelCall` ledger (model, live
