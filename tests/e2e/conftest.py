@@ -57,6 +57,8 @@ from typing import Final, NoReturn
 
 import pytest
 
+from bench.stack_mode import is_local_stack
+
 # Host ports mirror compose.yaml (plan §2.1).
 SERVICE_PORTS: Final[dict[str, int]] = {
     "control": 8101,
@@ -295,13 +297,14 @@ REPO_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).resolve().parents[2]
 
 
 def is_local_mode() -> bool:
-    """Return True when the Docker-free local stack is active (REQ-017)."""
-    if os.getenv("AUTOBRIDGE_RUNTIME", "").strip().lower() == "local":
-        return True
-    try:
-        return (REPO_ROOT / ".local" / "ACTIVE").is_file()
-    except Exception:
-        return False
+    """Return True when the Docker-free local stack is active (REQ-017).
+
+    Validated by bench.stack_mode (REQ-037): a stale ``.local/ACTIVE``
+    from a dead local stack answers False — exactly as if the marker
+    were absent — so live tests take the Compose branch instead of
+    loopback URLs against a Docker stack.
+    """
+    return is_local_stack()
 
 
 def edge_relay_url() -> str:

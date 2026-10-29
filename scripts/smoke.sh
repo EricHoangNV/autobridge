@@ -35,11 +35,16 @@ for entry in $SERVICES; do
   echo "  ok $name (:$port)"
 done
 
-# REQ-017: in local mode every service shares the host loopback, so Docker
-# network attachment cannot isolate anything. The container probes below
-# cannot run (no containers); the in-process allowlist checks still run
-# inside runtime-sandbox /readyz ("runtime_target" check).
-if [ "${AUTOBRIDGE_RUNTIME:-}" = "local" ] || [ -f .local/ACTIVE ]; then
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# REQ-037: local-vs-Compose is decided by the validated marker
+# (bench/stack_mode.py) — a stale .local/ACTIVE from a dead local stack
+# falls through to the Compose branch exactly as if it were absent (a
+# warning naming the file goes to stderr), so the network checks below
+# are never silently skipped. In local mode there is no Docker network
+# isolation to probe.
+STACK_MODE="$(python3 "$REPO_ROOT/bench/stack_mode.py" --mode || echo compose)"
+if [ "$STACK_MODE" = "local" ]; then
   echo ">> smoke: network probes skipped: local mode (no Docker network isolation)"
   echo "  skipped: local mode — sandbox -/-> verifier/admin, ui -/-> sims, worker -/-> verifier, edge-net checks"
   echo "  skipped: local mode — simulator admin authorization probe (admin still needs SIM_ADMIN_TOKEN when set)"

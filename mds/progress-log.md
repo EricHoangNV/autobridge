@@ -3435,3 +3435,10 @@ Gotchas: restarting the stack mid-task is required after engine/sim/catalog edit
 - `mds/REQUESTS.MD`, `mds/LEARNINGS.MD` — resolve + learning #49
 
 **Verification:** targeted 98 + 51 pass; lint, typecheck, full `make test` green (2557/134/408, 90.35/91.49/90.48%, ui 160). No live stack in sandbox; e2e not run (callers pass explicit counts; fakes cover the change).
+
+## 2026-10-29 13:05 UTC — REQ-037 DONE (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+Stale `.local/ACTIVE` can no longer masquerade as a running local stack: new stdlib-only `bench/stack_mode.py` validates the marker (recorded pid alive, or control `/readyz` `runtime_mode: local`) and all three consumers — `scripts/smoke.sh`, `bench/demo.py`, `tests/e2e/conftest.py` — delegate to it. Stale → Compose branch exactly as without the marker + one stderr warning naming the file; genuinely-local behaviour unchanged.
+Verification: 21 new unit tests green; full `make test` 2578+134+408 pass (90.35/91.49/90.48%) + ui 160 pass; `make lint`, `make typecheck`, trust-boundary tests green; e2e collection 170 OK; live CLI + smoke-assignment checks with a planted stale marker behave per acceptance (warning + `compose`). No live stack run here (nothing listening in sandbox); docker-answers leg covered by stub-readyz scenarios.
+Files: bench/stack_mode.py (new), bench/demo.py, tests/e2e/conftest.py, scripts/smoke.sh, tests/unit/test_autobridge_stack_mode.py (new), docs/safety-model.md (§12 note), mds/REQUESTS.MD (REQ-037 DONE).
+**Ref:** REQUESTS.MD REQ-037 (Muse Wonder audit 2026-10-29).

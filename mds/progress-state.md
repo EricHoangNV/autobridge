@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-036 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): stale DIRECTIVES §§1/2/3/6/7 amended in place (v3 schema, 5 networks + bench, labelled demo values, 8 UI routes, L3 surviving-count gate) + AR-4-3 code-fixed (controller derives len(surviving), new counted-number test). Full gates green; verdict change is the auditor's.
+REQ-037 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): one shared stdlib-only `bench/stack_mode.py` validates `.local/ACTIVE` (recorded pid alive, or control `/readyz` `runtime_mode: local`); smoke, demo and e2e conftest delegate to it. Stale marker → Compose branch as without the marker + warning naming the file; genuinely-local behaviour unchanged. Full gates green.
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
@@ -18,17 +18,17 @@ REQ-036 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): st
   - REQ-035 DONE (demo admin token default + auth-boundary smoke; live verified)
   - REQ-038 DONE (deterministic FIAS replay/flood tests; 50/50 + full suite green)
   - REQ-036 DONE (directives amended + L3 count derived; full suite green)
+  - REQ-037 DONE (validated stack-mode marker; stale → Compose + warning; full suite green)
   - Edge readyz closed-store 500 fixed (honest degraded + regression test)
-- Tests: 2557 + 134 + 408 pass / 0 fail (autobridge 90.35%, verifier 91.49%, simulators 90.48%; ui 160 pass); lint + typecheck green
-- Stack: not started this run (unit-test-only change, no live verify needed)
+- Tests: 2578 + 134 + 408 pass / 0 fail (autobridge 90.35%, verifier 91.49%, simulators 90.48%; ui 160 pass); lint + typecheck green
+- Stack: not started this run (no live stack in sandbox; stub-readyz + planted-marker CLI checks instead)
 
 ## Next tasks
-1. **REQ-037** — stale `.local/ACTIVE` marker must not misroute smoke/demo/e2e mode detection
-2. **REQ-030 → REQ-031 → REQ-032 → REQ-033** — owner UI-first demo (after findings above, before benchmark rounds)
-3. **REQ-028 (VERIFY)** — owner: keyed `BENCH_TRIALS=1 make bench-ablation`, record frontier numbers; then merge/close
-4. **REQ-027 iteration (VERIFY)** — owner keyed-stack run, then sub-step 6 bench rerun
-5. **REQ-021 remaining (owner step)** — record-frontier capture + live step-4 check
-6. **REQ-024 remaining (owner/CI steps)** — leak-audit re-run; live frontier numbers; Nov 3 held-out run
-7. **REQ-025 remaining (owner/CI steps)** — live frontier numbers; the real frozen run
-8. **P1.W10.3** — [~] OWNER: confirm CI demo + record labelled demo (docs/demo.md)
-9. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching SHA256SUMS
+1. **REQ-030 → REQ-031 → REQ-032 → REQ-033** — owner UI-first demo (findings fixed, before benchmark rounds)
+2. **REQ-028 (VERIFY)** — owner: keyed `BENCH_TRIALS=1 make bench-ablation`, record frontier numbers; then merge/close
+3. **REQ-027 iteration (VERIFY)** — owner keyed-stack run, then sub-step 6 bench rerun
+4. **REQ-021 remaining (owner step)** — record-frontier capture + live step-4 check
+5. **REQ-024 remaining (owner/CI steps)** — leak-audit re-run; live frontier numbers; Nov 3 held-out run
+6. **REQ-025 remaining (owner/CI steps)** — live frontier numbers; the real frozen run
+7. **P1.W10.3** — [~] OWNER: confirm CI demo + record labelled demo (docs/demo.md)
+8. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching SHA256SUMS

@@ -456,6 +456,12 @@ so Docker network separation does **not** exist here:
 * vendor-net / verifier-net / admin-net / edge-net are one network;
   any local process *could* open any local port. `make smoke` reports its
   container probes as `skipped: local mode` instead of pretending otherwise.
+* Local-vs-Compose is decided by a *validated* `.local/ACTIVE` marker
+  (REQ-037, `bench/stack_mode.py` — shared by `make smoke`, `make demo`
+  and the e2e harness): the marker counts only while the local stack is
+  alive (a recorded PID runs, or control `/readyz` says `runtime_mode:
+  local`). A stale marker from a dead stack falls through to the Compose
+  branch with a warning naming the file, never skipping checks silently.
 * The runtime executes specs with `LocalProcessTarget` semantics even when a
   spec declares `docker_sandbox` (`AUTOBRIDGE_RUNTIME=local` or Docker
   unavailable; `active_target_kind()` in `src/autobridge/runtime/mode.py`).

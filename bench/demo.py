@@ -48,6 +48,8 @@ import pathlib
 from decimal import Decimal
 from typing import Any
 
+from bench.stack_mode import is_local_stack
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 GENERATED = REPO_ROOT / "generated" / "connectors"
 SCORECARD_PATH = REPO_ROOT / "experiments" / "scorecard.md"
@@ -546,20 +548,13 @@ def _control_probe(base_url: str) -> bool:
 def _stack_is_local() -> bool:
     """Host-side view of the stack mode (mirrors tests/e2e/conftest.is_local_mode).
 
-    The demo script runs on the host in both modes: local when this
-    checkout's local-stack marker exists (``make local-up``) or
-    ``AUTOBRIDGE_RUNTIME=local``, else Compose. Used only to state which
-    connector address form to expect back from the server — the server
-    itself normalizes (``normalize_connector_base_url``); the demo asserts
-    it did, so a leaked Compose hostname fails the step instead of a
-    later sync.
+    Validated by bench.stack_mode (REQ-037): a stale ``.local/ACTIVE``
+    from a dead local stack answers False — exactly as if the marker
+    were absent — so a leaked Compose hostname fails the step instead of
+    a later sync. The server itself normalizes
+    (``normalize_connector_base_url``); the demo asserts it did.
     """
-    if os.environ.get("AUTOBRIDGE_RUNTIME", "").strip().lower() == "local":
-        return True
-    try:
-        return (REPO_ROOT / ".local" / "ACTIVE").is_file()
-    except Exception:
-        return False
+    return is_local_stack()
 
 
 def _check_connector_address(sent: str, stored: Any) -> str | None:
