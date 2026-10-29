@@ -3412,3 +3412,26 @@ Gotchas: restarting the stack mid-task is required after engine/sim/catalog edit
 **Notes for next iteration:**
 - The REQ-038 "Also note" about `RepairController._handle_semantic_climb` defaulting the L3 yield count (AR-4-3) belongs to REQ-036 — not done here
 - Next: REQ-036 (stale DIRECTIVES) and REQ-037 (stale .local/ACTIVE marker), then the owner-priority REQ-030 → REQ-031 → REQ-032 → REQ-033 chain
+
+## REQ-036 — stale directives + L3 gate-count fix
+**Date:** 2026-10-29
+**Ref:** REQUESTS.MD REQ-036 (Muse Wonder directives audit 2026-10-29); Code Review Cycle 4 AR-4-3
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- `_handle_semantic_climb` derives `enumerator_yield_count = len(surviving hypotheses)` when the caller passes None, instead of fabricating 1; explicit counts still win.
+- New unit test through `RepairController.handle` asserting the L3 rung reason names the counted number (skip on 2, invoke on 1, explicit 5 wins).
+- DIRECTIVES.MD §§1/2/3/6/7 amended in place: v3 schema validation, five compose networks + bench on verifier-net + FIAS admin sidecar, labelled sim demo values, eight UI routes, L3 surviving-count gate semantics. QR untouched (1851 B, all lines ≤300 chars).
+- REQUESTS.MD: REQ-036 moved to Resolved/DONE; learnings #49 added (block-scoped claim edits).
+
+**Key decisions:**
+- Derive `len()` rather than skipping the climb when no count is given: with 0 hypotheses the count is honestly 0 and L3 is invoked exactly as before (reason now says 0 instead of 1); with ≥2 it is skipped, which is what the gate rule always meant.
+- No FEEDBACKS.MD edit: the Cycle 4 verdict line is the auditor's to change (same precedent as REQ-038).
+
+**Files changed:**
+- `src/autobridge/repair/controller.py` — derived L3 gate count
+- `tests/unit/test_autobridge_frontier_climb.py` — counted-number gate test
+- `mds/DIRECTIVES.MD` — five bullets amended in place
+- `mds/REQUESTS.MD`, `mds/LEARNINGS.MD` — resolve + learning #49
+
+**Verification:** targeted 98 + 51 pass; lint, typecheck, full `make test` green (2557/134/408, 90.35/91.49/90.48%, ui 160). No live stack in sandbox; e2e not run (callers pass explicit counts; fakes cover the change).

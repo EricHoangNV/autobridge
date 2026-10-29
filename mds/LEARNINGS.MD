@@ -452,3 +452,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed by waiting on the engine's own counter (`postings_sent >= sent_before + 2`) while collecting, then asserting exact equality plus a same-P# / nothing-invented check; same treatment for exact frame counts (`== 5` → `>= 5`) wherever a resend copy can land in the collection batch.
 
 **Rule:** When a protocol retransmits below the business layer, tests assert on business-level counters or idempotency sets, never on wire frame counts or arrival order.
+
+---
+
+## 49. Claim one request with a block-scoped edit, never a bare status-line sed
+
+**Context:** REQ-036 claim — `sed -i 's/^Status: OPEN (audit …)$/.../' mds/REQUESTS.MD` matched the identical status lines of REQ-036 *and* REQ-037, claiming both tasks at once (caught by `git diff` before pushing; REQ-037 reverted).
+
+- Open requests often share byte-identical `Status:` lines (same audit, same date). A global line-pattern replace cannot tell them apart.
+- Caught because the claim step checks `git diff --stat`/`grep ^[+-]Status` before committing — one extra minute that saved a cross-loop claim collision.
+
+**Rule:** When claiming a request, scope the edit to its block (match on the `### REQ-NNN` header through its status line, or edit with line numbers from `grep -n`), and always verify with `git diff` that exactly one status line changed before pushing the claim.
