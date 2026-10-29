@@ -119,6 +119,15 @@ after `POST /demo/reset` and `make demo` on the keyed local stack:
    response) instead of reading once.
 Gate: `make demo` 8/8 on a keyed local stack after `POST /demo/reset`, run twice in a row.
 
+**Owner re-check (2026-10-29, on 97e682c3): step 8 fixed (PABX now v3), L3 now answers (2,009 tokens, 1,757
+reasoning; its patch targets a non-existent `/money_check`, rejected and escalated: fine). `make demo` is 7/8 twice
+in a row; step 7 still fails, and it is not a race.** The assertion "knowledge lists meridianpms under v2 with v1
+refused" reads the body returned by `_control_call`, which is `_redact_body(...)`: at depth > 3 it replaces values
+with `"…"` (`bench/demo.py:735`). `/knowledge` → `connectors` (list) → profile (dict) → `refused_vocabularies`
+(list) → `"v1"` sits at depth 4, so the step sees `['…']` while the API really returns `["v1"]`. The polling added in
+97e682c3 cannot help. Fix: assert on the raw response (keep `_redact_body` for printing only), and check every other
+`_assert_live` that reads nested values for the same trap. Gate: `make demo` 8/8 twice on a keyed local stack.
+
 ### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 19:10; matrix full-climb merged, remaining: owner record-frontier capture + live step-4 check)
 Owner: every demo scenario must run the same way every time, including REQ-020's "before" refusal after the vocabulary
