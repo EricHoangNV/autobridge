@@ -3085,3 +3085,30 @@ Step 3: detect PAGINATION_CHANGE -> propose page_to_cursor rung 1, 0 tokens -> a
 
 ## 2026-10-29 — REQ-027 sub-step 4 + owner check-1 fixes merged to main (sbx1)
 Sub-step 4 (demo steps on the live chain) plus the fixes for the owner check after sub-step 3 (verbatim base_url/vendor on docs builds, no drift on zero-response syncs, tests/e2e/test_027_live_chain.py) merged. New owner check on the knowledge page (profiles vocabulary, learned entries, UI e2e) arrived mid-flight and is explicitly OPEN next — it needs the keyed stack + browser, unverifiable from sbx1. Note for next: step3-live already approves via API (feeds learned knowledge); still missing: vocabulary recorded on connector profiles incl. refused v1 builds, "inject again" leg showing times_reused, UI e2e assertion. Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+
+## REQ-027 knowledge-page check — code complete
+**Date:** 2026-10-29
+**Ref:** REQUESTS.MD REQ-027 owner check (2026-10-29, on 03d097d4)
+
+**What was done:**
+- `/knowledge` connector profiles now record every build's vocabulary: new `refused_vocabularies` field (failed builds) beside the release-in-use vocabulary; OpenAPI regenerated
+- Demo steps 3/7/8/2 drive builds + approvals through the control API with pinned vocabularies; step 3 adds the inject-again leg (reactivate pre-patch release, same fault → L0 hit, 0 tokens, `times_reused` 0→1, all asserted live)
+- UI knowledge page renders refused vocabularies; new Playwright spec asserts the post-demo state (API + page), skips without a stack
+- Stateful live stub in `test_autobridge_demo.py` emulates the full stack (incl. meridian-v1 refusal and atlas L0 reuse); new `test_knowledge_connector_refused_vocabulary` unit test
+- docs/demo.md steps 3/7/8 updated
+
+**Key decisions:**
+- Refused builds (bootstrap success False) stay visible instead of ignored: the knowledge page must show the v1 refusal as data, not hide it
+- Inject-again reuses the same connector by reactivating the pre-patch release — same vendor+delta, so the engine's L0 cache answers; `/knowledge` grouping counts it as reuse
+- Live meridian sync is not asserted (body-token env is a stack concern); builds + profile are, which is what the check requires
+- Playwright spec skips without a stack rather than mocking: the assertion is only meaningful on real post-demo state
+
+**Files changed:**
+- `src/autobridge/control/schemas.py`, `src/autobridge/control/routes/capabilities.py`
+- `bench/demo.py`, `docs/demo.md`, `playwright.config.ts`
+- `tests/unit/test_autobridge_demo.py`, `tests/unit/test_autobridge_knowledge.py`, `tests/e2e/test_027_knowledge.spec.ts`
+- `ui/app/knowledge/page.tsx`, `ui/app/knowledge/page.test.tsx`, `ui/lib/api/schema.d.ts`, `ui/openapi.json`
+
+**Notes for next iteration:**
+- Needs owner keyed-stack verification: `make local-up && make demo` 8/8, then `/knowledge` shows atlaspms v1, meridianpms v2 (v1 refused), PABX edge v3, page_to_cursor entry reused≥1; run the new UI spec against it
+- After that lands: REQ-027 sub-steps 5-6 (live e2e per scenario + honest bench rerun), then REQ-023 video-cut update

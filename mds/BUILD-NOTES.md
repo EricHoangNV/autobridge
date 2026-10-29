@@ -1954,3 +1954,34 @@ repair rows. Skips without Docker like every other live e2e file.
 Also made test_sync_with_release hermetic (127.0.0.1:9; the verbatim fix
 means built specs now really dial, tripping the no-DNS guard on
 localhost).
+
+### REQ-027 knowledge-page check (sbx1 2026-10-29)
+Code the owner check "knowledge page stays empty after the demo" (on 03d097d4).
+Backend: `KnowledgeConnectorOut` gains `refused_vocabularies: list[str]`;
+`knowledge_payload` records the refused vocabulary of every failed build
+(result.success is False) beside the release-in-use vocabulary (successful
+build input, else latest release spec_version). OpenAPI regenerated
+(`make openapi`: ui/openapi.json + schema.d.ts).
+Demo live chain (`bench/demo.py`): step 3 pins `spec_vocabulary: v1` on the
+docs build, approves the L1 repair, then reactivates the pre-patch release
+and injects `page_to_cursor` again — L0 hit, 0 tokens, `/knowledge`
+`times_reused` 0→1 (asserted). Step 7 drives v1 (refused: success False, no
+release, reason names POST + ConnectorSpec v1) then v2 (release) through the
+API on one `meridianpms` connector; step 8 ensures `PABX edge` + v3 build;
+step 2 builds the Harbor excerpt v1. Helpers `_live_build_and_poll`,
+`_live_latest_repair/drift`, `_live_candidate_for_repair`,
+`_live_approve_repair`, `_live_knowledge` added; in-process evidence
+unchanged. UI `/knowledge` shows refused vocabularies
+(`v2 · v1 refused`); component test covers it. New Playwright spec
+`tests/e2e/test_027_knowledge.spec.ts` (registered in playwright.config.ts)
+asserts the post-demo state (API + page), skips without a stack.
+`tests/unit/test_autobridge_demo.py` live stub rewritten as a stateful
+emulator (connectors/builds/releases/repairs/knowledge; meridian-v1
+refusal; atlas inject-again L0) with end-state assertions.
+Unit test `test_knowledge_connector_refused_vocabulary` added.
+docs/demo.md steps 3/7/8 describe the live behavior + knowledge page.
+Gates: make lint, make typecheck, make ui-typecheck green; make test green
+(autobridge 2495 / verifier 134 / simulators gate + ui 159).
+NOT live-verified here (no keyed stack in sbx1): owner runs keyed
+`make local-up && make e2e && make demo` and `make up` variants.
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
