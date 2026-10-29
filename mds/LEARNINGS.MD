@@ -431,3 +431,12 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed two ways: (1) the target name is edge-net-only while the alias lives on admin-net only, so the target can never resolve to self; (2) a `_self_dial_target` guard compares the route's source address against every address the target resolves to (same IP *and* same port) and refuses loudly instead of connecting.
 
 **Rule:** Any proxy/forwarder must prove its target is not itself before connecting — compare resolved target addresses against the local route source for the same port, and fail closed with a loud log when they overlap.
+
+## 47. A 403 is not "unreachable" — smoke probes must name which refusal they got
+
+**Context:** REQ-035 (Code Review Cycle 4, AR-4-2): `scripts/smoke.sh` treated any failed HTTP probe as "down/unreachable", so a vendor-net peer getting `403` from the simulator admin API looked identical to having no route — hiding that the §2 "no route" boundary was actually an authorization boundary all along.
+
+- A negative check has three outcomes, not two: no route (connection failure), reachable-but-rejected (401/403), and accepted (2xx). Collapsing the first two lets a misconfigured open endpoint pass as "isolated" and lets a real boundary look like a network gap.
+- Fixed with `probe_admin_denied`: pass on no-route and on 401/403 with distinct messages naming the case, fail only on 2xx without a token. The same shape applies to the write probes (`probe_post … down` already failed only on accept).
+
+**Rule:** Every negative network/admin probe distinguishes "no route" from "reachable but rejected" in its output and fails only when the unauthorized access is ACCEPTED. Never assert refusal with a plain reachability probe.

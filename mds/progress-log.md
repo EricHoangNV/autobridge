@@ -3365,3 +3365,27 @@ Gotchas: restarting the stack mid-task is required after engine/sim/catalog edit
 
 **Verification:**
 - 4 acceptance e2e green on `make up` and `make local-up`; `/demo/reset` FIAS targets 200; `make smoke` green; `make demo` 8/8 (Compose); lint + typecheck green; `make test` green (90.30/91.49/90.48 + ui 160).
+
+## REQ-035 — sim admin default token + authorization-boundary smoke
+**Date:** 2026-10-29
+**Ref:** REQUESTS REQ-035 (Code Review Cycle 4 AR-4-2); owner decision (a)+(c)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- (a) `SIM_ADMIN_TOKEN` ships non-empty demo default `sim-admin-dev-token` in `.env.example`, all 6 `compose.yaml` entries (control + 4 sims + FIAS), and `scripts/local-up.sh` (`${VAR:-default}`, explicit value wins). Fresh clone never runs header-only.
+- (c) `mds/DIRECTIVES.MD` §2 bullet amended in place (577 chars): simulator admin API is an authorization boundary, not no-route. `scripts/smoke.sh` gains `probe_admin_denied`: 401/403 and no-route pass with distinct messages, 2xx without token fails. AR-1-1 write checks kept (fail only when a write is ACCEPTED).
+- Aligned comments in `simulators/common/admin.py`, control proxy (`demo.py`), e2e `conftest.py`, `docs/safety-model.md`, local-up banner.
+- New `tests/unit/test_simulators_admin_defaults.py` (5 tests): .env/compose/local-up defaults + smoke helper semantics.
+- Verified live on Compose: `make up` + `make smoke` green (sandbox→sim admin reports "rejected (HTTP 403 … auth boundary holds)", edge-relay→sim-atlas reports "no route"); host header-only POST → 403; keyed `POST /demo/reset` → 200 on all targets incl. FIAS. Stack torn down after.
+
+**Key decisions:**
+- Kept the header-only fallback in code for explicitly-emptied env (old e2e + unit tests rely on it); the default makes it unreachable in practice.
+- Did NOT touch DIRECTIVES §6 ("empty value") or §7 ("four screens") staleness — owned by REQ-036 items 3–4.
+- Left the FAIL verdict in FEEDBACKS Cycle 4 to the auditor; code side of AR-4-2 is fixed.
+
+**Files changed:**
+- `.env.example`, `compose.yaml`, `scripts/local-up.sh`, `scripts/smoke.sh`, `mds/DIRECTIVES.MD`, `docs/safety-model.md`, `simulators/common/admin.py`, `src/autobridge/control/routes/demo.py`, `tests/e2e/conftest.py`, `tests/unit/test_simulators_admin_defaults.py` (new)
+
+**Notes for next iteration:**
+- REQ-036 next: it amends the remaining stale bullets (§§1/2-networks/3/6/7) plus the AR-4-3 controller-count fix (enumerator_yield_count default).
+- `test_replay_postings_resend_same_pno` flaked once under full `make test` (passed alone + on rerun) — that is REQ-038's item, untouched here.
