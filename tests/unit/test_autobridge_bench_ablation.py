@@ -139,22 +139,26 @@ def test_provider_factory_live_without_key_raises(monkeypatch: pytest.MonkeyPatc
         ablation_provider("live")
 
 
-def test_engine_cold_structural_derives_then_escalates_zero_tokens() -> None:
-    """End-to-end honesty: the engine observes PAGINATION_CHANGE but the L1
-    rules need strategy evidence the detector does not produce, so the arm
-    escalates with zero model tokens (REQ-024 owner check: losses published)."""
+def test_engine_cold_structural_derives_then_proposes_zero_tokens() -> None:
+    """End-to-end honesty: the engine observes PAGINATION_CHANGE with wire
+    evidence (cursor leaf on the envelope, no total), the L1 page_to_cursor
+    rule fires, and the arm proposes with zero model tokens (REQ-027
+    sub-step 2: the detector gap from the REQ-024 owner check is closed)."""
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
     case = ablation_case_for_scenario("page_to_cursor")
     diag = derive_diagnostics(case.spec, scenario_id="page_to_cursor", connector_id="atlaspms", seed=inputs.seed)
     assert diag.drift_class == "PAGINATION_CHANGE"
+    assert any("wire_evidence" in (s.details or {}) for s in diag.signals)
     res = run_engine_arm(inputs, case, ablation="autobridge_cold", provider=FakeProvider())
     assert res.arm == "autobridge_cold"
     assert res.success
     assert res.frontier_tokens == 0
     assert res.input_tokens == 0
-    assert res.spec is not None and res.spec["decision"] == "escalate"
-    assert res.spec["candidate_patch"] == []
+    assert res.spec is not None and res.spec["decision"] == "propose"
+    assert res.spec["rule_id"] == "page_to_cursor"
+    assert res.spec["ladder_level_reached"] == 1
+    assert res.spec["candidate_patch"], "a patch must be proposed"
 
 
 def test_engine_no_knowledge_escalates_structural() -> None:
@@ -227,12 +231,11 @@ def test_engine_arm_handle_kwargs_carry_no_case_diagnostics(monkeypatch: pytest.
 
 
 def test_warm_cache_learns_dev_split() -> None:
-    """Warm learning caches only what the deterministic ladder can fix.
+    """Warm learning caches what the deterministic ladder fixes.
 
-    Honest end-to-end (REQ-024 owner check): page_to_cursor currently
-    escalates without proposing, so nothing is cached and the warm arm
-    matches cold. When the detector gap closes, propose-path scenarios
-    will cache here and this test pins the L0 hit again.
+    Honest end-to-end (REQ-027 sub-step 2): page_to_cursor proposes from
+    wire evidence, so the dev-split run caches the patch and the warm arm
+    hits L0 with zero model tokens.
     """
     from autobridge.repair.knowledge import KnowledgeCache
 
@@ -242,7 +245,9 @@ def test_warm_cache_learns_dev_split() -> None:
     inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
     case = ablation_case_for_scenario("page_to_cursor")
     res = run_engine_arm(inputs, case, ablation="autobridge_warm", provider=FakeProvider(), knowledge=cache)
-    assert res.spec is not None and res.spec["decision"] == "escalate"
+    assert res.spec is not None and res.spec["decision"] == "propose"
+    assert res.spec["ladder_level_reached"] == 0
+    assert res.frontier_tokens == 0
 
 
 def test_frontier_oneshot_arm_label() -> None:
@@ -501,12 +506,16 @@ def test_learning_curve_shape(tmp_path: Any) -> None:
     result = run_learning_curve("page_to_cursor", repeats=3, provider=FakeProvider())
     assert result["scenario_id"] == "page_to_cursor"
     assert len(result["rows"]) == 3
-    # Agent pays every time; the honest engine escalates every repeat (the
-    # L1 rules cannot fire on derived deltas yet — REQ-024 owner check).
+    # Agent pays every time; the engine derives the fix from wire evidence:
+    # cold proposes via L1 on the first repeat then hits L0, warm hits L0
+    # from the start (REQ-027 sub-step 2). No frontier tokens anywhere.
     assert all(r["frontier_agent_frontier_tokens"] == 2000 for r in result["rows"])
-    assert all(r["autobridge_cold_rung"] == 4 for r in result["rows"])
-    assert all(r["autobridge_warm_rung"] == 4 for r in result["rows"])
-    assert all(r["autobridge_cold_decision"] == "escalate" for r in result["rows"])
+    assert [r["autobridge_cold_rung"] for r in result["rows"]] == [1, 0, 0]
+    assert all(r["autobridge_warm_rung"] == 0 for r in result["rows"])
+    assert all(r["autobridge_cold_decision"] == "propose" for r in result["rows"])
+    assert all(r.get("autobridge_warm_decision") == "propose" for r in result["rows"])
+    assert all(r["autobridge_cold_frontier_tokens"] == 0 for r in result["rows"])
+    assert all(r["autobridge_warm_frontier_tokens"] == 0 for r in result["rows"])
     md = write_learning_curve_md(result, tmp_path / "learning_curve.md")
     text = md.read_text(encoding="utf-8")
     assert "frontier_agent" in text and "autobridge_cold" in text

@@ -345,3 +345,20 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - `bench/app.py`'s `# type: ignore[return-value]` comments pass under `mypy src/autobridge bench` (ignores used) but fail as unused under standalone `mypy bench`. Same code, same config — only the checked file set differs (follower import resolution changes the precise types mypy sees).
 - Fix: restructured the returns to need no ignore in either mode (`{"status": healthz()["status"]}`, `dict(readyz())`), and extended the gate to `mypy src/autobridge bench` so the harness stays typechecked after the move.
 - **Rule:** Gate the exact union you ship (`make typecheck` must name every checked tree); never trust a subset run — an ignore that is "used" in one set can be "unused" in another, and vice versa.
+
+## 38. Spec-shaped fingerprints cannot show vendor behavior flips — observe the wire
+
+**Context:** REQ-027 sub-step 2 (2026-10-29) — every engine arm escalated on page_to_cursor with 0 fixes
+
+- The fingerprint's pagination shape mixes spec fields (strategy, params) with runtime counters (pages_fetched, stop_reason). A page→cursor flip changes the wire envelope (`next_cursor` present, `total` gone) but the spec side is identical on both fingerprints, so `_delta_shows_page_to_cursor` (previous.strategy vs current.strategy) can never fire on the real path — only on hand-built deltas.
+- Canonical-types fingerprints cannot show renames either: unmapped wire keys never reach canonical records, so a rename reads as a type change (null) or a removal.
+- Fix: `_observe_wire_pagination` / `_observe_wire_schema` in `drift/signals.py` read `raw_pages` envelopes + `records` directly (non-null cursor values only — null leaves are normal on last pages; Harbor's envelope carries both `cursor` and `total`), and L1 rules consume them from `ctx.signals`.
+- **Rule:** When the detector compares summaries derived from the spec, any drift that changes vendor behavior without changing spec-shaped fields needs a wire-level observer on the raw responses; null/missing on the wire is normal more often than it is evidence, so observers must require a transmitted value, and ambiguous evidence (several added keys) stays unclaimed.
+
+## 39. A response leaf is not a request param; a strategy flip is vendor-level
+
+**Context:** REQ-027 sub-step 2 (2026-10-29) — two reverted refinements
+
+- Setting `cursor_param` from the observed response leaf (`next_cursor`) broke the follow-up sync: the vendor reads the request param `cursor` while serving the response leaf `next_cursor`. Patch `next_path` from the wire leaf, keep `cursor_param` at its default unless explicit extra says otherwise.
+- Restricting the flip patch to ops that exhibited the contradiction under-patched: a small op fits on one page (null cursor, no signal) while its sibling flips. Strategy is a vendor-level contract — evidence on one op plus the same spec strategy on the others flips all of them; the verifier gate confirms.
+- **Rule:** Wire evidence names response fields only — never derive request-param names from it; and never narrow a vendor-level patch (strategy, auth) to exhibiting operations.

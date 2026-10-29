@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from autobridge.repair.rules.wire import wire_next_path_hint
+
 if TYPE_CHECKING:
     from autobridge.repair.context import RepairContext
 
@@ -69,6 +71,12 @@ def _new_next_path(ctx: RepairContext) -> str | None:
         cand = nested.get("new_next_path") or nested.get("new")
         if isinstance(cand, str) and cand.strip():
             return cand.strip()
+    # Wire evidence (REQ-027): the detector saw the spec's next_path read
+    # null while the envelope carries another cursor-like leaf.
+    for op_name in _operations_with_cursor_family(ctx.spec):
+        hint = wire_next_path_hint(ctx.signals, op_name)
+        if hint is not None:
+            return hint
     return None
 
 

@@ -1077,12 +1077,10 @@ def run_learning_curve(
     Arms: ``frontier_agent`` (fake driver pays every time), engine arms
     ``autobridge_cold`` (empty knowledge) and ``autobridge_warm``
     (pre-warmed on the dev split). Rows carry frontier tokens, the rung
-    reached and the decision. Honest end-to-end (REQ-024 owner check on
-    f32b4b4b): the arms derive everything from observation, so the curve
-    shows what the ladder genuinely does — currently every repeat
-    escalates for drifts the L1 rules cannot match on derived deltas.
-    When the detector gap closes, the first repair proposes via the
-    ladder and later repeats hit L0 (cold), warm hits L0 from the start.
+    reached and the decision. Honest end-to-end (REQ-027 sub-step 2): the
+    arms derive everything from observation, so the curve shows what the
+    ladder genuinely does — the first repair proposes via L1 from wire
+    evidence and later repeats hit L0 (cold), warm hits L0 from the start.
     Returns the raw rows plus per-arm totals; :func:`write_learning_curve_md`
     renders the file. Fake-labelled rows are rehearsal, not publication
     numbers: rerun with ``FRONTIER_API_KEY`` set for live tokens.

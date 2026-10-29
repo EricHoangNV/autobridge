@@ -192,6 +192,43 @@ def _collect_fingerprint_deltas(signals: list[DriftSignal]) -> list[FingerprintD
 # ---------------------------------------------------------------------------
 
 
+def _wire_provenance(
+    grouped: dict[str, list[DriftSignal]], kinds: list[str]
+) -> list[dict[str, Any]]:
+    """Wire-observation provenance for the signals that decided the class.
+
+    Each entry names where the evidence came from (``raw_pages`` envelope
+    vs ``records``) so later stages (demo steps, REQ-027 item 4 output) can
+    say which input each repair input came from.
+    """
+    out: list[dict[str, Any]] = []
+    for kind in kinds:
+        for sig in grouped.get(kind, []):
+            details = sig.details if isinstance(sig.details, dict) else {}
+            if not isinstance(details, dict) or "wire_evidence" not in details:
+                continue
+            entry: dict[str, Any] = {
+                "signal_kind": kind,
+                "operation": sig.operation,
+                "source": details.get("wire_evidence"),
+            }
+            for key in (
+                "spec_strategy",
+                "wire_strategy_hint",
+                "cursor_field",
+                "envelope_keys",
+                "entity",
+                "missing",
+                "added",
+                "spec_items_path",
+                "array_candidates",
+            ):
+                if key in details:
+                    entry[key] = details[key]
+            out.append(entry)
+    return out
+
+
 def _match_auth_revoked(grouped: dict[str, list[DriftSignal]]) -> tuple[str, list[str], str] | None:
     # Any auth_error with 403, or explicit http 403, is revoked (permanent).
     for sig in grouped.get("auth_error", []):
@@ -302,6 +339,55 @@ def _match_pagination_change(grouped: dict[str, list[DriftSignal]]) -> tuple[str
     return None
 
 
+def _wire_schema_rename(
+    signals: list[DriftSignal],
+) -> tuple[str, str, str] | None:
+    """Single missing + single added wire key (REQ-027 wire evidence).
+
+    The canonical-types fingerprint cannot show a rename (unmapped wire keys
+    never reach canonical records), so this reads the wire-schema signal
+    details directly. Returns (entity, old_key, new_key) or None.
+    """
+    for sig in signals:
+        details = sig.details if isinstance(sig.details, dict) else None
+        if not details:
+            continue
+        missing = details.get("missing")
+        added = details.get("added")
+        if (
+            isinstance(missing, list)
+            and len(missing) == 1
+            and isinstance(missing[0], str)
+            and isinstance(added, list)
+            and len(added) == 1
+            and isinstance(added[0], dict)
+            and isinstance(added[0].get("key"), str)
+        ):
+            entity = details.get("entity")
+            return (
+                entity if isinstance(entity, str) else "",
+                missing[0],
+                str(added[0]["key"]),
+            )
+    return None
+
+
+def _match_wire_schema_rename(
+    grouped: dict[str, list[DriftSignal]], signals: list[DriftSignal]
+) -> tuple[str, list[str], str] | None:
+    if "keys_changed" not in grouped:
+        return None
+    hit = _wire_schema_rename(signals)
+    if hit is None:
+        return None
+    entity, old_key, new_key = hit
+    return (
+        "SCHEMA_RENAME",
+        ["keys_changed"],
+        f"Wire rename on {entity or 'entity'}: {old_key} -> {new_key}",
+    )
+
+
 def _match_schema_from_types(
     grouped: dict[str, list[DriftSignal]], signals: list[DriftSignal]
 ) -> tuple[str, list[str], str] | None:
@@ -372,6 +458,7 @@ _MATCHERS: list[Callable[..., tuple[str, list[str], str] | None]] = [
     _match_rate_limit,
     _match_transient,
     _match_pagination_change,
+    _match_wire_schema_rename,
     _match_schema_from_types,
     _match_semantic,
 ]
@@ -417,7 +504,7 @@ def classify(signals: list[DriftSignal]) -> DriftClassification:
     for matcher in _MATCHERS:
         hit = (
             matcher(grouped, signals)
-            if matcher is _match_schema_from_types
+            if matcher in (_match_schema_from_types, _match_wire_schema_rename)
             else matcher(grouped)
         )
         if hit is not None:
@@ -435,6 +522,7 @@ def classify(signals: list[DriftSignal]) -> DriftClassification:
                 details={
                     "matched_by": matcher.__name__,
                     "signal_counts": {k: len(v) for k, v in grouped.items()},
+                    "wire_evidence": _wire_provenance(grouped, supporting_kinds),
                 },
                 fixable=drift_class not in _NON_FIXABLE,
             )

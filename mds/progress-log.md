@@ -3064,3 +3064,14 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Main script + faul
 - Sub-step 2 (detector evidence) is next; sub-step 1 changes no detector/ladder behavior.
 - E2E not run in sbx1 (no Compose here); unit + in-process cover the change. Owner/CI must confirm `make local-up && make e2e && make demo` and `make up` equivalents.
 - One flaky failure seen: `test_simulators_fias_pabx.py::test_replay_postings_resend_same_pno` failed once under full `make test`, passes alone and in file rerun; untouched by this change.
+
+## 2026-10-29 — REQ-027 sub-step 2 MERGED (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+Detector now carries wire-observed evidence (cursor leaf/total presence, missing/added
+wire keys with samples, items candidates) from raw_pages/records only; classifier maps it
+(SCHEMA_RENAME for unambiguous renames + wire_evidence provenance); L1 rules consume it
+via ctx.signals (page/offset_to_cursor, rename_field, cursor_next_path_shift,
+nested_path_shift). Engine cold arm on page_to_cursor now proposes (rung 1, 0 tokens),
+warm hits L0; gross_to_net still semantic. Gates: make test 2484+134+396 / ui 158 green;
+e2e test_03 fake path 5/5; live-stack error pre-existing (verified on base via stash).
+Next: REQ-027 sub-step 3 (the live chain: sync -> detect -> handle -> gate -> approve).

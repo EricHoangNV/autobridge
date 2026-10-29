@@ -184,6 +184,440 @@ def _extract_http_signals(
     return signals
 
 
+# ---------------------------------------------------------------------------
+# Wire-observed evidence (REQ-027 sub-step 2).
+#
+# Everything here derives from the observed vendor responses carried in
+# ``operation_results`` (``raw_pages`` envelopes + ``records`` extracted via
+# the spec's ``items_path``). Never from scenario ids, fault YAML or answer
+# keys. The detector attaches this to signals so the classifier and the L1
+# rules can use it: the fingerprint compares spec-shaped summaries, so a
+# page->cursor flip never shows as a strategy change there — but the wire
+# envelope (``next_cursor`` present, ``total`` gone) does.
+# ---------------------------------------------------------------------------
+
+# Closed set of known cursor-leaf names (lowercased for comparison).
+_CURSOR_LEAF_NAMES: frozenset[str] = frozenset(
+    {
+        "next_cursor",
+        "nextcursor",
+        "cursor",
+        "next_page_token",
+        "nextpagetoken",
+        "next_token",
+        "nexttoken",
+        "continuation_token",
+        "continuationtoken",
+        "page_token",
+        "pagetoken",
+        "end_cursor",
+        "endcursor",
+    }
+)
+
+# Closed set of known total-count leaf names (lowercased for comparison).
+_TOTAL_LEAF_NAMES: frozenset[str] = frozenset(
+    {
+        "total",
+        "totalcount",
+        "total_count",
+        "totalrecords",
+        "total_records",
+        "count_total",
+    }
+)
+
+_WIRE_SAMPLE_LIMIT = 64
+_WIRE_ADDED_SAMPLE_RECORDS = 5
+
+
+def _wire_truncate(value: Any) -> str:
+    text = value if isinstance(value, str) else repr(value)
+    return text[:_WIRE_SAMPLE_LIMIT]
+
+
+def _raw_pages_of(res: Any) -> list[Any]:
+    pages = getattr(res, "raw_pages", None)
+    if pages is None and isinstance(res, dict):
+        pages = res.get("raw_pages")
+    return list(pages) if isinstance(pages, list) else []
+
+
+def _records_of(res: Any) -> list[Any]:
+    records = getattr(res, "records", None)
+    if records is None and isinstance(res, dict):
+        records = res.get("records")
+    return list(records) if isinstance(records, list) else []
+
+
+def _wire_cursor_values(
+    raw_pages: list[Any],
+) -> dict[str, list[Any]]:
+    """Non-null values seen per cursor-like envelope key (REQ-027).
+
+    A null cursor leaf is normal (last page, request echo); only a
+    transmitted cursor value contradicts the spec, so the contradiction
+    checks below ignore nulls.
+    """
+    seen: dict[str, list[Any]] = {}
+    for page in raw_pages:
+        if not isinstance(page, dict):
+            continue
+        for key, value in page.items():
+            if not isinstance(key, str) or value is None:
+                continue
+            lowered = key.lower()
+            if lowered in _CURSOR_LEAF_NAMES or "cursor" in lowered:
+                seen.setdefault(key, []).append(value)
+    return seen
+
+
+def _wire_total_present(page: Any) -> bool:
+    if not isinstance(page, dict):
+        return False
+    return any(
+        isinstance(key, str) and key.lower() in _TOTAL_LEAF_NAMES for key in page
+    )
+
+
+def _spec_op_pagination(spec: Any, op_name: str) -> dict[str, Any]:
+    if not isinstance(spec, dict):
+        return {}
+    ops = spec.get("operations")
+    if not isinstance(ops, dict):
+        return {}
+    op_spec = ops.get(op_name)
+    if not isinstance(op_spec, dict):
+        return {}
+    pag = op_spec.get("pagination")
+    return dict(pag) if isinstance(pag, dict) else {}
+
+
+def _jsonpath_extracts(data: Any, path: str | None) -> Any:
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        from autobridge.runtime.interpreter import extract_jsonpath  # noqa: PLC0415
+    except Exception:  # pragma: no cover - interpreter always present in practice
+        return None
+    try:
+        return extract_jsonpath(data, path)
+    except Exception:
+        return None
+
+
+def _array_candidates(page: Any) -> list[str]:
+    """Candidate items arrays on a raw envelope (top level + one nesting level).
+
+    Reports ``$.<key>`` (or ``$.<parent>.<key>``) paths whose value is a
+    non-empty list of dicts. Depth is capped at two levels so the result
+    stays predictable; deeper shifts escalate for the operator.
+    """
+    if not isinstance(page, dict):
+        return []
+    out: list[str] = []
+    for key, value in page.items():
+        if not isinstance(key, str):
+            continue
+        if (
+            isinstance(value, list)
+            and value
+            and all(isinstance(item, dict) for item in value)
+        ):
+            out.append(f"$.{key}")
+        elif isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                if not isinstance(sub_key, str):
+                    continue
+                if (
+                    isinstance(sub_value, list)
+                    and sub_value
+                    and all(isinstance(item, dict) for item in sub_value)
+                ):
+                    out.append(f"$.{key}.{sub_key}")
+    return out
+
+
+def _observe_wire_pagination(
+    spec: Any,
+    operation_results: dict[str, Any],
+    *,
+    source_run_id: str | None = None,
+) -> list[DriftSignal]:
+    """Emit ``pagination_changed`` signals from wire-vs-spec contradictions.
+
+    Only fires when the observed envelope contradicts the spec's pagination
+    strategy, so a healthy baseline sync (wire matches spec) emits nothing.
+    """
+    signals: list[DriftSignal] = []
+    if not isinstance(operation_results, dict):
+        return signals
+    for op_name, res in operation_results.items():
+        raw_pages = _raw_pages_of(res)
+        if not raw_pages:
+            continue
+        first = raw_pages[0] if isinstance(raw_pages[0], dict) else None
+        if first is None:
+            continue
+        pag = _spec_op_pagination(spec, op_name)
+        if not pag:
+            continue
+        strategy = pag.get("strategy")
+        cursor_values = _wire_cursor_values(raw_pages)
+        total_present = any(_wire_total_present(page) for page in raw_pages)
+        envelope_keys = sorted(k for k in first if isinstance(k, str))
+        next_path = pag.get("next_path")
+        items_path = pag.get("items_path")
+
+        if strategy in ("page", "offset"):  # noqa: SIM102
+            # A transmitted cursor value with no total anywhere contradicts
+            # a page/offset spec. Null leaves are normal (last page) and
+            # never fire on their own.
+            if cursor_values and not total_present:
+                cursor_leaf = next(iter(cursor_values))
+                sample = cursor_values[cursor_leaf][0]
+                signals.append(
+                    DriftSignal(
+                        kind="pagination_changed",
+                        operation=op_name,
+                        severity="high",
+                        message=(
+                            f"Wire serves cursor pagination on {op_name} "
+                            f"(spec strategy {strategy})"
+                        ),
+                        details={
+                            "spec_strategy": strategy,
+                            "wire_strategy_hint": "cursor",
+                            "cursor_field": cursor_leaf,
+                            "cursor_sample": _wire_truncate(sample),
+                            "total_present": False,
+                            "envelope_keys": envelope_keys,
+                            "wire_evidence": "raw_pages[0]",
+                        },
+                        source_run_id=source_run_id,
+                    )
+                )
+                continue
+        if strategy in ("cursor", "body_cursor"):
+            next_hit = any(
+                _jsonpath_extracts(page, next_path) is not None
+                for page in raw_pages
+                if isinstance(page, dict)
+            )
+            # The spec's next_path reads null everywhere, yet the wire
+            # transmitted a cursor value the spec failed to pick up: the
+            # response leaf was renamed (or the strategy flipped to page).
+            if not next_hit and cursor_values:
+                cursor_leaf = next(iter(cursor_values))
+                signals.append(
+                    DriftSignal(
+                        kind="pagination_changed",
+                        operation=op_name,
+                        severity="high",
+                        message=(
+                            f"Spec next_path {next_path!r} reads null on {op_name}; "
+                            f"wire carries {cursor_leaf!r}"
+                        ),
+                        details={
+                            "spec_strategy": strategy,
+                            "spec_next_path": next_path,
+                            "wire_strategy_hint": "page" if total_present else "cursor",
+                            "observed_leaf": cursor_leaf,
+                            "cursor_sample": _wire_truncate(cursor_values[cursor_leaf][0]),
+                            "total_present": total_present,
+                            "envelope_keys": envelope_keys,
+                            "wire_evidence": "raw_pages",
+                        },
+                        source_run_id=source_run_id,
+                    )
+                )
+                continue
+        # Items-path shift: the spec's items_path extracts nothing but the
+        # envelope carries candidate arrays.
+        if isinstance(items_path, str) and items_path:
+            extracted = _records_of(res)
+            if not extracted:
+                candidates = _array_candidates(first)
+                if candidates:
+                    signals.append(
+                        DriftSignal(
+                            kind="pagination_changed",
+                            operation=op_name,
+                            severity="high",
+                            message=(
+                                f"Spec items_path {items_path!r} extracts no "
+                                f"records on {op_name}; wire carries {candidates}"
+                            ),
+                            details={
+                                "spec_strategy": strategy,
+                                "spec_items_path": items_path,
+                                "items_extracted": 0,
+                                "array_candidates": candidates,
+                                "envelope_keys": envelope_keys,
+                                "wire_evidence": "raw_pages[0]",
+                            },
+                            source_run_id=source_run_id,
+                        )
+                    )
+    return signals
+
+
+def _spec_field_top_keys(spec: Any, entity: str) -> set[str]:
+    """Top-level wire keys the spec's field paths cover for *entity*."""
+    covered: set[str] = set()
+    if not isinstance(spec, dict):
+        return covered
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return covered
+    ent_spec = entities.get(entity)
+    if not isinstance(ent_spec, dict):
+        return covered
+    fields = ent_spec.get("fields")
+    if not isinstance(fields, dict):
+        return covered
+    for fm in fields.values():
+        if not isinstance(fm, dict):
+            continue
+        paths: list[Any] = []
+        if fm.get("path") is not None:
+            paths.append(fm.get("path"))
+        extra_paths = fm.get("paths")
+        if isinstance(extra_paths, list):
+            paths.extend(extra_paths)
+        for path in paths:
+            if not isinstance(path, str) or not path.startswith("$."):
+                continue
+            rest = path[2:]
+            if not rest:
+                continue
+            covered.add(rest.split(".")[0])
+    return covered
+
+
+def _wire_records_for_entity(
+    spec: Any,
+    operation_results: dict[str, Any],
+    entity: str,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Wire records backing *entity* via its ``from_operation`` (if known)."""
+    if not isinstance(spec, dict) or not isinstance(operation_results, dict):
+        return None, []
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return None, []
+    ent_spec = entities.get(entity)
+    op_name: str | None = None
+    if isinstance(ent_spec, dict):
+        for key in ("from_operation", "from"):
+            cand = ent_spec.get(key)
+            if isinstance(cand, str):
+                op_name = cand
+                break
+    if op_name is None:
+        # Fall back to the single operation when the spec has exactly one.
+        ops = spec.get("operations")
+        if isinstance(ops, dict) and len(ops) == 1:
+            op_name = next(iter(ops))
+    if op_name is None:
+        return None, []
+    res = operation_results.get(op_name)
+    records = [r for r in _records_of(res) if isinstance(r, dict)]
+    return op_name, records
+
+
+def _type_name_of(value: Any) -> str:
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if value is None:
+        return "null"
+    if isinstance(value, str):
+        return "str"
+    if isinstance(value, list):
+        return "list"
+    if isinstance(value, dict):
+        return "dict"
+    return type(value).__name__
+
+
+def _observe_wire_schema(
+    spec: Any,
+    operation_results: dict[str, Any],
+    *,
+    source_run_id: str | None = None,
+) -> list[DriftSignal]:
+    """Emit ``keys_changed`` signals for spec-mapped fields missing on the wire.
+
+    Only fires when at least one spec-covered field is absent from every
+    observed wire record, so a healthy baseline (wire carries what the spec
+    maps) emits nothing. Added wire keys come with truncated sample values
+    so rules can propose the new path deterministically.
+    """
+    signals: list[DriftSignal] = []
+    if not isinstance(spec, dict) or not isinstance(operation_results, dict):
+        return signals
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return signals
+    for entity in entities:
+        if not isinstance(entity, str):
+            continue
+        op_name, wire_records = _wire_records_for_entity(
+            spec, operation_results, entity
+        )
+        if not wire_records:
+            continue
+        covered = _spec_field_top_keys(spec, entity)
+        if not covered:
+            continue
+        wire_keys: set[str] = set()
+        for rec in wire_records[:_WIRE_ADDED_SAMPLE_RECORDS]:
+            wire_keys.update(k for k in rec if isinstance(k, str))
+        for rec in wire_records[_WIRE_ADDED_SAMPLE_RECORDS:]:
+            wire_keys.update(k for k in rec if isinstance(k, str))
+        missing = sorted(k for k in covered if k not in wire_keys)
+        if not missing:
+            continue
+        added: list[dict[str, Any]] = []
+        for key in sorted(wire_keys - covered):
+            sample: Any = None
+            for rec in wire_records[:_WIRE_ADDED_SAMPLE_RECORDS]:
+                if key in rec:
+                    sample = rec[key]
+                    break
+            added.append(
+                {
+                    "key": key,
+                    "sample": _wire_truncate(sample),
+                    "type": _type_name_of(sample),
+                }
+            )
+        signals.append(
+            DriftSignal(
+                kind="keys_changed",
+                operation=op_name,
+                entity=entity,
+                severity="medium",
+                message=(
+                    f"Wire no longer carries {missing} for {entity}; "
+                    f"new keys: {[a['key'] for a in added]}"
+                ),
+                details={
+                    "entity": entity,
+                    "missing": missing,
+                    "added": added,
+                    "wire_evidence": "records",
+                },
+                source_run_id=source_run_id,
+            )
+        )
+    return signals
+
+
 def signals_from_sync(
     sync_summary: dict[str, Any],
     *,
@@ -419,6 +853,16 @@ def signals_from_sync(
 
     # HTTP error signals from operation results
     signals.extend(_extract_http_signals(operation_results, source_run_id=source_run_id))
+
+    # Wire-observed evidence (REQ-027): what the vendor actually served on
+    # the wire, derived only from raw_pages/records in operation_results.
+    # Never from scenario ids, YAML or answer keys.
+    signals.extend(
+        _observe_wire_pagination(spec, operation_results, source_run_id=source_run_id)
+    )
+    signals.extend(
+        _observe_wire_schema(spec, operation_results, source_run_id=source_run_id)
+    )
 
     # Fingerprint delta signals (when caller supplies both fingerprints)
     if previous_fingerprint is not None and current_fingerprint is not None:

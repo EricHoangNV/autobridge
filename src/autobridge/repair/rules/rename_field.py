@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from autobridge.repair.rules.wire import wire_rename_hint
+
 if TYPE_CHECKING:
     from autobridge.repair.context import RepairContext
 
@@ -19,6 +21,29 @@ RULE_ID = "rename_field"
 CONFIDENCE = 0.92
 VERIFICATION_LEVEL = "visible"
 PRODUCES_PATCH = True
+
+
+def _rename_info(ctx: RepairContext) -> tuple[str, str, str] | None:
+    """Resolve (entity, old_field, new_field) from delta, extra or wire."""
+    info = _delta_rename_info(ctx.fingerprint_delta)
+    if info is None:
+        info = _extra_rename_info(ctx)
+    if info is None:
+        # Wire evidence (REQ-027): single missing + single added wire key
+        # observed on the raw records by the detector.
+        hint = wire_rename_hint(ctx.signals)
+        if hint is not None:
+            entity, old_field, new_field = hint
+            if entity is None:
+                # Infer from spec like the extra path does.
+                for ent_name, ent_spec in ctx.spec.get("entities", {}).items():
+                    if isinstance(ent_spec, dict) and old_field in ent_spec.get("fields", {}):
+                        entity = ent_name
+                        break
+                if entity is None:
+                    entity = next(iter(ctx.spec.get("entities", {})), "Reservation")
+            info = (entity, old_field, new_field)
+    return info
 
 
 def _delta_rename_info(delta: Any | None) -> tuple[str, str, str] | None:
@@ -117,10 +142,8 @@ def precondition(ctx: RepairContext) -> bool:
     """True when a single-field rename can be inferred."""
     if ctx.drift_class != "SCHEMA_RENAME":
         return False
-    # Try delta first, then extra
-    info = _delta_rename_info(ctx.fingerprint_delta)
-    if info is None:
-        info = _extra_rename_info(ctx)
+    # Try delta first, then extra, then wire evidence
+    info = _rename_info(ctx)
     if info is None:
         return False
     entity, old_field, new_field = info
@@ -141,9 +164,7 @@ def precondition(ctx: RepairContext) -> bool:
 
 def generate_patch(ctx: RepairContext) -> list[dict[str, Any]]:
     """Produce JSON Patch updating the source path for the renamed field."""
-    info = _delta_rename_info(ctx.fingerprint_delta)
-    if info is None:
-        info = _extra_rename_info(ctx)
+    info = _rename_info(ctx)
     if info is None:
         return []
     entity, old_field, new_field = info

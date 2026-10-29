@@ -1843,3 +1843,34 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 
 ### REQ-027 sub-step 1 — mode-correct simulator addresses (sbx1 2026-10-29)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). One place decides simulator addresses: `in_compose_network()` (ADMIN_NET_HOST set or /.dockerenv present) in `src/autobridge/control/demo_targets.py`, used by both admin URLs (`routes/demo.py`) and the new data-plane resolver (`public_base_url_for_target`: compose `http://<id>:8000`, host `http://localhost:<public_port>` from the registry). `normalize_connector_base_url` rewrites registry hostnames/aliases and loopback-with-registry-port to the mode-correct form, passes `${VAR}`/vendor/unknown through. Applied server-side in `POST /connectors` and the build `base_url_override` fallback, so demo/build/UI inputs all work in both modes. Bootstrap gains a generic `sim-<slug>` → `${SLUG}_BASE_URL` mapping (atlas/harbor/localhost branches keep precedence; no vendor literal added). Demo step 1 sends the canonical service-DNS form, reads the stored connector back, and fails loudly on a leaked Compose hostname in local mode; evidence names sent/stored/source. Gates: `make lint`, `make typecheck` green; `make test` green (autobridge 2478, verifier 134, simulators 396 + ui 158; one flaky FIAS replay test failed once, passes alone/rerun, untouched). E2E not runnable in sbx1 (no Compose); unit + in-process cover the change. Gotcha: unit-test env must monkeypatch `in_compose_network` (a container CI host has /.dockerenv); explicit `compose=` kwarg exists for that.
+
+### REQ-027 sub-step 2 — detector carries the evidence (sbx1 2026-10-29)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation).
+What: a real sync against a faulted simulator now produces drift signals + classifier
+provenance holding what the L1 rules need — derived from observed responses only
+(raw_pages envelopes + records), never scenario ids / YAML / answer keys.
+- `drift/signals.py`: `_observe_wire_pagination` (cursor leaf + total presence vs spec
+  strategy; only non-null transmitted cursor values count — null leaves are normal),
+  `_observe_wire_schema` (spec-mapped keys missing on every wire record + uncovered wire
+  keys with truncated samples/types), items-path shift (spec path extracts nothing, 1+
+  candidate arrays, depth<=2). Baseline syncs emit nothing new (all 92 drift/signal tests green).
+- `drift/classifier.py`: `_match_wire_schema_rename` (single missing + single added wire
+  key -> SCHEMA_RENAME, ahead of the canonical-types inference which misreads renames as
+  type-change/removal); `wire_evidence` provenance in classification.details.
+- `repair/rules/wire.py` (new shared helper, not a rule): cursor/rename/next-path/items
+  hints from ctx.signals. `page_to_cursor`, `offset_to_cursor` fire on wire cursor hints
+  (next_path follows the observed response leaf; cursor_param stays the request param);
+  `rename_field`, `cursor_next_path_shift`, `nested_path_shift` accept wire sources.
+  Strategy flips patch all same-strategy ops (vendor-level; evidence on one op suffices).
+  Multi-candidate renames stay unclaimed (no guessing).
+- Tests: `tests/unit/test_autobridge_detector_wire_evidence.py` (6: page/offset/rename/
+  next-path/items-shift end-to-end signals->classify->handle, 0 model calls + baseline
+  silence); updated 3 bench ablation expectations to the new honest behavior (cold page_to_cursor
+  proposes rung 1 / warm L0 hit / curve [1,0,0] cold + [0,0,0] warm, 0 frontier tokens).
+  Gross_to_net still derives SEMANTIC_VALUE_DRIFT (Harbor normal envelope no longer trips the observer).
+- Docs: `docs/architecture.md` §4.1 (wire-evidence contract).
+- Gates: make lint/typecheck green; make test 2484+134+396 pass, ui 158 pass; e2e test_03
+  fake-transport 5/5 green. Live-stack test errors at fixture setup identically on base
+  (environmental, verified via stash). Multi-op narrowing + cursor_param-from-wire were tried
+  and reverted (broke oracle / fake param contract) — see learnings.
+Files: src/autobridge/drift/{signals,classifier}.py, src/autobridge/repair/rules/{wire,page_to_cursor,offset_to_cursor,rename_field,cursor_next_path_shift,nested_path_shift}.py, bench/ablation.py (docstring), tests + docs.

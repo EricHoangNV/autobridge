@@ -192,6 +192,33 @@ Migrations live in `alembic/versions/` (`0001_core_data_model`,
 `0002_job_queue`). `DATABASE_URL` in `.env` selects SQLite (default) or
 Postgres.
 
+### 4.1 Wire-observed detector evidence (REQ-027 sub-step 2, plan §2.5)
+
+The fingerprint compares spec-shaped summaries, so a page→cursor flip never
+shows as a strategy change there (both sides read the strategy from the
+spec). The detector therefore also attaches what the vendor actually served,
+derived only from the observed `raw_pages` envelopes and `records` — never
+from scenario ids, fault YAML or answer keys:
+
+- pagination contradiction: a transmitted (non-null) cursor leaf with no
+  total anywhere contradicts a `page`/`offset` spec; a cursor-family spec
+  whose `next_path` reads null on every page while the wire carries a
+  non-null cursor leaf names the renamed leaf. Null leaves are normal (last
+  page, request echo) and never fire alone.
+- schema observation: spec-mapped top-level keys absent from every wire
+  record, plus the uncovered wire keys with truncated samples and types.
+- items-path shift: the spec's `items_path` extracts nothing while the
+  envelope carries candidate arrays (`$.key` or `$.parent.key`, depth ≤ 2).
+
+`classify` maps these to the canonical classes (`PAGINATION_CHANGE`,
+`SCHEMA_RENAME` for an unambiguous single↔single rename) and records the
+provenance in `classification.details["wire_evidence"]` (signal kind,
+operation, source `raw_pages` vs `records`). L1 rules read the evidence from
+`ctx.signals` (`repair/rules/wire.py`); a response leaf and a request param
+are different names, so `cursor_param` is never taken from the wire.
+Ambiguous evidence (several added keys) stays unclaimed: no guessing, the
+drift falls back to the previous classification and escalates.
+
 ## 5. ConnectorSpec v1/v2 (plan §2.4)
 
 A connector is a strict YAML document validated by `src/autobridge/spec/models.py`

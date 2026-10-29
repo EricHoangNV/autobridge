@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from autobridge.repair.rules.wire import wire_items_shift
+
 if TYPE_CHECKING:
     from autobridge.repair.context import RepairContext
 
@@ -59,6 +61,13 @@ def precondition(ctx: RepairContext) -> bool:
     info = _items_path_delta(ctx.fingerprint_delta)
     if info is not None:
         return True
+    # Wire evidence (REQ-027): the spec's items_path extracts nothing while
+    # the envelope carries exactly one candidate array.
+    shift = wire_items_shift(ctx.signals)
+    if shift is not None:
+        op_name, _new_path = shift
+        if isinstance(ctx.spec.get("operations", {}).get(op_name), dict):
+            return True
     # Check explicit extra
     if isinstance(ctx.extra.get("items_path"), dict):
         ip = ctx.extra["items_path"]
@@ -82,6 +91,17 @@ def generate_patch(ctx: RepairContext) -> list[dict[str, Any]]:
             {
                 "op": "replace",
                 "path": pointer,
+                "value": new_path,
+            }
+        ]
+    # Wire evidence form: single unambiguous candidate array.
+    shift = wire_items_shift(ctx.signals)
+    if shift is not None:
+        op_name, new_path = shift
+        return [
+            {
+                "op": "replace",
+                "path": f"/operations/{op_name}/pagination/items_path",
                 "value": new_path,
             }
         ]

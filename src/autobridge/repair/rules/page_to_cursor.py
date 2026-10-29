@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from autobridge.repair.rules.wire import wire_cursor_for_strategy
+
 if TYPE_CHECKING:
     from autobridge.repair.context import RepairContext
 
@@ -60,6 +62,13 @@ def precondition(ctx: RepairContext) -> bool:
     # Spec must currently be page for at least one op
     if not _operations_with_page(ctx.spec):
         return False
+    # Wire evidence (REQ-027): the detector saw a cursor leaf on the raw
+    # envelope for a page-strategy op. The fingerprint delta never shows a
+    # strategy flip (strategies come from the spec), so this is the signal
+    # the real sync path provides.
+    wire = wire_cursor_for_strategy(ctx.signals, {"page"})
+    if wire:
+        return True
     # If delta is present, require it to show page->cursor
     if ctx.fingerprint_delta is not None:  # noqa: SIM102
         if not _delta_shows_page_to_cursor(ctx.fingerprint_delta):  # noqa: SIM102
@@ -72,6 +81,11 @@ def precondition(ctx: RepairContext) -> bool:
 
 def generate_patch(ctx: RepairContext) -> list[dict[str, Any]]:
     ops = _operations_with_page(ctx.spec)
+    # Prefer the wire-observed cursor leaf over the default names: the patch
+    # then points at the field the vendor actually serves. A strategy flip
+    # is vendor-level, so every page op flips (evidence on one op plus the
+    # same spec strategy on the others); the verifier gate confirms.
+    wire = wire_cursor_for_strategy(ctx.signals, {"page"})
     # If specific operations are named in extra, filter to those
     if ctx.extra.get("operations"):
         wanted = ctx.extra["operations"]
@@ -79,10 +93,14 @@ def generate_patch(ctx: RepairContext) -> list[dict[str, Any]]:
             ops = [o for o in ops if o in wanted]
     patches: list[dict[str, Any]] = []
     for op_name in ops:
+        # next_path follows the wire-observed response leaf; cursor_param
+        # stays the request param the vendor reads (response leaf and
+        # request param are different names).
+        next_path = f"$.{wire[op_name]}" if op_name in wire else "$.next_cursor"
         base = f"/operations/{op_name}/pagination"
         patches.append({"op": "replace", "path": f"{base}/strategy", "value": "cursor"})
         patches.append({"op": "replace", "path": f"{base}/cursor_param", "value": "cursor"})
-        patches.append({"op": "replace", "path": f"{base}/next_path", "value": "$.next_cursor"})
+        patches.append({"op": "replace", "path": f"{base}/next_path", "value": next_path})
         patches.append({"op": "replace", "path": f"{base}/page_param", "value": None})
         # Ensure stop_when includes repeated_cursor guard ( Harbor-style )
         patches.append({"op": "replace", "path": f"{base}/stop_when", "value": ["null_cursor", "repeated_cursor"]})
