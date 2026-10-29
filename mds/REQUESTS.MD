@@ -140,7 +140,7 @@ assertion that `make demo` step 4 passes live (owner's host) and in replay. Afte
      entry's "times reused" goes up. Assert this sequence in an e2e test.
 
 ### REQ-022 — FIAS PABX simulator and a real on-premise edge agent (replaces EdgePOS) (2026-10-28)
-Status: IN_PROGRESS (reopened by owner 2026-10-29: sub-steps A–E merged, but the owner check "on 6a294fd8" below is still open: the e2e heartbeat wait and the doubled docs label on the simulators index. Do it next, before more REQ-025 work; then mark DONE.)
+Status: IN_PROGRESS (sbx1 since 2026-10-29 00:30; owner check on 6a294fd8: e2e heartbeat wait + simulators docs label)
 Owner: make the edge story reflect how hotel on-premise integrations really work. Replace the EdgePOS toy (P2.S2) with
 a **FIAS PABX** simulator speaking the public FIAS protocol, and turn the edge worker into an on-premise agent.
 **Spec (owner, binding): implement from `simulators/docs/fias-pabx.md`**, the hotel's PABX interface
