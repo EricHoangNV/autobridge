@@ -7,7 +7,7 @@ Owner priority (2026-10-29 10:40, supersedes the list below): **REQ-027 first.**
 describe the REQ-027 demo, so finish REQ-023 after REQ-027 lands (or update it then).
 
 ### REQ-027 — Auto-detect + auto-heal end to end on the live stack, and a demo that proves it (2026-10-29)
-Status: IN_PROGRESS (sbx1 2026-10-29 — knowledge-page check + sim-keys defaults code DONE on branch; remaining: owner keyed-stack run (make demo 8/8, /knowledge state, UI spec), then L3 output-room + Harbor money-invariant inference)
+Status: IN_PROGRESS (sbx1 2026-10-29 — knowledge-page check + sim-keys defaults code DONE on branch; remaining: owner keyed-stack run (make demo 8/8, /knowledge state, UI spec), then L3 output-room + Harbor money-invariant inference) **Fix first: owner check "on 96ba3137" (demo 6/8: PABX v3 build rejected, step 7 read race).**
 Why: it is the product's headline claim and today only FIAS (demo step 8) shows it. Owner checks on the host
 (2026-10-29, main at f61274b8, keyed local stack):
 - After REQ-024's honest fix (a62013dc) every engine arm escalates with 0 fixes: the detector output does not carry
@@ -102,6 +102,22 @@ supports it), count reasoning tokens separately in the ledger, and make sure the
 verifier then judges. Third (labelled honestly already, lower priority): step 4's live leg is Blocked because the
 docs-built Harbor spec has no money invariant; infer it from the docs if they state gross totals, otherwise keep the
 labelled gap.
+
+**Owner check (2026-10-29, on 96ba3137): demo keys fixed, but `make demo` is now 6/8 on the owner's host. Fix first.**
+Default simulator keys verified: with `ATLAS_API_KEY` unset, `test_027_live_chain.py` 2/2. Knowledge data mostly
+there (`page_to_cursor` learned, `times_reused: 1`; atlaspms v1, harborpms v1, meridianpms v2 with v1 refused). But
+after `POST /demo/reset` and `make demo` on the keyed local stack:
+1. **Step 8 fails: the PABX docs build with v3 is rejected.** `spec validation: source.base_url: base_url must be an
+   http(s) URL or start with a ${ENV} placeholder [input_value='edge-relay://queue/fias-commands']`. This is the
+   "use the connector's base_url verbatim" change from the sub-step 3 owner fix (4ca7586a) meeting the edge
+   connector's relay address. So the PABX profile has `vocabulary: ""` and `refused_vocabularies: ["v3"]`. Either
+   the `fias_tcp`/edge source accepts its relay address form, or the override applies only to http connectors;
+   decide by protocol, not by name.
+2. **Step 7 failed its new assertion once** ("knowledge lists meridianpms under v2 with v1 refused"), although
+   `GET /knowledge` read right after shows `vocabulary v2, refused ["v1"]`. Most likely the step reads the profile
+   before the second build's write is visible. Wait for the build to finish (or read the profile from the build's
+   response) instead of reading once.
+Gate: `make demo` 8/8 on a keyed local stack after `POST /demo/reset`, run twice in a row.
 
 ### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 19:10; matrix full-climb merged, remaining: owner record-frontier capture + live step-4 check)
