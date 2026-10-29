@@ -159,6 +159,17 @@ queued after this run) has nothing to re-open. The verdict line in FEEDBACKS is 
    still wanted as a label, store it on the build as provenance only. Tests for the 422 and for each caller.
 Gates: `make test`, keyed `make local-up && make e2e && make demo` 8/8, `make up` likewise. Do not weaken guards.
 
+### REQ-038 — Flaky FIAS replay test makes `make test` randomly red (Code Review Cycle 4, AR-4-4) (2026-10-29)
+Status: OPEN
+`tests/unit/test_simulators_fias_pabx.py::test_replay_postings_resend_same_pno` failed in the Cycle 4 review's full
+`make test` (`assert 7 == (6 + 2)` on `postings_sent`, line ~665) and passed on rerun; the earlier owner run also saw
+it as "one load-sensitive FIAS timing flake". It races wall-clock deadlines (8 s pumps). Make it deterministic: drive
+the PABX link with an injected clock or explicit events (wait for the specific frames/acks, not a time window), so the
+assertion holds under load; no retries or longer sleeps. Acceptance: the test passes 50 times in a row alone and inside
+the full `make test` under parallel load; same pattern applied to any other FIAS test that waits on wall-clock windows.
+Also note for REQ-036 item 5 (AR-4-3): `RepairController._handle_semantic_climb` must pass the real surviving-hypothesis
+count to `run_frontier_climb`, never a default `1`; the L3 gate assertion must test a counted number.
+
 ### REQ-034 — Directive: §2 fault injection — FIAS admin unreachable from control in Compose; /demo/reset and /demo/inject-fault fail for sim-fias-pabx (2026-10-29)
 Status: OPEN (audit 2026-10-29, opencode meta/muse-wonder-1.0 (escalation))
 **Owner decision (2026-10-29): option (a).** Give the FIAS simulator's admin listener a route on admin-net only, so
