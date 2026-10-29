@@ -170,7 +170,7 @@ def test_create_connector_missing_fields(client: Any) -> None:  # type: ignore[n
     assert r.status_code == 422
 
 
-def test_get_connector_detail(client: Any) -> None:  # type: ignore[no-untyped-def]
+def test_get_connector_detail(client: Any, monkeypatch: Any) -> None:  # type: ignore[no-untyped-def]
     c = _create_connector(client)
     r = client.get(f"/connectors/{c['id']}")
     assert r.status_code == 200
@@ -183,7 +183,7 @@ def test_get_connector_detail(client: Any) -> None:  # type: ignore[no-untyped-d
     # Ensure credential value not leaked (spec carries ref only)
     assert "HARBOR_API_KEY" in r.text
     # But actual secret value (if env) not present
-    os.environ["HARBOR_API_KEY"] = "supersecret123"
+    monkeypatch.setenv("HARBOR_API_KEY", "supersecret123")
     r2 = client.get(f"/connectors/{c['id']}")
     assert "supersecret123" not in r2.text
 
@@ -684,3 +684,32 @@ def test_demo_inject_fault_meridian_target(client: Any) -> None:  # type: ignore
     r2 = client.post("/demo/inject-fault", json={"target": "meridian", "scenario_id": "meridian_cursor_renamed"})
     assert r2.status_code == 200
     assert r2.json()["target"] == "sim-meridian"
+
+
+def test_framed_build_with_relay_record_address_uses_docs_fias_base(client: Any) -> None:  # type: ignore[no-untyped-def]
+    """Owner check on 96ba3137 (demo 6/8, step 8): a connector record may
+    carry the edge relay queue address for its runtime target; the framed
+    docs build must still compile to a valid spec with the docs-derived
+    fias:// source instead of 422ing on the relay address."""
+    from pathlib import Path as _Path
+
+    fias_docs = (_Path(__file__).resolve().parents[2] / "simulators" / "docs" / "fias-pabx.md").read_text(encoding="utf-8")
+    c = _create_connector(
+        client,
+        name="PABX edge",
+        base_url="edge-relay://queue/fias-commands",
+        credential_ref="EDGE_TOKEN",
+        vendor_docs_ref="simulators/docs/fias-pabx.md",
+        target_entities=["FolioCharge"],
+        runtime_target={"kind": "edge"},
+    )
+    r = client.post(
+        f"/connectors/{c['id']}/build",
+        json={"docs_text": fias_docs, "spec_vocabulary": "v3"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "succeeded"
+    rels = client.get("/releases").json()
+    assert len(rels) == 1
+    assert rels[0]["spec"]["source"]["protocol"] == "fias_tcp"
+    assert rels[0]["spec"]["source"]["base_url"] == "fias://listen:5010"

@@ -3159,3 +3159,35 @@ Sub-step 4 (demo steps on the live chain) plus the fixes for the owner check aft
 **Notes for next iteration:**
 - Same keyed-stack verification covers this plus the knowledge-page state; then REQ-027 sub-steps 5-6 (per-scenario live e2e + honest bench rerun with the new L3 budget)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+## REQ-027 owner check "fix first": PABX relay base_url + step 7 profile race (sbx1 2026-10-29)
+**Date:** 2026-10-29
+**Ref:** REQ-027 owner check on 96ba3137 (demo 6/8 on the owner's host)
+
+**What was done:**
+- PABX v3 build rejected: `source.base_url` validation refused the connector record's `edge-relay://queue/fias-commands`. Root cause: the sub-step 3 "verbatim base_url" fix feeds the record address into every build, and `_compile_framed_spec` always honored the override — but a relay queue address is a runtime-target routing concern, not a spec source address. Fix (decided by protocol, per owner): framed builds honor only `fias://` overrides, else the docs-derived `fias://listen:{port}` stands (`src/autobridge/discovery/bootstrap.py`)
+- Step 7 profile read race: replaced the single `/knowledge` read with `_poll_knowledge_profile` (poll until the meridianpms profile shows v2 + refused v1, bounded tries, every poll recorded; returns last seen so the loud assertion still fires on timeout). Step 8's PABX v3 assertion polls the same way
+- Tests: framed override ignored (relay → docs-derived fias://) + honored (explicit fias:// wins); poll converges on second read; poll returns last profile on timeout without inventing state
+
+**Files changed:**
+- `src/autobridge/discovery/bootstrap.py`, `bench/demo.py`, `tests/unit/test_autobridge_fias_vocab.py`, `tests/unit/test_autobridge_demo.py`
+
+**Notes for next iteration:**
+- Owner gate for this iteration: keyed `make demo` 8/8 twice in a row after `POST /demo/reset`, then sub-steps 5-6
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+## REQ-027 gate flake: HARBOR_API_KEY leak fixed (sbx1 2026-10-29)
+**Date:** 2026-10-29
+**Ref:** `make test` order-dependent teardown errors
+
+**What was done:**
+- `make test` failed intermittently (3 teardown ERRORs in `test_autobridge_activation.py`, `_no_real_dns` trips on `localhost`, only with coverage, ~1 run in 8): root-caused to `test_get_connector_detail` assigning `os.environ["HARBOR_API_KEY"]` directly without cleanup — when random order ran it before the activation tests, their syncs passed auth and attempted real HTTP (trip); otherwise they Blocked pre-HTTP and stayed green
+- Fixed with `monkeypatch.setenv` (auto-reverted); previously-failing seed 3092249606 now passes clean; 6 consecutive full-package runs green
+- Reverted the temporary conftest DNS-debug instrumentation (no conftest diff remains)
+
+**Files changed:**
+- `tests/unit/test_autobridge_control_api.py` (leak fix), `mds/LEARNINGS.MD` (entry 41)
+
+**Notes for next iteration:**
+- Pre-existing flake, not caused by this iteration's changes; the fix removes it for all future runs
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)

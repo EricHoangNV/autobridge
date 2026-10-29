@@ -536,3 +536,40 @@ def test_capabilities_payload_lists_v3() -> None:
     assert payload["versions"]["v1"]["protocols"] == ["http"]
     assert payload["versions"]["v2"]["methods"] == ["POST"]
     assert any("edge_relay" in line for line in payload["v2_v3_diff"])
+
+
+# ---------------------------------------------------------------------------
+# Framed override is protocol-decided (REQ-027 owner check on 96ba3137)
+# ---------------------------------------------------------------------------
+
+
+def test_framed_build_ignores_non_fias_override() -> None:
+    """The PABX connector record carries the edge relay queue address
+    (``edge-relay://…``) for its runtime target; the framed build must not
+    copy it into the spec source — the docs-derived ``fias://`` address
+    stands, so the v3 build validates."""
+    result = build_draft_spec(
+        FIAS_MD,
+        source="simulators/docs/fias-pabx.md",
+        connector_id="fiaspabx",
+        spec_vocabulary="v3",
+        base_url_override="edge-relay://queue/fias-commands",
+    )
+    assert result.success, result.visible_errors
+    spec = load_spec_from_dict(dict(result.draft_spec))
+    assert spec.source.base_url == "fias://listen:5010"
+    assert spec.source.protocol == "fias_tcp"
+
+
+def test_framed_build_honors_fias_override() -> None:
+    """An explicit framed address still wins over the docs-derived one."""
+    result = build_draft_spec(
+        FIAS_MD,
+        source="simulators/docs/fias-pabx.md",
+        connector_id="fiaspabx",
+        spec_vocabulary="v3",
+        base_url_override="fias://edge:5010",
+    )
+    assert result.success, result.visible_errors
+    spec = load_spec_from_dict(dict(result.draft_spec))
+    assert spec.source.base_url == "fias://edge:5010"

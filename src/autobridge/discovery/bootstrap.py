@@ -1158,7 +1158,15 @@ def _compile_framed_spec(
     cid = re.sub(r"[^a-z0-9_-]", "-", cid.lower()).strip("-") or "connector"
     ven = vendor or _derive_vendor(iface)
     cred_ref = _derive_credential_ref(cid, credential_ref)
-    base = base_url_override or f"fias://listen:{port}"
+    # Framed sources decide by protocol, not by name (REQ-027 owner check):
+    # only a fias:// override lands in the spec. A connector record may
+    # carry a routing address for its runtime target instead (e.g. the edge
+    # relay queue `edge-relay://…` the PABX connector polls through), which
+    # is not a valid fias_tcp source address — the docs-derived
+    # fias://listen:{port} stands and the relay stays a runtime concern.
+    base = f"fias://listen:{port}"
+    if base_url_override and base_url_override.startswith("fias://"):
+        base = base_url_override
     tz_value = _FRAMED_PROPERTY_TZ
 
     feed_ops = [op for op in iface.operations if op.method == "EVENT" and (op.raw.get("kind") == "feed")]

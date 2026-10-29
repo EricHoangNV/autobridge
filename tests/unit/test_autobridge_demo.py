@@ -825,3 +825,57 @@ def test_step4_live_empty_reply_names_reasoning_spend(monkeypatch: Any) -> None:
     assert ev["l3_skipped"] is False
     assert "4,000 reasoning" in ev["rejection_reason"]
     assert "reasoning" in rung_table_row(step)
+
+
+def test_poll_knowledge_profile_waits_for_convergence(monkeypatch: Any) -> None:
+    """Owner check on 96ba3137 (demo 6/8, step 7 flake): the profile read
+    polls until the expected state appears instead of reading once."""
+    import bench.demo as demo_mod
+
+    bodies = [
+        {"connectors": [{"name": "meridianpms", "vocabulary": "", "refused_vocabularies": ["v1"]}]},
+        {"connectors": [{"name": "meridianpms", "vocabulary": "v2", "refused_vocabularies": ["v1"]}]},
+    ]
+    seen: list[str] = []
+
+    def fake_call(base_url: str, method: str, path: str, payload: Any = None) -> dict[str, Any]:
+        _ = (base_url, payload)
+        seen.append(path)
+        body = bodies[min(len(seen) - 1, len(bodies) - 1)]
+        return {"method": method, "path": path, "status": 200, "body": body}
+
+    monkeypatch.setattr(demo_mod, "_control_call", fake_call)
+    calls: list[dict[str, Any]] = []
+    profile = demo_mod._poll_knowledge_profile(
+        "http://127.0.0.1:9",
+        calls,
+        "meridianpms",
+        lambda p: p.get("vocabulary") == "v2" and "v1" in (p.get("refused_vocabularies") or []),
+        tries=3,
+        wait_s=0,
+    )
+    assert profile.get("vocabulary") == "v2"
+    assert len(calls) == 2
+    assert all(c["path"] == "/knowledge" for c in calls)
+
+
+def test_poll_knowledge_profile_returns_last_on_timeout(monkeypatch: Any) -> None:
+    """Polling never invents the state: after the budget it returns the
+    last profile seen and the caller still asserts loudly on it."""
+    import bench.demo as demo_mod
+
+    def _timeout_call(base_url: Any, method: str, path: str, payload: Any = None) -> dict[str, Any]:
+        _ = (base_url, payload)
+        return {
+            "method": method, "path": path, "status": 200,
+            "body": {"connectors": [{"name": "meridianpms", "vocabulary": "", "refused_vocabularies": []}]},
+        }
+
+    monkeypatch.setattr(demo_mod, "_control_call", _timeout_call)
+    calls: list[dict[str, Any]] = []
+    profile = demo_mod._poll_knowledge_profile(
+        "http://127.0.0.1:9", calls, "meridianpms",
+        lambda p: p.get("vocabulary") == "v2", tries=2, wait_s=0,
+    )
+    assert profile.get("vocabulary") == ""
+    assert len(calls) == 2

@@ -370,3 +370,11 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - `src/autobridge/control/migrate.py::_detect_revision` decides what schema an unversioned database has by checking each revision's effects; a revision missing from `_REVISION_EFFECTS` is invisible to detection. A `create_all`-built DB (current models, no version row) then stamps 0007 and upgrades to head, re-running 0008's `ADD COLUMN` on a table that already has it → `duplicate column name: reasoning_tokens`, `POST /demo/reset` 500s.
 - Caught pre-commit by `test_demo_reset` (file DB via create_all + ensure_migrated), not by the head-cycle test (fresh DBs never exercise detection).
 - **Rule:** The migration and its `_REVISION_EFFECTS` entry land in the same commit, and the commit must include a test that upgrades a database built from current `create_all` metadata (detection path), not just `upgrade head` on an empty file.
+
+## 41. Never assign `os.environ` directly in a test — a leak flips sync behavior suite-wide
+
+**Context:** REQ-027 fix-first (2026-10-29) — intermittent `make test` teardown errors (`_no_real_dns` trips on `localhost` in 3 activation tests, only with coverage, only in some random orders)
+
+- `test_get_connector_detail` set `os.environ["HARBOR_API_KEY"]` directly and never deleted it. When random order ran it before the activation tests, their syncs passed auth and attempted real HTTP to `localhost:8106` (DNS trip → teardown error); otherwise the syncs Blocked pre-HTTP on the missing credential and everything was green. Same tests, same code — order decided the gate.
+- Diagnosis path: replay the failing `--randomly-seed`, instrument the guard to print a stack on trip (temporary conftest hack, reverted after), read the httpx→sync→build chain, then notice the passing runs never reach HTTP at all (pre-HTTP auth failure, still HTTP 200 so assertions pass).
+- **Rule:** `monkeypatch.setenv` (auto-reverted) for every test env var, no exceptions; direct `os.environ` writes are a gate flake waiting for a seed. When a teardown-only failure is order-dependent, suspect leaked process-global state (env, lru_cache, module attrs) before suspecting the failing test.

@@ -1199,6 +1199,44 @@ def _live_knowledge(base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any
     return dict(body) if isinstance(body, dict) else {}
 
 
+def _poll_knowledge_profile(
+    base_url: str,
+    calls: list[dict[str, Any]],
+    name: str,
+    pred: Any,
+    *,
+    tries: int = 12,
+    wait_s: float = 1.0,
+) -> dict[str, Any]:
+    """Poll /knowledge until the named connector's profile satisfies *pred*.
+
+    The profile is derived from committed build rows, but a just-finished
+    build's write may not be visible to the next request yet (owner check:
+    step 7 read the Meridian profile before the v2 build's write was
+    visible). Poll instead of reading once; every poll is a recorded call.
+    Returns the last profile seen — callers still assert loudly on it.
+    """
+    import time as _time  # noqa: PLC0415
+
+    profile: dict[str, Any] = {}
+    for _ in range(tries):
+        knowledge = _live_knowledge(base_url, calls)
+        connectors = knowledge.get("connectors")
+        profile = {}
+        if isinstance(connectors, list):
+            for conn in connectors:
+                if isinstance(conn, dict) and conn.get("name") == name:
+                    profile = conn
+                    break
+        try:
+            if pred(profile):
+                break
+        except Exception:
+            pass
+        _time.sleep(wait_s)
+    return profile
+
+
 def _knowledge_reuses_for_rule(knowledge: dict[str, Any], rule_id: str) -> int:
     entries = knowledge.get("entries")
     if not isinstance(entries, list):
@@ -2071,14 +2109,15 @@ def _step7_live(docs_text: str, base_url: str, calls: list[dict[str, Any]]) -> d
                 f"/connectors/{connector_id}/releases/{release_id}/activate", {},
             )
         )
-    knowledge = _live_knowledge(base_url, calls)
-    profile: dict[str, Any] = {}
-    connectors = knowledge.get("connectors")
-    if isinstance(connectors, list):
-        for conn in connectors:
-            if isinstance(conn, dict) and conn.get("name") == "meridianpms":
-                profile = conn
-                break
+    # Poll for convergence: the v2 build is terminal, but its profile write
+    # may not be visible to the very next read (owner check flake) — read
+    # until the expected state appears instead of reading once.
+    profile = _poll_knowledge_profile(
+        base_url,
+        calls,
+        "meridianpms",
+        lambda p: p.get("vocabulary") == "v2" and "v1" in (p.get("refused_vocabularies") or []),
+    )
     _assert_live(
         calls, "knowledge lists meridianpms under v2 with v1 refused",
         profile.get("vocabulary") == "v2" and "v1" in (profile.get("refused_vocabularies") or []),
@@ -2288,14 +2327,14 @@ def _step8_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
     calls.append(_control_call(base_url, "POST", "/demo/inject-fault",
                                {"target": "sim-fias-pabx", "scenario_id": "fias_record_layout_change", "seed": seed}))
     calls.append(_control_call(base_url, "GET", "/demo/simulators"))
-    knowledge = _live_knowledge(base_url, calls)
-    profile: dict[str, Any] = {}
-    connectors = knowledge.get("connectors")
-    if isinstance(connectors, list):
-        for conn in connectors:
-            if isinstance(conn, dict) and conn.get("name") == "PABX edge":
-                profile = conn
-                break
+    # Poll for convergence like step 7: the v3 build's profile write may
+    # lag the terminal job read by one request.
+    profile = _poll_knowledge_profile(
+        base_url,
+        calls,
+        "PABX edge",
+        lambda p: p.get("vocabulary") == "v3",
+    )
     _assert_live(
         calls, "knowledge lists PABX edge under v3",
         profile.get("vocabulary") == "v3",
