@@ -516,11 +516,11 @@ def test_ensure_migrated_repairs_stale_version_row(
     url = f"sqlite:///{db}"
     monkeypatch.setenv(m.DATABASE_URL_ENV, url)
     engine = create_engine(url)
-    m.init_db(engine)  # current models: full 0009 schema, no version row
+    m.init_db(engine)  # current models: full schema incl. scheduler_state, no version row
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "alembic"))
     command.stamp(cfg, "0008_model_call_reasoning_tokens")
-    assert ensure_migrated(url) == "0009_req030_persistence"
+    assert ensure_migrated(url) == "0010_scheduler_pause"
 
 
 def test_model_call_ledger_stores_reasoning_split(session: Session) -> None:

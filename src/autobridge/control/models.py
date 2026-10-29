@@ -868,3 +868,36 @@ class Job(Base):
         if value not in JOB_STATES:
             raise ValueError(f"{key} must be one of {sorted(JOB_STATES)}")
         return value
+
+
+#: A pause older than this is stale (its owner died mid-reset/seed) and the
+#: scheduler treats it as cleared (REQ-031 owner check). Fresh pauses are
+#: honoured; the row is only rewritten by pause/resume, never read-deleted.
+SCHEDULER_PAUSE_STALE_AFTER_S = 30 * 60
+
+
+class SchedulerState(Base):
+    """Sync-scheduler pause flag (REQ-031 owner check).
+
+    One row, ``id == "scheduler"``. ``POST /demo/reset``,
+    ``POST /demo/seed``-style multi-call scripts (via
+    ``POST /demo/scheduler/pause|resume``) and sims-only heal set
+    ``paused`` while they run, so the scheduler never syncs a
+    half-reset/half-seeded connector and never doubles a driven sync's
+    drift rows; reset resumes (when it owns the pause) in a ``finally``.
+    ``owner`` names who paused (``demo-reset`` / ``demo-seed`` /
+    ``demo-heal``); a resume only clears its owner's pause, so a nested
+    reset inside a paused seed cannot resume early. Stale pauses
+    (owner crashed) expire by ``updated_at`` instead of wedging the
+    scheduler forever.
+    """
+
+    __tablename__ = "scheduler_state"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default="scheduler")
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    owner: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    reason: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )

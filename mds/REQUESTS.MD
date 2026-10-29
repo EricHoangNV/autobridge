@@ -41,49 +41,6 @@ runs in-process). Syncs run only when something calls `POST /sync`; there is no 
 Tests: scheduler (interval, skip while busy, off when unset, never approves); persistence of each item above; state
 and activity for each transition. Gates: `make test`, keyed `make local-up && make e2e && make demo` 8/8.
 
-### REQ-031 — UI-first demo, part B: demo-seed, demo-break, demo-heal, build from docs in the UI (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 19:25; reopened by owner 2026-10-30: two owner checks below are open — (1) seed Harbor from its reference release so `gross_to_net` breaks live, (2) fix the reset/seed-vs-scheduler race and the scar drifts at the cause, no retry. Do them next, then mark DONE. Earlier: DONE (sbx1 2026-10-29) — demo-seed (4 connectors working, 0 tokens), demo-break (inject-only + one line), demo-heal (sims-only reset), build-from-sim-docs in UI (docs picker + 5-stage progress), docs-path-prefix fix, empty-entity drift quieted, EDGE_TOKEN derivation. Gates: make test (90.50/91.49/90.48%, ui 166), lint/typecheck/openapi-check/ui-typecheck green, local-up + e2e (09, 027, 04, meridian, knowledge, 03, fias) + demo 8/8 green unkeyed.)
-Depends on REQ-030.
-1. **`make demo-seed`**: from `make demo-reset`, creates the recording's connectors **through the control API only**
-   (the calls the UI makes), each baseline-synced `Complete`: AtlasPMS (the reusable reference release), HarborPMS
-   (reference release with its money check, used by the semantic scenario), MeridianPMS (built from its docs with
-   v2; the refused v1 build recorded with its reason), the Grand Plaza PABX edge connector (v3, link up, postings
-   flowing). Clean names, real addresses, no leftover or example.com rows. End state: four connectors `working`,
-   0 model tokens, nothing waiting.
-2. **`make demo-break SCENARIO=<id> [TARGET=<vendor>]`**: injects one catalogued fault and prints one line ("broke
-   AtlasPMS with page_to_cursor — watch Repairs"). It never syncs, detects, repairs or approves; the scheduler and the
-   engine do that, visibly. The UI's "Demo: inject fault" drawer offers exactly the same list.
-3. **`make demo-heal [TARGET=<vendor>]`**: clears injected faults without a reset (retakes of one scenario).
-4. **Build a connector from docs in the UI** (deck 3): the "Build a connector" page works with the simulator docs and
-   shows docs read → draft → probes → result → release. Either the page loads the docs text in the browser and sends
-   `docs_text`, or the server allows exactly the simulator hosts from `config/demo_targets.yaml` in demo mode. Never
-   reopen the AR-2-2 SSRF guard or `docs_path` file reads.
-5. `make demo` (terminal version) stays; it may approve through the API as today, but everything it does lands in the
-   database (REQ-030 item 3).
-Tests: seed end state; demo-break only injects; heal clears; UI build from Harbor docs; SSRF tests still green.
-
-**Owner check (2026-10-29, on 488e9dff): Harbor is seeded from docs, so the semantic scenario never breaks live.**
-Item 1 says HarborPMS is seeded from its **reference release with its money check**; `bench/demo_seed.py` builds
-`harborpms` (and `atlaspms`) from docs instead (`"harborpms — docs-built release with its checks"`). The docs-built
-Harbor spec has no money invariant, so `make demo-break SCENARIO=gross_to_net TARGET=harbor` leaves Harbor `Complete`
-and deck 5 never appears in the UI from the break (found by the REQ-033 iteration, which reached for `record-climb`
-rows instead). Fix: seed Harbor as the reusable reference release with its money check, through the control API
-(the same path demo step 1 uses for Atlas's reusable artifact; add an API route to register a reference release if
-none exists, verifier-gated like any release). Then the break → scheduled sync → `Degraded` → climb (funnel, 1 model
-call, rejected proposal, operator question) → Harbor `error` happens live, and the REQ-033 UI journey asserts it from
-the break, not from `record-climb` rows (keep `record-climb` only as the documented no-key fallback). Atlas may stay
-docs-built.
-
-**Owner check (2026-10-30, from the REQ-033 iteration's findings): fix the reset/seed-vs-scheduler race, don't retry
-around it.** The REQ-033 iteration found `make demo-seed` failing intermittently after `demo-reset`, and stray
-("scar") drift rows appearing ~10 s after a break before any approval. Both come from the sync scheduler running
-during reset/seed (and possibly the verifier gate's regression syncs against a still-faulted simulator writing drift
-rows). A retry in the seed only hides it; on camera a take must start clean every time. Fix the cause: the scheduler
-pauses while `demo-reset` / `demo-seed` / `demo-heal` run (an explicit pause/resume or a lock the scheduler honours),
-reset waits for any in-flight sync to finish, and gate-internal syncs never create drift or repair rows. Acceptance:
-`make demo-reset && make demo-seed` green 20 times in a row with the scheduler on and no retry; after one
-`make demo-break`, exactly one drift and one repair appear for that connector.
-
 ### REQ-032 — UI-first demo, part C: live states and a repair page that explains itself (2026-10-29)
 Status: DONE (sbx1 2026-10-29) — code + docs + full gates green unkeyed (see BUILD-NOTES); keyed re-run (make local-up && make e2e && make demo) is the owner step. Next: REQ-033.
 Depends on REQ-030.
@@ -618,6 +575,51 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-031 — UI-first demo, part B: demo-seed, demo-break, demo-heal, build from docs in the UI (2026-10-29)
+Status: DONE (sbx1 2026-10-29)
+Resolution: Harbor seeds from its reference release via new POST /connectors/{id}/reference-release (verifier-gated); scheduler pauses during reset/seed/heal with owner scoping + reset waits for in-flight jobs; one undecided fault keeps exactly one drift + one repair (dedupe); deterministic live repairs record L0→L4 reasons; step 4 + test_08 assert the live break (record-climb kept as no-key fallback). Remaining: owner keyed re-run + 20x camera acceptance.
+Depends on REQ-030.
+1. **`make demo-seed`**: from `make demo-reset`, creates the recording's connectors **through the control API only**
+   (the calls the UI makes), each baseline-synced `Complete`: AtlasPMS (the reusable reference release), HarborPMS
+   (reference release with its money check, used by the semantic scenario), MeridianPMS (built from its docs with
+   v2; the refused v1 build recorded with its reason), the Grand Plaza PABX edge connector (v3, link up, postings
+   flowing). Clean names, real addresses, no leftover or example.com rows. End state: four connectors `working`,
+   0 model tokens, nothing waiting.
+2. **`make demo-break SCENARIO=<id> [TARGET=<vendor>]`**: injects one catalogued fault and prints one line ("broke
+   AtlasPMS with page_to_cursor — watch Repairs"). It never syncs, detects, repairs or approves; the scheduler and the
+   engine do that, visibly. The UI's "Demo: inject fault" drawer offers exactly the same list.
+3. **`make demo-heal [TARGET=<vendor>]`**: clears injected faults without a reset (retakes of one scenario).
+4. **Build a connector from docs in the UI** (deck 3): the "Build a connector" page works with the simulator docs and
+   shows docs read → draft → probes → result → release. Either the page loads the docs text in the browser and sends
+   `docs_text`, or the server allows exactly the simulator hosts from `config/demo_targets.yaml` in demo mode. Never
+   reopen the AR-2-2 SSRF guard or `docs_path` file reads.
+5. `make demo` (terminal version) stays; it may approve through the API as today, but everything it does lands in the
+   database (REQ-030 item 3).
+Tests: seed end state; demo-break only injects; heal clears; UI build from Harbor docs; SSRF tests still green.
+
+**Owner check (2026-10-29, on 488e9dff): Harbor is seeded from docs, so the semantic scenario never breaks live.**
+Item 1 says HarborPMS is seeded from its **reference release with its money check**; `bench/demo_seed.py` builds
+`harborpms` (and `atlaspms`) from docs instead (`"harborpms — docs-built release with its checks"`). The docs-built
+Harbor spec has no money invariant, so `make demo-break SCENARIO=gross_to_net TARGET=harbor` leaves Harbor `Complete`
+and deck 5 never appears in the UI from the break (found by the REQ-033 iteration, which reached for `record-climb`
+rows instead). Fix: seed Harbor as the reusable reference release with its money check, through the control API
+(the same path demo step 1 uses for Atlas's reusable artifact; add an API route to register a reference release if
+none exists, verifier-gated like any release). Then the break → scheduled sync → `Degraded` → climb (funnel, 1 model
+call, rejected proposal, operator question) → Harbor `error` happens live, and the REQ-033 UI journey asserts it from
+the break, not from `record-climb` rows (keep `record-climb` only as the documented no-key fallback). Atlas may stay
+docs-built.
+
+**Owner check (2026-10-30, from the REQ-033 iteration's findings): fix the reset/seed-vs-scheduler race, don't retry
+around it.** The REQ-033 iteration found `make demo-seed` failing intermittently after `demo-reset`, and stray
+("scar") drift rows appearing ~10 s after a break before any approval. Both come from the sync scheduler running
+during reset/seed (and possibly the verifier gate's regression syncs against a still-faulted simulator writing drift
+rows). A retry in the seed only hides it; on camera a take must start clean every time. Fix the cause: the scheduler
+pauses while `demo-reset` / `demo-seed` / `demo-heal` run (an explicit pause/resume or a lock the scheduler honours),
+reset waits for any in-flight sync to finish, and gate-internal syncs never create drift or repair rows. Acceptance:
+`make demo-reset && make demo-seed` green 20 times in a row with the scheduler on and no retry; after one
+`make demo-break`, exactly one drift and one repair appear for that connector.
+
 
 ### REQ-033 — UI-first demo, part D: README "How to run the demo", docs, UI e2e journeys (2026-10-29)
 Status: DONE (sbx1 2026-10-29)

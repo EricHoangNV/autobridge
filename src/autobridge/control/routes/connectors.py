@@ -26,6 +26,8 @@ from autobridge.control.schemas import (
     DependencyCreate,
     DependencyOut,
     DriftEventOut,
+    ReferenceReleaseRequest,
+    ReferenceReleaseResponse,
     ReleaseOut,
     SyncRunOut,
 )
@@ -297,3 +299,146 @@ def activate_connector_release(
     if refreshed is None:  # pragma: no cover - connector cannot vanish mid-request
         raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
     return _connector_to_out(refreshed, db)
+
+
+#: Spec keys that must only ever name a credential reference, never carry
+#: a value (DIRECTIVES §6). A reference-release registration POSTs a full
+#: spec document, so the server rejects smuggled values fail-closed —
+#: placeholders (``${ENV}``) and empty values stay allowed.
+_SECRET_VALUE_KEYS = frozenset(
+    {"api_key", "api_secret", "token", "access_token", "secret", "password", "private_key", "authorization"}
+)
+
+
+def _reject_secret_values(node: object, path: str = "$") -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            child = f"{path}.{key}"
+            if (
+                isinstance(key, str)
+                and key.lower() in _SECRET_VALUE_KEYS
+                and isinstance(value, str)
+                and value.strip()
+                and not value.strip().startswith("${")
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"spec must carry credential_ref, never a credential value (DIRECTIVES §6): {child}",
+                )
+            _reject_secret_values(value, child)
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            _reject_secret_values(value, f"{path}[{i}]")
+
+
+@router.post(
+    "/{connector_id}/reference-release",
+    response_model=ReferenceReleaseResponse,
+    responses={**DOMAIN_ERROR_422, **AUTH_401},
+)
+def register_reference_release(
+    connector_id: str, body: ReferenceReleaseRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)
+) -> ReferenceReleaseResponse:
+    """Register a pre-built reference ConnectorSpec as a release (REQ-031).
+
+    The demo seeds HarborPMS from its reusable reference release (money
+    invariant included) through the control API — the same API the UI
+    uses — instead of compiling it from docs. The client sends the parsed
+    spec (it read the file; the server never reads files, AR-2-2). The
+    candidate is verifier-gated exactly like a docs build (gate-before-
+    persist: blocked/unreachable → 422, nothing persisted). A build row
+    records the registration (vocabulary, provenance label) so the
+    knowledge page shows it like any build; the release activates when
+    the connector has no active release yet (first-build rule, REQ-013).
+    """
+    import os  # noqa: PLC0415
+
+    from autobridge.control.models import BuildRun  # noqa: PLC0415
+
+    conn = db.get(Connector, connector_id)
+    if conn is None:
+        raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
+    if not isinstance(body.spec, dict) or not body.spec:
+        raise HTTPException(status_code=422, detail="spec must be a non-empty ConnectorSpec document")
+    _reject_secret_values(body.spec)
+
+    vocabulary: str | None = body.spec_vocabulary
+    if vocabulary is None:
+        version = body.spec.get("spec_version") if isinstance(body.spec, dict) else None
+        vocabulary = f"v{version}" if version in (1, 2, 3) else "v1"
+
+    build_run = BuildRun(
+        connector_id=conn.id,
+        state="succeeded",
+        inputs={
+            "docs_source": body.docs_source or "reference",
+            "spec_vocabulary": vocabulary,
+            "connector_id": conn.id,
+            "scenario_id": body.scenario_id,
+            "reference_release": True,
+        },
+        ladder_trace=[],
+        model_usage={"calls": 0, "small_tokens": 0, "frontier_tokens": 0},
+        evidence_ids=[],
+        draft_spec=dict(body.spec),
+        result={"success": True, "verified": False, "registration": "reference"},
+    )
+    db.add(build_run)
+    db.flush()
+
+    verifier_url = body.verifier_url or os.environ.get("VERIFIER_URL")
+    try:
+        from autobridge.engine.releases import ReleaseError, create_release  # noqa: PLC0415
+        from autobridge.engine.verification import GateBlockedError  # noqa: PLC0415
+
+        release = create_release(
+            db,
+            connector_id=conn.id,
+            spec=dict(body.spec),
+            provenance_build_run_id=build_run.id,
+            verifier_url=verifier_url,
+            scenario_id=body.scenario_id or "baseline",
+        )
+        db.flush()
+    except GateBlockedError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=f"reference release blocked by the verifier gate: {exc}") from exc
+    except ReleaseError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    report_id = release.verification_report_id
+    build_run.ladder_trace = [
+        {
+            "stage": "verifier",
+            "verdict": "pass" if report_id else "skipped",
+            "scenario": body.scenario_id or "baseline",
+            "gate": "before_persist",
+        }
+    ]
+    build_run.result = {
+        "success": True,
+        "verified": bool(report_id),
+        "release_id": release.id,
+        "registration": "reference",
+    }
+    db.flush()
+
+    activated = False
+    if conn.active_release_id is None:
+        from autobridge.engine.releases import _activate  # noqa: PLC0415
+
+        _activate(db, conn.id, release.id, actor="reference-release:first-build")
+        db.flush()
+        activated = True
+    db.commit()
+    return ReferenceReleaseResponse(
+        release_id=release.id,
+        build_run_id=build_run.id,
+        connector_id=conn.id,
+        version=release.version,
+        activated=activated,
+        active_release_id=conn.active_release_id,
+        verified=bool(report_id),
+        verification_report_id=report_id,
+    )

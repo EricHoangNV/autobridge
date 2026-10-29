@@ -1117,6 +1117,83 @@ def _live_build_and_poll(
     return {}
 
 
+def _reference_spec_for(connector_name: str) -> dict[str, Any] | None:
+    """Parsed reference spec for a seeded connector, or None when absent.
+
+    The client reads the file (bench-side); the server never reads files
+    (AR-2-2). ``make demo`` on a fresh checkout still has these files —
+    they are committed — so this only returns None when the workstream
+    never built one.
+    """
+    import yaml  # noqa: PLC0415
+
+    path = REPO_ROOT / "generated" / "connectors" / connector_name / "reference" / "spec.yaml"
+    if not path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _ensure_harbor_reference_release(
+    base_url: str, connector_id: str, calls: list[dict[str, Any]]
+) -> str | None:
+    """Harbor's active release must carry the money invariant (REQ-031).
+
+    Registers ``generated/connectors/harborpms/reference/spec.yaml``
+    through ``POST /connectors/{id}/reference-release`` when the active
+    release has no ``money_invariant`` check (fresh ``make demo`` without
+    the seed, or a docs-built release that cannot see ``gross_to_net``).
+    A no-op when the active release already carries the check (the seed
+    registers it up front). Returns the reference release id, or None
+    when no reference spec is available — the caller then keeps the
+    labelled gap instead of inventing a release.
+    """
+    detail = _control_get_raw(base_url, f"/connectors/{connector_id}")
+    active: Any = detail.get("active_release_id") if isinstance(detail, dict) else None
+    releases = detail.get("releases") if isinstance(detail, dict) else []
+    for rel in releases or []:
+        if isinstance(rel, dict) and rel.get("id") == active:
+            if _money_fields_of_spec(rel.get("spec") or {}):
+                return str(active)
+            break
+    spec = _reference_spec_for("harborpms")
+    if spec is None:
+        calls.append(
+            {
+                "method": "ASSERT",
+                "path": "harbor reference spec",
+                "status": "assertion-failed",
+                "error": "no reference spec available and the active release has no money invariant",
+            }
+        )
+        return None
+    calls.append(
+        _control_call(
+            base_url,
+            "POST",
+            f"/connectors/{connector_id}/reference-release",
+            {
+                "spec": spec,
+                "spec_vocabulary": "v1",
+                "docs_source": "reference:harborpms",
+                "scenario_id": "baseline",
+            },
+        )
+    )
+    after = _control_get_raw(base_url, f"/connectors/{connector_id}")
+    active_after: Any = after.get("active_release_id") if isinstance(after, dict) else None
+    _assert_live(
+        calls,
+        "harbor reference release registered and active",
+        isinstance(active_after, str) and bool(active_after),
+        f"reference-release after: {active_after}",
+    )
+    return str(active_after) if isinstance(active_after, str) and active_after else None
+
+
 def _step_live_ensure_active_release(
     base_url: str, connector_id: str, docs_path: str, calls: list[dict[str, Any]],
     spec_vocabulary: str | None = None,
@@ -1416,15 +1493,19 @@ def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
 
 
 def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """Live half of step 4: fault the built Harbor connector and record the engine.
+    """Live half of step 4: break → sync → Degraded → climb → error, live.
 
-    The built spec carries no money_invariant (the builder does not infer
-    it), so the live faulted sync cannot show the semantic drift — the
-    step records that honestly (counts before/after, no new repair) and
-    the in-process climb above demonstrates the instrumented path on the
-    reference spec. If the engine ever does propose here, the new rows
-    are recorded and the no-new-repair assertion fails loud, forcing the
-    step to be updated to the new behavior.
+    Harbor's active release carries the money invariant (the seed registers
+    the reusable reference release through the control API; a bare
+    ``make demo`` registers it here via the same route), so the faulted
+    sync degrades on ``money_invariant``, the detector and classifier name
+    ``SEMANTIC_VALUE_DRIFT`` from the wire signals, and the engine
+    escalates with one operator question — Harbor goes to ``error``, all
+    from the break, never from ``record-climb`` rows. The instrumented
+    in-process climb above still demonstrates the hypothesis funnel (and
+    the 1 live model call when a frontier is available); that climb is
+    recorded via ``POST /demo/record-climb`` as the documented no-key
+    fallback for the model-call box.
     """
     ensure_calls = _live_ensure_connector(
         base_url,
@@ -1441,47 +1522,94 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
     if connector_id is None:
         _assert_live(calls, "connector harborpms id", False, "no connector id from ensure calls")
         return {"connector_id": None}
-    _step_live_ensure_active_release(
-        base_url, connector_id, "simulators/docs/harborpms.md", calls,
-        spec_vocabulary="v1",
-    )
-    before_drift = _control_call(base_url, "GET", f"/drift?connector_id={connector_id}")
-    calls.append(before_drift)
-    before_repairs = _control_call(base_url, "GET", f"/repairs?connector_id={connector_id}")
-    calls.append(before_repairs)
-    n_drift_before = len(before_drift.get("body") or []) if isinstance(before_drift.get("body"), list) else 0
-    n_rep_before = len(before_repairs.get("body") or []) if isinstance(before_repairs.get("body"), list) else 0
+    reference_id = _ensure_harbor_reference_release(base_url, connector_id, calls)
+    if reference_id is None:
+        _assert_live(calls, "harbor money invariant available live", False, "no reference release and no money check on the active release")
+        return {"connector_id": connector_id, "gap": "no money invariant anywhere; cannot break gross_to_net live"}
+    before_ids = {
+        str(d.get("id"))
+        for d in (_control_get_raw(base_url, f"/drift?connector_id={connector_id}") or [])
+        if isinstance(d, dict) and d.get("id")
+    }
     calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-harbor", "scenario_id": "gross_to_net", "seed": seed}))
     faulted_result = _step_live_sync_terminal(base_url, connector_id, calls)
-    after_drift = _control_call(base_url, "GET", f"/drift?connector_id={connector_id}")
-    calls.append(after_drift)
-    after_repairs = _control_call(base_url, "GET", f"/repairs?connector_id={connector_id}")
-    calls.append(after_repairs)
-    after_drift_body: Any = after_drift.get("body")
-    after_rep_body: Any = after_repairs.get("body")
-    drift_rows: list[Any] = after_drift_body if isinstance(after_drift_body, list) else []
-    rep_rows: list[Any] = after_rep_body if isinstance(after_rep_body, list) else []
-    n_drift_after = len(drift_rows)
-    n_rep_after = len(rep_rows)
     _assert_live(
-        calls, "no new repair for the uninstrumented semantic fault",
-        n_rep_after == n_rep_before,
-        f"repairs before={n_rep_before} after={n_rep_after}: {rep_rows[:1]}",
+        calls, "faulted sync Degraded on the money invariant",
+        faulted_result.get("outcome") == "Degraded",
+        f"faulted sync outcome {faulted_result.get('outcome')}: {faulted_result.get('unmet_criteria')}",
+    )
+    drift_rows: list[Any] = _control_get_raw(base_url, f"/drift?connector_id={connector_id}") or []
+    engine_rows = [
+        d for d in drift_rows
+        if isinstance(d, dict)
+        and d.get("drift_class") == "SEMANTIC_VALUE_DRIFT"
+        and d.get("source_sync_run_id")
+    ]
+    fresh = [d for d in engine_rows if str(d.get("id")) not in before_ids]
+    if len(fresh) == 1:
+        drift_row: dict[str, Any] = dict(fresh[0])
+        deduped_note = "new drift from this break"
+    elif engine_rows:
+        # Rerun without a reset: the still-open, still-undecided drift is
+        # reused (dedupe), never doubled. Steps run after a reset, so the
+        # fresh path is the norm; this keeps STEP=4 rerunnable.
+        drift_row = dict(sorted(engine_rows, key=lambda d: str(d.get("created_at", "")))[-1])
+        deduped_note = f"deduped onto still-open drift {drift_row.get('id')} (rerun without reset)"
+        _assert_live(
+            calls, "no second drift for one undecided fault",
+            len(fresh) == 0,
+            f"fresh drifts: {[d.get('id') for d in fresh]}",
+        )
+    else:
+        _assert_live(calls, "one SEMANTIC_VALUE_DRIFT from the break", False, f"drift rows: {drift_rows[:2]}")
+        return {
+            "connector_id": connector_id,
+            "faulted_sync_outcome": faulted_result.get("outcome"),
+            "faulted_sync_unmet": faulted_result.get("unmet_criteria"),
+        }
+    _assert_live(
+        calls, "drift names SEMANTIC_VALUE_DRIFT from detector evidence",
+        drift_row.get("drift_class") == "SEMANTIC_VALUE_DRIFT" and bool(drift_row.get("source_sync_run_id")),
+        f"drift row: {drift_row}",
+    )
+    rep_rows: list[Any] = _control_get_raw(base_url, f"/repairs?connector_id={connector_id}") or []
+    repair_row: dict[str, Any] = {}
+    for rep in rep_rows:
+        if (
+            isinstance(rep, dict)
+            and rep.get("drift_class") == "SEMANTIC_VALUE_DRIFT"
+            and drift_row.get("id") in (rep.get("drift_event_ids") or [])
+        ):
+            repair_row = dict(rep)
+            break
+    _assert_live(
+        calls, "engine escalated with one operator question (never patched)",
+        repair_row.get("decision") == "escalate" and bool((repair_row.get("escalation_bundle") or {}).get("question")),
+        f"repair row: {repair_row}",
+    )
+    trace_levels = [a.get("level") for a in (repair_row.get("ladder_trace") or []) if isinstance(a, dict)]
+    _assert_live(
+        calls, "live repair shows the deterministic climb (L0 miss, L1 no rule, L4 escalate)",
+        0 in trace_levels and 1 in trace_levels and 4 in trace_levels,
+        f"ladder trace levels: {trace_levels}",
+    )
+    raw_usage: Any = repair_row.get("model_usage")
+    usage: dict[str, Any] = dict(raw_usage) if isinstance(raw_usage, dict) else {}
+    _assert_live(
+        calls, "live engine repair costs 0 model calls (frontier lives in the instrumented climb)",
+        int(usage.get("frontier_tokens", 0) or 0) == 0 and int(usage.get("small_tokens", 0) or 0) == 0,
+        f"live repair model usage: {usage}",
     )
     return {
         "connector_id": connector_id,
+        "reference_release_id": reference_id,
         "faulted_sync_outcome": faulted_result.get("outcome"),
         "faulted_sync_unmet": faulted_result.get("unmet_criteria"),
-        "drift_rows_before": n_drift_before,
-        "drift_rows_after": n_drift_after,
-        "repair_rows_before": n_rep_before,
-        "repair_rows_after": n_rep_after,
-        "gap": (
-            "built Harbor spec carries no money_invariant (the builder does not "
-            "infer it), so the live faulted sync cannot surface gross_to_net; "
-            "the climb above demonstrates the detector-derived path on the "
-            "instrumented reference spec"
-        ),
+        "drift_id": drift_row.get("id"),
+        "drift_class": drift_row.get("drift_class"),
+        "repair_run_id": repair_row.get("id"),
+        "repair_decision": repair_row.get("decision"),
+        "deduped_note": deduped_note,
     }
 
 
@@ -1728,8 +1856,11 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     (net_amount -> total_amount) is rejected as invalid_patch_trap;
     anything else still ends Degraded with one operator question, because
     a semantic drift is never patched without the operator. Nothing is
-    released either way. When no provider and no recording exist, L3 is
-    labelled skipped instead of invented.
+    released either way. Live, Harbor is seeded (or registered here) from
+    the reference release, so the same chain happens through the stack:
+    inject → sync → Degraded → engine drift + escalated repair → error.
+    When no provider and no recording exist, L3 is labelled skipped
+    instead of invented.
     """
     from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
     from autobridge.repair.escalation import escalation_for_no_fix  # noqa: PLC0415

@@ -2259,3 +2259,36 @@ Gates: 6/6 journeys green live unkeyed (5 on fresh seed + recorded after `make d
 2640 (autobridge 90%) + 134 (verifier 91%) + 408 (simulators 90%) + ui 192 pass; lint + typecheck + ui-typecheck +
 openapi-check green. Keyed re-run (`make local-up && make demo-seed && make e2e && make e2e-ui && make demo`) is the
 owner step (no FRONTIER_API_KEY in sandbox; semantic leg exercises the L3-skipped branch unkeyed).
+
+### REQ-031 (reopened owner checks, sbx1 2026-10-29)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Both owner checks from the 2026-10-30 reopen fixed in
+code; full gates green unkeyed (`make test` 2660+134+408+192, lint, typecheck, openapi-check, ui-typecheck) and
+verified live on the local stack (seed 5/5 with scheduler on, break → Degraded → escalate → error, demo 8/8,
+test_08 both passes, e2e subset test_09/test_027/test_03/test_04/test_05/matrix/knowledge green).
+- Check 1: `POST /connectors/{id}/reference-release` registers a client-sent ConnectorSpec as a verifier-gated
+  release (gate-blocked → 422, nothing persists; secret values rejected with the offending path; BuildRun row with
+  `spec_vocabulary` + `docs_source: reference:<name>` so /knowledge lists it; activates when no active release).
+  Demo-seed registers Harbor from its reference spec (money invariant included) — Atlas stays docs-built per the
+  check. Step 4 ensures the same release when running bare.
+- Check 2: scheduler pause is a DB row (`scheduler_state`, migration 0010) honoured per tick; owner-scoped
+  pause/resume (nested reset cannot resume a seed's pause; stale pauses expire after 30 min); reset waits for
+  running jobs only (`AUTOBRIDGE_RESET_WAIT_S`, default 90 s, 409 naming stuck jobs) and resumes at both exits;
+  `make demo-seed` pauses around the whole seed (reset inside keeps it). Acceptance: `make demo-reset &&
+  make demo-seed` 5/5 green in sandbox with scheduler on and no retry; after one break exactly one drift + one
+  repair (new e2e test in test_09). Owner runs the 20x camera acceptance.
+- Cause fix for scars: detection dedupes onto the open, still-undecided, engine-derived drift of the same class
+  (record-climb rows have no source sync and never match; decided repairs start new incidents, so approve →
+  verifying-sync → inject-again flows are unaffected). Deterministic escalations now record the full rung ladder
+  (L0 miss → L1 no rule → L2/L3 skipped → L4) with one-line reasons; matrix pins for the three affected rows moved
+  [0,4] → [0,1,2,3,4] (decisions/calls unchanged).
+- Live proof (unkeyed local stack): `broke HarborPMS with gross_to_net` → state `error` ("needs your decision"),
+  1 SEMANTIC_VALUE_DRIFT (source sync set) + 1 escalate repair, trace L0→L4, 0 model calls, operator question.
+- UI journey test_08: live leg polls the scheduled detection and asserts the four repair sections from the live
+  rows (incl. explicit "0 model calls" box); moved last so PABX still runs on a fresh seed; skips when a previous
+  take's drift is open (pass 2 = recorded half). Recorded half + record-climb kept as the no-key fallback.
+- Gotchas: (a) trust-boundary e2e forbids even mentioning `generated/connectors` in engine docstrings — reworded
+  the schema docstring instead of widening the guard. (b) Reset waits on running jobs only; the seeded queued-Job
+  fixture in demo-reset tests is wiped as state. (c) A stale `.local/ACTIVE` in the worktree broke unit-test
+  teardown (DNS guard) — `make local-down` cleared it; unrelated to this change. (d) Meridian
+  cursor/state_renamed L0-reuse e2e fails identically on base (REQ-030 2b leftover) — left for its owner.
+- Remaining (owner): keyed re-run of the full loop + 20x reset/seed on camera.

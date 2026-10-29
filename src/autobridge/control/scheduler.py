@@ -22,9 +22,143 @@ one connector's error is recorded in its result and the pass continues.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
+
+
+def _pause_fresh(paused_at: Any) -> bool:
+    """A pause is honoured only while fresh (REQ-031: stale owners die)."""
+    from autobridge.control.models import SCHEDULER_PAUSE_STALE_AFTER_S
+
+    if paused_at is None:
+        return False
+    try:
+        # SQLite returns naive datetimes; control stores UTC throughout.
+        if getattr(paused_at, "tzinfo", None) is None:
+            paused_at = paused_at.replace(tzinfo=UTC)
+        age_s = (datetime.now(UTC) - paused_at).total_seconds()
+    except Exception:
+        return True
+    return age_s < SCHEDULER_PAUSE_STALE_AFTER_S
+
+
+def pause_scheduler(session: Any, owner: str, reason: str = "") -> dict[str, Any]:
+    """Pause the sync scheduler (idempotent, owner-scoped).
+
+    ``POST /demo/reset``, ``POST /demo/scheduler/pause`` (the seed
+    script) and sims-only heal pause while they run; the scheduler
+    honours a fresh pause by skipping whole passes. A resume only clears
+    its owner's pause, so a nested reset inside a paused seed cannot
+    resume early — and a stale pause (owner crashed) expires instead of
+    wedging the scheduler.
+    """
+    from autobridge.control.models import SchedulerState
+
+    row = session.get(SchedulerState, "scheduler")
+    if row is None:
+        row = SchedulerState(id="scheduler", paused=True, owner=owner, reason=reason)
+        session.add(row)
+    else:
+        row.paused = True
+        row.owner = owner
+        row.reason = reason
+    session.flush()
+    return {"paused": True, "owner": owner, "reason": reason}
+
+
+def resume_scheduler(session: Any, owner: str) -> dict[str, Any]:
+    """Clear a pause owned by *owner*; a foreign owner's pause is kept.
+
+    Returns ``{"resumed": True}`` when this call cleared the pause,
+    ``{"resumed": False, "owner": <current>}`` when someone else owns it
+    (nested reset inside a paused seed: the seed resumes, not the reset).
+    """
+    from autobridge.control.models import SchedulerState
+
+    row = session.get(SchedulerState, "scheduler")
+    if row is None or not row.paused:
+        return {"resumed": True, "owner": owner, "reason": "not paused"}
+    if row.owner and row.owner != owner:
+        return {"resumed": False, "owner": row.owner, "reason": row.reason}
+    row.paused = False
+    row.owner = ""
+    row.reason = ""
+    session.flush()
+    return {"resumed": True, "owner": owner, "reason": ""}
+
+
+def scheduler_pause_status(session: Any) -> dict[str, Any]:
+    """Fresh pauses are honoured; stale ones read as cleared (never wedged)."""
+    from autobridge.control.models import SchedulerState
+
+    row = session.get(SchedulerState, "scheduler")
+    if row is None or not row.paused:
+        return {"paused": False, "owner": "", "reason": ""}
+    if not _pause_fresh(row.updated_at):
+        return {
+            "paused": False,
+            "owner": row.owner,
+            "reason": row.reason,
+            "stale": True,
+        }
+    return {"paused": True, "owner": row.owner, "reason": row.reason}
+
+
+def wait_for_quiescent(
+    session: Any, *, timeout_s: float = 90.0, poll_s: float = 1.0
+) -> dict[str, Any]:
+    """Block until no sync/build/repair job is still running.
+
+    ``POST /demo/reset`` calls this after pausing: the reset must start
+    from a known state, never mid-sync (a sync that outlives the reset
+    writes rows for deleted connectors, or its writes collide with the
+    seed's). Only ``running`` jobs block — those are in flight on the
+    worker or on an inline ``POST /sync``. ``queued`` rows are demo state
+    the reset itself deletes (nothing has started them; pausing first
+    guarantees the scheduler submits nothing new while waiting).
+    Returns ``{"quiescent": True, "waited_s": ...}``; on timeout raises
+    :class:`TimeoutError` naming the stuck jobs — reset fails loud (409)
+    instead of starting dirty.
+    """
+    import time
+
+    from autobridge.control.models import Job
+
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    waited_s = 0.0
+    while True:
+        stuck = (
+            session.execute(
+                select(Job).where(
+                    Job.kind.in_(("sync", "build", "repair")),
+                    Job.state.in_(("running",)),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not stuck:
+            return {"quiescent": True, "waited_s": round(waited_s, 1)}
+        if time.monotonic() >= deadline:
+            def _describe(j: Any) -> str:
+                payload = j.payload if isinstance(j.payload, dict) else {}
+                target = (
+                    payload.get("release_id")
+                    or payload.get("connector_id")
+                    or (payload.get("drift_event_ids") or [None])[0]
+                    or "?"
+                )
+                return f"{j.kind}/{j.id} {j.state} (worker {j.worker_id or '?'}, target {target})"
+
+            raise TimeoutError(
+                "reset refused: jobs still in flight after "
+                f"{timeout_s:g}s: " + ", ".join(_describe(j) for j in stuck[:10])
+            )
+        session.expire_all()
+        time.sleep(poll_s)
+        waited_s += poll_s
 
 
 def connector_busy_reason(session: Any, connector_id: str) -> str | None:
@@ -160,6 +294,21 @@ def run_scheduler_pass(session: Any) -> dict[str, Any]:
     from autobridge.control.runner import sync_connector_now
 
     results: list[dict[str, Any]] = []
+    # REQ-031: reset/seed/heal pause the scheduler while they run — a pass
+    # that starts paused syncs nothing (half-reset connectors, doubled
+    # drift rows and SQLite lock races all come from here).
+    pause = scheduler_pause_status(session)
+    if pause.get("paused"):
+        return {
+            "connectors": 0,
+            "results": results,
+            "synced": 0,
+            "skipped": 0,
+            "errors": 0,
+            "link_snapshots": 0,
+            "paused": True,
+            "pause_owner": pause.get("owner"),
+        }
     # Snapshots commit on their own: holding one write transaction open
     # across every connector's sync would serialize API writes behind the
     # pass (SQLite), even in WAL mode. The syncs below run in the runner's

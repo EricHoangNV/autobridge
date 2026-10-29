@@ -5,7 +5,8 @@ control API only** (the calls the UI makes), each baseline-synced
 ``Complete``:
 
 - atlaspms — docs-built release, pinned vocabulary v1;
-- harborpms — docs-built release with its checks, pinned v1;
+- harborpms — the reusable reference release (money invariant included),
+  registered through the control API, pinned v1;
 - meridianpms — the refused v1 build recorded with its reason, v2 release
   in use;
 - PABX edge — the Grand Plaza PABX edge connector, docs-built v3 release,
@@ -35,6 +36,8 @@ from bench.demo import (
     _check_connector_address,
     _connector_id_from_calls,
     _control_call,
+    _control_get_raw,
+    _ensure_harbor_reference_release,
     _live_build_and_poll,
     _live_ensure_connector,
     _live_knowledge,
@@ -68,7 +71,12 @@ SEED_CONNECTORS: tuple[dict[str, Any], ...] = (
             "credential_ref": "HARBOR_API_KEY",
             "target_entities": ["Reservation", "FolioCharge"],
         },
-        "docs_file": "simulators/docs/harborpms.md",
+        # REQ-031 owner check: Harbor seeds from its reusable reference
+        # release (money invariant included), not from docs (the docs
+        # build cannot infer the check, so gross_to_net never breaks
+        # live on it). Registered through the control API, verifier-gated
+        # like any release. Atlas stays docs-built.
+        "reference_spec": "harborpms",
         "spec_vocabulary": "v1",
     },
     {
@@ -154,7 +162,22 @@ def seed_connector(base_url: str, spec: dict[str, Any], calls: list[dict[str, An
     if isinstance(stored, str) and "example.com" in stored:
         _assert_live(calls, f"connector {name} real address", False, f"placeholder address stored: {stored!r}")
 
-    docs_text = (REPO_ROOT / str(spec["docs_file"])).read_text(encoding="utf-8")
+    docs_text = ""
+    if spec.get("reference_spec"):
+        # REQ-031: Harbor registers its reference release (money check
+        # included) instead of compiling it from docs. No refused leg: the
+        # reference spec is already v1.
+        release_id = _ensure_harbor_reference_release(base_url, connector_id, calls)
+        _assert_live(
+            calls, f"{name} reference release active",
+            isinstance(release_id, str) and bool(release_id),
+            f"reference registration result: {release_id}",
+        )
+        detail_raw = _control_get_raw(base_url, f"/connectors/{connector_id}")
+        if isinstance(detail_raw, dict):
+            release_id = detail_raw.get("active_release_id") or release_id
+    else:
+        docs_text = (REPO_ROOT / str(spec["docs_file"])).read_text(encoding="utf-8")
     refused_vocab = spec.get("refused_vocabulary")
     if refused_vocab:
         refused = _live_build_and_poll(
@@ -173,17 +196,19 @@ def seed_connector(base_url: str, spec: dict[str, Any], calls: list[dict[str, An
             "POST" in reason and "ConnectorSpec v1" in reason,
             f"{refused_vocab} degradation_reason: {reason!r}",
         )
-    build_result = _live_build_and_poll(
-        base_url, connector_id,
-        {"docs_text": docs_text, "spec_vocabulary": str(spec["spec_vocabulary"])},
-        calls,
-    )
-    _assert_live(
-        calls, f"{name} docs build with {spec['spec_vocabulary']} succeeds",
-        build_result.get("success") is True,
-        f"build result: {build_result}",
-    )
-    release_id = build_result.get("release_id")
+    build_result: dict[str, Any] = {}
+    if not spec.get("reference_spec"):
+        build_result = _live_build_and_poll(
+            base_url, connector_id,
+            {"docs_text": docs_text, "spec_vocabulary": str(spec["spec_vocabulary"])},
+            calls,
+        )
+        _assert_live(
+            calls, f"{name} docs build with {spec['spec_vocabulary']} succeeds",
+            build_result.get("success") is True,
+            f"build result: {build_result}",
+        )
+        release_id = build_result.get("release_id")
     _assert_live(
         calls, f"{name} build persisted a release",
         isinstance(release_id, str) and bool(release_id),
@@ -284,12 +309,48 @@ def verify_end_state(base_url: str, calls: list[dict[str, Any]]) -> dict[str, An
 def run_seed(base_url: str, seed: int) -> dict[str, Any]:
     """Reset, seed the four connectors, verify the end state."""
     calls: list[dict[str, Any]] = []
+    # REQ-031 owner check: the scheduler pauses for the whole seed (an
+    # explicit pause/resume the scheduler honours), not just inside reset
+    # — a tick landing between reset and a build (or mid-build) writes
+    # rows for half-seeded connectors and races the seed's own syncs.
+    # The pause is owner-scoped: reset (called below) keeps it, and the
+    # finally resumes exactly what this seed paused.
+    pause_rec = _control_call(
+        base_url, "POST", "/demo/scheduler/pause",
+        {"owner": "demo-seed", "reason": "demo-seed in progress"},
+    )
+    calls.append(pause_rec)
+    pause_ok = pause_rec.get("status") == 200
+    if not pause_ok:
+        calls.append({"method": "ASSERT", "path": "/demo/scheduler/pause", "status": "assertion-failed",
+                      "error": f"scheduler pause failed: {pause_rec.get('status')}: {pause_rec.get('body') or pause_rec.get('error')}"})
+        failed = [c for c in calls if c.get("status") == "assertion-failed" or not _call_ok(c)]
+        return {"mode": "live", "seed": seed, "connectors": [], "failed": len(failed),
+                "control_calls": calls, "error": "scheduler pause failed"}
+    try:
+        report = _run_seed_paused(base_url, seed, calls)
+    finally:
+        resume_rec = _control_call(
+            base_url, "POST", "/demo/scheduler/resume", {"owner": "demo-seed"},
+        )
+        calls.append(resume_rec)
+    # Recount after the resume lands: a failed resume fails the seed (the
+    # scheduler must not stay paused behind a green seed).
+    failed = [c for c in calls if c.get("status") == "assertion-failed" or not _call_ok(c)]
+    report["failed"] = len(failed)
+    report["control_calls"] = calls
+    return report
+
+
+def _run_seed_paused(base_url: str, seed: int, calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """Reset, seed the four connectors, verify the end state (scheduler paused)."""
     reset_rec = _control_call(base_url, "POST", "/demo/reset", {})
     calls.append(reset_rec)
     if not _call_ok(reset_rec):
         calls.append({"method": "ASSERT", "path": "/demo/reset", "status": "assertion-failed",
                       "error": f"reset failed: {reset_rec.get('status')}: {reset_rec.get('body') or reset_rec.get('error')}"})
-        return {"mode": "live", "seed": seed, "connectors": [], "failed": 1,
+        failed = [c for c in calls if c.get("status") == "assertion-failed" or not _call_ok(c)]
+        return {"mode": "live", "seed": seed, "connectors": [], "failed": len(failed),
                 "control_calls": calls, "error": "demo-reset failed"}
     connectors: list[dict[str, Any]] = []
     for spec in SEED_CONNECTORS:

@@ -162,3 +162,73 @@ def test_heal_clears_fias_link_faults(e2e_stack: str) -> None:
         assert faults.get("ps_layout", "baseline") == "baseline", faults
     finally:
         run_heal(base_url, "sim-fias-pabx")
+
+
+@pytest.mark.live
+@pytest.mark.timeout(600)
+def test_break_semantic_opens_exactly_one_drift_and_repair(e2e_stack: str) -> None:
+    """REQ-031 owner check: one break → scheduled sync → exactly one drift + one repair.
+
+    Harbor seeds from its reference release (money invariant included), so
+    ``gross_to_net`` breaks live: the scheduled sync Degrades on
+    money_invariant, the engine opens one ``SEMANTIC_VALUE_DRIFT`` and one
+    escalated repair, and no second tick doubles them (dedupe). The heal in
+    the finally clears the fault; the rows stay (retakes reset + reseed).
+    """
+    import time
+
+    assert e2e_stack
+    from bench.demo_break import run_break  # noqa: PLC0415
+    from bench.demo_heal import run_heal  # noqa: PLC0415
+    from bench.demo_seed import run_seed  # noqa: PLC0415
+    from tests.e2e.conftest import service_url  # noqa: PLC0415
+
+    base_url = service_url("control", "")
+    report = run_seed(base_url, 0)
+    assert report["failed"] == 0, json.dumps(report["control_calls"][-3:], default=str)[:2000]
+    connectors = _control("GET", "/connectors")
+    rows = connectors if isinstance(connectors, list) else connectors.get("connectors", [])
+    harbor = next(r for r in rows if r["name"] == "harborpms")
+    connector_id = harbor["id"]
+    try:
+        record = run_break(base_url, "gross_to_net", "harbor")
+        assert record["ok"] is True, record
+        assert _active_scenario("sim-harbor") == "gross_to_net"
+        # The scheduled tick (default 10 s) detects; wait for the engine rows.
+        deadline = time.time() + 150
+        drift_row: dict[str, Any] = {}
+        repair_row: dict[str, Any] = {}
+        while time.time() < deadline:
+            drifts = _control("GET", f"/drift?connector_id={connector_id}")
+            engine = [
+                d for d in drifts
+                if d.get("drift_class") == "SEMANTIC_VALUE_DRIFT" and d.get("source_sync_run_id")
+            ]
+            repairs = _control("GET", f"/repairs?connector_id={connector_id}")
+            live = [r for r in repairs if r.get("drift_class") == "SEMANTIC_VALUE_DRIFT"]
+            if len(engine) == 1 and len(live) == 1 and live[0].get("decision") == "escalate":
+                drift_row, repair_row = engine[0], live[0]
+                break
+            time.sleep(5)
+        assert drift_row, "one engine SEMANTIC_VALUE_DRIFT from the break"
+        assert repair_row.get("decision") == "escalate", repair_row
+        assert (repair_row.get("escalation_bundle") or {}).get("question"), repair_row
+        usage = repair_row.get("model_usage") or {}
+        assert int(usage.get("frontier_tokens", 0) or 0) == 0, usage
+        # One more tick must not double the rows (dedupe + busy-skip).
+        time.sleep(15)
+        drifts = _control("GET", f"/drift?connector_id={connector_id}")
+        engine = [
+            d for d in drifts
+            if d.get("drift_class") == "SEMANTIC_VALUE_DRIFT" and d.get("source_sync_run_id")
+        ]
+        repairs = _control("GET", f"/repairs?connector_id={connector_id}")
+        live = [r for r in repairs if r.get("drift_class") == "SEMANTIC_VALUE_DRIFT"]
+        assert len(engine) == 1, engine
+        assert len(live) == 1, live
+        detail = _control("GET", f"/connectors/{connector_id}")
+        assert detail["state"] == "error", detail.get("activity")
+    finally:
+        healed = run_heal(base_url, "sim-harbor")
+        assert healed["ok"] is True, healed
+    assert _active_scenario("sim-harbor") is None

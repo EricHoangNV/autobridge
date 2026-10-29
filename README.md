@@ -93,7 +93,9 @@ command, then watch:
 - **What AutoBridge knows.** Open `/knowledge` (top bar): vocabulary
   v1/v2/v3 with "used by" per version, and any learned fixes with
   "reused N×". Back on `/connectors`, AtlasPMS is the reusable
-  artifact: Working, 0 tokens.
+  artifact: Working, 0 tokens. HarborPMS seeds from its reference
+  release too (money invariant included), so the semantic scenario
+  breaks live.
 - **Unfamiliar API — build Harbor from its docs in the UI.** Open
   `/connectors/new`, pick the Harbor docs, watch docs read → draft →
   probes → result → release. The refused v1 / working v2 pair for
@@ -109,14 +111,17 @@ command, then watch:
   the same drift now resolves at L0 and the Knowledge entry reads
   "reused 1×".
 - **Hard semantic failure.** `make demo-break SCENARIO=gross_to_net
-  TARGET=harbor` → the syncs stay Complete: the docs-built Harbor spec
-  carries no money invariant, so the semantic drift cannot surface live
-  (known gap, labelled in `make demo` step 4). After `make demo`, open
-  the recorded step-4 repair (`/repairs`, the `SEMANTIC_VALUE_DRIFT`
-  escalation) and point at the four sections: the funnel, the model-call
-  box (live call with `FRONTIER_API_KEY`, labelled replay otherwise),
-  the rejected `net_amount → total_amount` decoy, the operator question,
-  the "Needs your decision" line.
+  TARGET=harbor` → the scheduled sync Degrades on `money_invariant`
+  (Harbor seeds from its reference release, which carries the check):
+  HarborPMS turns ▲ Degrading, then ■ Error with "needs your decision".
+  Open the new `/repairs` row (`SEMANTIC_VALUE_DRIFT`, escalate): the
+  four sections read from the break's own rows — decision line, the
+  deterministic climb, the "0 model calls" box, the operator question.
+  After `make demo`, open the recorded step-4 repair (the same class)
+  and point at the funnel, the model-call box (live call with
+  `FRONTIER_API_KEY`, labelled replay otherwise), the rejected
+  `net_amount → total_amount` decoy, the operator question, the
+  "Needs your decision" line.
 - **New kind of API.** Meridian's page shows the refused v1 build with
   its reason and v2 in use. `make demo-break
   SCENARIO=meridian_cursor_renamed` → fix at L1 → **Approve** → Working.

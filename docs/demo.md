@@ -71,11 +71,20 @@ approval — nothing auto-applies, so every transition stays on screen.
   Complete, and the connector returns to ● Working. Break it again:
   the same drift resolves at L0 and the Knowledge entry reads "reused 1×".
 - **Hard semantic failure.** Left: `make demo-break
-  SCENARIO=gross_to_net TARGET=harbor`. Right: the syncs stay Complete —
-  the docs-built Harbor spec carries no money invariant, so the semantic
-  drift cannot surface live (this is the labelled gap from step 4; the
-  step asserts it instead of pretending). After `make demo` has run once,
+  SCENARIO=gross_to_net TARGET=harbor`. Right: the scheduled sync
+  Degrades on `money_invariant` — HarborPMS turns ▲ Degrading ("drift
+  detected …"), then ■ Error ("needs your decision") as the engine
+  escalates. On `/repairs`: the new row reads connector HarborPMS,
+  class `SEMANTIC_VALUE_DRIFT`, rung L4, decision "escalate",
+  "0 model calls". Open it: the four sections read from the break's own
+  rows — the decision line "Needs your decision: the engine is not
+  confident", the deterministic climb (L0 miss → L1 no rule → L4
+  escalate), the model-call box saying "0 model calls" (the frontier
+  call lives in the instrumented climb below, never in a live repair),
+  the operator question, and the Reject path (a semantic drift is never
+  patched without the operator). After `make demo` has run once,
   open the recorded step-4 repair (`SEMANTIC_VALUE_DRIFT`, decision escalate): the funnel with
+  its surviving "net" reading, the model-call box with the single
   its surviving "net" reading, the model-call box with the single
   frontier call — live ("muse-spark-1.3, N tokens") with
   `FRONTIER_API_KEY` set, otherwise the labelled replay ("replayed from

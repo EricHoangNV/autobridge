@@ -31,7 +31,7 @@ from autobridge.control.models import (
 	RepairRun,
 	SyncRun,
 )
-from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, DemoDocsOut, DemoResetRequest, InjectFaultRequest, InjectFaultResponse, PabxEventOut, PabxRestartRequest, RecordClimbRequest, RecordClimbResponse, SimulatorConnectorRef, SimulatorInfo, SimulatorsOut
+from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, DemoDocsOut, DemoResetRequest, InjectFaultRequest, InjectFaultResponse, PabxEventOut, PabxRestartRequest, RecordClimbRequest, RecordClimbResponse, SchedulerPauseRequest, SimulatorConnectorRef, SimulatorInfo, SimulatorsOut
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 
@@ -164,6 +164,51 @@ def inject_fault(body: InjectFaultRequest, _: None = Security(require_control_to
     )
 
 
+@router.post("/scheduler/pause", response_model=dict, responses=AUTH_401)
+def scheduler_pause(
+    body: SchedulerPauseRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+    _: None = Security(require_control_token),
+) -> dict[str, Any]:
+    """Pause the sync scheduler (REQ-031 owner check).
+
+    The seed script (``make demo-seed``) pauses before its first control
+    call and resumes in a ``finally`` after its last one, so no scheduled
+    sync races a half-seeded connector. ``POST /demo/reset`` pauses and
+    resumes itself around its work (nested-safe: a resume only clears its
+    owner's pause). Stale pauses expire instead of wedging the scheduler.
+    """
+    from autobridge.control.scheduler import pause_scheduler  # noqa: PLC0415
+
+    req = body or SchedulerPauseRequest()
+    out = pause_scheduler(db, req.owner or "manual", req.reason or "")
+    db.commit()
+    return {"labelled": True, "demo": True, **out}
+
+
+@router.post("/scheduler/resume", response_model=dict, responses=AUTH_401)
+def scheduler_resume(
+    body: SchedulerPauseRequest | None = Body(default=None),
+    db: Session = Depends(get_db),
+    _: None = Security(require_control_token),
+) -> dict[str, Any]:
+    """Clear a scheduler pause owned by ``owner`` (keeps a foreign owner's)."""
+    from autobridge.control.scheduler import resume_scheduler  # noqa: PLC0415
+
+    req = body or SchedulerPauseRequest()
+    out = resume_scheduler(db, req.owner or "manual")
+    db.commit()
+    return {"labelled": True, "demo": True, **out}
+
+
+def _reset_wait_s() -> float:
+    """How long ``POST /demo/reset`` waits for in-flight jobs (env knob)."""
+    try:
+        return max(0.0, float(os.environ.get("AUTOBRIDGE_RESET_WAIT_S", "90") or "90"))
+    except ValueError:
+        return 90.0
+
+
 @router.post("/reset", response_model=dict, responses=AUTH_401)
 def demo_reset(
     _: None = Security(require_control_token),
@@ -211,6 +256,44 @@ def demo_reset(
 
     ensure_migrated(db.get_bind())
 
+    # REQ-031 owner check: pause the scheduler while reset/seed/heal run,
+    # and wait for any in-flight sync to finish — never reset mid-sync
+    # (rows for deleted connectors, SQLite lock races, scar drifts from a
+    # tick landing between the reset and the seed's first build). Owner
+    # scoped with takeover: a pause owned by someone else is kept (a
+    # nested reset inside a paused seed must not resume early); a pause
+    # owned by us — including one a crashed run left behind — is taken
+    # over and resumed at our exits below.
+    from autobridge.control.scheduler import (  # noqa: PLC0415
+        pause_scheduler,
+        resume_scheduler,
+        scheduler_pause_status,
+        wait_for_quiescent,
+    )
+
+    pause_owner = "demo-heal" if request.sims_only else "demo-reset"
+    pause_status = scheduler_pause_status(db)
+    pause_mine = (not pause_status.get("paused")) or pause_status.get("owner") in (
+        "",
+        pause_owner,
+    )
+    if pause_mine:
+        pause_scheduler(
+            db, pause_owner, "demo reset in progress (scheduler paused)"
+        )
+        db.commit()
+
+    def _resume_if_mine() -> None:
+        if pause_mine:
+            resume_scheduler(db, pause_owner)
+            db.commit()
+
+    try:
+        wait_for_quiescent(db, timeout_s=_reset_wait_s())
+    except TimeoutError as exc:
+        _resume_if_mine()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     resets: list[dict[str, Any]] = []
     for target in reset_targets:
         base = _admin_url_for_target(target)
@@ -244,6 +327,7 @@ def demo_reset(
         from autobridge.repair.knowledge import get_default_cache as _knowledge_size  # noqa: PLC0415
 
         kept = _knowledge_size().size()
+        _resume_if_mine()
         return {
             "labelled": True,
             "demo": True,
@@ -306,6 +390,7 @@ def demo_reset(
         removed[model.__tablename__] = db.query(model).delete()
     db.commit()
 
+    _resume_if_mine()
     return {
         "labelled": True,
         "demo": True,

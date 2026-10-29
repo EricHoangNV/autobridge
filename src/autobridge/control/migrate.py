@@ -123,6 +123,7 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
             ],
         },
     ),
+    ("0010_scheduler_pause", {"tables": ["scheduler_state"], "columns": []}),
 )
 
 

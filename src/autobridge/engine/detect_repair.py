@@ -47,6 +47,79 @@ def _summary_has_responses(summary: dict[str, Any]) -> bool:
     return False
 
 
+def _find_undecided_open_drift(
+    session: Any, connector_id: str, drift_class: str
+) -> tuple[Any | None, Any | None]:
+    """Newest open engine-derived drift of this class still awaiting a decision.
+
+    Returns ``(drift, repair)`` when an ``open`` :class:`DriftEvent` for
+    *(connector_id, drift_class)* exists whose newest repair has no
+    :class:`Approval` row yet (no approve/reject/rollback decision), else
+    ``(None, None)``.
+
+    Scope is engine-derived drifts only: rows with
+    ``source_sync_run_id`` set (a real ``POST /sync`` or scheduler sync
+    wrote them). Labelled demo rows (``record-climb``) have no source sync
+    and never match — a live break always opens its own drift.
+
+    REQ-031 owner check (reset/seed-vs-scheduler race): without this, every
+    sync on an undecided fault opens another drift and another repair —
+    the scheduler tick and a driven sync (or two ticks) double the rows
+    ("scar" drifts). One fault keeps exactly one drift and one repair
+    until the operator decides.
+    """
+    from autobridge.control.models import Approval, DriftEvent, RepairRun
+
+    drift = (
+        session.execute(
+            _select(DriftEvent)
+            .where(
+                DriftEvent.connector_id == connector_id,
+                DriftEvent.drift_class == drift_class,
+                DriftEvent.status == "open",
+                DriftEvent.source_sync_run_id.is_not(None),
+            )
+            .order_by(DriftEvent.created_at.desc())
+        )
+        .scalars()
+        .first()
+    )
+    if drift is None:
+        return None, None
+    repair: Any | None = None
+    for run in (
+        session.execute(
+            _select(RepairRun)
+            .where(RepairRun.drift_class == drift_class)
+            .order_by(RepairRun.created_at.desc())
+            .limit(50)
+        )
+        .scalars()
+        .all()
+    ):
+        if drift.id in (run.drift_event_ids or []):
+            repair = run
+            break
+    if repair is None:
+        # An open drift with no repair is not the undecided state this
+        # dedupes (something deleted the repair); fall through and repair
+        # it instead of silently attaching to a repair-less drift.
+        return None, None
+    decided = (
+        session.execute(
+            _select(Approval).where(Approval.repair_run_id == repair.id)
+        )
+        .scalars()
+        .first()
+    )
+    if decided is not None:
+        # Approved/rejected/rolled back: the operator decided, so a new
+        # detection is a new incident (e.g. the inject-again leg after an
+        # approval) — never dedupe onto a decided repair.
+        return None, None
+    return drift, repair
+
+
 def _triples(signals: list[Any]) -> list[tuple[str | None, str | None, dict[str, Any]]]:
     """Normalize signals (objects or dicts) to (kind, operation, details)."""
     out: list[tuple[str | None, str | None, dict[str, Any]]] = []
@@ -281,6 +354,53 @@ def detect_and_repair_after_sync(
     classification = classify(signals)
     delta = build_detector_delta(spec_dict, signals)
 
+    # REQ-031: one fault keeps one drift and one repair until the operator
+    # decides. A sync that re-detects an already-open, still-undecided
+    # drift of the same class returns the existing rows — no second drift,
+    # no second repair, no second candidate release. The sync itself still
+    # lands (its SyncRun row and outcome are written by the caller); only
+    # drift/repair creation dedupes.
+    existing_drift, existing_repair = _find_undecided_open_drift(
+        session, connector_id, classification.drift_class
+    )
+    if existing_drift is not None and existing_repair is not None:
+        dedupe_candidate_id: str | None = None
+        try:
+            from autobridge.control.models import ConnectorRelease
+
+            candidate = (
+                session.execute(
+                    _select(ConnectorRelease)
+                    .where(
+                        ConnectorRelease.connector_id == connector_id,
+                        ConnectorRelease.provenance_repair_run_id
+                        == existing_repair.id,
+                    )
+                    .order_by(ConnectorRelease.version.desc())
+                )
+                .scalars()
+                .first()
+            )
+            if candidate is not None:
+                dedupe_candidate_id = candidate.id
+        except Exception:
+            dedupe_candidate_id = None
+        return {
+            "drift_found": True,
+            "deduped": True,
+            "outcome": outcome,
+            "drift_id": existing_drift.id,
+            "drift_class": classification.drift_class,
+            "drift_reason": classification.reason,
+            "repair_run_id": existing_repair.id,
+            "decision": existing_repair.decision,
+            "rule_id": existing_repair.rule_id,
+            "ladder_level_reached": existing_repair.ladder_level_reached,
+            "model_usage": dict(existing_repair.model_usage or {}),
+            "candidate_release_id": dedupe_candidate_id,
+            "gate_error": None,
+        }
+
     drift = DriftEvent(
         connector_id=connector_id,
         drift_class=classification.drift_class,
@@ -302,8 +422,6 @@ def detect_and_repair_after_sync(
     )
 
     # The run handle() just persisted (same session, flushed): newest row.
-    from sqlalchemy import select as _select
-
     repair_run = session.execute(
         _select(RepairRun).order_by(RepairRun.created_at.desc()).limit(1)
     ).scalars().first()

@@ -691,3 +691,173 @@ def test_rollback_after_approve_evicts() -> None:
             drift_event_ids=[], session=s,
         )
         assert again.ladder_level_reached == 1, "rollback must evict: L1 re-derives"
+
+
+# ---------------------------------------------------------------------------
+# REQ-031: one fault keeps one drift and one repair until the operator decides
+# ---------------------------------------------------------------------------
+
+
+def _rename_summary() -> dict[str, Any]:
+    """Same connector, a different fault class (SCHEMA_RENAME)."""
+    wire = [{"reservation_id": "R0001", "primaryOccupant": "Guest 1"}]
+    return {
+        "outcome": "Complete",
+        "unmet_criteria": [],
+        "data_readiness": {},
+        "fingerprint_id": "rename",
+        "operation_results": {
+            "list_reservations": OperationResult(
+                operation="list_reservations",
+                records=wire,
+                pages_fetched=1,
+                raw_pages=[{"success": True, "data": wire, "total": 1}],
+                stop_reason="total_reached",
+            )
+        },
+        "records_observed": {"Reservation": 1},
+        "canonical_records": {},
+        "blocked_records": {},
+        "invariant_results": [],
+        "checkpoint_values": {},
+    }
+
+
+def test_repeat_sync_dedupes_undecided_drift() -> None:
+    """Scheduler tick + driven sync on one undecided fault: one drift, one repair."""
+    factory = _mem_factory()
+    spec = _page_spec()
+    conn_id, rel_id = _seed_connector(factory, spec)
+    cache = KnowledgeCache()
+    with factory() as s:
+        first = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-1",
+            knowledge_cache=cache,
+        )
+        s.commit()
+        second = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-2",
+            knowledge_cache=cache,
+        )
+        s.commit()
+        assert second.get("deduped") is True
+        assert second["drift_id"] == first["drift_id"]
+        assert second["repair_run_id"] == first["repair_run_id"]
+        assert second["decision"] == "propose"
+        assert second["ladder_level_reached"] == 1
+        assert second["rule_id"] == "page_to_cursor"
+        drifts = s.query(DriftEvent).filter_by(connector_id=conn_id).all()
+        repairs = s.query(RepairRun).all()
+        assert len(drifts) == 1, "one fault keeps exactly one drift"
+        assert len(repairs) == 1, "one fault keeps exactly one repair"
+
+
+def test_decided_repair_is_not_deduped() -> None:
+    """After an approval the same detection is a new incident (inject-again leg)."""
+    from autobridge.engine.releases import approve_release
+
+    factory = _mem_factory()
+    spec = _page_spec()
+    conn_id, rel_id = _seed_connector(factory, spec)
+    cache = KnowledgeCache()
+    with factory() as s:
+        first = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-1",
+            knowledge_cache=cache,
+        )
+        approval = approve_release(
+            s, repair_run_id=first["repair_run_id"], actor="tester",
+            from_release_id=rel_id, to_release_id=first["candidate_release_id"],
+            connector_id=conn_id, knowledge_cache=cache,
+        )
+        assert approval.decision == "approve"
+        s.commit()
+        second = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-2",
+            knowledge_cache=cache,
+        )
+        s.commit()
+        assert second.get("deduped") is not True
+        assert second["repair_run_id"] != first["repair_run_id"]
+        assert second["ladder_level_reached"] == 0, "approved fix reuses at L0"
+        assert len(s.query(RepairRun).all()) == 2
+
+
+def test_recorded_drift_is_not_deduped() -> None:
+    """Labelled demo rows (record-climb, no source sync) never match a live break."""
+    factory = _mem_factory()
+    spec = _page_spec()
+    conn_id, rel_id = _seed_connector(factory, spec)
+    with factory() as s:
+        drift = DriftEvent(
+            connector_id=conn_id,
+            drift_class="PAGINATION_CHANGE",
+            severity="high",
+            evidence_ids=[],
+            source_sync_run_id=None,
+            status="open",
+        )
+        s.add(drift)
+        s.commit()
+        out = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-live",
+            knowledge_cache=KnowledgeCache(),
+        )
+        s.commit()
+        assert out.get("deduped") is not True
+        assert out["drift_id"] != drift.id, "live break opens its own drift"
+        assert len(s.query(DriftEvent).filter_by(connector_id=conn_id).all()) == 2
+
+
+def test_different_class_is_not_deduped() -> None:
+    """A second fault class while the first is undecided still opens its own drift."""
+    factory = _mem_factory()
+    spec = _page_spec()
+    conn_id, rel_id = _seed_connector(factory, spec)
+    cache = KnowledgeCache()
+    with factory() as s:
+        first = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-1",
+            knowledge_cache=cache,
+        )
+        assert first["drift_class"] == "PAGINATION_CHANGE"
+        other = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_rename_summary(), sync_run_id="sync-2",
+            knowledge_cache=cache,
+        )
+        s.commit()
+        assert other.get("deduped") is not True
+        assert other["drift_class"] == "SCHEMA_RENAME"
+        assert other["drift_id"] != first["drift_id"]
+        assert len(s.query(DriftEvent).filter_by(connector_id=conn_id).all()) == 2
+
+
+def test_deterministic_semantic_trace_names_every_rung() -> None:
+    """REQ-021 item 3: the live deterministic path records L0 → L4 reasons.
+
+    A semantic drift with no delta to match and no provider climbs L0 miss
+    → L1 no rule → L2/L3 skipped → L4 escalate, each with a one-line
+    reason — the repair page renders this timeline verbatim.
+    """
+    from autobridge.repair.ladder import run_ladder
+
+    spec = _page_spec()
+    signals = signals_from_sync(_cursor_summary(), spec=spec)
+    result = run_ladder(spec, "SEMANTIC_VALUE_DRIFT", signals=signals, vendor="atlas")
+    assert result.decision == "escalate"
+    assert result.ladder_level_reached == 4
+    by_level = {t["level"]: t for t in result.ladder_trace}
+    assert set(by_level) == {0, 1, 2, 3, 4}, result.ladder_trace
+    assert by_level[0]["action"] == "knowledge_miss"
+    assert by_level[1]["action"] == "no_rule_matched"
+    assert by_level[2]["action"] == "l2_skipped"
+    assert by_level[3]["action"] == "l3_skipped"
+    assert by_level[4]["action"] == "escalate"
+    assert result.model_usage["frontier_tokens"] == 0

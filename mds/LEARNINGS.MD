@@ -531,3 +531,16 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The scar is deterministic, not flaky: any heal-while-shape-fixed-release-is-active plus one scheduler tick produces it, and there is no dismiss-drift affordance (reject leaves the drift open), so only a reset recovers.
 - The journey now approves and verifies first, heals only where the active spec matches clean sims, and reactivates the base release before healing after a shape fix.
 - **Rule:** repairs verify against the fault they were built for — never heal/clear the fault between approve and the verifying sync; when a demo or e2e needs a clean frame afterwards, reactivate the pre-patch release first, then heal, and assert no escalate repair was left behind.
+
+## 58. One undecided fault keeps exactly one drift and one repair — dedupe at detection, not at read
+**Context:** REQ-031 owner check (scheduler tick + driven sync doubling drift/repair rows; "after one break, exactly one drift and one repair")
+
+- `detect_and_repair_after_sync` created a `DriftEvent` unconditionally, so any two sequential detections of the same undecided fault (scheduler tick racing a driven sync, or two ticks when the busy-check window was missed) wrote scar rows. Concurrent overlap is already prevented (the scheduler skips busy connectors; the loop never overlaps passes), so the remaining hole was strictly sequential.
+- Fixed with `_find_undecided_open_drift`: same (connector, class), status open, engine-derived (source sync set — labelled `record-climb` rows never match), newest repair still without an `Approval`. Decided repairs (approved/rejected/rolled back) and different classes always open new incidents, so approve → verifying-sync → inject-again flows are untouched.
+- **Rule:** idempotency for detection-like writes belongs at creation time with a decision-aware key (open + undecided), never as a read-side filter — dashboards, busy-checks and counts all stay correct by construction.
+
+## 59. Trust-boundary guard tests match strings, not intent — even docstrings trip them
+**Context:** REQ-031 (`ReferenceReleaseRequest` docstring named the reference-spec path; `test_workspace_has_no_path_to_verifier_or_simulators` failed)
+
+- The W5.7 negative test forbids the literal `generated/connectors` in every file under `src/autobridge` except four named files — a docstring that merely *names* the path the client reads (the server never opens it) still fails the suite. Widening a guard test needs an owner note (REQ-024 precedent), so the fix was rewording, not a carve-out.
+- **Rule:** when a guard test scans for forbidden strings, treat the scan as the contract: keep the strings out of engine code entirely (including comments and docstrings); if a carve-out is truly needed, add the owner note in REQUESTS first, never widen silently.

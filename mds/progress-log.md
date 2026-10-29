@@ -3500,3 +3500,51 @@ affordance, so a scar bricks the connector until reset); `make e2e-ui` can't go 
 repairs); `make demo-seed` flakes right after spec runs (succeeds on retry). Gates green unkeyed: 6/6 journeys,
 make test 2640+134+408+192 (90/91/90%), lint/typecheck/ui-typecheck/openapi-check. Keyed stack re-run is the owner
 step. Left: stack up, seeded frame + step-4 recorded row present (harbor shows the recorded drift — reseed before recording).
+
+## REQ-031 reopened owner checks — Harbor reference seed + scheduler race fixed (sbx1)
+**Date:** 2026-10-29
+**Ref:** REQUESTS REQ-031 (reopened by owner 2026-10-30); Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Check 1 (Harbor reference seed): new `POST /connectors/{id}/reference-release` (schemas + route, verifier-gated
+  via `create_release`, secret-value guard 422, BuildRun row for knowledge vocabulary, first-build activation).
+  `bench/demo_seed.py` registers Harbor from `generated/.../harborpms/reference/spec.yaml` (Atlas stays docs-built);
+  new `_ensure_harbor_reference_release` helper also used by demo step 4 so bare `make demo` works.
+- Check 2 (scheduler race): `scheduler_state` table + migration 0010; pause/resume helpers (owner-scoped, 30-min
+  stale expiry); `run_scheduler_pass` skips whole passes while paused; `POST /demo/reset` pauses (takeover-safe),
+  waits for in-flight running jobs (`AUTOBRIDGE_RESET_WAIT_S`, 409 naming stuck jobs), resumes at both exits;
+  new `POST /demo/scheduler/pause|resume` used by `make demo-seed` around the whole seed; sims-only heal pauses too.
+- Scar drifts at the cause: `detect_and_repair_after_sync` dedupes onto the open undecided engine drift of the same
+  class (record-climb rows excluded via null source sync; decided repairs start new incidents).
+- Deterministic live repairs now record L0 miss → L1 no rule → L2/L3 skipped → L4 escalate (REQ-021 item 3); matrix
+  pins for the three deterministic-escalation rows updated [0,4] → [0,1,2,3,4].
+- `bench/demo.py` step 4 live leg rewritten (break → Degraded/money_invariant → +1 drift +1 escalate → error, 0 calls;
+  rerun-safe via dedupe); record-climb kept as the documented no-key fallback.
+- `test_08` live leg rewritten (polls the scheduled detection, asserts the four repair sections from live rows, runs
+  last so PABX still runs on pass 1; skips when a previous take's drift is open); README + docs/demo.md updated.
+
+**Key decisions:**
+- Dedupe on (connector, class, open, undecided, engine-derived) — concurrent syncs are already serialized by the
+  busy-check; dedupe covers sequential double-detection without touching retake-after-approval semantics.
+- Only running (not queued) jobs block reset — queued rows are demo state the reset wipes.
+- Matrix pin updates follow the owner's gross_to_net precedent (pins record rungs tried, decisions unchanged).
+- Meridian L0-reuse e2e failures are pre-existing on main (verified via stash; REQ-030 2b leftover) — not touched.
+
+**Files changed:**
+- `src/autobridge/control/routes/connectors.py`, `schemas.py` — reference-release route + schemas
+- `src/autobridge/control/{models,scheduler,migrate}.py`, `alembic/versions/0010_scheduler_pause.py` — pause flag
+- `src/autobridge/control/routes/demo.py` — pause/wait/resume in reset + heal, pause/resume endpoints
+- `src/autobridge/engine/detect_repair.py` — open-drift dedupe
+- `src/autobridge/repair/ladder.py` — `_record_unattempted_rungs`
+- `bench/demo.py`, `bench/demo_seed.py` — Harbor reference registration + step-4 live rewrite + seed pause
+- `tests/unit/test_autobridge_req031_pause_reference.py` (new), `test_autobridge_detect_repair.py` (+5),
+  `test_autobridge_demo.py` (harbor stub), `test_autobridge_db_models.py` (head 0010)
+- `tests/e2e/test_09_demo_seed_break_heal.py` (+acceptance test), `test_model_usage_matrix.py` (3 pins),
+  `tests/e2e/test_08_recording_journey.spec.ts` (live leg rewrite + reorder)
+- `README.md`, `docs/demo.md`, `ui/openapi.json`, `ui/lib/api/schema.d.ts`
+
+**Notes for next iteration:**
+- Owner run: keyed stack, `make local-up && make demo-seed && make e2e && make e2e-ui && make demo`, plus reset/seed
+  20x on camera (5/5 green in sandbox). Keyed step 4 should show the live L3 call in the instrumented climb.
+- Known pre-existing (main, verified via stash): `test_meridian_cursor/state_renamed_zero_frontier` L0-reuse
+  expectation contradicts REQ-030 2b (propose caches nothing) — needs an approve leg or re-derived expectation.

@@ -321,6 +321,44 @@ class BuildResponse(BaseModel):
     connector_id: str
 
 
+class ReferenceReleaseRequest(BaseModel):
+    """Register a reference (pre-built, versioned) ConnectorSpec (REQ-031).
+
+    The demo seeds HarborPMS from its reusable reference release — the spec
+    the workstream built and verified, money invariant included — instead
+    of compiling it from docs (the docs build cannot infer the money
+    check, so ``gross_to_net`` never breaks live on a docs-built spec).
+    The client (bench/demo-seed) reads the reference spec file
+    client-side and sends the parsed spec; the server never reads files.
+    The release is verifier-gated
+    exactly like a docs build (gate-blocked → 422, nothing persists).
+    """
+
+    spec: dict[str, Any] = Field(description="Full ConnectorSpec document to register")
+    spec_vocabulary: Literal["v1", "v2", "v3"] | None = Field(
+        default=None,
+        description="Vocabulary the spec is compiled under; defaults to the spec's own spec_version (v1|v2|v3)",
+    )
+    docs_source: str = Field(
+        default="reference",
+        max_length=256,
+        description="Provenance label recorded on the build row (e.g. reference:harborpms)",
+    )
+    scenario_id: str = Field(default="baseline")
+    verifier_url: str | None = None
+
+
+class ReferenceReleaseResponse(BaseModel):
+    release_id: str
+    build_run_id: str
+    connector_id: str
+    version: int
+    activated: bool
+    active_release_id: str | None = None
+    verified: bool
+    verification_report_id: str | None = None
+
+
 class SyncRequest(BaseModel):
     release_id: str | None = Field(default=None, description="Release to sync; defaults to active")
     checkpoint: dict[str, Any] | None = None
@@ -425,6 +463,18 @@ class InjectFaultResponse(BaseModel):
 class SimulatorConnectorRef(BaseModel):
     id: str
     name: str
+
+
+class SchedulerPauseRequest(BaseModel):
+    """Body for POST /demo/scheduler/pause|resume (REQ-031 owner check).
+
+    ``owner`` names who holds the pause (``demo-seed`` for the seed
+    script, ``manual`` otherwise); a resume only clears its owner's
+    pause, so a nested reset inside a paused seed cannot resume early.
+    """
+
+    owner: str = Field(default="manual", max_length=64)
+    reason: str = Field(default="", max_length=256)
 
 
 class SimulatorInfo(BaseModel):

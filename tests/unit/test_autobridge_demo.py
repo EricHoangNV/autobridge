@@ -284,6 +284,8 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
     atlas_injects = {"n": 0}
     atlas_repairs: list[dict[str, Any]] = []
     recorded_climb: dict[str, Any] = {}
+    harbor_injects = {"n": 0}
+    harbor_live_repair = {"created": False}
 
     def _connector_id(name: str) -> str:
         return f"c-{name.lower().replace(' ', '-')}"
@@ -332,7 +334,13 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
         if path.endswith("/sync") and method == "POST":
             counters["job"] += 1
             jid = f"j-sync-{counters['job']}"
-            jobs[jid] = {"sync_run_id": f"s-{counters['job']}", "outcome": "Complete", "unmet_criteria": []}
+            cid = path.split("/")[2]
+            conn = next((c for c in connectors.values() if c["id"] == cid), None)
+            if conn is not None and conn["name"] == "harborpms" and harbor_injects["n"] > 0:
+                jobs[jid] = {"sync_run_id": f"s-{counters['job']}", "outcome": "Degraded",
+                             "unmet_criteria": ["money_invariant"]}
+            else:
+                jobs[jid] = {"sync_run_id": f"s-{counters['job']}", "outcome": "Complete", "unmet_criteria": []}
             return {"method": method, "path": path, "status": 200,
                     "body": {"job_id": jid, "sync_run_id": None, "state": "queued", "release_id": "r-1"}}
         if path.startswith("/jobs/"):
@@ -343,6 +351,8 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
         if path == "/demo/inject-fault" and method == "POST":
             if (_payload or {}).get("target") == "sim-atlas":
                 atlas_injects["n"] += 1
+            if (_payload or {}).get("target") == "sim-harbor":
+                harbor_injects["n"] += 1
             return {"method": method, "path": path, "status": 200, "body": {"ok": True}}
         if path == "/demo/record-climb" and method == "POST":
             # REQ-030: persist the stub; read-back serves the recorded rows.
@@ -387,6 +397,12 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
                         "body": [{"id": "d-1", "connector_id": conn["id"], "drift_class": "PAGINATION_CHANGE",
                                   "severity": "high", "evidence_ids": [], "source_sync_run_id": "s-1",
                                   "status": "open"}]}
+            if conn is not None and conn["name"] == "harborpms" and harbor_injects["n"] > 0:
+                return {"method": method, "path": path, "status": 200,
+                        "body": [{"id": "d-harbor-1", "connector_id": conn["id"],
+                                  "drift_class": "SEMANTIC_VALUE_DRIFT",
+                                  "severity": "high", "evidence_ids": [],
+                                  "source_sync_run_id": "s-harbor-1", "status": "open"}]}
             return {"method": method, "path": path, "status": 200, "body": []}
         if path.startswith("/repairs"):
             if method == "POST":
@@ -400,6 +416,20 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
                                  "decision": "approve", "to_release_id": rel["id"]}}
             query = path.split("connector_id=")[-1] if "connector_id=" in path else ""
             conn = next((c for c in connectors.values() if c["id"] == query), None)
+            if conn is not None and conn["name"] == "harborpms" and harbor_injects["n"] > 0:
+                harbor_live_repair["created"] = True
+                return {"method": method, "path": path, "status": 200, "body": [{
+                    "id": "rr-harbor-1", "drift_event_ids": ["d-harbor-1"],
+                    "drift_class": "SEMANTIC_VALUE_DRIFT",
+                    "ladder_level_reached": 4, "rule_id": None, "decision": "escalate",
+                    "model_usage": {"frontier_tokens": 0, "small_tokens": 0, "calls": 0},
+                    "ladder_trace": [
+                        {"level": 0, "action": "knowledge_miss", "reason": "L0 stub miss"},
+                        {"level": 1, "action": "no_rule", "reason": "L1 stub no rule"},
+                        {"level": 4, "action": "escalate", "reason": "stub semantic escalate"},
+                    ],
+                    "escalation_bundle": {"question": "stub: map total_amount or add a canonical field?"},
+                }]}
             if conn is not None and conn["name"] == "atlaspms":
                 while len(atlas_repairs) < atlas_injects["n"]:
                     rid = f"rr-{len(atlas_repairs) + 1}"
@@ -418,6 +448,20 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
             cid = parts[2] if len(parts) > 2 else ""
             conn = next((c for c in connectors.values() if c["id"] == cid), None)
             assert conn is not None, f"unknown connector path {path}"
+            if len(parts) == 4 and parts[3] == "reference-release" and method == "POST":
+                counters["rel"] += 1
+                rel = {
+                    "id": f"r-ref-{counters['rel']}",
+                    "spec": {"entities": {"Reservation": {"checks": [{"kind": "money_invariant", "field": "total_amount"}]}}},
+                }
+                conn["releases"].append(rel)
+                if conn["active_release_id"] is None:
+                    conn["active_release_id"] = rel["id"]
+                return {"method": method, "path": path, "status": 200,
+                        "body": {"release_id": rel["id"], "build_run_id": "b-ref-1",
+                                 "connector_id": cid, "version": len(conn["releases"]),
+                                 "activated": True, "active_release_id": conn["active_release_id"],
+                                 "verified": False, "verification_report_id": None}}
             if len(parts) == 5 and parts[4] == "activate" and method == "POST":
                 rid = parts[3]
                 assert any(r["id"] == rid for r in conn["releases"]), f"unknown release {rid}"

@@ -2320,6 +2320,122 @@
         "title": "RecordClimbResponse",
         "type": "object"
       },
+      "ReferenceReleaseRequest": {
+        "description": "Register a reference (pre-built, versioned) ConnectorSpec (REQ-031).\n\nThe demo seeds HarborPMS from its reusable reference release \u2014 the spec\nthe workstream built and verified, money invariant included \u2014 instead\nof compiling it from docs (the docs build cannot infer the money\ncheck, so ``gross_to_net`` never breaks live on a docs-built spec).\nThe client (bench/demo-seed) reads the reference spec file\nclient-side and sends the parsed spec; the server never reads files.\nThe release is verifier-gated\nexactly like a docs build (gate-blocked \u2192 422, nothing persists).",
+        "properties": {
+          "docs_source": {
+            "default": "reference",
+            "description": "Provenance label recorded on the build row (e.g. reference:harborpms)",
+            "maxLength": 256,
+            "title": "Docs Source",
+            "type": "string"
+          },
+          "scenario_id": {
+            "default": "baseline",
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "description": "Full ConnectorSpec document to register",
+            "title": "Spec",
+            "type": "object"
+          },
+          "spec_vocabulary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "v1",
+                  "v2",
+                  "v3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Vocabulary the spec is compiled under; defaults to the spec's own spec_version (v1|v2|v3)",
+            "title": "Spec Vocabulary"
+          },
+          "verifier_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifier Url"
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "title": "ReferenceReleaseRequest",
+        "type": "object"
+      },
+      "ReferenceReleaseResponse": {
+        "properties": {
+          "activated": {
+            "title": "Activated",
+            "type": "boolean"
+          },
+          "active_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Release Id"
+          },
+          "build_run_id": {
+            "title": "Build Run Id",
+            "type": "string"
+          },
+          "connector_id": {
+            "title": "Connector Id",
+            "type": "string"
+          },
+          "release_id": {
+            "title": "Release Id",
+            "type": "string"
+          },
+          "verification_report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Report Id"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "release_id",
+          "build_run_id",
+          "connector_id",
+          "version",
+          "activated",
+          "verified"
+        ],
+        "title": "ReferenceReleaseResponse",
+        "type": "object"
+      },
       "ReleaseOut": {
         "properties": {
           "approved_by": {
@@ -2906,6 +3022,25 @@
           "resolved_rung"
         ],
         "title": "RungLedgerOut",
+        "type": "object"
+      },
+      "SchedulerPauseRequest": {
+        "description": "Body for POST /demo/scheduler/pause|resume (REQ-031 owner check).\n\n``owner`` names who holds the pause (``demo-seed`` for the seed\nscript, ``manual`` otherwise); a resume only clears its owner's\npause, so a nested reset inside a paused seed cannot resume early.",
+        "properties": {
+          "owner": {
+            "default": "manual",
+            "maxLength": 64,
+            "title": "Owner",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "SchedulerPauseRequest",
         "type": "object"
       },
       "ScorecardEntry": {
@@ -4179,6 +4314,144 @@
         ]
       }
     },
+    "/connectors/{connector_id}/reference-release": {
+      "post": {
+        "description": "Register a pre-built reference ConnectorSpec as a release (REQ-031).\n\nThe demo seeds HarborPMS from its reusable reference release (money\ninvariant included) through the control API \u2014 the same API the UI\nuses \u2014 instead of compiling it from docs. The client sends the parsed\nspec (it read the file; the server never reads files, AR-2-2). The\ncandidate is verifier-gated exactly like a docs build (gate-before-\npersist: blocked/unreachable \u2192 422, nothing persisted). A build row\nrecords the registration (vocabulary, provenance label) so the\nknowledge page shows it like any build; the release activates when\nthe connector has no active release yet (first-build rule, REQ-013).",
+        "operationId": "register_reference_release_connectors__connector_id__reference_release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connector_id",
+            "required": true,
+            "schema": {
+              "title": "Connector Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceReleaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "detail": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "detail"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "detail": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "detail"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Request validation failure or domain error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Register Reference Release",
+        "tags": [
+          "connectors"
+        ]
+      }
+    },
     "/connectors/{connector_id}/releases/{release_id}/activate": {
       "post": {
         "description": "Activate a build candidate so it becomes runnable (REQ-013).\n\nThe first build's release is auto-activated (see ``run_build_handler``);\nlater build candidates need this explicit operator step. Repair\ncandidates cannot be activated here \u2014 they go through repair\napproval \u2014 and gate-blocked or rejected releases stay unrunnable (422).\nThe actor is the server-configured operator (REQ-001), never a client\nvalue.",
@@ -5163,6 +5436,226 @@
           }
         ],
         "summary": "Demo Reset",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
+    "/demo/scheduler/pause": {
+      "post": {
+        "description": "Pause the sync scheduler (REQ-031 owner check).\n\nThe seed script (``make demo-seed``) pauses before its first control\ncall and resumes in a ``finally`` after its last one, so no scheduled\nsync races a half-seeded connector. ``POST /demo/reset`` pauses and\nresumes itself around its work (nested-safe: a resume only clears its\nowner's pause). Stale pauses expire instead of wedging the scheduler.",
+        "operationId": "scheduler_pause_demo_scheduler_pause_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SchedulerPauseRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Scheduler Pause Demo Scheduler Pause Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Scheduler Pause",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
+    "/demo/scheduler/resume": {
+      "post": {
+        "description": "Clear a scheduler pause owned by ``owner`` (keeps a foreign owner's).",
+        "operationId": "scheduler_resume_demo_scheduler_resume_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SchedulerPauseRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Scheduler Resume Demo Scheduler Resume Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Scheduler Resume",
         "tags": [
           "demo"
         ]

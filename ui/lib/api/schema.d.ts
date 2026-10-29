@@ -145,6 +145,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connectors/{connector_id}/reference-release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register Reference Release
+         * @description Register a pre-built reference ConnectorSpec as a release (REQ-031).
+         *
+         *     The demo seeds HarborPMS from its reusable reference release (money
+         *     invariant included) through the control API — the same API the UI
+         *     uses — instead of compiling it from docs. The client sends the parsed
+         *     spec (it read the file; the server never reads files, AR-2-2). The
+         *     candidate is verifier-gated exactly like a docs build (gate-before-
+         *     persist: blocked/unreachable → 422, nothing persisted). A build row
+         *     records the registration (vocabulary, provenance label) so the
+         *     knowledge page shows it like any build; the release activates when
+         *     the connector has no active release yet (first-build rule, REQ-013).
+         */
+        post: operations["register_reference_release_connectors__connector_id__reference_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connectors/{connector_id}/releases/{release_id}/activate": {
         parameters: {
             query?: never;
@@ -359,6 +389,52 @@ export interface paths {
          *     names are 422.
          */
         post: operations["demo_reset_demo_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/demo/scheduler/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scheduler Pause
+         * @description Pause the sync scheduler (REQ-031 owner check).
+         *
+         *     The seed script (``make demo-seed``) pauses before its first control
+         *     call and resumes in a ``finally`` after its last one, so no scheduled
+         *     sync races a half-seeded connector. ``POST /demo/reset`` pauses and
+         *     resumes itself around its work (nested-safe: a resume only clears its
+         *     owner's pause). Stale pauses expire instead of wedging the scheduler.
+         */
+        post: operations["scheduler_pause_demo_scheduler_pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/demo/scheduler/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scheduler Resume
+         * @description Clear a scheduler pause owned by ``owner`` (keeps a foreign owner's).
+         */
+        post: operations["scheduler_resume_demo_scheduler_resume_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2186,6 +2262,65 @@ export interface components {
             /** Repair Run Id */
             repair_run_id: string;
         };
+        /**
+         * ReferenceReleaseRequest
+         * @description Register a reference (pre-built, versioned) ConnectorSpec (REQ-031).
+         *
+         *     The demo seeds HarborPMS from its reusable reference release — the spec
+         *     the workstream built and verified, money invariant included — instead
+         *     of compiling it from docs (the docs build cannot infer the money
+         *     check, so ``gross_to_net`` never breaks live on a docs-built spec).
+         *     The client (bench/demo-seed) reads the reference spec file
+         *     client-side and sends the parsed spec; the server never reads files.
+         *     The release is verifier-gated
+         *     exactly like a docs build (gate-blocked → 422, nothing persists).
+         */
+        ReferenceReleaseRequest: {
+            /**
+             * Docs Source
+             * @description Provenance label recorded on the build row (e.g. reference:harborpms)
+             * @default reference
+             */
+            docs_source: string;
+            /**
+             * Scenario Id
+             * @default baseline
+             */
+            scenario_id: string;
+            /**
+             * Spec
+             * @description Full ConnectorSpec document to register
+             */
+            spec: {
+                [key: string]: unknown;
+            };
+            /**
+             * Spec Vocabulary
+             * @description Vocabulary the spec is compiled under; defaults to the spec's own spec_version (v1|v2|v3)
+             */
+            spec_vocabulary?: ("v1" | "v2" | "v3") | null;
+            /** Verifier Url */
+            verifier_url?: string | null;
+        };
+        /** ReferenceReleaseResponse */
+        ReferenceReleaseResponse: {
+            /** Activated */
+            activated: boolean;
+            /** Active Release Id */
+            active_release_id?: string | null;
+            /** Build Run Id */
+            build_run_id: string;
+            /** Connector Id */
+            connector_id: string;
+            /** Release Id */
+            release_id: string;
+            /** Verification Report Id */
+            verification_report_id?: string | null;
+            /** Verified */
+            verified: boolean;
+            /** Version */
+            version: number;
+        };
         /** ReleaseOut */
         ReleaseOut: {
             /**
@@ -2413,6 +2548,26 @@ export interface components {
              * @default 0
              */
             total_cost: string;
+        };
+        /**
+         * SchedulerPauseRequest
+         * @description Body for POST /demo/scheduler/pause|resume (REQ-031 owner check).
+         *
+         *     ``owner`` names who holds the pause (``demo-seed`` for the seed
+         *     script, ``manual`` otherwise); a resume only clears its owner's
+         *     pause, so a nested reset inside a paused seed cannot resume early.
+         */
+        SchedulerPauseRequest: {
+            /**
+             * Owner
+             * @default manual
+             */
+            owner: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
         };
         /** ScorecardEntry */
         ScorecardEntry: {
@@ -3117,6 +3272,78 @@ export interface operations {
             };
         };
     };
+    register_reference_release_connectors__connector_id__reference_release_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReferenceReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferenceReleaseResponse"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
     activate_connector_release_connectors__connector_id__releases__release_id__activate_post: {
         parameters: {
             query?: never;
@@ -3633,6 +3860,142 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": components["schemas"]["DemoResetRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scheduler_pause_demo_scheduler_pause_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SchedulerPauseRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scheduler_resume_demo_scheduler_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SchedulerPauseRequest"] | null;
             };
         };
         responses: {

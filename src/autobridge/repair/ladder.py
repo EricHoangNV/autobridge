@@ -808,6 +808,77 @@ def _try_budgeted_ladder(
     return None
 
 
+def _record_unattempted_rungs(
+    trace: list[dict[str, Any]],
+    *,
+    drift_class: str,
+    vendor: str,
+    no_rule_matched: bool,
+    hypotheses: list[Any] | None,
+) -> None:
+    """One-line reasons for rungs the deterministic path never attempted.
+
+    REQ-021 item 3: every repair run records each rung it tried (L0 → L4)
+    with a one-line reason for moving up — including the deterministic
+    live path, where L0 has no observable delta to match, L1 has no rule
+    for the class, and L2/L3 never fire without hypotheses and a provider.
+    Only fills levels the trace does not already name (a ``knowledge_miss``,
+    a ``patch_error``, a ``BudgetExhausted`` escalate all stay exactly as
+    recorded). Early returns (non-fixable classes, token refresh, backoff,
+    ablation-disabled) keep their own shapes untouched.
+    """
+    levels = {t.get("level") for t in trace if isinstance(t, dict)}
+    if 0 not in levels:
+        trace.append(
+            {
+                "level": 0,
+                "action": "knowledge_miss",
+                "reason": (
+                    f"L0 miss: no known fix for {vendor} + {drift_class} "
+                    "(no observable delta to match a learned fix against)"
+                ),
+                "drift_class": drift_class,
+                "vendor": vendor,
+            }
+        )
+    if no_rule_matched and 1 not in levels:
+        trace.append(
+            {
+                "level": 1,
+                "action": "no_rule_matched",
+                "reason": (
+                    f"L1: no rule precondition matched for {drift_class} "
+                    "from the wire signals"
+                ),
+                "drift_class": drift_class,
+            }
+        )
+    if hypotheses is None and 2 not in levels:
+        trace.append(
+            {
+                "level": 2,
+                "action": "l2_skipped",
+                "reason": (
+                    f"L2 skipped: nothing to rank for {drift_class} on the "
+                    "deterministic path (no hypotheses, no small-model call)"
+                ),
+                "drift_class": drift_class,
+            }
+        )
+    if hypotheses is None and 3 not in levels:
+        trace.append(
+            {
+                "level": 3,
+                "action": "l3_skipped",
+                "reason": (
+                    f"L3 skipped: no frontier call on the deterministic path "
+                    f"for {drift_class} (models fire only via the instrumented climb)"
+                ),
+                "drift_class": drift_class,
+            }
+        )
+
+
 def run_ladder(
     spec: dict[str, Any],
     drift_class: str,
@@ -1290,6 +1361,10 @@ def run_ladder(
         )
         if budgeted is not None:
             return budgeted
+        _record_unattempted_rungs(
+            trace, drift_class=drift_class, vendor=vendor_val,
+            no_rule_matched=False, hypotheses=hypotheses,
+        )
         reason = f"L1 rules matched but none produced a valid patch for {drift_class}"
         trace.append({"level": 4, "action": "escalate", "reason": reason, "drift_class": drift_class})
         bundle = escalation_for_no_fix(reason, evidence_ids=evidence_ids)
@@ -1325,6 +1400,10 @@ def run_ladder(
     )
     if budgeted is not None:
         return budgeted
+    _record_unattempted_rungs(
+        trace, drift_class=drift_class, vendor=vendor_val,
+        no_rule_matched=True, hypotheses=hypotheses,
+    )
     reason = f"No L0/L1 repair for {drift_class} — escalate to L4"
     trace.append({"level": 4, "action": "escalate", "reason": reason, "drift_class": drift_class})
     bundle = escalation_for_no_fix(reason, evidence_ids=evidence_ids)

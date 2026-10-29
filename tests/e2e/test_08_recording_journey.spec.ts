@@ -9,11 +9,14 @@
  *   appears without a manual sync → click Approve in the UI → Working,
  *   with the four repair sections present; break it again after
  *   reactivating the base release → L0 hit, Knowledge "reused" goes up;
- *   break `gross_to_net` → the labelled gap (no engine repair: the
- *   docs-built Harbor spec carries no money invariant), then the recorded
- *   step-4 repair shows the funnel, the 1 model call and the question;
  *   break `fias_record_layout_change` → the agent re-handshakes, the
- *   connector stays Working, postings resume (no approval needed).
+ *   connector stays Working, postings resume (no approval needed); break
+ *   `gross_to_net` last → the scheduled sync Degrades on the money
+ *   invariant and the engine escalates to `error` with the operator
+ *   question (asserted from the break's own rows: decision, climb,
+ *   0 model calls, question, reject path), then the recorded step-4
+ *   repair shows the funnel, the 1 model call and the rejection.
+ *   (The semantic break runs last: it leaves Harbor non-Working.)
  *
  * Live-stack only: without a reachable control plane the spec skips
  * (the mocked test_06 journey covers the screens offline). Requires the
@@ -24,11 +27,12 @@
  *
  * The recorded semantic repair exists only after `make demo` step 4 has
  * run once (POST /demo/record-climb): on a fresh seed that half skips.
- * The semantic halves are split on purpose — the gap half needs the
+ * The semantic halves are split on purpose — the live half needs the
  * seed frame, the recorded half needs only the recorded row (step 4
  * leaves Harbor non-Working, since its recorded drift stays open).
- * Full coverage is two passes: seed → journey (gap passes, recorded
- * skips) → `make demo` → journey again (recorded passes). Re-seed
+ * Full coverage is two passes: seed → journey (live passes, recorded
+ * skips) → `make demo` → journey again (recorded passes; live skips, its
+ * drift is still open). Re-seed before re-running the journey — `make demo`
  * before re-running the journey — `make demo` leaves its rows behind
  * by design, and the opening frame asserts the seed contract
  * (Working, 0 tokens, nothing waiting).
@@ -427,35 +431,14 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
   );
 
   test(
-    "hard semantic failure: the live gap is labelled (no engine repair)",
-    { timeout: 300_000 },
-    async ({ page }) => {
-      test.setTimeout(300_000);
-      const byName = await requireSeed();
-      const harbor = byName.get("harborpms")!;
-      const before = (await repairsFor(harbor.id)) ?? [];
-
-      await waitForTick(harbor.id);
-      await breakFault("gross_to_net", "sim-harbor");
-      // The docs-built Harbor spec carries no money invariant, so the
-      // faulted syncs stay Complete and the engine proposes nothing
-      // (demo step 4 asserts the same). Fail loud if that ever changes:
-      // the journey below must then be rewritten for the live climb.
-      await page.waitForTimeout(40_000);
-      expect(await connectorState(harbor.id)).toBe("working");
-      const after = (await repairsFor(harbor.id)) ?? [];
-      expect(after.length, "no engine repair for the uninstrumented semantic fault").toBe(before.length);
-    },
-  );
-
-  test(
     "hard semantic failure: recorded repair shows funnel + call + question",
     { timeout: 120_000 },
     async ({ page }) => {
       test.setTimeout(120_000);
       // Needs only the recorded row, not the seed frame: `make demo`
       // step 4 leaves Harbor non-Working (its recorded drift stays open),
-      // so this half runs after the demo, the gap half before it.
+      // so this half runs after the demo; the live half needs the seed
+      // frame and runs last in the file.
       await requireControl();
       // Scope by connector: other legs' scars (e.g. a verifying sync that
       // raced release activation) must never match here.
@@ -536,4 +519,68 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       await expect(page.getByTestId("pabx-layout")).toBeVisible();
     },
   );
+
+  test(
+    "hard semantic failure: the break climbs live to error (no record-climb rows)",
+    { timeout: 420_000 },
+    async ({ page }) => {
+      test.setTimeout(420_000);
+      const byName = await requireSeed();
+      const harbor = byName.get("harborpms")!;
+      // Harbor seeds from its reference release (money invariant included),
+      // so gross_to_net breaks live: inject → scheduled sync → Degraded →
+      // engine drift + escalated repair → error. The assertions below read
+      // the engine-derived rows (source sync set), never record-climb rows.
+      // One fresh take per seed: a previous take's still-open drift would
+      // dedupe this break (one fault keeps one drift), so the live half
+      // skips then — reseed for a fresh live take, like every other leg.
+      const preDrift = await control<Array<{ id?: string; source_sync_run_id?: string | null }>>(
+        "GET",
+        `/drift?connector_id=${encodeURIComponent(harbor.id)}`,
+      );
+      if ((preDrift ?? []).some((d) => d.source_sync_run_id)) {
+        test.skip(true, "harbor already carries an open engine semantic drift — reseed for a fresh live take");
+        return;
+      }
+      const sinceBreak = new Date().toISOString();
+      await waitForTick(harbor.id);
+      await breakFault("gross_to_net", "sim-harbor");
+      const repair = await poll(
+        async () => newest((await repairsFor(harbor.id))?.filter((r) => (r.created_at ?? "") >= sinceBreak) ?? null),
+        (r) => !!r && r.decision === "escalate",
+        "live gross_to_net escalation",
+        180_000,
+        5000,
+      );
+      expect(repair.drift_class).toBe("SEMANTIC_VALUE_DRIFT");
+      await poll(() => connectorState(harbor.id), (s) => s === "error", "harbor error after the live climb", 180_000);
+      // One undecided fault keeps exactly one drift and one repair: drain
+      // a tick past the error and fail fast on a doubled row.
+      await new Promise((r) => setTimeout(r, 15_000));
+      const settled = ((await repairsFor(harbor.id)) ?? []).filter((r) => (r.created_at ?? "") >= sinceBreak);
+      expect(
+        settled.map((r) => r.id).sort(),
+        "exactly one repair for one break (no scar doubling)",
+      ).toEqual([repair.id]);
+
+      // The repair page explains itself from the live rows: the decision,
+      // the deterministic climb, the explicit 0 model calls, the operator
+      // question and the reject path (a semantic drift is never patched).
+      await page.goto(`${UI_BASE}/repairs/${encodeURIComponent(repair.id)}`, {
+        waitUntil: "domcontentloaded",
+      });
+      await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId("repair-decision-line")).toContainText("Needs your decision");
+      await expect(page.getByTestId("repair-section-happened")).toBeVisible();
+      await expect(page.getByTestId("happened-class")).toContainText("Semantic value drift");
+      await expect(page.getByTestId("repair-section-did")).toBeVisible();
+      await expect(page.getByTestId("rung-timeline-0")).toBeVisible();
+      await expect(page.getByTestId("rung-timeline-4")).toBeVisible();
+      await expect(page.getByTestId("model-call-box-empty")).toContainText("0 model calls");
+      await expect(page.getByTestId("decided-question")).toBeVisible();
+      await expect(page.getByTestId("verifier-verdict")).toBeVisible();
+      await expect(page.getByTestId("approve-preview")).toBeVisible();
+    },
+  );
+
 });
