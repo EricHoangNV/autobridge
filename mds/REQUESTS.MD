@@ -2,6 +2,34 @@
 
 ## Open Requests (read this section only)
 
+Owner priority (2026-10-30 06:00): **REQ-042 first, then REQ-040, then REQ-041.**
+
+### REQ-042 — A model call must never run inside a request or a held transaction: keyed demo fails 3/8 (2026-10-30)
+Status: OPEN
+Owner run (2026-10-30, sandbox, fresh checkout of `origin/main` at 57670155, the Cycle 5 PASS commit, **with the
+owner's `.env` incl. `FRONTIER_API_KEY`**): `make up && make demo-reset && make demo` → **steps 4, 7, 8 failed**:
+step 4 `POST /connectors/{id}/sync -> unreachable: "timed out"` (no `Degraded`, no drift row); steps 7 and 8
+`POST /connectors -> unreachable: "timed out"`. Each step alone after `demo-reset`: 7 and 8 pass, **4 fails**. The
+Cycle 5 audit saw 8/8 because its run had no frontier key (L3 skipped instantly).
+Cause: `POST /connectors/{id}/sync` executes the whole chain inline in the request (`control/routes/builds.py`
+`trigger_sync` → `control.runner.sync_connector_now`), and since REQ-039 that chain includes the **live L3 frontier
+call** for a `SEMANTIC_VALUE_DRIFT`. The request outlives the demo's 10 s client timeout and control stays blocked
+(most likely the sync's DB transaction / SQLite write lock is held across the model call), so the next writes time
+out too. The scheduler path has the same shape.
+Fix (do not raise timeouts to hide it):
+1. **No model call inside a request handler, and no DB transaction or write lock held across a model call.** The sync
+   (request or scheduler) records the sync run and the drift, then queues the repair as a job; the repair job
+   (deterministic rungs, then L2/L3) runs in the worker/scheduler thread, committing before and after each model call.
+2. `POST /sync` returns as soon as the sync run and drift are recorded (well under 2 s); the UI and `make demo` follow
+   the repair by polling its row (the Repairs page already polls). Step 4 waits on the repair row's state, bounded
+   by the L3 budget, and reports it.
+3. While a model call is in flight, control stays fully responsive: other connectors can be created, synced and read.
+4. Tests: a fake provider that sleeps 30 s → `POST /sync` returns < 2 s, `POST /connectors` and `GET /repairs` answer
+   meanwhile, the repair finishes and carries the call; plus the same through the scheduler.
+5. **Run the gates keyed**: `make demo` 8/8 with `FRONTIER_API_KEY` set (live L3) and without it (replay or labelled
+   skip), each step alone after `make demo-reset` as well. Note in docs/demo.md that the semantic repair arrives a few
+   seconds after the break when the frontier call is live.
+
 Owner priority (2026-10-30 03:40): **REQ-039 next**, before anything else.
 
 ### REQ-040 — Directive: §4/§7 repair provenance — the sync→repair path re-fetches "the newest RepairRun" unscoped, so concurrent syncs can cross-link candidate releases (2026-10-29)
