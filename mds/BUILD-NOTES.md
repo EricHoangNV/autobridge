@@ -2334,3 +2334,12 @@ climb as the instrumented path instead of the deterministic 0-call escalation.
 - Owner steps: keyed full run, then `make record-frontier SCENARIO=gross_to_net` → commit the capture (live
   prompt hash is seed-stable: `35115558…` across resets). Note: in-process and live prompts differ only in
   the records sample (seeded sim vs fake), so one capture run records both hashes.
+
+### REQ-029 close-out (sbx1 2026-10-29)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+Close condition met: REQ-034 decided (option a) and DONE on main (admin-forwarder sidecar `sim-fias-pabx-admin` in compose.yaml:341, smoke admin-port checks), so REQ-029's "owner's call once REQ-034 is decided" now applies.
+Re-verified both gaps on current main, no code changes needed:
+- AR-1-2 residual: `_require_verified_release` fail-closed activation gate (`src/autobridge/engine/releases.py:72-87`, called in `_activate`.:319); worker verification routes through control; compose/worker comments + docs/safety-model.md updated.
+- docs_path 422: `POST /connectors/{id}/build` with only `docs_path` returns 422 "docs_path is an identifier only; send docs_text (or docs_url)" (`src/autobridge/control/routes/builds.py:148-161`, engine mirror `src/autobridge/engine/build_run.py:410-418`); callers (demo, UI, CLI `ab`, e2e, docs) send docs_text.
+Targeted suites green: test_autobridge_releases + test_autobridge_verification_gate + test_autobridge_engine_build_run (104 passed), test_autobridge_build_docs_guard + control_api + control_api_extended + cli (110 passed).
+Remaining (not mine to change): auditor flips the Code Review verdict line in FEEDBACKS.MD; owner keyed `make local-up && make e2e && make demo` re-run.

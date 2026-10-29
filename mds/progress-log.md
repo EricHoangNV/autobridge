@@ -3557,3 +3557,11 @@ repair row carries funnel + L3 messages + verdict; record-climb is fallback-only
 live prompt for replay. Gates green unkeyed (make test 2669+134+sim/0 fail, 90.55%/91.49%, ui 192; lint,
 typecheck, openapi-check, ui-typecheck); live verified (seed, break→error, demo 8/8 x2, test_08 both passes).
 Owner: keyed re-run + `make record-frontier SCENARIO=gross_to_net` + commit capture.
+
+## 2026-10-29 21:50 UTC — REQ-029 close-out (sbx1, opencode meta/muse-spark-1.3-contributor (escalation))
+Close condition satisfied: REQ-034 decided (option a) and DONE on main, so per the task text ("closing this item
+is the owner's call once REQ-034 is decided") REQ-029 moves DONE. Re-verified both gaps in code, no changes needed:
+(1) `_require_verified_release` fail-closed activation gate in `src/autobridge/engine/releases.py:72-87,319`;
+(2) docs_path-422 in `control/routes/builds.py:148-161` + engine mirror. Targeted suites: 104 + 110 passed, 0 fail.
+Status flipped in REQUESTS.MD, build note appended. Remaining (not mine): auditor verdict line in FEEDBACKS.MD,
+owner keyed local-up+e2e+demo re-run. No stack started this run; no code diff.
