@@ -7,7 +7,7 @@ Owner priority (2026-10-29 10:40, supersedes the list below): **REQ-027 first.**
 describe the REQ-027 demo, so finish REQ-023 after REQ-027 lands (or update it then).
 
 ### REQ-027 — Auto-detect + auto-heal end to end on the live stack, and a demo that proves it (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 03:31; sub-steps 1-4 + owner check-1 fixes MERGED 2026-10-29; knowledge-page check (below) OPEN next) **Open: knowledge-page check (below).**
+Status: IN_PROGRESS (sub-steps 1-4 + check-1 fixes merged 2026-10-29; knowledge-page check + sub-steps 5-6 OPEN next — unclaimed)
 Why: it is the product's headline claim and today only FIAS (demo step 8) shows it. Owner checks on the host
 (2026-10-29, main at f61274b8, keyed local stack):
 - After REQ-024's honest fix (a62013dc) every engine arm escalates with 0 fixes: the detector output does not carry
