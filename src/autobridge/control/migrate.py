@@ -107,6 +107,22 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
             "columns": ["model_calls.reasoning_tokens", "model_call_archive.reasoning_tokens"],
         },
     ),
+    (
+        "0009_req030_persistence",
+        {
+            "tables": ["pabx_link_events"],
+            "columns": [
+                "repair_runs.drift_class",
+                "repair_runs.fingerprint_delta",
+                "model_calls.mode",
+                "model_calls.captured_at",
+                "model_calls.outcome",
+                "model_call_archive.mode",
+                "model_call_archive.captured_at",
+                "model_call_archive.outcome",
+            ],
+        },
+    ),
 )
 
 
@@ -188,6 +204,21 @@ def ensure_migrated(engine_or_url: Any = None) -> str:
         # The version row lies (stamped head, schema older): fall through
         # and repair by detection instead of trusting it.
         current = None
+    if current is not None and current != head:
+        # The version row lags the schema: create_all ran with newer models
+        # (dev/test databases), so the tables already carry a later
+        # revision's effects. Trust the schema, stamp the detection —
+        # upgrading would re-add existing columns and fail.
+        detected = _detect_revision(url)
+        order = [rev for rev, _ in _REVISION_EFFECTS]
+        if (
+            detected is not None
+            and detected in order
+            and current in order
+            and order.index(detected) > order.index(current)
+        ):
+            command.stamp(cfg, detected)
+            current = detected
     if current is None:
         # Unversioned database: detect the schema it actually has and stamp
         # that revision — never head blindly (a create_all-built database

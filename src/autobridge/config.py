@@ -131,6 +131,32 @@ def replay_dir() -> str:
     return (os.environ.get("REPLAY_DIR", "") or "").strip() or "demo/recordings"
 
 
+#: Env var naming the sync-scheduler interval in seconds (REQ-030 item 1).
+SYNC_INTERVAL_ENV = "AUTOBRIDGE_SYNC_INTERVAL_S"
+
+
+def sync_interval_seconds() -> float | None:
+    """Scheduler tick in seconds (env ``AUTOBRIDGE_SYNC_INTERVAL_S``).
+
+    Returns ``None`` (scheduler off) when unset, empty, blank or
+    non-positive — "off when unset". A non-numeric value raises
+    ``ValueError`` loudly: a typo'd interval must fail at startup, not
+    silently disable the scheduler.
+    """
+    raw = (os.environ.get(SYNC_INTERVAL_ENV, "") or "").strip()
+    if not raw:
+        return None
+    try:
+        seconds = float(raw)
+    except ValueError:
+        raise ValueError(
+            f"{SYNC_INTERVAL_ENV} must be a number of seconds, got {raw!r}"
+        ) from None
+    if seconds <= 0:
+        return None
+    return seconds
+
+
 def runtime_max_vocabulary() -> str:
     """Newest vocabulary the runtime executes (cap for sync pins)."""
     return SPEC_VOCABULARIES[-1]

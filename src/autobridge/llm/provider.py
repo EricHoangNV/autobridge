@@ -237,10 +237,18 @@ def record_model_call(
     purpose: str,
     latency_ms: float = 0.0,
     cost_estimate: Decimal | None = None,
+    mode: str = "live",
+    captured_at: str = "",
+    outcome: str | None = None,
 ) -> Any:
     """Insert a :class:`ModelCall` row and flush (caller commits).
 
     ``cost_estimate`` defaults to :func:`estimate_cost`.
+    ``mode`` is ``"live"`` or ``"replay"`` (REQ-030 item 3: the model-call
+    box reads it from the column, not the purpose suffix); ``captured_at``
+    is the replay recording's capture date (empty for live calls);
+    ``outcome`` is what the call produced (``ranked``, ``proposal``,
+    ``proposal_rejected``, ``no_patch``, ``unparsable``, ``hypothesis``).
     Returns the inserted row.
     """
     from autobridge.control.models import ModelCall  # noqa: PLC0415 (avoid cycle)
@@ -258,10 +266,44 @@ def record_model_call(
         latency_ms=latency_ms,
         cost_estimate=cost_estimate,
         purpose=purpose,
+        mode=mode or "live",
+        captured_at=captured_at or "",
+        outcome=outcome,
     )
     session.add(row)
     session.flush()
     return row
+
+
+def stamp_call_outcome(
+    session: Session, *, run_id: str, tier: str, outcome: str
+) -> None:
+    """Set ``outcome`` on the newest :class:`ModelCall` row for (run, tier).
+
+    The ledger row is written when the call returns, before the caller has
+    parsed the text; the rung outcome (proposal vs unparsable, ranked vs
+    fallback) is known only after. Best-effort: never raises.
+    """
+    try:
+        from sqlalchemy import select as _select  # noqa: PLC0415
+
+        from autobridge.control.models import ModelCall as _ModelCall  # noqa: PLC0415
+
+        row = (
+            session.execute(
+                _select(_ModelCall)
+                .where(_ModelCall.run_id == run_id, _ModelCall.tier == tier)
+                .order_by(_ModelCall.created_at.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        if row is not None:
+            row.outcome = outcome
+            session.flush()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +357,7 @@ class BudgetedProvider:
         tier: str = "small",
         purpose: str = "",
         tools: list[dict[str, Any]] | None = None,
+        outcome: str | None = None,
     ) -> Completion:
         self.budget.check_pre_call()
         start = time.monotonic()
@@ -344,6 +387,9 @@ class BudgetedProvider:
                 usage=result.usage,
                 purpose=ledger_purpose,
                 latency_ms=elapsed_ms,
+                mode="replay" if result.replayed else "live",
+                captured_at=(result.captured_at or "").strip(),
+                outcome=outcome,
             )
         return result
 

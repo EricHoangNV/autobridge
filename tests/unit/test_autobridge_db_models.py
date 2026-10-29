@@ -482,6 +482,47 @@ def test_alembic_upgrade_downgrade_cycle(
     assert os.environ[m.DATABASE_URL_ENV].startswith("sqlite:///")
 
 
+def test_alembic_0009_adds_req030_persistence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-0009 database (at 0008) upgrades to head: repair delta/class,
+    model-call serving columns on both ledger tables, and the PABX table."""
+    db = tmp_path / "pre0009.db"
+    monkeypatch.setenv(m.DATABASE_URL_ENV, f"sqlite:///{db}")
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "alembic"))
+    command.upgrade(cfg, "0008_model_call_reasoning_tokens")
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.connect() as conn:
+        insp = sa.inspect(conn)
+        repair_cols = {c["name"] for c in insp.get_columns("repair_runs")}
+        assert {"drift_class", "fingerprint_delta"} <= repair_cols
+        for table in ("model_calls", "model_call_archive"):
+            cols = {c["name"] for c in insp.get_columns(table)}
+            assert {"mode", "captured_at", "outcome"} <= cols
+        assert "pabx_link_events" in insp.get_table_names()
+
+
+def test_ensure_migrated_repairs_stale_version_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-030: create_all raced ahead of the version stamp (new schema,
+    old row) — ensure_migrated trusts the schema instead of re-adding
+    columns and failing."""
+    from autobridge.control.migrate import ensure_migrated  # noqa: PLC0415
+
+    db = tmp_path / "stale.db"
+    url = f"sqlite:///{db}"
+    monkeypatch.setenv(m.DATABASE_URL_ENV, url)
+    engine = create_engine(url)
+    m.init_db(engine)  # current models: full 0009 schema, no version row
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "alembic"))
+    command.stamp(cfg, "0008_model_call_reasoning_tokens")
+    assert ensure_migrated(url) == "0009_req030_persistence"
+
+
 def test_model_call_ledger_stores_reasoning_split(session: Session) -> None:
     call = ModelCall(
         run_id="repair:reason",

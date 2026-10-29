@@ -223,6 +223,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/demo/pabx-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pabx Events
+         * @description PABX link snapshots + restart reports, newest first (PABX panel source).
+         */
+        get: operations["list_pabx_events_demo_pabx_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/demo/pabx-restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Pabx Restart
+         * @description Persist a PABX restart report (REQ-030 item 3, PABX panel source).
+         */
+        post: operations["record_pabx_restart_demo_pabx_restart_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/demo/record-climb": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Climb
+         * @description Persist the demo's instrumented semantic climb (REQ-030 item 3).
+         *
+         *     The climb really ran — provider really called, tokens really spent,
+         *     proposal really judged — but it ran in the demo process (against the
+         *     reference spec) because the docs-built spec carries no money invariant
+         *     yet, so no engine sync can detect the semantic drift live. Recording
+         *     it here puts the rung trace, hypothesis derivation, model-call box and
+         *     verifier verdict on the repair page as rows, instead of leaving them
+         *     in process memory. Never used by the engine: ``POST /sync`` and the
+         *     scheduler only ever write engine-derived rows.
+         */
+        post: operations["record_climb_demo_record_climb_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/demo/reset": {
         parameters: {
             query?: never;
@@ -1133,6 +1202,11 @@ export interface components {
         ConnectorDetail: {
             /** Active Release Id */
             active_release_id?: string | null;
+            /**
+             * Activity
+             * @default
+             */
+            activity: string;
             /** Base Url */
             base_url: string;
             /**
@@ -1149,6 +1223,8 @@ export interface components {
             /** Id */
             id: string;
             last_sync?: components["schemas"]["SyncRunOut"] | null;
+            /** Last Sync At */
+            last_sync_at?: string | null;
             /** Name */
             name: string;
             /** Open Drift */
@@ -1159,6 +1235,11 @@ export interface components {
             runtime_target: {
                 [key: string]: unknown;
             };
+            /**
+             * State
+             * @default working
+             */
+            state: string;
             /** Target Entities */
             target_entities: string[];
             /**
@@ -1173,6 +1254,11 @@ export interface components {
         ConnectorOut: {
             /** Active Release Id */
             active_release_id?: string | null;
+            /**
+             * Activity
+             * @default
+             */
+            activity: string;
             /** Base Url */
             base_url: string;
             /**
@@ -1186,12 +1272,19 @@ export interface components {
             health_status: string;
             /** Id */
             id: string;
+            /** Last Sync At */
+            last_sync_at?: string | null;
             /** Name */
             name: string;
             /** Runtime Target */
             runtime_target: {
                 [key: string]: unknown;
             };
+            /**
+             * State
+             * @default working
+             */
+            state: string;
             /** Target Entities */
             target_entities: string[];
             /**
@@ -1652,6 +1745,16 @@ export interface components {
         };
         /** KnowledgeLearnedFromOut */
         KnowledgeLearnedFromOut: {
+            /**
+             * Actor
+             * @default
+             */
+            actor: string;
+            /**
+             * Approval Id
+             * @default
+             */
+            approval_id: string;
             /** At */
             at?: string | null;
             /**
@@ -1659,6 +1762,11 @@ export interface components {
              * @default 0
              */
             cost: string;
+            /**
+             * Release Id
+             * @default
+             */
+            release_id: string;
             /** Run Id */
             run_id: string;
             /**
@@ -1751,6 +1859,183 @@ export interface components {
              */
             name: string;
         };
+        /** PabxEventOut */
+        PabxEventOut: {
+            /** Connector Id */
+            connector_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * PabxRestartRequest
+         * @description Persist a PABX restart report (REQ-030 item 3).
+         *
+         *     Counts come from live ``/edge/postings`` comparisons across a restart
+         *     (computed by the demo's live leg), recorded here so the PABX panel
+         *     reads rows, not terminal output.
+         */
+        PabxRestartRequest: {
+            /** Connector Id */
+            connector_id: string;
+            /** Duplicated */
+            duplicated: number;
+            /** Lost */
+            lost: number;
+            /** Redelivered */
+            redelivered: number;
+            /**
+             * Unique Keys
+             * @default 0
+             */
+            unique_keys: number;
+        };
+        /** RecordClimbCallIn */
+        RecordClimbCallIn: {
+            /**
+             * Captured At
+             * @default
+             */
+            captured_at: string;
+            /**
+             * Cost
+             * @default 0
+             */
+            cost: string;
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Latency Ms
+             * @default 0
+             */
+            latency_ms: number;
+            /**
+             * Mode
+             * @default live
+             */
+            mode: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /** Outcome */
+            outcome?: string | null;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
+            /**
+             * Purpose
+             * @default
+             */
+            purpose: string;
+            /**
+             * Reasoning Tokens
+             * @default 0
+             */
+            reasoning_tokens: number;
+            /** Tier */
+            tier: string;
+        };
+        /** RecordClimbHypothesisIn */
+        RecordClimbHypothesisIn: {
+            /**
+             * Claim
+             * @default
+             */
+            claim: string;
+            /**
+             * Family
+             * @default
+             */
+            family: string;
+            /** Id */
+            id: string;
+        };
+        /**
+         * RecordClimbRequest
+         * @description Persist the demo's instrumented semantic climb (REQ-030 item 3).
+         *
+         *     The climb really ran (provider really called, tokens really spent,
+         *     proposal really judged) — but it ran in the demo process against the
+         *     reference spec because the docs-built spec carries no money invariant
+         *     yet. Recording it through this labelled demo endpoint (never the
+         *     engine path) is what puts the rung trace, hypothesis derivation,
+         *     model-call box and verifier verdict on the repair page instead of
+         *     leaving them in process memory.
+         */
+        RecordClimbRequest: {
+            /** Attempts */
+            attempts?: {
+                [key: string]: unknown;
+            }[];
+            /** Connector Id */
+            connector_id: string;
+            /** Drift Class */
+            drift_class: string;
+            /**
+             * Enumerator Yield Count
+             * @default 0
+             */
+            enumerator_yield_count: number;
+            /** Escalation Question */
+            escalation_question: string;
+            /** Hypotheses */
+            hypotheses?: components["schemas"]["RecordClimbHypothesisIn"][];
+            /** Model Calls */
+            model_calls?: components["schemas"]["RecordClimbCallIn"][];
+            /** Model Usage */
+            model_usage?: {
+                [key: string]: unknown;
+            };
+            /** Proposal */
+            proposal?: {
+                [key: string]: unknown;
+            }[] | null;
+            /**
+             * Scenario
+             * @default
+             */
+            scenario: string;
+            /**
+             * Vendor
+             * @default
+             */
+            vendor: string;
+            /** Verifier Verdict */
+            verifier_verdict?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** RecordClimbResponse */
+        RecordClimbResponse: {
+            /** Drift Id */
+            drift_id: string;
+            /** Model Call Ids */
+            model_call_ids?: string[];
+            /** Repair Run Id */
+            repair_run_id: string;
+        };
         /** ReleaseOut */
         ReleaseOut: {
             /**
@@ -1814,12 +2099,18 @@ export interface components {
             created_at: string;
             /** Decision */
             decision: string;
+            /** Drift Class */
+            drift_class?: string | null;
             /** Drift Event Ids */
             drift_event_ids: string[];
             /** Drift Signature */
             drift_signature?: string | null;
             /** Escalation Bundle */
             escalation_bundle?: {
+                [key: string]: unknown;
+            } | null;
+            /** Fingerprint Delta */
+            fingerprint_delta?: {
                 [key: string]: unknown;
             } | null;
             /** Hypothesis Ids */
@@ -1908,10 +2199,27 @@ export interface components {
         };
         /** RungCallOut */
         RungCallOut: {
+            /**
+             * Captured At
+             * @default
+             */
+            captured_at: string;
             /** Cost */
             cost: string;
             /** Input Tokens */
             input_tokens: number;
+            /**
+             * Mode
+             * @default live
+             */
+            mode: string;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /** Outcome */
+            outcome?: string | null;
             /** Output Tokens */
             output_tokens: number;
             /** Purpose */
@@ -2868,6 +3176,195 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InjectFaultResponse"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Request validation failure or domain error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: Record<string, never>[];
+                    } | {
+                        detail: string;
+                    };
+                };
+            };
+        };
+    };
+    list_pabx_events_demo_pabx_events_get: {
+        parameters: {
+            query?: {
+                connector_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PabxEventOut"][];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_pabx_restart_demo_pabx_restart_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PabxRestartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PabxEventOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_climb_demo_record_climb_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordClimbRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordClimbResponse"];
                 };
             };
             /** @description Malformed request body */

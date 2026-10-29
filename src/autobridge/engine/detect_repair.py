@@ -20,6 +20,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from sqlalchemy import select as _select
+
 
 def _summary_has_responses(summary: dict[str, Any]) -> bool:
     """Whether the sync observed any vendor response (raw page or records).
@@ -163,6 +165,62 @@ def build_detector_delta(
     return delta or None
 
 
+def _resolve_verified_drifts(
+    session: Any, connector_id: str, release_id: str, summary: dict[str, Any]
+) -> list[str]:
+    """Mark an approved repair's drifts repaired after its verifying sync.
+
+    Only when the sync landed ``Complete`` on a release whose provenance is
+    a repair run that has an approve ``Approval``: that is the operator's
+    verified fix. Everything else (other releases, other outcomes,
+    unapproved repairs) leaves drift rows untouched. Best-effort: detection
+    failures are row data, never a sync failure.
+    """
+    try:
+        from autobridge.control.models import Approval, ConnectorRelease, DriftEvent
+
+        if (summary.get("outcome") if isinstance(summary, dict) else None) != "Complete":
+            return []
+        release = session.get(ConnectorRelease, release_id)
+        if release is None:
+            return []
+        provenance_id = getattr(release, "provenance_repair_run_id", None)
+        if not provenance_id:
+            return []
+        approved = (
+            session.execute(
+                _select(Approval).where(
+                    Approval.repair_run_id == provenance_id,
+                    Approval.decision == "approve",
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if approved is None:
+            return []
+        from autobridge.control.models import RepairRun as _RepairRun
+
+        repair = session.get(_RepairRun, provenance_id)
+        if repair is None:
+            return []
+        resolved: list[str] = []
+        for did in list(repair.drift_event_ids or []):
+            drift = session.get(DriftEvent, did)
+            if (
+                drift is not None
+                and drift.connector_id == connector_id
+                and drift.status == "open"
+            ):
+                drift.status = "repaired"
+                resolved.append(drift.id)
+        if resolved:
+            session.flush()
+        return resolved
+    except Exception:
+        return []
+
+
 def detect_and_repair_after_sync(
     session: Any,
     *,
@@ -203,7 +261,13 @@ def detect_and_repair_after_sync(
         summary, spec=spec_dict, source_run_id=sync_run_id
     )
     if not signals:
-        return {"drift_found": False, "outcome": outcome}
+        # No drift on a sync that reached the vendor. When this sync ran
+        # on a release created by an approved repair, it is the verifying
+        # sync — landing Complete retires that repair's drift events (the
+        # connector returns to Working). Any other outcome leaves them
+        # open: the fix is not verified yet.
+        resolved = _resolve_verified_drifts(session, connector_id, release_id, summary)
+        return {"drift_found": False, "outcome": outcome, "drifts_resolved": resolved}
 
     classification = classify(signals)
     delta = build_detector_delta(spec_dict, signals)
@@ -252,6 +316,12 @@ def detect_and_repair_after_sync(
             )
             session.flush()
             candidate_release_id = candidate.id
+            # REQ-030 item 3: the verifier verdict lives on the repair row
+            # too (the candidate release carries the report id) — the
+            # repair page reads verdicts from here, never recomputed.
+            if candidate.verification_report_id:
+                repair_run.verifier_report_id = candidate.verification_report_id
+                session.flush()
         except Exception as exc:  # noqa: BLE001 — gate/patch failures are row data
             gate_error = f"{type(exc).__name__}: {exc}"[:500]
 

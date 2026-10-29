@@ -104,6 +104,9 @@ DISCOVERY_TRANSITIONS: dict[str, dict[str, str]] = {
 #: handler creates its row at execution time.
 JOB_KINDS = frozenset({"build", "sync", "repair"})
 JOB_STATES = frozenset({"queued", "running", "succeeded", "failed"})
+#: PABX edge event kinds (REQ-030 item 3): link snapshots the scheduler
+#: records per pass plus restart reports the demo writes after a restart leg.
+PABX_EVENT_KINDS = frozenset({"link", "restart"})
 
 
 class ImmutableReleaseError(Exception):
@@ -176,10 +179,30 @@ def default_database_url() -> str:
 
 
 def engine_from_url(url: str) -> Engine:
-    """Create an engine; the models use only portable types, so any URL works."""
-    from sqlalchemy import create_engine
+    """Create an engine; the models use only portable types, so any URL works.
 
-    return create_engine(url)
+    SQLite runs the scheduler and the API in one process (local mode) and
+    beside each other in Compose: WAL mode plus a busy timeout keeps a
+    background scheduler pass from locking API writes out (readers never
+    block writers; writers wait their turn instead of failing). Postgres
+    URLs are untouched.
+    """
+    from sqlalchemy import create_engine, event
+
+    if url.split(":", 1)[0] not in ("sqlite",):
+        return create_engine(url)
+    engine = create_engine(url, connect_args={"timeout": 30})
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_scheduler_pragmas(dbapi_conn: Any, _record: Any) -> None:
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=30000")
+        finally:
+            cur.close()
+
+    return engine
 
 
 def session_factory(engine: Engine) -> sessionmaker[Session]:
@@ -456,6 +479,15 @@ class RepairRun(Base):
     vendor: Mapped[str | None] = mapped_column(String(64), nullable=True)
     #: Fingerprint-delta signature the L0 key was built from (REQ-021 item 6).
     drift_signature: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: Drift class the ladder answered (REQ-030 2b: part of the L0 key, so
+    #: the approve path can relearn without re-deriving it).
+    drift_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Fingerprint delta content the L0 key was built from (REQ-030 item 3:
+    #: the wire before/after the repair page renders). Stored beside the
+    #: signature so approve-time learning has the full key inputs.
+    fingerprint_delta: Mapped[dict[str, Any] | None] = mapped_column(
+        GenericJSON, nullable=True
+    )
     #: Candidate JSON Patch (list of RFC 6902 ops) on the ConnectorSpec.
     candidate_patch: Mapped[list[dict[str, Any]] | None] = mapped_column(
         GenericJSON, nullable=True
@@ -587,6 +619,19 @@ class ModelCall(Base):
         Numeric(12, 6), nullable=False, default=Decimal("0")
     )
     purpose: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: How the call was served (REQ-030 item 3): ``"live"`` hit the model
+    #: API, ``"replay"`` served a redacted recording. Structured here (not
+    #: just a purpose suffix) so the repair page's model-call box can say
+    #: "0 model calls" or "replayed from <date>" from columns.
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="live")
+    #: Capture date of the replay recording (``YYYY-MM-DD``, or
+    #: ``"synthetic-test-fixture"``); empty for live calls.
+    captured_at: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    #: What the call produced (REQ-030 item 3): ``ranked`` (L2),
+    #: ``proposal`` / ``proposal_rejected`` / ``no_patch`` / ``unparsable``
+    #: (L3), ``hypothesis`` (L3-hypothesis generation). Null when the caller
+    #: did not classify it; the rung trace always carries the reason too.
+    outcome: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -633,6 +678,11 @@ class ModelCallArchive(Base):
         Numeric(12, 6), nullable=False, default=Decimal("0")
     )
     purpose: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: Mirrors :class:`ModelCall` (REQ-030 item 3): live/replay serving mode,
+    #: replay capture date, and what the call produced.
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="live")
+    captured_at: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    outcome: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -726,6 +776,42 @@ class DiscoveryRecord(Base):
     def _validate_status(self, key: str, value: str) -> str:
         if value not in DISCOVERY_STATUSES:
             raise ValueError(f"{key} must be one of {sorted(DISCOVERY_STATUSES)}")
+        return value
+
+
+class PabxLinkEvent(Base):
+    """One persisted PABX edge observation (REQ-030 item 3).
+
+    ``link`` rows are best-effort snapshots the sync scheduler records per
+    pass for edge (``fias_tcp``) connectors (link state, depths, last
+    heartbeat from the relay ``/v1/agents`` view); ``restart`` rows are
+    restart reports the demo writes after a restart leg (redelivered, lost,
+    duplicated counts). Postings counters need no extra rows: every sync
+    persists a ``SyncRun`` with ``records_observed``/``records_emitted``,
+    so "postings arriving" is the SyncRun series for the edge connector.
+    """
+
+    __tablename__ = "pabx_link_events"
+    __table_args__ = (
+        _check("pabx_link_events", "kind", "kind", PABX_EVENT_KINDS),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    connector_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("connectors.id"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        GenericJSON, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+    @validates("kind")
+    def _validate_kind(self, key: str, value: str) -> str:
+        if value not in PABX_EVENT_KINDS:
+            raise ValueError(f"{key} must be one of {sorted(PABX_EVENT_KINDS)}")
         return value
 
 

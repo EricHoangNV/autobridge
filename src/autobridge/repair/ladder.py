@@ -21,7 +21,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from autobridge.llm.provider import Budget, BudgetedProvider, BudgetExhausted, ReplayMissing
+from autobridge.llm.provider import (
+    Budget,
+    BudgetedProvider,
+    BudgetExhausted,
+    ReplayMissing,
+    stamp_call_outcome,
+)
 from autobridge.repair.context import RepairContext
 from autobridge.repair.escalation import (
     EscalationBundle,
@@ -224,6 +230,14 @@ def _call_small_model_rank(
     for h in hypotheses:
         if h not in ranked:
             ranked.append(h)
+    if session is not None and run_id is not None and budget is not None:
+        # REQ-030 item 3: what the L2 call produced, on the ledger row.
+        stamp_call_outcome(
+            session,
+            run_id=run_id,
+            tier="small",
+            outcome="ranked" if ranked_ids else "unparsable",
+        )
     # Build usage delta from result
     usage = {
         "frontier_tokens": 0,
@@ -310,6 +324,14 @@ def _call_frontier_generate(
     except Exception:
         # If frontier output not JSON, keep original list — caller will handle as ambiguity
         pass
+    if session is not None and run_id is not None and budget is not None:
+        # REQ-030 item 3: what the L3-hypothesis call produced, on the ledger row.
+        stamp_call_outcome(
+            session,
+            run_id=run_id,
+            tier="frontier",
+            outcome="hypothesis" if len(new_hyps) > len(hypotheses) else "unparsable",
+        )
     usage = {
         "frontier_tokens": result.usage.total_tokens,
         "small_tokens": 0,
@@ -356,7 +378,8 @@ def rung_ledger(
     :class:`ModelCall` attaches to the rung that made it (small → L2,
     frontier → L3; calls of an unknown tier attach to the last attempt so
     nothing is silently dropped). Every call is summarized as
-    tier/purpose/tokens/estimated cost — never the prompt or response.
+    model/mode/captured-date/outcome/tier/purpose/tokens/estimated cost —
+    never the prompt or response.
     """
     attempts: list[dict[str, Any]] = []
     for entry in trace or []:
@@ -379,6 +402,10 @@ def rung_ledger(
         summary = {
             "tier": tier,
             "purpose": purpose,
+            "model": str(_call_field(call, "model", "") or ""),
+            "mode": str(_call_field(call, "mode", "live") or "live"),
+            "captured_at": str(_call_field(call, "captured_at", "") or ""),
+            "outcome": _call_field(call, "outcome", None),
             "input_tokens": int(_call_field(call, "input_tokens", 0) or 0),
             "output_tokens": int(_call_field(call, "output_tokens", 0) or 0),
             "reasoning_tokens": int(_call_field(call, "reasoning_tokens", 0) or 0),
@@ -1717,6 +1744,18 @@ def run_frontier_climb(
             l3_entry["action"] = "proposal_rejected"
             l3_entry["reason"] = f"L3 proposal rejected: patch does not apply ({exc})"
             l3_entry["raw_preview"] = l3_text.strip()[:300]
+    if session is not None and run_id is not None and budget is not None:
+        # REQ-030 item 3: what the L3 call produced, on the ledger row —
+        # the model-call box reads this column, not the trace.
+        if proposal is not None:
+            l3_outcome = "proposal"
+        elif l3_entry.get("action") == "proposal_rejected":
+            l3_outcome = "proposal_rejected"
+        elif l3_text.strip():
+            l3_outcome = "unparsable"
+        else:
+            l3_outcome = "no_patch"
+        stamp_call_outcome(session, run_id=run_id, tier="frontier", outcome=l3_outcome)
     replay_captured_at = str(getattr(provider, "last_captured_at", "") or "")
     return {
         "attempts": attempts,

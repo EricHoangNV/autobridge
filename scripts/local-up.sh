@@ -77,6 +77,9 @@ export MERIDIAN_ACCESS_TOKEN="${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}"
 # an explicit value (.env / shell) always wins. Simulator demo value, not
 # a secret — never a real credential.
 export SIM_ADMIN_TOKEN="${SIM_ADMIN_TOKEN:-sim-admin-dev-token}"
+# REQ-030 item 1: the sync scheduler ticks every active connector on this
+# cadence (unset/empty/0 disables it). Demo value, not a secret.
+export AUTOBRIDGE_SYNC_INTERVAL_S="${AUTOBRIDGE_SYNC_INTERVAL_S:-10}"
 export EDGE_RELAY_DB="$LOCAL_DIR/edge_relay.db"
 export EDGE_STORE_PATH="$LOCAL_DIR/edge_agent.db"
 # Persist the effective env for local-down diagnostics (values only used

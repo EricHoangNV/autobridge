@@ -463,3 +463,37 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Caught because the claim step checks `git diff --stat`/`grep ^[+-]Status` before committing — one extra minute that saved a cross-loop claim collision.
 
 **Rule:** When claiming a request, scope the edit to its block (match on the `### REQ-NNN` header through its status line, or edit with line numbers from `grep -n`), and always verify with `git diff` that exactly one status line changed before pushing the claim.
+
+---
+
+## 50. Blocking I/O on the event loop wedges the whole control plane — scheduler passes belong on threads
+
+**Context:** REQ-030 sync scheduler (lifespan background task, local stack)
+
+- The first scheduler implementation ran `run_scheduler_pass` (sync httpx calls with retry/backoff budgets, seconds per connector) directly in an `async` lifespan task. Every tick blocked the loop for the whole pass: `/healthz` took seconds, e2e fixtures timed out calling the stack "not reachable", and parallel requests queued behind syncs.
+- Root cause: FastAPI runs one event loop; any `def`-sync blocking call inside an `async` task stalls every route, SSE stream and readiness probe until it returns. A 10s cadence with multi-second passes makes the stall permanent, not transient.
+- Fixed by running the pass in `asyncio.to_thread` with an overlap guard (a tick whose predecessor is still running is skipped), verified by `/healthz` staying at single-digit milliseconds under a ticking scheduler.
+
+**Rule:** Never run blocking engine I/O (sync HTTP, long DB passes) on the control event loop — offload to a worker thread and guard overlaps; verify with a latency probe under load, not just a green tick.
+---
+
+## 51. One SQLite writer at a time: WAL mode plus short transactions for scheduler + API coexistence
+
+**Context:** REQ-030 (scheduler background passes + API writes on one SQLite file, local mode)
+
+- With the default rollback-journal mode, a scheduler pass holding one session across all connector syncs locked API writes out: `POST /connectors` answered 500 `database is locked` whenever a background pass was mid-flight.
+- Root cause: in journal mode an open read/write transaction blocks writers; the pass held its transaction for seconds. WAL mode (readers never block writers) plus a 30s busy timeout (writers wait instead of failing) plus committing scheduler snapshots before the sync loop removed the collisions — proven live (38 e2e + demo 8/8 with the scheduler ticking).
+- Applied in `engine_from_url` (SQLite only; Postgres untouched) with a unit pin on the pragma values.
+
+**Rule:** Any background writer sharing a SQLite file with request handlers needs WAL + busy timeout and short transactions; a "database is locked" 500 under background load means the pass holds its transaction too long, not that SQLite can't cope.
+---
+
+## 52. Fresh SQLite files on shared filesystems can go readonly mid-creation — seed, copy, and repair migrations defensively
+
+**Context:** REQ-030 (sandbox worktree on a virtiofs mount; `make test` collection, `ensure_migrated`)
+
+- Creating a new SQLite file in the worktree intermittently failed on the *second* write (`attempt to write a readonly database`), leaving partial schemas (e.g. only `connectors` + empty `alembic_version`). This poisoned `ensure_migrated` two ways: upgrade re-ran `CREATE TABLE` on existing tables, and a version row older than a create_all-built schema re-added existing columns.
+- Fixed in two places: (a) `ensure_migrated` now also repairs the schema-ahead case (version older than detected schema → trust the schema, stamp the detection — the mirror of the existing head-stamp repair); (b) unit tests only touch tmp-dir databases, and the dev flow builds migration targets on local tmp then copies into place.
+- The same flake explains "table already exists" during parallel/concurrent startups: treat a stale local `./autobridge.db` as disposable (delete + let lifespan recreate + migrate) rather than debugging it as a schema bug.
+
+**Rule:** On shared/sandbox filesystems, never diagnose a partial SQLite schema as a migration bug first — check for a failed file creation (readonly mid-write), rebuild from a tmp-built copy, and keep the migrator able to repair version skew in both directions.

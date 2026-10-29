@@ -14,17 +14,15 @@ AUTH_EXPIRED tries refresh if spec auth permits, else escalates.
 
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING, Any
 
 from autobridge.control.models import DriftEvent, RepairRun
 from autobridge.drift.classifier import DriftClassification, classify
 from autobridge.repair.escalation import escalation_for_no_fix
 from autobridge.repair.knowledge import (
-    NO_LEARN_CLASSES,
     KnowledgeCache,
-    delta_has_content,
     delta_signature,
+    delta_to_json,
     get_default_cache,
 )
 
@@ -46,6 +44,21 @@ def _spec_vendor(spec: dict[str, Any]) -> str:
     except Exception:
         pass
     return "unknown"
+
+
+def _hypothesis_ids(hypotheses: list[Any] | None) -> list[str]:
+    """Best-effort hypothesis ids for RepairRun attribution (REQ-030 item 3).
+
+    Hypothesis objects carry ``id``; dicts may carry ``"id"``. Anything else
+    is stringified so no considered hypothesis is silently dropped.
+    """
+    ids: list[str] = []
+    for hyp in hypotheses or []:
+        hid: Any = hyp.get("id") if isinstance(hyp, dict) else getattr(hyp, "id", None)
+        text = str(hid) if hid is not None else str(hyp)
+        if text and text not in ids:
+            ids.append(text)
+    return ids
 
 
 def _signal_evidence_ids(signals_list: list[Any]) -> list[str]:
@@ -169,9 +182,11 @@ class RepairController:
                 ladder_level_reached=result.ladder_level_reached,
                 vendor=vendor_val,
                 drift_signature=delta_signature(fingerprint_delta),
+                drift_class=drift_class,
+                fingerprint_delta=delta_to_json(fingerprint_delta),
                 candidate_patch=result.candidate_patch,
                 rule_id=result.rule_id,
-                hypothesis_ids=[],
+                hypothesis_ids=_hypothesis_ids(hypotheses),
                 visible_test_results=[],
                 verifier_report_id=None,
                 decision=result.decision,
@@ -181,28 +196,10 @@ class RepairController:
             )
             session.add(run)
             session.flush()
-            # Cache successful propose patches for L0 future hits. A None or
-            # empty delta has no content to key on (every such drift would
-            # share one constant key), so it is never cached: without an
-            # observed change the ladder re-derives from signals every time
-            # instead of risking a wrong-patch L0 hit. Transport/auth/
-            # capability classes never populate L0 either (REQ-028).
-            if (
-                result.decision == "propose"
-                and result.candidate_patch
-                and fingerprint_delta is not None
-                and drift_class not in NO_LEARN_CLASSES
-                and delta_has_content(fingerprint_delta)
-            ):
-                with contextlib.suppress(Exception):
-                    self.knowledge_cache.put(
-                        vendor_val,
-                        fingerprint_delta,
-                        result.candidate_patch,
-                        result.rule_id or "unknown",
-                        drift_class=drift_class,
-                        confidence=result.confidence or 0.0,
-                    )
+            # REQ-030 2b: proposing caches nothing. A proposal that is still
+            # waiting can never be reused at L0, by any connector — the fix
+            # is learned only once it is approved (engine approve path), so
+            # this walk deliberately leaves the knowledge cache untouched.
 
         return result
 
@@ -347,9 +344,11 @@ class RepairController:
                 ladder_level_reached=result.ladder_level_reached,
                 vendor=vendor_val,
                 drift_signature=delta_signature(fingerprint_delta),
+                drift_class=drift_class,
+                fingerprint_delta=delta_to_json(fingerprint_delta),
                 candidate_patch=result.candidate_patch,
                 rule_id=result.rule_id,
-                hypothesis_ids=[],
+                hypothesis_ids=_hypothesis_ids(surviving),
                 visible_test_results=[],
                 verifier_report_id=None,
                 decision=result.decision,
@@ -359,6 +358,55 @@ class RepairController:
             )
             session.add(run)
             session.flush()
+            # REQ-030 item 3: the hypothesis derivation persists as a
+            # kind=hypothesis evidence record owned by this repair run
+            # (counts and ids per stage), and the climb's ModelCall rows —
+            # written under the climb's run id — are re-linked to the
+            # repair row so the ledger endpoint serves them. Failures are
+            # row data or best-effort: the decision above already stands.
+            try:
+                from autobridge.evidence.store import EvidenceStore  # noqa: PLC0415
+
+                store = EvidenceStore(session)
+                store.append(
+                    kind="hypothesis",
+                    payload={
+                        "drift_class": drift_class,
+                        "enumerator_yield_count": enumerator_yield_count,
+                        "stages": [
+                            {
+                                "name": "distinct",
+                                "count": len(surviving),
+                                "ids": _hypothesis_ids(surviving),
+                                "source": (
+                                    "hypotheses passed to the climb "
+                                    "(engine-enumerated or caller-supplied)"
+                                ),
+                            }
+                        ],
+                    },
+                    run_id=f"repair_runs:{run.id}",
+                    parent_ids=_signal_evidence_ids(signals_list),
+                )
+                session.flush()
+            except Exception:
+                pass
+            try:
+                from sqlalchemy import select as _select  # noqa: PLC0415
+
+                from autobridge.control.models import ModelCall as _ModelCall  # noqa: PLC0415
+
+                for call in (
+                    session.execute(
+                        _select(_ModelCall).where(_ModelCall.run_id == active_run_id)
+                    )
+                    .scalars()
+                    .all()
+                ):
+                    call.run_id = run.id
+                session.flush()
+            except Exception:
+                pass
         return result
 
     def handle_classified(

@@ -8,17 +8,18 @@ import ipaddress
 import os
 import socket
 import urllib.parse
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Security
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autobridge.control.demo_targets import normalize_connector_base_url
-from autobridge.control.deps import get_db, get_session_factory, require_control_token
-from autobridge.control.jobs import JobRunner
-from autobridge.control.models import Approval, BuildRun, Connector, ConnectorRelease
+from autobridge.control.deps import get_db, require_control_token
+from autobridge.control.models import Connector
+
+if TYPE_CHECKING:
+    from autobridge.control.jobs import JobRunner
 from autobridge.control.schemas import AUTH_401, BuildRequest, BuildResponse, SyncRequest, SyncResponse
 
 router = APIRouter(tags=["jobs"])
@@ -116,59 +117,12 @@ def validate_docs_url(url: str) -> None:
 
 
 def _get_runner(db: Session | None = None) -> JobRunner:
-    # Use the DB's engine when available (so tests with overridden DB work),
-    # otherwise fall back to the global session factory.
-    if db is not None:
-        try:
-            bind = db.get_bind()
-            if bind is not None:
-                from sqlalchemy.orm import sessionmaker as _sm
+    # One sync implementation for the route and the scheduler (REQ-030):
+    # the real logic lives in control.runner; this keeps the old name for
+    # existing callers (build submit path below).
+    from autobridge.control.runner import get_runner  # noqa: PLC0415
 
-                factory = _sm(bind=bind, expire_on_commit=False)
-                runner = JobRunner(factory)  # type: ignore[arg-type]
-                try:
-                    from autobridge.engine.build_run import run_build_handler  # noqa: PLC0415
-
-                    runner.register_handler("build", run_build_handler)
-                except Exception:
-                    pass
-                try:
-                    from autobridge.engine.sync_run import run_sync_handler  # noqa: PLC0415
-
-                    runner.register_handler("sync", run_sync_handler)
-                except Exception:
-                    pass
-                try:
-                    from autobridge.repair.controller import repair_job_handler  # noqa: PLC0415
-
-                    runner.register_handler("repair", repair_job_handler)
-                except Exception:
-                    pass
-                return runner
-        except Exception:
-            pass
-    factory = get_session_factory()
-    runner = JobRunner(factory)
-    # Try to register real handlers if available
-    try:
-        from autobridge.engine.build_run import run_build_handler  # noqa: PLC0415
-
-        runner.register_handler("build", run_build_handler)
-    except Exception:
-        pass
-    try:
-        from autobridge.engine.sync_run import run_sync_handler  # noqa: PLC0415
-
-        runner.register_handler("sync", run_sync_handler)
-    except Exception:
-        pass
-    try:
-        from autobridge.repair.controller import repair_job_handler  # noqa: PLC0415
-
-        runner.register_handler("repair", repair_job_handler)
-    except Exception:
-        pass
-    return runner
+    return get_runner(db)
 
 
 @router.post("/connectors/{connector_id}/build", response_model=BuildResponse, responses=AUTH_401)
@@ -283,78 +237,25 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
 
 @router.post("/connectors/{connector_id}/sync", response_model=SyncResponse, responses=AUTH_401)
 def trigger_sync(connector_id: str, body: SyncRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> SyncResponse:
-    conn = db.get(Connector, connector_id)
-    if conn is None:
-        raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
+    # Same execution the scheduler runs (control.runner): validate, submit,
+    # inline-execute (detect → classify → ladder → verifier gate).
+    from autobridge.control.runner import SyncError, sync_connector_now  # noqa: PLC0415
 
-    release_id = body.release_id or conn.active_release_id
-    if not release_id:
-        # AR-1-2: no fallback to the latest release. The latest release may
-        # be an unapproved (or gate-blocked) candidate that must never
-        # execute. Sync requires an explicitly chosen or activated release.
-        raise HTTPException(status_code=422, detail="connector has no active release to sync (sync requires an approved, active release)")
-
-    # Validate release exists and belongs to connector
-    rel_obj = db.get(ConnectorRelease, release_id)
-    if rel_obj is None:
-        raise HTTPException(status_code=404, detail=f"Release {release_id!r} not found")
-    if rel_obj.connector_id != connector_id:
-        raise HTTPException(status_code=422, detail="release belongs to a different connector")
-    # REQ-013: an explicitly named release runs only when it is runnable —
-    # the active release or an operator-accepted (approved/rollback) one.
-    # Anything else (an unapproved candidate, a rejected release) is 422.
-    # Gate-blocked builds persist no release (gate-before-persist), so they
-    # can never be named here; a gate_blocked provenance flag is still
-    # refused explicitly (fail closed).
-    if rel_obj.provenance_build_run_id is not None:
-        brun = db.get(BuildRun, rel_obj.provenance_build_run_id)
-        if brun is not None and isinstance(brun.result, dict) and brun.result.get("gate_blocked"):
-            raise HTTPException(
-                status_code=422,
-                detail=f"Release {release_id!r} was blocked by the verifier gate and cannot sync",
-            )
-    if release_id != conn.active_release_id:
-        accepted = (
-            db.execute(
-                select(Approval).where(
-                    Approval.to_release_id == release_id,
-                    Approval.decision.in_(("approve", "rollback")),
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if accepted is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"Release {release_id!r} is not active or approved for connector "
-                    f"{connector_id!r} (sync needs the active release or an approved one; "
-                    "activate a build candidate or approve a repair candidate first)"
-                ),
-            )
-
-    runner = _get_runner(db)
-    checkpoint = body.checkpoint or {}
     try:
-        job_id = runner.submit_sync(
-            release_id=release_id, checkpoint=checkpoint, spec_vocabulary=body.spec_vocabulary
+        out = sync_connector_now(
+            db,
+            connector_id,
+            release_id=body.release_id,
+            checkpoint=body.checkpoint or {},
+            spec_vocabulary=body.spec_vocabulary,
         )
-    except Exception as exc:
+    except SyncError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    try:
-        runner.run_once()
-    except Exception:
-        pass
-
-    from autobridge.control.models import Job as JobModel
-
-    job = db.get(JobModel, job_id)
-    if job is None:
-        raise HTTPException(status_code=500, detail="job not found after submit")
-    sync_run_id = job.run_id
-    if job.result and isinstance(job.result, dict):
-        sync_run_id = job.result.get("sync_run_id", sync_run_id)
-
-    return SyncResponse(job_id=job_id, sync_run_id=sync_run_id, state=job.state, release_id=release_id)
+    return SyncResponse(
+        job_id=str(out["job_id"]),
+        sync_run_id=out.get("sync_run_id"),
+        state=str(out.get("state")),
+        release_id=str(out.get("release_id")),
+    )

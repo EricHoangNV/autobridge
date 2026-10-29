@@ -818,13 +818,50 @@ def _mem_session() -> Any:
     return sessionmaker(bind=engine)()
 
 
-def warm_knowledge(scenario_ids: list[str], *, provider: Any | None = None) -> Any:
+def warm_provenance(cache: Any) -> dict[str, Any]:
+    """What the warm cache learned and how (REQ-030 2b provenance).
+
+    Every entry records the approval that taught it (approval id, actor,
+    release id) because ``warm_knowledge`` learns through the real approve
+    path. The harness summary and the learning curve carry this so the
+    warm arm's provenance says how its knowledge was learned.
+    """
+    entries = []
+    try:
+        stored = cache.all_entries() if hasattr(cache, "all_entries") else []
+    except Exception:
+        stored = []
+    for entry in stored:
+        entries.append(
+            {
+                "vendor": getattr(entry, "vendor", ""),
+                "drift_class": getattr(entry, "drift_class", ""),
+                "rule_id": getattr(entry, "rule_id", ""),
+                "approval_id": getattr(entry, "approval_id", ""),
+                "actor": getattr(entry, "actor", ""),
+                "release_id": getattr(entry, "release_id", ""),
+            }
+        )
+    return {"learned_via": "approve_release", "fixes": entries}
+
+
+def warm_knowledge(
+    scenario_ids: list[str],
+    *,
+    provider: Any | None = None,
+    verifier_url: str | None = None,
+    verify: Any | None = None,
+) -> Any:
     """Learn on the dev split only: run each fixable case once, keep cache.
 
     Returns the :class:`KnowledgeCache` the ``autobridge_warm`` arm uses.
-    Only dev-split scenarios are learned (never held-out); repairs that do
-    not propose cache nothing. Learning runs the same end-to-end arm path
-    (observe → derive → deterministic repair), never case diagnostics.
+    Only dev-split scenarios are learned (never held-out). REQ-030 2b: a
+    fix is learned only once it is approved — each proposed dev-split fix
+    is verified (``verify`` callable or ``verifier_url``, same verdict the
+    grading uses) and then approved through the real ``approve_release``
+    path with this cache, so the entry records its approval. Unverified
+    fixes are never learned: without a verifier the warm arm stays cold
+    (provenance says so; warm is never worse than cold).
     """
     from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
     from bench.harness import HarnessConfig, make_trial_inputs  # noqa: PLC0415
@@ -837,17 +874,45 @@ def warm_knowledge(scenario_ids: list[str], *, provider: Any | None = None) -> A
             case = ablation_case_for_scenario(sid)
         except (KeyError, ValueError, RuntimeError):
             continue
-        # A session is required: handle() only caches propose patches
-        # (L0 future hits) when it can persist the RepairRun.
         session = _mem_session()
         try:
-            run_engine_arm(
+            res = run_engine_arm(
                 make_trial_inputs(cfg, sid, 0),
                 case,
                 ablation="autobridge_cold",
                 provider=prov,
-                knowledge=cache,
+                knowledge=KnowledgeCache(),
                 session=session,
+            )
+            spec = getattr(res, "spec", None) or {}
+            if spec.get("decision") != "propose" or not spec.get("candidate_patch"):
+                continue  # nothing verified to learn (escalation/backoff)
+            # The arm's RepairRun row (persisted by the controller) carries
+            # the vendor, drift class and delta the approve path learns.
+            from sqlalchemy import select as _select  # noqa: PLC0415
+
+            from autobridge.control.models import RepairRun as _RepairRun  # noqa: PLC0415
+
+            repair = (
+                session.execute(_select(_RepairRun).order_by(_RepairRun.created_at.desc()).limit(1))
+                .scalars()
+                .first()
+            )
+            if repair is None:
+                continue
+            _approve_warm_fix(
+                session,
+                sid,
+                case,
+                {
+                    "candidate_patch": list(spec.get("candidate_patch") or []),
+                    "rule_id": spec.get("rule_id", ""),
+                    "repair_run_id": repair.id,
+                    "vendor": repair.vendor or "unknown",
+                },
+                cache,
+                verifier_url=verifier_url,
+                verify=verify,
             )
             session.commit()
         except Exception:
@@ -855,6 +920,89 @@ def warm_knowledge(scenario_ids: list[str], *, provider: Any | None = None) -> A
         finally:
             session.close()
     return cache
+
+
+def _approve_warm_fix(
+    session: Any,
+    scenario_id: str,
+    case: Any,
+    arm_spec: dict[str, Any],
+    cache: Any,
+    *,
+    verifier_url: str | None = None,
+    verify: Any | None = None,
+) -> dict[str, Any]:
+    """Verify then approve one dev-split fix into the warm cache.
+
+    Raises when the fix is not verified (unreachable verifier, failed
+    verdict) — the caller skips learning and the provenance shows why.
+    """
+    from autobridge.control.models import Connector, ConnectorRelease  # noqa: PLC0415
+    from autobridge.engine.releases import approve_release, create_release_from_patch  # noqa: PLC0415
+    from autobridge.spec.patch import apply_patch  # noqa: PLC0415
+
+    patch = list(arm_spec.get("candidate_patch") or [])
+    patched = apply_patch(dict(case.spec), patch)
+    if verify is None and verifier_url:
+        from bench.scoring import normalize_verify_response, verify_via_http  # noqa: PLC0415
+
+        def _via_http(spec: Any, sid: str) -> bool:
+            payload = verify_via_http(spec, sid, verifier_url=verifier_url)
+            outcome = normalize_verify_response(payload if isinstance(payload, dict) else {})
+            failed = getattr(outcome, "failed_checks", None)
+            names = [f.get("name") for f in failed] if isinstance(failed, list) else []
+            return bool(getattr(outcome, "passed", False)) and not any(
+                isinstance(n, str) and "verifier_unreachable" in n for n in names
+            )
+
+        verify = _via_http
+    if verify is None:
+        raise RuntimeError(f"warm learning needs a verifier (no verifier_url for {scenario_id})")
+    if not verify(patched, scenario_id):
+        raise RuntimeError(f"warm learning skipped: verifier failed the {scenario_id} fix")
+    repair_run_id = arm_spec.get("repair_run_id", "")
+    vendor = arm_spec.get("vendor", "") or "unknown"
+    conn = Connector(
+        name=f"warm-{scenario_id}",
+        base_url="http://warm.invalid",
+        credential_ref="WARM_TOKEN",
+        target_entities=[],
+        runtime_target={"kind": "local_process"},
+    )
+    # Vendor on the connector record feeds nothing here; the repair row's
+    # vendor (from the arm path) is the attribution the cache learns.
+    session.add(conn)
+    session.flush()
+    base = ConnectorRelease(connector_id=conn.id, version=1, spec=dict(case.spec), signature="0" * 64)
+    session.add(base)
+    session.flush()
+    candidate = create_release_from_patch(
+        session,
+        connector_id=conn.id,
+        base_release_id=base.id,
+        patch=patch,
+        provenance_repair_run_id=repair_run_id or None,
+        verifier_url=None,  # already verifier-judged above; the gate is the grading path
+    )
+    session.flush()
+    approval = approve_release(
+        session,
+        repair_run_id=repair_run_id,
+        actor="bench:warm",
+        from_release_id=base.id,
+        to_release_id=candidate.id,
+        connector_id=conn.id,
+        knowledge_cache=cache,
+    )
+    session.flush()
+    return {
+        "scenario_id": scenario_id,
+        "vendor": vendor,
+        "rule_id": arm_spec.get("rule_id", ""),
+        "approval_id": approval.id,
+        "actor": approval.actor,
+        "release_id": candidate.id,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -999,7 +1147,11 @@ def run_ablation_harness(
     prov = provider or ablation_provider()
     for row in describe_arm_availability():
         print(f"bench harness: arm {row['arm']}: {row['mode']}", flush=True)
-    warm = warm_knowledge(list(warm_scenario_ids if warm_scenario_ids is not None else scenario_ids), provider=prov)
+    warm = warm_knowledge(
+        list(warm_scenario_ids if warm_scenario_ids is not None else scenario_ids),
+        provider=prov,
+        verifier_url=verifier_url,
+    )
     trials: list[AblationTrialResult] = []
     skipped: list[str] = []
     for sid in scenario_ids:
@@ -1019,6 +1171,7 @@ def run_ablation_harness(
     summary["verifier_url"] = verifier_url
     summary["trials"] = len(trials)
     summary["skipped_scenarios"] = sorted(skipped)
+    summary["warm_provenance"] = warm_provenance(warm)
     return trials, grades, summary
 
 
@@ -1132,16 +1285,21 @@ def run_learning_curve(
     repeats: int = 5,
     provider: Any | None = None,
     seed: int = 42,
+    verifier_url: str | None = None,
+    verify: Any | None = None,
 ) -> dict[str, Any]:
     """Inject the same drift ``repeats`` times; frontier tokens per repair.
 
     Arms: ``frontier_agent`` (fake driver pays every time), engine arms
     ``autobridge_cold`` (empty knowledge) and ``autobridge_warm``
-    (pre-warmed on the dev split). Rows carry frontier tokens, the rung
-    reached and the decision. Honest end-to-end (REQ-027 sub-step 2): the
-    arms derive everything from observation, so the curve shows what the
-    ladder genuinely does — the first repair proposes via L1 from wire
-    evidence and later repeats hit L0 (cold), warm hits L0 from the start.
+    (pre-warmed on the dev split through the approve path). Rows carry
+    frontier tokens, the rung reached and the decision. Honest end-to-end
+    (REQ-027 sub-step 2): the arms derive everything from observation.
+    REQ-030 2b: proposing caches nothing, so cold repeats re-derive at L1
+    (0 model tokens each) until an approval teaches the fix — L0 hits only
+    after approval. Warm hits L0 from the start only when its dev-split
+    fixes verified (``verifier_url`` or ``verify``); without a verifier it
+    stays cold and the provenance says so.
     Returns the raw rows plus per-arm totals; :func:`write_learning_curve_md`
     renders the file. Fake-labelled rows are rehearsal, not publication
     numbers: rerun with ``FRONTIER_API_KEY`` set for live tokens.
@@ -1160,7 +1318,7 @@ def run_learning_curve(
     from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
 
     cold_cache: Any = KnowledgeCache()
-    warm_cache: Any = warm_knowledge([scenario_id], provider=prov)
+    warm_cache: Any = warm_knowledge([scenario_id], provider=prov, verifier_url=verifier_url, verify=verify)
     cold_session = _mem_session()
     warm_session = _mem_session()
     rows: list[dict[str, Any]] = []
@@ -1214,6 +1372,8 @@ def run_learning_curve(
             "frontier_agent_model": driver.default_model,
             "engine_provider": type(prov).__name__,
             "engine_frontier_model": getattr(prov, "frontier_model", None),
+            "warm": warm_provenance(warm_cache),
+            "verifier_url": verifier_url,
         },
     }
 
@@ -1237,13 +1397,12 @@ def write_learning_curve_md(result: dict[str, Any], path: str | pathlib.Path) ->
         "Fake-labelled rows are rehearsal, not publication numbers: rerun with",
         "`FRONTIER_API_KEY` set for live tokens.",
         "",
-        "Expected (honest end-to-end, REQ-024 owner check on f32b4b4b): the",
-        "agent pays model tokens on every repair (it has no memory across",
-        "repairs). The engine arms derive everything from observation; they",
-        "currently escalate every repeat for drifts the L1 rules cannot",
-        "match on derived detector output — learning shows as rung 0 only",
-        "once the detector gap closes (first repair proposes via the",
-        "ladder, later repeats hit L0; warm hits L0 from the start).",
+        "Expected (REQ-030 2b: proposing caches nothing): the agent pays",
+        "model tokens on every repair (it has no memory across repairs).",
+        "Cold repeats re-derive at L1 with 0 model tokens each — L0 hits",
+        "only after an approval teaches the fix. Warm hits L0 from the",
+        "start only when its dev-split fixes verified (see provenance);",
+        "without a verifier it repeats cold exactly.",
         "",
         "| repeat | frontier_agent | autobridge_cold | autobridge_warm |",
         "| --- | --- | --- | --- |",

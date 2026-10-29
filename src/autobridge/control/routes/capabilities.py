@@ -251,6 +251,18 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
     approved_repairs: set[str] = {
         a.repair_run_id for a in approvals if a.decision == "approve" and a.repair_run_id
     }
+    # REQ-030 2b: a fix is learned by its earliest approval — the entry
+    # records that approval (id, actor, release). Later runs in the group
+    # count as reuses only when they are L0 hits (ladder level 0): a
+    # still-waiting proposal re-derived at L1 is not a reuse.
+    approve_by_run: dict[str, Any] = {}
+    for approval in sorted(approvals, key=lambda a: a.created_at):
+        if (
+            approval.decision == "approve"
+            and approval.repair_run_id
+            and approval.repair_run_id not in approve_by_run
+        ):
+            approve_by_run[approval.repair_run_id] = approval
 
     groups: dict[tuple[str, str, str], list[RepairRun]] = {}
     for run in runs:
@@ -275,18 +287,28 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
 
     entries: list[dict[str, Any]] = []
     for (vendor, rule_id, _patch_key), group in sorted(groups.items(), key=lambda kv: kv[1][0].created_at):
-        if not any(r.id in approved_repairs for r in group):
+        learned_runs = sorted(
+            (r for r in group if r.id in approve_by_run),
+            key=lambda r: (r.created_at, r.id),
+        )
+        if not learned_runs:
             continue  # learned entries need a verified (approved) repair
-        first = group[0]
+        first = learned_runs[0]
+        learned_approval = approve_by_run[first.id]
         first_usage = dict(first.model_usage or {})
         first_tokens = int(first_usage.get("frontier_tokens", 0) or 0) + int(first_usage.get("small_tokens", 0) or 0)
         first_cost = cost_by_run.get(first.id, Decimal("0"))
-        reuses = len(group) - 1
-        drift_class = ""
-        for did in first.drift_event_ids or []:
-            if did in drift_by_id:
-                drift_class = drift_by_id[did].drift_class
-                break
+        reuses = sum(
+            1
+            for r in group
+            if r.id != first.id and (r.ladder_level_reached or 0) == 0
+        )
+        drift_class = first.drift_class or ""
+        if not drift_class:
+            for did in first.drift_event_ids or []:
+                if did in drift_by_id:
+                    drift_class = drift_by_id[did].drift_class
+                    break
         entries.append(
             {
                 "vendor": vendor,
@@ -300,6 +322,9 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
                     "tokens": first_tokens,
                     "cost": str(first_cost),
                     "at": first.created_at,
+                    "approval_id": learned_approval.id,
+                    "actor": learned_approval.actor,
+                    "release_id": learned_approval.to_release_id or "",
                 },
                 "times_reused": reuses,
                 "tokens_saved": first_tokens * reuses,

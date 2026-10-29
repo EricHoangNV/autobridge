@@ -77,7 +77,14 @@ def _no_real_dns(monkeypatch: pytest.MonkeyPatch) -> Any:
         )
 
     monkeypatch.setattr(socket, "getaddrinfo", _guarded)
+    # REQ-030 2b: approving a repair teaches the process-default L0 cache,
+    # so one test's approval could L0-hit another test's drift. Isolate
+    # every test (before and after — a failing test must not leak either).
+    from autobridge.repair.knowledge import reset_default_cache  # noqa: PLC0415
+
+    reset_default_cache()
     yield
+    reset_default_cache()
     assert not trips, (
         "unit test(s) performed real DNS lookups (macOS fork-safety hazard): "
         + ", ".join(repr(t) for t in trips)

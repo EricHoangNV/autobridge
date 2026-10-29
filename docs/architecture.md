@@ -390,7 +390,7 @@ its readyz checks green + its docs page updated (plan §3).
 ## 9. Control plane + UI (plan §2.11, §4 W7)
 
 The control plane is a FastAPI app (`src/autobridge/control/app.py`) with
-44 paths and 44 schemas (OpenAPI at `ui/openapi.json`, typed client in
+53 paths and 62 schemas (OpenAPI at `ui/openapi.json`, typed client in
 `ui/lib/api/client.ts` via `openapi-typescript`). Every service has
 `/healthz`/`/readyz`; the UI has its own readyz proxy to control.
 
@@ -471,6 +471,45 @@ successful builds). Both are cleared by `POST /demo/reset` like everything
 else. CLI: `autobridge capabilities|knowledge` (text or `--output json`).
 Acceptance: `tests/e2e/test_knowledge_flow.py` (empty -> L1 -> approve ->
 entry -> same drift -> L0 hit, reused + 1) plus unit pins.
+
+REQ-030 adds the sync scheduler, server-side connector state, learn-on-approve
+and full persistence of every step. `AUTOBRIDGE_SYNC_INTERVAL_S` (default 10 in
+local and Compose demo mode, off when unset) ticks every active connector
+through the same path as `POST /sync` (detect -> classify -> ladder ->
+verifier gate, never approves): a lifespan background task runs one pass per
+interval on a worker thread (blocking sync I/O stays off the event loop; a
+tick whose predecessor is still running is skipped). A connector is skipped
+while a sync/build/repair job for it is queued/running or its latest repair
+still awaits an operator decision; per-connector failures are recorded, never
+raised. SQLite runs in WAL mode with a busy timeout so background passes and
+API writes interleave instead of locking each other out. `GET /connectors`
+and `GET /connectors/{id}` report `state` (`working` = last sync `Complete`,
+no open drift; `degrading` = drift detected, repair running, verified fix
+waiting, or verifying sync after approval; `error` = a waiting repair used a
+model or escalated, or the last sync `Degraded`/`Blocked`), plus a one-line
+`activity` and `last_sync_at` — the UI renders these, never its own
+classification. A fix is learned only once it is approved: proposing caches
+nothing (a waiting proposal can never hit L0), `approve_release` writes the
+entry after activation recording approval id, actor and release id, and the
+Knowledge page shows "learned from approval <id> by <actor>"; reject/rollback
+evict (AR-2-3). A `Complete` sync on an approved repair's release retires its
+drift events (`repaired`) — that is what returns a connector to `working`.
+Persistence additions (migration `0009_req030_persistence`): repair rows carry
+`drift_class` + `fingerprint_delta` (wire before/after), the verifier report
+id is written back onto the repair row, hypothesis derivations persist as
+`kind=hypothesis` evidence owned by the repair run, `ModelCall` rows carry
+structured `mode` (`live`/`replay`), `captured_at` and `outcome` (ranked /
+proposal / proposal_rejected / no_patch / unparsable / hypothesis), and
+`pabx_link_events` holds scheduler link snapshots (`link`) plus restart
+reports (`restart`). Labelled demo endpoints persist what the demo proves:
+`POST /demo/record-climb` (the instrumented semantic climb with rung trace,
+hypotheses, model-call box and verifier verdict, read back by the demo's
+assertions), `POST /demo/pabx-restart` and `GET /demo/pabx-events` (restart
+report and snapshots for the PABX panel; postings counters are the edge
+connector's `SyncRun` series). Acceptance:
+`tests/unit/test_autobridge_req030_scheduler_state.py` (interval, skips,
+busy, state machine, learn/evict, record-climb, pabx) plus `make demo` 8/8
+with the scheduler ticking.
 
 ### 9.2 UI screens (Next.js 15, App Router, Tailwind, SWR + SSE)
 1. `/connectors` — table: health, active release, last sync outcome, open drift,

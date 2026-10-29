@@ -558,7 +558,10 @@ def test_controller_handle_persists_repair_run() -> None:
     assert runs[0].model_usage["frontier_tokens"] == 0
 
 
-def test_controller_caches_successful_patch_for_l0() -> None:
+def test_controller_propose_caches_nothing_until_approved() -> None:
+    """REQ-030 2b: proposing caches nothing; approving learns the fix."""
+    from autobridge.engine.releases import approve_release
+
     cache, ctrl, SessionLocal = _make_controller_engine()
     spec = _load_spec()
     delta = _delta_types("Reservation", "guest_name", "guest_identifier")
@@ -566,12 +569,48 @@ def test_controller_caches_successful_patch_for_l0() -> None:
     res1 = ctrl.handle(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta, session=s)
     s.commit()
     assert res1.ladder_level_reached == 1  # first time via L1
-    # Second call should hit L0
+    assert cache.size() == 0, "proposing must not populate L0"
+    # Repeat without approval: L0 miss, L1 re-derives.
     s2 = SessionLocal()
     res2 = ctrl.handle(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta, session=s2)
-    assert res2.ladder_level_reached == 0
-    assert res2.rule_id == "rename_field"
-    assert res2.candidate_patch == res1.candidate_patch
+    assert res2.ladder_level_reached == 1
+    assert cache.size() == 0
+    s2.commit()
+    # Approve the first run's patch through the engine path: learned.
+    run_id = s2.query(RepairRun).order_by(RepairRun.created_at.desc()).first().id
+    from autobridge.control.models import Connector, ConnectorRelease, spec_signature
+
+    conn = Connector(
+        name="Atlas", base_url="http://localhost:8105", credential_ref="ATLAS_API_KEY",
+        target_entities=["Reservation"], runtime_target={"kind": "local_process"},
+    )
+    s2.add(conn)
+    s2.flush()
+    base = ConnectorRelease(connector_id=conn.id, version=1, spec=spec, signature=spec_signature(spec))
+    s2.add(base)
+    s2.flush()
+    candidate = ConnectorRelease(
+        connector_id=conn.id, version=2, spec=spec, signature=spec_signature(spec),
+        parent_release_id=base.id, provenance_repair_run_id=run_id,
+    )
+    s2.add(candidate)
+    s2.flush()
+    approval = approve_release(
+        s2, repair_run_id=run_id, actor="tester",
+        from_release_id=base.id, to_release_id=candidate.id,
+        connector_id=conn.id, knowledge_cache=cache,
+    )
+    s2.commit()
+    assert approval.decision == "approve"
+    assert cache.size() == 1
+    entry = cache.all_entries()[0]
+    assert entry.approval_id == approval.id and entry.actor == "tester"
+    # Third call hits L0 with the approved patch.
+    s3 = SessionLocal()
+    res3 = ctrl.handle(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta, session=s3)
+    assert res3.ladder_level_reached == 0
+    assert res3.rule_id == "rename_field"
+    assert res3.candidate_patch == res1.candidate_patch
 
 
 def test_controller_rate_limit_no_release_but_persists() -> None:

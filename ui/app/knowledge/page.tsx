@@ -39,7 +39,16 @@ type KnowledgeEntry = {
   drift_signature: string;
   rule_id: string;
   patch: unknown[];
-  learned_from: { run_id: string; rung: number; tokens: number; cost: string; at: string };
+  learned_from: {
+    run_id: string;
+    rung: number;
+    tokens: number;
+    cost: string;
+    at: string;
+    approval_id?: string;
+    actor?: string;
+    release_id?: string;
+  };
   times_reused: number;
   tokens_saved: number;
   cost_saved: string;
@@ -217,8 +226,14 @@ export default function KnowledgePage() {
                     <span className="text-ink-2">→ {entry.rule_id}</span>
                   </p>
                   <p className="mt-1 font-mono text-xs text-ink-2">
-                    learned at rung {entry.learned_from.rung} ({entry.learned_from.tokens} tokens) ·
-                    reused {entry.times_reused}x, saved {entry.tokens_saved} tokens
+                    learned at rung {entry.learned_from.rung} ({entry.learned_from.tokens} tokens)
+                    {entry.learned_from.approval_id ? (
+                      <>
+                        {" "}· learned from approval {entry.learned_from.approval_id}
+                        {entry.learned_from.actor ? ` by ${entry.learned_from.actor}` : ""}
+                      </>
+                    ) : null}{" "}
+                    · reused {entry.times_reused}x, saved {entry.tokens_saved} tokens
                   </p>
                 </div>
               ))}

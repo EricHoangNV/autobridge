@@ -88,6 +88,8 @@ def _repair_to_out(r: RepairRun) -> RepairRunOut:
         ladder_level_reached=r.ladder_level_reached,
         vendor=r.vendor,
         drift_signature=r.drift_signature,
+        drift_class=r.drift_class,
+        fingerprint_delta=dict(r.fingerprint_delta) if r.fingerprint_delta else None,
         candidate_patch=list(r.candidate_patch) if r.candidate_patch else None,
         rule_id=r.rule_id,
         hypothesis_ids=list(r.hypothesis_ids or []),

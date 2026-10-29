@@ -13,6 +13,7 @@ HTTP (it is on verifier-net + admin-net); it never imports ``verifier`` or
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -39,10 +40,82 @@ async def lifespan(app: FastAPI):
     # columns, so a database file kept across runs goes stale and endpoints
     # 500. Upgrade-to-head handles fresh, stale and current databases;
     # failure is loud (no serving a broken schema).
-    from autobridge.control.migrate import ensure_migrated
+    import asyncio  # noqa: PLC0415
+
+    from autobridge.config import sync_interval_seconds  # noqa: PLC0415
+    from autobridge.control.migrate import ensure_migrated  # noqa: PLC0415
 
     ensure_migrated(get_engine())
-    yield
+    scheduler_task: asyncio.Task[None] | None = None
+    try:
+        interval = sync_interval_seconds()
+    except ValueError:
+        # A typo'd interval must fail startup loudly, never silently run
+        # unscheduled (or scheduled at a surprising cadence).
+        raise
+    if interval is not None:
+        scheduler_task = asyncio.create_task(_scheduler_loop(interval))
+    try:
+        yield
+    finally:
+        if scheduler_task is not None:
+            scheduler_task.cancel()
+            try:
+                await scheduler_task
+            except asyncio.CancelledError:
+                pass
+
+
+def _run_scheduler_pass(factory: Any) -> None:
+    """One scheduler pass on a worker thread (never on the event loop).
+
+    Syncs do blocking HTTP with retry/backoff budgets; running them on the
+    loop would stall readyz, SSE and the UI for the whole pass. A pass
+    never raises: per-connector results are row data, and a pass-level
+    failure rolls back and is forgotten (the next tick tries again).
+    """
+    try:
+        with factory() as session:
+            try:
+                from autobridge.control.scheduler import run_scheduler_pass  # noqa: PLC0415
+
+                run_scheduler_pass(session)
+            except Exception:
+                session.rollback()
+    except Exception:
+        pass
+
+
+async def _scheduler_loop(interval_s: float) -> None:
+    """Tick the sync scheduler until cancelled (REQ-030 item 1).
+
+    One pass per interval: sync every idle active connector through the
+    same path as POST /sync. Passes run on a worker thread
+    (:func:`_run_scheduler_pass`); a tick whose predecessor is still
+    running is skipped — overlapping passes would double-sync connectors
+    the busy check is meant to serialize. Secrets never appear here:
+    syncs read credential values from the environment at runtime, as always.
+    """
+    import asyncio  # noqa: PLC0415
+
+    from autobridge.control.deps import get_session_factory  # noqa: PLC0415
+
+    factory = get_session_factory()
+    running = False
+
+    def _done(_task: Any) -> None:
+        nonlocal running
+        running = False
+
+    while True:
+        if not running:
+            running = True
+            task = asyncio.create_task(asyncio.to_thread(_run_scheduler_pass, factory))
+            task.add_done_callback(_done)
+        try:
+            await asyncio.sleep(interval_s)
+        except asyncio.CancelledError:
+            break
 
 
 app = FastAPI(

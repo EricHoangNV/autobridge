@@ -344,6 +344,7 @@ def approve_release(
     from_release_id: str | None,
     to_release_id: str,
     connector_id: str | None = None,
+    knowledge_cache: Any | None = None,
 ) -> Approval:
     """Approve a candidate release: create approval and activate it.
 
@@ -355,13 +356,17 @@ def approve_release(
     match). A foreign, stale, or rolled-back release cannot be activated
     under an unrelated repair's audit cover (AR-1-3).
     *connector_id* may be omitted — it is inferred from *to_release_id*.
+    *knowledge_cache* receives the learned fix (defaults to the process
+    default cache): REQ-030 2b learns a fix only once it is approved —
+    proposing caches nothing, approving writes the entry (recording the
+    approval id, actor and release id) after the release is activated.
 
     The connector's ``active_release_id`` is set to *to_release_id*.
     Returns the new :class:`Approval` row.
     """
     if not actor or not actor.strip():
         raise ReleaseError("actor must be a non-empty string")
-    _ensure_repair_run(session, repair_run_id)
+    run = _ensure_repair_run(session, repair_run_id)
     to_rel = _ensure_release(session, to_release_id)
     # AR-1-3: bind the approval to this repair run's candidate release.
     if to_rel.provenance_repair_run_id != repair_run_id:
@@ -389,6 +394,33 @@ def approve_release(
     )
     session.add(approval)
     session.flush()
+    # REQ-030 2b: a fix is learned only once it is approved, after the
+    # release is activated. A proposal that is still waiting can never be
+    # reused at L0, by any connector. Learning is best-effort: cache
+    # failure must not break the approval.
+    if run.decision == "propose" and run.candidate_patch:
+        with contextlib.suppress(Exception):
+            from autobridge.repair.knowledge import (  # noqa: PLC0415
+                NO_LEARN_CLASSES,
+                delta_has_content,
+                get_default_cache,
+            )
+
+            drift_class = run.drift_class or ""
+            delta = run.fingerprint_delta
+            if drift_class not in NO_LEARN_CLASSES and delta_has_content(delta):
+                cache = knowledge_cache if knowledge_cache is not None else get_default_cache()
+                cache.put(
+                    run.vendor or "unknown",
+                    delta,
+                    list(run.candidate_patch),
+                    run.rule_id or "unknown",
+                    drift_class=drift_class,
+                    confidence=0.0,
+                    approval_id=approval.id,
+                    actor=approval.actor,
+                    release_id=to_release_id,
+                )
     return approval
 
 
@@ -463,12 +495,15 @@ def reject_release(
     actor: str,
     from_release_id: str | None,
     to_release_id: str | None,
+    knowledge_cache: Any | None = None,
 ) -> Approval:
     """Reject a candidate release: record decision, do not activate.
 
     Neither the connector's active release nor any existing release is
     mutated. *from/to* are optional (reject may be recorded even before a
     release was created, but when given they are validated to exist).
+    *knowledge_cache* names the L0 cache the rejection evicts (defaults to
+    the process default — the same cache the approve path learns into).
     """
     if not actor or not actor.strip():
         raise ReleaseError("actor must be a non-empty string")
@@ -494,7 +529,8 @@ def reject_release(
         with contextlib.suppress(Exception):
             from autobridge.repair.knowledge import get_default_cache  # noqa: PLC0415
 
-            get_default_cache().evict_patch(list(run.candidate_patch))
+            cache = knowledge_cache if knowledge_cache is not None else get_default_cache()
+            cache.evict_patch(list(run.candidate_patch))
     return approval
 
 
@@ -505,6 +541,7 @@ def rollback_release(
     target_release_id: str,
     actor: str,
     repair_run_id: str,
+    knowledge_cache: Any | None = None,
 ) -> tuple[ConnectorRelease, Approval]:
     """Rollback *connector_id* to *target_release_id*'s spec.
 
@@ -564,8 +601,9 @@ def rollback_release(
     with contextlib.suppress(Exception):
         from autobridge.repair.knowledge import get_default_cache  # noqa: PLC0415
 
+        cache = knowledge_cache if knowledge_cache is not None else get_default_cache()
         prov_id = current.provenance_repair_run_id
         prov_run = session.get(RepairRun, prov_id) if prov_id else None
         if prov_run is not None and prov_run.candidate_patch:
-            get_default_cache().evict_patch(list(prov_run.candidate_patch))
+            cache.evict_patch(list(prov_run.candidate_patch))
     return new_release, approval

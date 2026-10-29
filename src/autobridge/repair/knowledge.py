@@ -35,6 +35,21 @@ def _delta_to_dict(delta: FingerprintDelta | dict[str, Any] | None) -> dict[str,
     return {}
 
 
+def delta_to_json(delta: FingerprintDelta | dict[str, Any] | None) -> dict[str, Any] | None:
+    """JSON-safe copy of a fingerprint delta for persistence.
+
+    Returns ``None`` when there is no delta to store, so RepairRun rows
+    for content-free drifts stay null instead of holding ``{}`` (an empty
+    object would be indistinguishable from an observed-but-empty delta).
+    """
+    if delta is None:
+        return None
+    d = _delta_to_dict(delta)
+    if not d:
+        return None
+    return json.loads(json.dumps(d, sort_keys=True, separators=(",", ":"), default=str))
+
+
 def delta_signature(delta: FingerprintDelta | dict[str, Any] | None) -> str:
     """Deterministic short hash of fingerprint delta content."""
     d = _delta_to_dict(delta)
@@ -104,7 +119,13 @@ def _canonical_patch(patch: list[dict[str, Any]] | None) -> str:
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeEntry:
-    """One cached successful repair."""
+    """One cached successful repair.
+
+    REQ-030 2b: a fix is learned only once it is approved — entries record
+    the approval that taught them (approval id, actor) and the release the
+    approval activated, so the knowledge page can say "learned from
+    approval <id> by <actor>".
+    """
 
     vendor: str
     delta_key: str
@@ -113,6 +134,9 @@ class KnowledgeEntry:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     drift_class: str = ""
     confidence: float = 0.0
+    approval_id: str = ""
+    actor: str = ""
+    release_id: str = ""
 
 
 class KnowledgeCache:
@@ -136,6 +160,9 @@ class KnowledgeCache:
         *,
         drift_class: str = "",
         confidence: float = 0.0,
+        approval_id: str = "",
+        actor: str = "",
+        release_id: str = "",
     ) -> KnowledgeEntry:
         """Store a successful patch for (vendor, drift class, delta). Returns the entry."""
         key = cache_key(vendor, drift_class, delta)
@@ -146,6 +173,9 @@ class KnowledgeCache:
             rule_id=rule_id,
             drift_class=drift_class,
             confidence=confidence,
+            approval_id=approval_id,
+            actor=actor,
+            release_id=release_id,
         )
         self._store[key] = entry
         return entry

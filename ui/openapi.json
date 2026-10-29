@@ -459,6 +459,11 @@
             ],
             "title": "Active Release Id"
           },
+          "activity": {
+            "default": "",
+            "title": "Activity",
+            "type": "string"
+          },
           "base_url": {
             "title": "Base Url",
             "type": "string"
@@ -497,6 +502,18 @@
               }
             ]
           },
+          "last_sync_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sync At"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -519,6 +536,11 @@
             "additionalProperties": true,
             "title": "Runtime Target",
             "type": "object"
+          },
+          "state": {
+            "default": "working",
+            "title": "State",
+            "type": "string"
           },
           "target_entities": {
             "items": {
@@ -571,6 +593,11 @@
             ],
             "title": "Active Release Id"
           },
+          "activity": {
+            "default": "",
+            "title": "Activity",
+            "type": "string"
+          },
           "base_url": {
             "title": "Base Url",
             "type": "string"
@@ -592,6 +619,18 @@
             "title": "Id",
             "type": "string"
           },
+          "last_sync_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sync At"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -600,6 +639,11 @@
             "additionalProperties": true,
             "title": "Runtime Target",
             "type": "object"
+          },
+          "state": {
+            "default": "working",
+            "title": "State",
+            "type": "string"
           },
           "target_entities": {
             "items": {
@@ -1604,6 +1648,16 @@
       },
       "KnowledgeLearnedFromOut": {
         "properties": {
+          "actor": {
+            "default": "",
+            "title": "Actor",
+            "type": "string"
+          },
+          "approval_id": {
+            "default": "",
+            "title": "Approval Id",
+            "type": "string"
+          },
           "at": {
             "anyOf": [
               {
@@ -1619,6 +1673,11 @@
           "cost": {
             "default": "0",
             "title": "Cost",
+            "type": "string"
+          },
+          "release_id": {
+            "default": "",
+            "title": "Release Id",
             "type": "string"
           },
           "run_id": {
@@ -1812,6 +1871,300 @@
         "title": "OperatorOut",
         "type": "object"
       },
+      "PabxEventOut": {
+        "properties": {
+          "connector_id": {
+            "title": "Connector Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "connector_id",
+          "kind",
+          "payload",
+          "created_at"
+        ],
+        "title": "PabxEventOut",
+        "type": "object"
+      },
+      "PabxRestartRequest": {
+        "description": "Persist a PABX restart report (REQ-030 item 3).\n\nCounts come from live ``/edge/postings`` comparisons across a restart\n(computed by the demo's live leg), recorded here so the PABX panel\nreads rows, not terminal output.",
+        "properties": {
+          "connector_id": {
+            "minLength": 1,
+            "title": "Connector Id",
+            "type": "string"
+          },
+          "duplicated": {
+            "minimum": 0.0,
+            "title": "Duplicated",
+            "type": "integer"
+          },
+          "lost": {
+            "minimum": 0.0,
+            "title": "Lost",
+            "type": "integer"
+          },
+          "redelivered": {
+            "minimum": 0.0,
+            "title": "Redelivered",
+            "type": "integer"
+          },
+          "unique_keys": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Unique Keys",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connector_id",
+          "redelivered",
+          "lost",
+          "duplicated"
+        ],
+        "title": "PabxRestartRequest",
+        "type": "object"
+      },
+      "RecordClimbCallIn": {
+        "properties": {
+          "captured_at": {
+            "default": "",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "cost": {
+            "default": "0",
+            "title": "Cost",
+            "type": "string"
+          },
+          "input_tokens": {
+            "default": 0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "default": 0.0,
+            "title": "Latency Ms",
+            "type": "number"
+          },
+          "mode": {
+            "default": "live",
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "default": "",
+            "title": "Model",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "output_tokens": {
+            "default": 0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "provider": {
+            "default": "",
+            "title": "Provider",
+            "type": "string"
+          },
+          "purpose": {
+            "default": "",
+            "title": "Purpose",
+            "type": "string"
+          },
+          "reasoning_tokens": {
+            "default": 0,
+            "title": "Reasoning Tokens",
+            "type": "integer"
+          },
+          "tier": {
+            "minLength": 1,
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier"
+        ],
+        "title": "RecordClimbCallIn",
+        "type": "object"
+      },
+      "RecordClimbHypothesisIn": {
+        "properties": {
+          "claim": {
+            "default": "",
+            "title": "Claim",
+            "type": "string"
+          },
+          "family": {
+            "default": "",
+            "title": "Family",
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "RecordClimbHypothesisIn",
+        "type": "object"
+      },
+      "RecordClimbRequest": {
+        "description": "Persist the demo's instrumented semantic climb (REQ-030 item 3).\n\nThe climb really ran (provider really called, tokens really spent,\nproposal really judged) \u2014 but it ran in the demo process against the\nreference spec because the docs-built spec carries no money invariant\nyet. Recording it through this labelled demo endpoint (never the\nengine path) is what puts the rung trace, hypothesis derivation,\nmodel-call box and verifier verdict on the repair page instead of\nleaving them in process memory.",
+        "properties": {
+          "attempts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Attempts",
+            "type": "array"
+          },
+          "connector_id": {
+            "minLength": 1,
+            "title": "Connector Id",
+            "type": "string"
+          },
+          "drift_class": {
+            "minLength": 1,
+            "title": "Drift Class",
+            "type": "string"
+          },
+          "enumerator_yield_count": {
+            "default": 0,
+            "title": "Enumerator Yield Count",
+            "type": "integer"
+          },
+          "escalation_question": {
+            "minLength": 1,
+            "title": "Escalation Question",
+            "type": "string"
+          },
+          "hypotheses": {
+            "items": {
+              "$ref": "#/components/schemas/RecordClimbHypothesisIn"
+            },
+            "title": "Hypotheses",
+            "type": "array"
+          },
+          "model_calls": {
+            "items": {
+              "$ref": "#/components/schemas/RecordClimbCallIn"
+            },
+            "title": "Model Calls",
+            "type": "array"
+          },
+          "model_usage": {
+            "additionalProperties": true,
+            "title": "Model Usage",
+            "type": "object"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposal"
+          },
+          "scenario": {
+            "default": "",
+            "title": "Scenario",
+            "type": "string"
+          },
+          "vendor": {
+            "default": "",
+            "title": "Vendor",
+            "type": "string"
+          },
+          "verifier_verdict": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifier Verdict"
+          }
+        },
+        "required": [
+          "connector_id",
+          "drift_class",
+          "escalation_question"
+        ],
+        "title": "RecordClimbRequest",
+        "type": "object"
+      },
+      "RecordClimbResponse": {
+        "properties": {
+          "drift_id": {
+            "title": "Drift Id",
+            "type": "string"
+          },
+          "model_call_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Model Call Ids",
+            "type": "array"
+          },
+          "repair_run_id": {
+            "title": "Repair Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "drift_id",
+          "repair_run_id"
+        ],
+        "title": "RecordClimbResponse",
+        "type": "object"
+      },
       "ReleaseOut": {
         "properties": {
           "approved_by": {
@@ -1987,6 +2340,17 @@
             "title": "Decision",
             "type": "string"
           },
+          "drift_class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift Class"
+          },
           "drift_event_ids": {
             "items": {
               "type": "string"
@@ -2016,6 +2380,18 @@
               }
             ],
             "title": "Escalation Bundle"
+          },
+          "fingerprint_delta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fingerprint Delta"
           },
           "hypothesis_ids": {
             "items": {
@@ -2255,6 +2631,11 @@
       },
       "RungCallOut": {
         "properties": {
+          "captured_at": {
+            "default": "",
+            "title": "Captured At",
+            "type": "string"
+          },
           "cost": {
             "title": "Cost",
             "type": "string"
@@ -2262,6 +2643,27 @@
           "input_tokens": {
             "title": "Input Tokens",
             "type": "integer"
+          },
+          "mode": {
+            "default": "live",
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "default": "",
+            "title": "Model",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
           },
           "output_tokens": {
             "title": "Output Tokens",
@@ -4063,6 +4465,324 @@
           }
         ],
         "summary": "Inject Fault",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
+    "/demo/pabx-events": {
+      "get": {
+        "description": "PABX link snapshots + restart reports, newest first (PABX panel source).",
+        "operationId": "list_pabx_events_demo_pabx_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "connector_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Connector Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PabxEventOut"
+                  },
+                  "title": "Response List Pabx Events Demo Pabx Events Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Pabx Events",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
+    "/demo/pabx-restart": {
+      "post": {
+        "description": "Persist a PABX restart report (REQ-030 item 3, PABX panel source).",
+        "operationId": "record_pabx_restart_demo_pabx_restart_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PabxRestartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PabxEventOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Record Pabx Restart",
+        "tags": [
+          "demo"
+        ]
+      }
+    },
+    "/demo/record-climb": {
+      "post": {
+        "description": "Persist the demo's instrumented semantic climb (REQ-030 item 3).\n\nThe climb really ran \u2014 provider really called, tokens really spent,\nproposal really judged \u2014 but it ran in the demo process (against the\nreference spec) because the docs-built spec carries no money invariant\nyet, so no engine sync can detect the semantic drift live. Recording\nit here puts the rung trace, hypothesis derivation, model-call box and\nverifier verdict on the repair page as rows, instead of leaving them\nin process memory. Never used by the engine: ``POST /sync`` and the\nscheduler only ever write engine-derived rows.",
+        "operationId": "record_climb_demo_record_climb_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordClimbRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordClimbResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "detail": {
+                          "items": {
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "detail"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "detail": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "detail"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Request validation failure or domain error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Record Climb",
         "tags": [
           "demo"
         ]

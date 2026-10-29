@@ -507,7 +507,26 @@ def _run_repair_scenario(
                 if money_field in recs[0]:
                     assert isinstance(recs[0][money_field], Decimal), f"{ent_name}.{money_field} must be Decimal"
 
-    # --- 8. L0 cache hit on second attempt ---
+    # --- 8. Approve the verified fix, then the repeat hits L0 ---
+    # REQ-030 2b: proposing caches nothing — the repeat below misses until
+    # the verified fix is approved through the engine approve path, which
+    # learns it (recording approval id, actor and release id) into the
+    # controller's cache.
+    from autobridge.engine.releases import approve_release
+
+    session_approve = SessionLocal()
+    approval = approve_release(
+        session_approve,
+        repair_run_id=repair_run_id,
+        actor="e2e",
+        from_release_id=release_id,
+        to_release_id=new_release.id,
+        connector_id=connector_db_id,
+        knowledge_cache=cache,
+    )
+    session_approve.commit()
+    assert approval.decision == "approve"
+    session_approve.close()
     session4 = SessionLocal()
     result2 = ctrl.handle(
         spec=spec,
@@ -519,7 +538,7 @@ def _run_repair_scenario(
         session=session4,
     )
     session4.commit()
-    # Second run should hit L0 (if first was L1, now cached)
+    # Second run should hit L0 (the approved fix is now learned)
     assert result2.decision == "propose"
     assert result2.candidate_patch == result.candidate_patch
     assert result2.model_usage["frontier_tokens"] == 0

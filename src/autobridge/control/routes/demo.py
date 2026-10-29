@@ -27,10 +27,11 @@ from autobridge.control.models import (
 	Job,
 	ModelCall,
 	ModelCallArchive,
+	PabxLinkEvent,
 	RepairRun,
 	SyncRun,
 )
-from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse, SimulatorConnectorRef, SimulatorInfo, SimulatorsOut
+from autobridge.control.schemas import AUTH_401, DOMAIN_ERROR_422, InjectFaultRequest, InjectFaultResponse, PabxEventOut, PabxRestartRequest, RecordClimbRequest, RecordClimbResponse, SimulatorConnectorRef, SimulatorInfo, SimulatorsOut
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 
@@ -246,6 +247,9 @@ def demo_reset(
                 latency_ms=call.latency_ms,
                 cost_estimate=call.cost_estimate,
                 purpose=call.purpose,
+                mode=call.mode or "live",
+                captured_at=call.captured_at or "",
+                outcome=call.outcome,
             )
         )
         archived += 1
@@ -357,3 +361,180 @@ def list_simulators(db: Session = Depends(get_db)) -> SimulatorsOut:
             )
         )
     return SimulatorsOut(simulators=rows)
+
+
+@router.post("/record-climb", response_model=RecordClimbResponse, responses={**DOMAIN_ERROR_422, **AUTH_401})
+def record_climb(body: RecordClimbRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> RecordClimbResponse:
+    """Persist the demo's instrumented semantic climb (REQ-030 item 3).
+
+    The climb really ran — provider really called, tokens really spent,
+    proposal really judged — but it ran in the demo process (against the
+    reference spec) because the docs-built spec carries no money invariant
+    yet, so no engine sync can detect the semantic drift live. Recording
+    it here puts the rung trace, hypothesis derivation, model-call box and
+    verifier verdict on the repair page as rows, instead of leaving them
+    in process memory. Never used by the engine: ``POST /sync`` and the
+    scheduler only ever write engine-derived rows.
+    """
+    from decimal import Decimal  # noqa: PLC0415
+
+    from autobridge.evidence.store import EvidenceStore  # noqa: PLC0415
+
+    conn = db.get(Connector, body.connector_id)
+    if conn is None:
+        raise HTTPException(status_code=404, detail=f"Connector {body.connector_id!r} not found")
+
+    drift = DriftEvent(
+        connector_id=body.connector_id,
+        drift_class=body.drift_class,
+        severity="high",
+        evidence_ids=[],
+        source_sync_run_id=None,
+        status="open",
+    )
+    db.add(drift)
+    db.flush()
+
+    ladder_trace = [dict(a) for a in (body.attempts or [])]
+    ladder_trace.append(
+        {
+            "level": 4,
+            "action": "escalate",
+            "reason": (
+                f"No verified fix for {body.scenario or body.drift_class} "
+                "(semantic drift is never auto-patched) — recorded from the "
+                "demo's instrumented climb; one operator question"
+            ),
+            "drift_class": body.drift_class,
+        }
+    )
+    run = RepairRun(
+        drift_event_ids=[drift.id],
+        ladder_level_reached=4,
+        vendor=body.vendor or None,
+        drift_class=body.drift_class,
+        candidate_patch=None,
+        rule_id=None,
+        hypothesis_ids=[h.id for h in body.hypotheses],
+        visible_test_results=[],
+        verifier_report_id=None,
+        decision="escalate",
+        model_usage=dict(body.model_usage or {}),
+        ladder_trace=ladder_trace,
+        escalation_bundle={
+            "reason": f"{body.scenario or body.drift_class}: semantic drift, no verified fix",
+            "question": body.escalation_question,
+            "evidence_ids": [],
+        },
+    )
+    db.add(run)
+    db.flush()
+
+    call_ids: list[str] = []
+    for call in body.model_calls:
+        try:
+            cost = Decimal(str(call.cost))
+        except Exception:
+            cost = Decimal("0")
+        row = ModelCall(
+            run_id=run.id,
+            provider=call.provider,
+            model=call.model,
+            tier=call.tier,
+            input_tokens=call.input_tokens,
+            output_tokens=call.output_tokens,
+            reasoning_tokens=call.reasoning_tokens,
+            latency_ms=call.latency_ms,
+            cost_estimate=cost,
+            purpose=call.purpose,
+            mode=call.mode or "live",
+            captured_at=call.captured_at or "",
+            outcome=call.outcome,
+        )
+        db.add(row)
+        db.flush()
+        call_ids.append(row.id)
+
+    store = EvidenceStore(db)
+    store.append(
+        kind="hypothesis",
+        payload={
+            "drift_class": body.drift_class,
+            "scenario": body.scenario,
+            "enumerator_yield_count": body.enumerator_yield_count,
+            "stages": [
+                {
+                    "name": "distinct",
+                    "count": len(body.hypotheses),
+                    "ids": [h.id for h in body.hypotheses],
+                    "families": sorted({h.family for h in body.hypotheses if h.family}),
+                    "source": "demo instrumented climb (engine enumerator on the Harbor docs)",
+                }
+            ],
+            "recorded_via": "POST /demo/record-climb",
+        },
+        run_id=f"repair_runs:{run.id}",
+        parent_ids=[],
+    )
+    if body.verifier_verdict is not None:
+        store.append(
+            kind="verification",
+            payload={
+                "scenario": body.scenario,
+                "verdict": dict(body.verifier_verdict),
+                "proposal": list(body.proposal or []),
+                "recorded_via": "POST /demo/record-climb",
+            },
+            run_id=f"repair_runs:{run.id}",
+            parent_ids=[],
+        )
+    db.flush()
+    db.commit()
+    return RecordClimbResponse(drift_id=drift.id, repair_run_id=run.id, model_call_ids=call_ids)
+
+
+@router.post("/pabx-restart", responses=AUTH_401)
+def record_pabx_restart(body: PabxRestartRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> PabxEventOut:
+    """Persist a PABX restart report (REQ-030 item 3, PABX panel source)."""
+    if db.get(Connector, body.connector_id) is None:
+        raise HTTPException(status_code=404, detail=f"Connector {body.connector_id!r} not found")
+    event = PabxLinkEvent(
+        connector_id=body.connector_id,
+        kind="restart",
+        payload={
+            "redelivered": body.redelivered,
+            "lost": body.lost,
+            "duplicated": body.duplicated,
+            "unique_keys": body.unique_keys,
+        },
+    )
+    db.add(event)
+    db.flush()
+    db.commit()
+    db.refresh(event)
+    return PabxEventOut(
+        id=event.id,
+        connector_id=event.connector_id,
+        kind=event.kind,
+        payload=dict(event.payload),
+        created_at=event.created_at,
+    )
+
+
+@router.get("/pabx-events", response_model=list[PabxEventOut])
+def list_pabx_events(connector_id: str | None = None, db: Session = Depends(get_db)) -> list[PabxEventOut]:
+    """PABX link snapshots + restart reports, newest first (PABX panel source)."""
+    query = db.query(PabxLinkEvent)
+    if connector_id:
+        query = query.filter(PabxLinkEvent.connector_id == connector_id)
+    rows = query.order_by(PabxLinkEvent.created_at.desc()).limit(100).all()
+    return [
+        PabxEventOut(
+            id=e.id,
+            connector_id=e.connector_id,
+            kind=e.kind,
+            payload=dict(e.payload or {}),
+            created_at=e.created_at,
+        )
+        for e in rows
+    ]

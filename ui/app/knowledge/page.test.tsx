@@ -33,7 +33,7 @@ const KNOWLEDGE = {
       drift_signature: "abc",
       rule_id: "page_to_cursor",
       patch: [],
-      learned_from: { run_id: "r1", rung: 1, tokens: 0, cost: "0", at: "2026-01-01T00:00:00Z" },
+      learned_from: { run_id: "r1", rung: 1, tokens: 0, cost: "0", at: "2026-01-01T00:00:00Z", approval_id: "a1", actor: "tester", release_id: "rel2" },
       times_reused: 1,
       tokens_saved: 0,
       cost_saved: "0",
@@ -79,6 +79,12 @@ describe("KnowledgePage", () => {
     expect(screen.getByTestId("knowledge-connector-c2").textContent).toContain("v1 refused");
     expect(screen.getByTestId("knowledge-connector-c3").textContent).toContain("PABX edge");
     expect(screen.getByTestId("knowledge-connector-c3").textContent).toContain("vocabulary v3");
+  });
+
+  it("shows which approval taught each learned fix", () => {
+    mockBoth(CAPABILITIES, KNOWLEDGE);
+    render(<KnowledgePage />);
+    expect(screen.getByTestId("knowledge-entry-0").textContent).toContain("learned from approval a1 by tester");
   });
 
   it("shows the empty state when nothing is learned", () => {

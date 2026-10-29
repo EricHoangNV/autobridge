@@ -2126,3 +2126,41 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 - Verification: `make test` 2578+134+408 pass (90.35/91.49/90.48%) + ui 160 pass; `make lint`, `make typecheck`, trust-boundary tests green; e2e collects 170. Live CLI checks: planted stale ACTIVE + dead pid + nothing on :8101 → `compose` + `WARNING: stale .../.local/ACTIVE...`; smoke.sh assignment yields `STACK_MODE=compose`. No stack was up here, so no live `make smoke/demo` run — stale-marker + Compose-up leg is covered by stub-readyz scenario checks (docker→compose/stale, local→local).
 - Gotcha: `bench/__init__.py` imports engine code, so the helper must stay import-clean (it is: argparse/json/os/pathlib/sys/urllib/dataclasses only) and `python3 bench/stack_mode.py` runs without package context.
 - Docs: `docs/safety-model.md` §12 notes the validated marker.
+
+### REQ-030 — UI-first demo, part A (sbx1 2026-10-29, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Scheduler (`AUTOBRIDGE_SYNC_INTERVAL_S`, default 10 local/Compose, off when unset): `control/scheduler.py`
+`run_scheduler_pass` syncs every idle active connector through the same `sync_connector_now`
+(`control/runner.py`, extracted from the `POST /sync` route so route and scheduler cannot drift); skips while a
+sync/build/repair job is queued/running or the latest repair awaits a decision; never approves; per-connector
+results, errors isolated. Runs on a worker thread from the lifespan (blocking sync I/O stays off the event loop;
+overlap guard skips a tick while the previous pass runs). SQLite WAL + 30s busy timeout (`engine_from_url`) so
+background passes and API writes interleave (fixed live `database is locked` 500s). Compose + local-up + .env
+ship the default 10.
+Learn-on-approve (2b): `RepairController.handle` no longer caches on propose (repeat → L0 miss, L1 re-derives at
+0 tokens); `engine.approve_release(..., knowledge_cache=None)` writes the entry after activation with approval id,
+actor and release id; `reject_release`/`rollback_release` take an optional cache (default: process default) and
+evict (AR-2-3). `RepairRun` gains `drift_class` + `fingerprint_delta` (migration 0009) so approve relearns without
+re-deriving; knowledge page groups by earliest *approved* run, `reuses` counts post-approval L0 hits only, and
+`learned_from` carries approval id/actor/release id ("learned from approval <id> by <actor>" in the UI).
+`warm_knowledge` verifies each dev-split fix (via `verify` callable or `verifier_url`; unverified fixes are never
+learned — offline warm stays cold) then approves through the real path; harness summary + learning curve carry
+`warm_provenance` (fixes with approval ids). Learning-curve "Expected" text rewritten to the approve story.
+Connector state server-side (`control/connector_state.py`, on `ConnectorOut`/`Detail` + OpenAPI regen): working /
+degrading / error with activity line and `last_sync_at`; drift retires to `repaired` on the verifying Complete sync
+(provenance + approval link); `sync_connector_now` shared by route and scheduler.
+Persistence (0009): `ModelCall`/`Archive` gain `mode`/`captured_at`/`outcome` (BudgetedProvider sets mode/capture;
+ladder stamps outcomes: ranked/unparsable/hypothesis/proposal/proposal_rejected/no_patch); ledger endpoint serves
+them via `RungCallOut`; repair rows get the verifier report id; hypothesis derivations persist as
+`kind=hypothesis` evidence (semantic climb + record-climb); `pabx_link_events` holds scheduler `link` snapshots +
+`restart` reports; `POST /demo/record-climb` persists the instrumented step-4 climb (read back + asserted);
+`POST /demo/pabx-restart` + `GET /demo/pabx-events` feed the PABX panel. Demo step 4 records when live (skip path
+recorded too); step 8 records the restart report. `ensure_migrated` now also repairs the schema-ahead case
+(create_all raced the version stamp → stamp detection instead of re-adding columns).
+Tests: `test_autobridge_req030_scheduler_state.py` (28: interval, skips, busy, state machine, learn/evict,
+record-climb, pabx, WAL, threaded loop); updated ladder/rung-ledger/detector/matrix/e2e-test_03/learn-curve
+expectations to the approve story. Docs: `docs/architecture.md` §9.1 REQ-030 paragraph (53 paths/62 schemas).
+Gates: `make test` green (autobridge 90.54% 2614 pass, verifier 91.49%, simulators 90.48%, ui 161),
+`make lint`/`typecheck`/`openapi-check`/`ui-typecheck` green; live (unkeyed) `make local-up` + e2e test_03,
+matrix, knowledge_flow, 027, fias (all green) + `make demo` 8/8 with scheduler ticking. Keyed re-run (L3 live
+numbers, step-4 recording with a real call) is the owner step — no FRONTIER_API_KEY in sandbox.
+Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>

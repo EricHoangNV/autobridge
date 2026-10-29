@@ -231,16 +231,23 @@ def test_engine_arm_handle_kwargs_carry_no_case_diagnostics(monkeypatch: pytest.
 
 
 def test_warm_cache_learns_dev_split() -> None:
-    """Warm learning caches what the deterministic ladder fixes.
+    """Warm learning approves verified dev-split fixes (REQ-030 2b).
 
     Honest end-to-end (REQ-027 sub-step 2): page_to_cursor proposes from
-    wire evidence, so the dev-split run caches the patch and the warm arm
-    hits L0 with zero model tokens.
+    wire evidence; the verified fix is approved through the real approve
+    path, so the entry records its approval and the warm arm hits L0 with
+    zero model tokens. Without a verifier nothing is learned (warm stays
+    cold — never worse).
     """
     from autobridge.repair.knowledge import KnowledgeCache
 
-    cache = warm_knowledge(["page_to_cursor"], provider=FakeProvider())
+    cache = warm_knowledge(
+        ["page_to_cursor"], provider=FakeProvider(), verify=lambda _spec, _sid: True
+    )
     assert isinstance(cache, KnowledgeCache)
+    assert len(cache.all_entries()) == 1
+    entry = cache.all_entries()[0]
+    assert entry.approval_id and entry.actor == "bench:warm" and entry.release_id
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
     case = ablation_case_for_scenario("page_to_cursor")
@@ -248,6 +255,9 @@ def test_warm_cache_learns_dev_split() -> None:
     assert res.spec is not None and res.spec["decision"] == "propose"
     assert res.spec["ladder_level_reached"] == 0
     assert res.frontier_tokens == 0
+
+    bare = warm_knowledge(["page_to_cursor"], provider=FakeProvider())
+    assert bare.size() == 0  # no verifier: unverified fixes are never learned
 
 
 def test_frontier_oneshot_arm_label() -> None:
@@ -506,12 +516,13 @@ def test_learning_curve_shape(tmp_path: Any) -> None:
     result = run_learning_curve("page_to_cursor", repeats=3, provider=FakeProvider())
     assert result["scenario_id"] == "page_to_cursor"
     assert len(result["rows"]) == 3
-    # Agent pays every time; the engine derives the fix from wire evidence:
-    # cold proposes via L1 on the first repeat then hits L0, warm hits L0
-    # from the start (REQ-027 sub-step 2). No frontier tokens anywhere.
+    # Agent pays every time; the engine derives the fix from wire evidence.
+    # REQ-030 2b: proposing caches nothing, so cold re-derives at L1 on
+    # every repeat (0 model tokens); with no verifier the warm arm learns
+    # nothing and repeats cold exactly.
     assert all(r["frontier_agent_frontier_tokens"] == 2000 for r in result["rows"])
-    assert [r["autobridge_cold_rung"] for r in result["rows"]] == [1, 0, 0]
-    assert all(r["autobridge_warm_rung"] == 0 for r in result["rows"])
+    assert [r["autobridge_cold_rung"] for r in result["rows"]] == [1, 1, 1]
+    assert all(r["autobridge_warm_rung"] == 1 for r in result["rows"])
     assert all(r["autobridge_cold_decision"] == "propose" for r in result["rows"])
     assert all(r.get("autobridge_warm_decision") == "propose" for r in result["rows"])
     assert all(r["autobridge_cold_frontier_tokens"] == 0 for r in result["rows"])

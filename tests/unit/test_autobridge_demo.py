@@ -283,6 +283,7 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
     counters = {"job": 0, "rel": 0}
     atlas_injects = {"n": 0}
     atlas_repairs: list[dict[str, Any]] = []
+    recorded_climb: dict[str, Any] = {}
 
     def _connector_id(name: str) -> str:
         return f"c-{name.lower().replace(' ', '-')}"
@@ -343,6 +344,41 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
             if (_payload or {}).get("target") == "sim-atlas":
                 atlas_injects["n"] += 1
             return {"method": method, "path": path, "status": 200, "body": {"ok": True}}
+        if path == "/demo/record-climb" and method == "POST":
+            # REQ-030: persist the stub; read-back serves the recorded rows.
+            recorded_climb["payload"] = dict(_payload or {})
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"drift_id": "d-rec", "repair_run_id": "rr-rec",
+                             "model_call_ids": ["m-rec-1", "m-rec-2"]}}
+        if path == "/repairs/rr-rec" and method == "GET":
+            p = recorded_climb.get("payload", {})
+            trace = [
+                {"level": a.get("level"), "action": a.get("action", ""), "reason": a.get("reason", "")}
+                for a in (p.get("attempts") or [])
+            ]
+            trace.append({"level": 4, "action": "escalate", "reason": "stub"})
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"id": "rr-rec", "decision": "escalate", "ladder_level_reached": 4,
+                             "ladder_trace": trace,
+                             "hypothesis_ids": [h.get("id") for h in (p.get("hypotheses") or [])],
+                             "escalation_bundle": {"question": p.get("escalation_question", "q?")}}}
+        if path == "/repairs/rr-rec/ledger" and method == "GET":
+            p = recorded_climb.get("payload", {})
+            by_tier: dict[str, list[dict[str, Any]]] = {}
+            for c in (p.get("model_calls") or []):
+                by_tier.setdefault(str(c.get("tier", "")), []).append(c)
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"repair_run_id": "rr-rec", "decision": "escalate", "resolved_rung": 4,
+                             "attempts": [{"rung": 2, "calls": by_tier.get("small", [])},
+                                          {"rung": 3, "calls": by_tier.get("frontier", [])}]}}
+        if path == "/demo/pabx-restart" and method == "POST":
+            p = dict(_payload or {})
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"id": "pabx-rec", "connector_id": p.get("connector_id"),
+                             "kind": "restart",
+                             "payload": {"redelivered": p.get("redelivered"), "lost": p.get("lost"),
+                                         "duplicated": p.get("duplicated"),
+                                         "unique_keys": p.get("unique_keys")}}}
         if path.startswith("/drift"):
             query = path.split("connector_id=")[-1] if "connector_id=" in path else ""
             conn = next((c for c in connectors.values() if c["id"] == query), None)

@@ -183,6 +183,10 @@ class RepairRunOut(BaseModel):
     ladder_level_reached: int
     vendor: str | None = None
     drift_signature: str | None = None
+    #: Drift class the ladder answered (REQ-030 item 3).
+    drift_class: str | None = None
+    #: Fingerprint delta content (the wire before/after, REQ-030 item 3).
+    fingerprint_delta: dict[str, Any] | None = None
     candidate_patch: list[dict[str, Any]] | None = None
     rule_id: str | None = None
     hypothesis_ids: list[str]
@@ -245,6 +249,12 @@ class ConnectorOut(BaseModel):
     runtime_target: dict[str, Any]
     active_release_id: str | None = None
     health_status: str
+    #: Server-side state (REQ-030 item 4): working | degrading | error.
+    state: str = "working"
+    #: One-line activity, e.g. "fix ready · verified · 0 model calls".
+    activity: str = ""
+    #: Latest sync timestamp (ISO), or None when never synced.
+    last_sync_at: UtcDatetime | None = None
     created_at: UtcDatetime
     updated_at: UtcDatetime
 
@@ -410,6 +420,12 @@ class SimulatorsOut(BaseModel):
 class RungCallOut(BaseModel):
     tier: str
     purpose: str
+    model: str = ""
+    #: live vs replay serving (REQ-030 item 3).
+    mode: str = "live"
+    captured_at: str = ""
+    #: What the call produced (ranked/proposal/...); None when unclassified.
+    outcome: str | None = None
     input_tokens: int
     output_tokens: int
     reasoning_tokens: int = 0
@@ -477,6 +493,10 @@ class KnowledgeLearnedFromOut(BaseModel):
     tokens: int = 0
     cost: str = "0"
     at: UtcDatetime | None = None
+    #: Approval that taught the fix (REQ-030 2b: learned only on approve).
+    approval_id: str = ""
+    actor: str = ""
+    release_id: str = ""
 
 
 class KnowledgeEntryOut(BaseModel):
@@ -681,3 +701,79 @@ class EdgeAgentRow(BaseModel):
 
 class EdgeAgentsResponse(BaseModel):
     agents: list[EdgeAgentRow]
+
+
+class RecordClimbHypothesisIn(BaseModel):
+    id: str = Field(min_length=1)
+    family: str = ""
+    claim: str = ""
+
+
+class RecordClimbCallIn(BaseModel):
+    tier: str = Field(min_length=1)
+    provider: str = ""
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    latency_ms: float = 0.0
+    cost: str = "0"
+    purpose: str = ""
+    mode: str = "live"
+    captured_at: str = ""
+    outcome: str | None = None
+
+
+class RecordClimbRequest(BaseModel):
+    """Persist the demo's instrumented semantic climb (REQ-030 item 3).
+
+    The climb really ran (provider really called, tokens really spent,
+    proposal really judged) — but it ran in the demo process against the
+    reference spec because the docs-built spec carries no money invariant
+    yet. Recording it through this labelled demo endpoint (never the
+    engine path) is what puts the rung trace, hypothesis derivation,
+    model-call box and verifier verdict on the repair page instead of
+    leaving them in process memory.
+    """
+
+    connector_id: str = Field(min_length=1)
+    drift_class: str = Field(min_length=1)
+    vendor: str = ""
+    scenario: str = ""
+    hypotheses: list[RecordClimbHypothesisIn] = Field(default_factory=list)
+    enumerator_yield_count: int = 0
+    attempts: list[dict[str, Any]] = Field(default_factory=list)
+    model_usage: dict[str, Any] = Field(default_factory=dict)
+    model_calls: list[RecordClimbCallIn] = Field(default_factory=list)
+    proposal: list[dict[str, Any]] | None = None
+    verifier_verdict: dict[str, Any] | None = None
+    escalation_question: str = Field(min_length=1)
+
+
+class RecordClimbResponse(BaseModel):
+    drift_id: str
+    repair_run_id: str
+    model_call_ids: list[str] = Field(default_factory=list)
+
+
+class PabxEventOut(BaseModel):
+    id: str
+    connector_id: str
+    kind: str
+    payload: dict[str, Any]
+    created_at: UtcDatetime
+
+
+class PabxRestartRequest(BaseModel):
+    """Persist a PABX restart report (REQ-030 item 3).
+
+    Counts come from live ``/edge/postings`` comparisons across a restart
+    (computed by the demo's live leg), recorded here so the PABX panel
+    reads rows, not terminal output.
+    """
+
+    connector_id: str = Field(min_length=1)
+    redelivered: int = Field(ge=0)
+    lost: int = Field(ge=0)
+    duplicated: int = Field(ge=0)
+    unique_keys: int = Field(ge=0, default=0)

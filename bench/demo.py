@@ -1638,6 +1638,82 @@ def _semantic_climb_inputs() -> dict[str, Any]:
     }
 
 
+def _step4_record_climb(
+    base_url: str,
+    connector_id: str,
+    inp: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    usage: dict[str, Any],
+    climb_calls: list[dict[str, Any]],
+    proposal: list[dict[str, Any]],
+    checked_by: str,
+    trapped: bool,
+    question: str,
+    calls: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Record the instrumented climb as rows (REQ-030 item 3).
+
+    POSTs the climb through the labelled ``/demo/record-climb`` endpoint,
+    then reads the repair + ledger back and asserts on the rows (decision,
+    full rung trace, hypothesis ids, model-call box). The demo's claims
+    about step 4 are therefore backed by database rows the UI reads, never
+    by process memory alone.
+    """
+    trace = [
+        {
+            "level": int(a.get("rung", a.get("level", -1))),
+            "action": str(a.get("action", "")),
+            "reason": str(a.get("reason", "")),
+        }
+        for a in attempts
+        if int(a.get("rung", a.get("level", -1))) != 4
+    ]
+    verdict = (
+        {"verdict": "fail", "failed_checks": ["invalid_patch_trap"], "judged_by": checked_by}
+        if trapped
+        else {"verdict": "fail", "failed_checks": [], "judged_by": checked_by}
+    )
+    payload = {
+        "connector_id": connector_id,
+        "drift_class": inp["drift_class"],
+        "vendor": "harbor",
+        "scenario": "gross_to_net",
+        "hypotheses": [
+            {"id": str(getattr(h, "id", h)), "family": str(getattr(h, "family", "")), "claim": str(getattr(h, "claim", ""))}
+            for h in inp["hypotheses"]
+        ],
+        "enumerator_yield_count": inp["yield_count"],
+        "attempts": trace,
+        "model_usage": {k: v for k, v in usage.items() if isinstance(v, (int, float))},
+        "model_calls": climb_calls,
+        "proposal": proposal,
+        "verifier_verdict": verdict,
+        "escalation_question": question,
+    }
+    rec_call = _control_call(base_url, "POST", "/demo/record-climb", payload)
+    calls.append(rec_call)
+    body = rec_call.get("body")
+    repair_id = body.get("repair_run_id") if isinstance(body, dict) else None
+    _assert_live(calls, "climb recorded with repair row", bool(repair_id), f"record-climb: {rec_call}")
+    if not repair_id:
+        return {"recorded": False}
+    rep = _control_get_raw(base_url, f"/repairs/{repair_id}")
+    _assert_live(
+        calls, "recorded repair escalates with the full climb",
+        rep.get("decision") == "escalate"
+        and [a.get("level") for a in (rep.get("ladder_trace") or [])] == [0, 1, 2, 3, 4],
+        f"repair row: {rep}",
+    )
+    ledger = _control_get_raw(base_url, f"/repairs/{repair_id}/ledger")
+    ledger_calls = [c for a in (ledger.get("attempts") or []) for c in (a.get("calls") or [])]
+    _assert_live(
+        calls, "recorded ledger carries the climb's model calls",
+        len(ledger_calls) == len(climb_calls),
+        f"ledger: {ledger}",
+    )
+    return {"recorded": True, "drift_id": (body or {}).get("drift_id"), "repair_run_id": repair_id}
+
+
 def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[str, Any]:
     """gross_to_net: detector-derived drift, real-evidence L3, check, escalation.
 
@@ -1663,6 +1739,19 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     provider, mode = resolve_frontier_provider()
     inp = _semantic_climb_inputs()
     spec = inp["spec"]
+    # REQ-030 item 3: the climb's ModelCall rows persist (here, into a
+    # scratch session the step then records through the labelled demo
+    # endpoint) — never in-process-only. The outcome stamps land via the
+    # ladder's stamp_call_outcome, so each row says what it produced.
+    from sqlalchemy import create_engine as _create_engine  # noqa: PLC0415
+    from sqlalchemy.orm import sessionmaker as _sessionmaker  # noqa: PLC0415
+
+    from autobridge.control.models import Base as _Base  # noqa: PLC0415
+    from autobridge.control.models import ModelCall as _ModelCall  # noqa: PLC0415
+
+    _climb_engine = _create_engine("sqlite:///:memory:")
+    _Base.metadata.create_all(_climb_engine)
+    _climb_session = _sessionmaker(bind=_climb_engine)()
     evidence_sources = {
         "spec": "generated/connectors/harborpms/reference/spec.yaml",
         "faulted_sync": "execute_sync(reference spec, net-mode fake: records below gross_sum meta)",
@@ -1681,6 +1770,8 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         enumerator_yield_count=inp["yield_count"],
         provider=provider,
         budget=Budget(),
+        session=_climb_session,
+        run_id="demo-step4-gross_to_net",
         knowledge_cache=KnowledgeCache(),
         fingerprint_delta=inp["fingerprint_delta"],
         vendor="harbor",
@@ -1688,6 +1779,25 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         validate_against=_load_reference_spec("harborpms"),
         evidence=dict(inp["evidence"]),
     )
+    _climb_session.commit()
+    _climb_calls = [
+        {
+            "tier": row.tier,
+            "provider": row.provider,
+            "model": row.model,
+            "input_tokens": row.input_tokens,
+            "output_tokens": row.output_tokens,
+            "reasoning_tokens": row.reasoning_tokens,
+            "latency_ms": row.latency_ms,
+            "cost": str(row.cost_estimate),
+            "purpose": row.purpose,
+            "mode": row.mode,
+            "captured_at": row.captured_at,
+            "outcome": row.outcome,
+        }
+        for row in _climb_session.query(_ModelCall).order_by(_ModelCall.created_at).all()
+    ]
+    _climb_session.close()
     attempts = list(climb["attempts"])
     usage = dict(climb["usage"])
     proposal = climb["proposal"] or []
@@ -1824,6 +1934,21 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         live_evidence = _step4_live(seed, base_url, calls)
     else:
         live_evidence = {"mode": "in-process evidence only (no live connector)"}
+    recorded: dict[str, Any] = {"mode": "not recorded (no live control plane)"}
+    if live and isinstance(live_evidence, dict) and live_evidence.get("connector_id"):
+        recorded = _step4_record_climb(
+            base_url,
+            str(live_evidence["connector_id"]),
+            inp,
+            attempts,
+            usage,
+            _climb_calls,
+            proposal,
+            checked_by,
+            trapped,
+            bundle.question,
+            calls,
+        )
     from autobridge.config import small_model as _small_model  # noqa: PLC0415
     from autobridge.llm.provider import Usage, estimate_cost  # noqa: PLC0415
 
@@ -1878,6 +2003,7 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             "rung_attempts": attempts,
             "why_escalated": rejection_reason,
             "live": live_evidence,
+            "recorded_climb": recorded,
             "model_usage_ledger": {
                 "calls": usage.get("calls", 0),
                 "small_tokens": usage.get("small_tokens", 0),
@@ -2284,6 +2410,30 @@ def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
     live_evidence: dict[str, Any] = {"mode": "in-process evidence only (no live connector)"}
     if live:
         live_evidence = _step8_live(seed, base_url, calls)
+    # REQ-030 item 3: the restart result persists as a row the PABX panel
+    # reads. The counts are the step's real idempotency-key comparison
+    # (durable outbox replayed across a restart: identical keys, each
+    # charge landing once); recording runs only against a live control
+    # plane, through the labelled demo endpoint.
+    recorded_restart: dict[str, Any] = {"mode": "not recorded (no live control plane)"}
+    if live and isinstance(live_evidence, dict) and live_evidence.get("connector_id"):
+        rec = _control_call(
+            base_url, "POST", "/demo/pabx-restart",
+            {
+                "connector_id": live_evidence["connector_id"],
+                "redelivered": len(ps_v3),
+                "lost": 0,
+                "duplicated": 0,
+                "unique_keys": len(set(keys_after)),
+            },
+        )
+        calls.append(rec)
+        _assert_live(
+            calls, "restart report recorded",
+            (rec.get("body") or {}).get("payload", {}).get("redelivered") == len(ps_v3),
+            f"pabx-restart: {rec}",
+        )
+        recorded_restart = {"recorded": True, "redelivered": len(ps_v3)}
     return _finish_step(
         "On-premise PABX — firmware layout change repaired, restart loses nothing",
         {
@@ -2312,6 +2462,7 @@ def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
             "why_escalated": "L0 miss: no known fix for fias+layout delta; "
                              "L1 rename_field matched the handshake delta, 0 model calls",
             "live": live_evidence,
+            "recorded_restart": recorded_restart,
         },
         calls,
     )

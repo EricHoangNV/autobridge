@@ -33,7 +33,23 @@ from autobridge.control.schemas import (
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 
-def _connector_to_out(c: Connector) -> ConnectorOut:
+def _connector_to_out(c: Connector, db: Session | None = None) -> ConnectorOut:
+    # REQ-030 item 4: state/activity/last_sync_at are computed server-side
+    # so every surface (list, detail, simulators index) agrees. Without a
+    # session (unit callers) the fields stay at their defaults.
+    state = "working"
+    activity = ""
+    last_sync_at = None
+    if db is not None:
+        try:
+            from autobridge.control.connector_state import connector_state  # noqa: PLC0415
+
+            computed = connector_state(db, c.id)
+            state = str(computed.get("state", "working"))
+            activity = str(computed.get("activity", ""))
+            last_sync_at = computed.get("last_sync_at")
+        except Exception:
+            state, activity = "degrading", "state unavailable"
     return ConnectorOut(
         id=c.id,
         name=c.name,
@@ -44,6 +60,9 @@ def _connector_to_out(c: Connector) -> ConnectorOut:
         runtime_target=dict(c.runtime_target or {}),
         active_release_id=c.active_release_id,
         health_status=c.health_status,
+        state=state,
+        activity=activity,
+        last_sync_at=last_sync_at,
         created_at=c.created_at,
         updated_at=c.updated_at,
     )
@@ -134,13 +153,13 @@ def create_connector(body: ConnectorCreate, db: Session = Depends(get_db), _: No
     db.flush()
     db.commit()
     db.refresh(conn)
-    return _connector_to_out(conn)
+    return _connector_to_out(conn, db)
 
 
 @router.get("", response_model=list[ConnectorOut])
 def list_connectors(db: Session = Depends(get_db)) -> list[ConnectorOut]:
     rows = db.execute(select(Connector).order_by(Connector.created_at)).scalars().all()
-    return [_connector_to_out(c) for c in rows]
+    return [_connector_to_out(c, db) for c in rows]
 
 
 @router.get("/{connector_id}", response_model=ConnectorDetail)
@@ -148,7 +167,7 @@ def get_connector(connector_id: str, db: Session = Depends(get_db)) -> Connector
     conn = db.get(Connector, connector_id)
     if conn is None:
         raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
-    base = _connector_to_out(conn)
+    base = _connector_to_out(conn, db)
     # Releases
     releases = db.execute(
         select(ConnectorRelease).where(ConnectorRelease.connector_id == connector_id).order_by(ConnectorRelease.version)
@@ -277,4 +296,4 @@ def activate_connector_release(
     refreshed = db.get(Connector, connector_id)
     if refreshed is None:  # pragma: no cover - connector cannot vanish mid-request
         raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
-    return _connector_to_out(refreshed)
+    return _connector_to_out(refreshed, db)

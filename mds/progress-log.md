@@ -3442,3 +3442,31 @@ Stale `.local/ACTIVE` can no longer masquerade as a running local stack: new std
 Verification: 21 new unit tests green; full `make test` 2578+134+408 pass (90.35/91.49/90.48%) + ui 160 pass; `make lint`, `make typecheck`, trust-boundary tests green; e2e collection 170 OK; live CLI + smoke-assignment checks with a planted stale marker behave per acceptance (warning + `compose`). No live stack run here (nothing listening in sandbox); docker-answers leg covered by stub-readyz scenarios.
 Files: bench/stack_mode.py (new), bench/demo.py, tests/e2e/conftest.py, scripts/smoke.sh, tests/unit/test_autobridge_stack_mode.py (new), docs/safety-model.md (§12 note), mds/REQUESTS.MD (REQ-037 DONE).
 **Ref:** REQUESTS.MD REQ-037 (Muse Wonder audit 2026-10-29).
+
+## REQ-030 — UI-first demo, part A: sync scheduler, every step persisted, connector state
+**Date:** 2026-10-29
+**Ref:** REQUESTS.MD REQ-030 (owner priority 2026-10-29 18:40, first of REQ-030→033)
+
+**What was done:**
+- Sync scheduler (`control/scheduler.py`, `control/runner.py`, `config.sync_interval_seconds`): every-10s pass over active connectors through the same code as `POST /sync`; skips while busy (in-flight job or repair awaiting decision); never approves; per-connector error isolation. Lifespan background task runs passes on a worker thread with an overlap guard. SQLite WAL + busy timeout. Compose/local-up/.env default 10, off when unset.
+- Learn-on-approve: propose-time caching removed from the controller; `approve_release` learns post-activation with approval attribution; reject/rollback evict; `RepairRun` stores drift class + fingerprint delta (migration 0009); knowledge page groups by earliest approved run, reuses = post-approval L0 hits, "learned from approval <id> by <actor>" in UI; bench `warm_knowledge` verifies then approves with provenance.
+- Connector state server-side (working/degrading/error + activity + last_sync_at) on both connector endpoints; verifying Complete sync retires drifts to `repaired`.
+- Persistence: repair verifier report id, hypothesis evidence, ModelCall mode/captured_at/outcome + ledger box, pabx_link_events, `POST /demo/record-climb` (step 4 recorded + asserted), pabx restart/events endpoints (step 8 records). Demo step 4/8 persist when live.
+- `ensure_migrated` schema-ahead repair; docs/architecture.md §9.1 paragraph; OpenAPI + UI client regenerated.
+
+**Key decisions:**
+- Scheduler reuses one sync implementation (`control/runner.py`) instead of duplicating route logic.
+- Thread offload (not shorter syncs): control is single-process; a 10s-cadence pass with retry budgets would stall readyz/SSE/UI.
+- WAL over bigger locks: readers never block writers; writers wait (busy timeout) instead of 500ing — proven by live `database is locked` failures before the fix.
+- Record-climb endpoint over engine changes: the builder money-invariant gap (owner-accepted, lower priority) blocks live semantic detection, so the demo's real climb (real provider call, tokens, verdict) is recorded rather than left in memory.
+- warm_knowledge verify-gates learning: without a verifier it learns nothing (warm==cold, still satisfies warm≥cold).
+
+**Files changed:**
+- `src/autobridge/control/scheduler.py`, `runner.py`, `connector_state.py`, `app.py`, `config.py`, `migrate.py`, `models.py`, `routes/builds.py`, `connectors.py`, `capabilities.py`, `demo.py`, `drift.py`, `runs.py`, `schemas.py`, `engine/detect_repair.py`, `engine/releases.py`, `llm/provider.py`, `repair/controller.py`, `repair/knowledge.py`, `repair/ladder.py`, `alembic/versions/0009_req030_persistence.py`, `bench/ablation.py`, `bench/demo.py`, `compose.yaml`, `scripts/local-up.sh`, `.env.example`, `docs/architecture.md`, `ui/app/knowledge/*`, `ui/components/ConnectorsTable.test.tsx`, `ui/lib/api/schema.d.ts`, `ui/openapi.json`
+- Tests: `tests/unit/test_autobridge_req030_scheduler_state.py` (new, 28), updated ladder/rung-ledger/detector/matrix/e2e-test_03/learn-curve/demo-stub expectations
+
+**Notes for next iteration:**
+- Keyed re-run is the owner step (no FRONTIER_API_KEY in sandbox): `make local-up && make e2e && make demo` with a key exercises step-4 live recording with a real L3 call.
+- REQ-031/032/033 build on this (demo-seed/break/heal, repair page, README journeys).
+- Sandbox virtiofs quirk: creating new SQLite files in the worktree intermittently fails ("readonly database"); unit tests use tmp dirs (unaffected); if `make test` collection fails on `./autobridge.db`, delete it and rerun (lifespan recreates+migrates).
+Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>

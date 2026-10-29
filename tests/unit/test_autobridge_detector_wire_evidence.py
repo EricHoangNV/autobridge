@@ -489,7 +489,7 @@ def test_annotated_baseline_stays_quiet_with_phantom_mapping() -> None:
         summary=summary,
         sync_run_id="s1",
     )
-    assert out == {"drift_found": False, "outcome": "Complete"}
+    assert out == {"drift_found": False, "outcome": "Complete", "drifts_resolved": []}
 
 
 def test_annotated_rename_repairs_from_detector_inputs_only() -> None:

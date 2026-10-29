@@ -88,6 +88,9 @@ services:
       # REQ-022 B: cloud command queue for the on-premise agent (engine-net
       # DNS; the agent polls it outbound, control enqueues through it).
       EDGE_RELAY_URL: ${EDGE_RELAY_URL:-http://edge-relay:8000}
+      # REQ-030 item 1: sync-scheduler tick in seconds (demo default 10;
+      # unset/empty/0 disables the scheduler). Demo value, not a secret.
+      AUTOBRIDGE_SYNC_INTERVAL_S: ${AUTOBRIDGE_SYNC_INTERVAL_S:-10}
     networks:
       - engine-net
       - verifier-net

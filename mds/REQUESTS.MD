@@ -7,7 +7,7 @@ the Muse Wonder audit and the owner's external audit are fixed, and **before** t
 touches the sync/repair path the benchmark measures).
 
 ### REQ-030 — UI-first demo, part A: sync scheduler, every step persisted, connector state (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 13:02)
+Status: DONE (sbx1 2026-10-29) — scheduler (interval/skip-busy/threaded/WAL), learn-on-approve (propose caches nothing; approve writes entry with approval id/actor/release id; evict on reject/rollback), connector state server-side (working/degrading/error + activity + last_sync_at), persistence (repair delta/class, verifier report id, hypothesis evidence, ModelCall mode/captured_at/outcome, pabx events, record-climb + pabx endpoints, drift retired on verifying sync), warm_knowledge via approve path, knowledge page approval line, docs/architecture.md §9.1. Gates: make test (autobridge 90.54%, verifier 91.49%, simulators 90.48%, ui 161), lint + typecheck + openapi-check + ui-typecheck green, local-up + e2e (test_03, matrix, knowledge_flow, 027, fias) + make demo 8/8 green unkeyed. Keyed re-run is the owner step (no FRONTIER_API_KEY in sandbox).
 Plan: the owner's reviewed plan (summarised here; this text is the spec). **Recording flow:** browser on the left
 (UI `localhost:8107`), terminal on the right. Every connector shows Working; the presenter runs one command per
 scenario; the UI reacts by itself (state changes, drift and repair appear with all details); **the presenter clicks

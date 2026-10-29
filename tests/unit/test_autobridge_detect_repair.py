@@ -195,7 +195,7 @@ def test_healthy_baseline_sync_detects_no_drift() -> None:
             s, connector_id=conn_id, release_id=rel_id,
             spec_dict=spec, summary=_baseline_summary(), sync_run_id="sync-ok",
         )
-        assert out == {"drift_found": False, "outcome": "Complete"}
+        assert out == {"drift_found": False, "outcome": "Complete", "drifts_resolved": []}
         assert s.query(DriftEvent).count() == 0
         assert s.query(RepairRun).count() == 0
 
@@ -267,7 +267,13 @@ def test_live_chain_page_to_cursor_propose_approve() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_repeat_same_drift_hits_l0() -> None:
+def test_repeat_same_drift_misses_until_approved() -> None:
+    """REQ-030 2b: proposing caches nothing — a repeat re-derives at L1.
+
+    The same drift twice with no approval in between: both propose at L1
+    with 0 model calls; neither populates L0. A waiting proposal can never
+    be reused at L0, by any connector.
+    """
     factory = _mem_factory()
     spec = _page_spec()
     conn_id, rel_id = _seed_connector(factory, spec)
@@ -286,7 +292,44 @@ def test_repeat_same_drift_hits_l0() -> None:
         )
     assert first["ladder_level_reached"] == 1
     assert second["decision"] == "propose"
-    assert second["ladder_level_reached"] == 0, "repeat must be an L0 hit"
+    assert second["ladder_level_reached"] == 1, "repeat without approval re-derives at L1"
+    assert second["rule_id"] == "page_to_cursor"
+    assert cache.size() == 0, "proposing must not populate L0"
+
+
+def test_approve_then_repeat_hits_l0() -> None:
+    """REQ-030 2b: approving teaches the fix — the repeat hits L0 at 0 tokens."""
+    from autobridge.engine.releases import approve_release
+
+    factory = _mem_factory()
+    spec = _page_spec()
+    conn_id, rel_id = _seed_connector(factory, spec)
+    cache = KnowledgeCache()
+    with factory() as s:
+        first = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-1",
+            knowledge_cache=cache,
+        )
+        assert first["ladder_level_reached"] == 1
+        approval = approve_release(
+            s, repair_run_id=first["repair_run_id"], actor="tester",
+            from_release_id=rel_id, to_release_id=first["candidate_release_id"],
+            connector_id=conn_id, knowledge_cache=cache,
+        )
+        s.commit()
+        assert approval.decision == "approve"
+        assert cache.size() == 1
+        entry = cache.all_entries()[0]
+        assert entry.approval_id == approval.id and entry.actor == "tester"
+        assert entry.release_id == first["candidate_release_id"]
+        second = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-2",
+            knowledge_cache=cache,
+        )
+    assert second["decision"] == "propose"
+    assert second["ladder_level_reached"] == 0, "repeat after approval must be an L0 hit"
     assert second["rule_id"] == "page_to_cursor"
 
 
@@ -532,3 +575,97 @@ def test_blocked_with_error_pages_still_detects() -> None:
         )
         assert out["drift_found"] is True, out
         assert s.query(DriftEvent).count() == 1
+
+
+# ---------------------------------------------------------------------------
+# REQ-030 2b: reject/rollback evict the learned fix
+# ---------------------------------------------------------------------------
+
+
+def _learned_cache(factory: Any, spec: dict[str, Any]) -> tuple[Any, str, str, str, str]:
+    """Detect → approve through the engine path; return (cache, run, conn, base, cand)."""
+    from autobridge.engine.releases import approve_release
+
+    conn_id, rel_id = _seed_connector(factory, spec)
+    cache = KnowledgeCache()
+    with factory() as s:
+        first = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="s1",
+            knowledge_cache=cache,
+        )
+        assert first["ladder_level_reached"] == 1
+        approve_release(
+            s, repair_run_id=first["repair_run_id"], actor="tester",
+            from_release_id=rel_id, to_release_id=first["candidate_release_id"],
+            connector_id=conn_id, knowledge_cache=cache,
+        )
+        s.commit()
+    assert cache.size() == 1
+    return cache, first["repair_run_id"], conn_id, rel_id, first["candidate_release_id"]
+
+
+def _detector_delta(spec: dict[str, Any]) -> Any:
+    signals = signals_from_sync(_cursor_summary(), spec=spec)
+    return build_detector_delta(spec, signals)
+
+
+def test_reject_evicts_learned_patch() -> None:
+    from autobridge.engine.releases import reject_release
+
+    factory = _mem_factory()
+    spec = _page_spec()
+    cache, _run_id, _conn_id, _base_id, _cand_id = _learned_cache(factory, spec)
+    with factory() as s:
+        ctrl = RepairController(knowledge_cache=cache)
+        hit = ctrl.handle(
+            spec=spec, drift_class="PAGINATION_CHANGE", signals=[],
+            fingerprint_delta=_detector_delta(spec),
+            extra={"target_strategy": "cursor"}, vendor="atlas",
+            drift_event_ids=[], session=s,
+        )
+        assert hit.ladder_level_reached == 0
+        run_id = s.query(RepairRun).order_by(RepairRun.created_at.desc()).first().id
+        s.commit()
+    with factory() as s:
+        reject_release(
+            s, repair_run_id=run_id, actor="tester",
+            from_release_id=None, to_release_id=None, knowledge_cache=cache,
+        )
+        s.commit()
+    assert cache.size() == 0, "reject must evict the learned patch"
+    with factory() as s:
+        ctrl = RepairController(knowledge_cache=cache)
+        again = ctrl.handle(
+            spec=spec, drift_class="PAGINATION_CHANGE", signals=[],
+            fingerprint_delta=_detector_delta(spec),
+            extra={"target_strategy": "cursor"}, vendor="atlas",
+            drift_event_ids=[], session=s,
+        )
+        assert again.ladder_level_reached == 1, "reject must evict: L1 re-derives"
+
+
+def test_rollback_after_approve_evicts() -> None:
+    from autobridge.engine.releases import rollback_release
+
+    factory = _mem_factory()
+    spec = _page_spec()
+    cache, run_id, conn_id, base_id, _cand_id = _learned_cache(factory, spec)
+    with factory() as s:
+        # Roll back to the pre-fix release: the approved patch regressed.
+        _, approval = rollback_release(
+            s, connector_id=conn_id, target_release_id=base_id,
+            actor="tester", repair_run_id=run_id, knowledge_cache=cache,
+        )
+        assert approval.decision == "rollback"
+        s.commit()
+    assert cache.size() == 0, "rollback must evict the learned patch"
+    with factory() as s:
+        ctrl = RepairController(knowledge_cache=cache)
+        again = ctrl.handle(
+            spec=spec, drift_class="PAGINATION_CHANGE", signals=[],
+            fingerprint_delta=_detector_delta(spec),
+            extra={"target_strategy": "cursor"}, vendor="atlas",
+            drift_event_ids=[], session=s,
+        )
+        assert again.ladder_level_reached == 1, "rollback must evict: L1 re-derives"
