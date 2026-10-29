@@ -84,6 +84,25 @@ again" leg shows `times_reused` going up with 0 model calls; (3) after `make dem
 Meridian (v2) and the PABX connector (v3) under their versions, plus at least one learned entry. Add a UI e2e
 assertion for that state after the demo.
 
+**Owner check after sub-step 4 (2026-10-29, on 15bd357d): the live chain works, but only with a key nobody has.**
+Verified on the keyed local stack: `tests/e2e/test_027_live_chain.py` 2/2 and demo step 3 live (classifier on wire
+signals → `page_to_cursor`, rung 1, 0 tokens), 8/8 steps, one learned entry on `/knowledge`. **But only after the
+owner exported `ATLAS_API_KEY=sim-demo-key`.** With the shipped defaults (`ATLAS_API_KEY=` in `.env.example`, unset in
+local-up and Compose) the test fails at line 144: baseline `Blocked: http_error`, because `runtime/auth.py:64` raises
+"Missing env var 'ATLAS_API_KEY'" and the simulator never gets a request. A judge's fresh clone hits exactly this;
+the sandbox run that passed must have had the variable set some other way. Fix: every simulator credential the demo
+uses gets a working demo value by default, in one place, for both modes (local-up exports e.g.
+`ATLAS_API_KEY=${ATLAS_API_KEY:-sim-demo-key}`, the same for the other vendors; Compose passes the same defaults;
+`.env.example` documents them as demo values for the simulators, not secrets). Add a fresh-clone check: with a
+`.env` copied from `.env.example` and only `make local-up`, `make e2e` and `make demo` are green.
+Second: **demo step 4's live L3 call returns nothing.** `L3 called live (muse-spark-1.3, 4,319 tokens): response
+contained no applicable patch (empty response: the model returned no text)`. The reasoning model spends the whole
+`max_tokens=4096` budget on thinking. Give L3 enough output room (and/or lower reasoning effort if the provider
+supports it), count reasoning tokens separately in the ledger, and make sure the step shows a real proposal that the
+verifier then judges. Third (labelled honestly already, lower priority): step 4's live leg is Blocked because the
+docs-built Harbor spec has no money invariant; infer it from the docs if they state gross totals, otherwise keep the
+labelled gap.
+
 ### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 19:10; matrix full-climb merged, remaining: owner record-frontier capture + live step-4 check)
 Owner: every demo scenario must run the same way every time, including REQ-020's "before" refusal after the vocabulary
