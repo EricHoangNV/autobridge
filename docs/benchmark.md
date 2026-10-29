@@ -278,16 +278,20 @@ HELDOUT_DIR=~/autobridge-heldout python3 scripts/heldout_leak_audit.py \
   --write experiments/benchmark_runs/_leak_audit.json
 ```
 
-It reads each private file's nonce and seed in memory and its sha256,
-then scans every `ralph-logs/*.jsonl` transcript, every blob in the full
-git history (`git rev-list --all` + `git cat-file`), every file under
-`.worktrees/`, and the project folder for any occurrence of a nonce, a
-seed file's sha256, or a seed file's raw bytes. Output is one line per
-source with counts (`0 hits in 109 transcripts, 0 in 2 140 blobs …`) and
-exit 1 on any hit. Bare seed integers are not searched (small ints occur
-everywhere); the exact raw file bytes cover that case with no false
-positives. The committed manifest itself is the one legitimate place for
-hashes, so it is excluded and reported as excluded. The audit result
+It reads each private file's raw bytes and its nonce in memory — never the
+sha256 hashes, which are public by design (they are the committed
+manifest) and therefore never searched — then scans every
+`ralph-logs/*.jsonl` transcript, every blob in the full git history
+(`git rev-list --all` + `git cat-file`), every file under `.worktrees/`,
+and the project folder for any occurrence of raw seed-file bytes or a
+nonce. Output is one line per source with counts plus the per-kind
+breakdown (`0 hits in 109 files (raw: 0, nonce: 0)` …) and exit 1 on any
+hit, so a FAIL says what leaked. Bare seed integers are not searched
+(small ints occur everywhere); the exact raw file bytes cover that case
+with no false positives. A transcript or file that merely quotes the
+public manifest is not a leak. Every copy of the committed manifest
+itself, wherever it is found, is excluded by content and reported as
+excluded. The audit result
 (counts only) is written into the scorecard: `make bench` /
 `make bench-heldout` pick up `<output-dir>/_leak_audit.json`
 automatically (or pass `--leak-audit <path>`), and the scorecard header

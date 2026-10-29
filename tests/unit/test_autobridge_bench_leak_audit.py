@@ -97,6 +97,72 @@ def test_audit_clean_tree_ok(tmp_path: pathlib.Path, git_repo: pathlib.Path, cap
     assert NONCE not in out
 
 
+def test_audit_manifest_quote_in_transcript_passes(tmp_path: pathlib.Path, git_repo: pathlib.Path) -> None:
+    """Quoting the public manifest (hashes) in a transcript is not a leak.
+
+    Owner check 2026-10-29: manifest sha256 values are public by design,
+    so they are never searched — only raw bytes and nonces are.
+    """
+    holdout, manifest = _fake_heldout(tmp_path, {"demo_a": 975311})
+    logs = git_repo / "ralph-logs"
+    logs.mkdir()
+    (logs / "loop-1.jsonl").write_text(
+        json.dumps({"text": f"freeze manifest:\n{manifest.read_text()}"}) + "\n"
+    )
+    result = AUDIT.audit(**_audit_kw(git_repo, holdout, manifest))
+    assert result["ok"] is True
+    for source in result["sources"].values():
+        assert source["hits"] == 0
+        assert source["hits_by_kind"] == {"raw": 0, "nonce": 0}
+
+
+def test_audit_worktree_manifest_copy_excluded(tmp_path: pathlib.Path, git_repo: pathlib.Path) -> None:
+    """A manifest copy under .worktrees is excluded by content, never a hit."""
+    holdout, manifest = _fake_heldout(tmp_path, {"demo_a": 975311})
+    wdir = tmp_path / "wt"
+    (wdir / "verifier" / "hidden_cases" / "heldout").mkdir(parents=True)
+    (wdir / "verifier" / "hidden_cases" / "heldout" / "SHA256SUMS").write_bytes(
+        manifest.read_bytes()
+    )
+    result = AUDIT.audit(
+        repo=git_repo, heldout_dir=holdout, manifest=manifest, worktrees_dirs=[wdir]
+    )
+    assert result["ok"] is True
+    assert result["sources"]["worktrees"]["hits"] == 0
+    assert result["excluded"]["public_manifest_files"] >= 1
+
+
+def test_audit_hit_kinds_reported_per_kind(
+    tmp_path: pathlib.Path, git_repo: pathlib.Path, capsys: Any
+) -> None:
+    """A FAIL says what leaked: per-kind (raw/nonce) counts in stdout and JSON."""
+    holdout, manifest = _fake_heldout(tmp_path, {"demo_a": 975311})
+    logs = git_repo / "ralph-logs"
+    logs.mkdir()
+    (logs / "loop-1.jsonl").write_text(json.dumps({"text": f"nonce {NONCE} here"}) + "\n")
+    (git_repo / "notes.md").write_bytes((holdout / "demo_a.yaml").read_bytes())
+    result = AUDIT.audit(**_audit_kw(git_repo, holdout, manifest))
+    assert result["ok"] is False
+    assert result["sources"]["transcripts"]["hits_by_kind"] == {"raw": 0, "nonce": 1}
+    # The transcript itself lives inside the project tree, so the project
+    # scan sees it too (nonce) alongside the raw-bytes copy in notes.md.
+    assert result["sources"]["project"]["hits"] == 2
+    assert result["sources"]["project"]["hits_by_kind"] == {"raw": 1, "nonce": 1}
+    out_path = tmp_path / "audit.json"
+    rc = AUDIT.main(["--heldout-dir", str(holdout), "--manifest", str(manifest),
+                     "--repo", str(git_repo), "--worktrees-dir", str(tmp_path / "nope"),
+                     "--write", str(out_path)])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "nonce: 1" in out
+    assert "raw: 1" in out
+    assert NONCE not in out  # counts only, never secret values
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["sources"]["transcripts"]["hits_by_kind"] == {"raw": 0, "nonce": 1}
+    assert payload["sources"]["project"]["hits_by_kind"] == {"raw": 1, "nonce": 1}
+    assert NONCE not in out_path.read_text(encoding="utf-8")
+
+
 def test_audit_transcript_hit(tmp_path: pathlib.Path, git_repo: pathlib.Path, capsys: Any) -> None:
     holdout, manifest = _fake_heldout(tmp_path, {"demo_a": 975311})
     logs = git_repo / "ralph-logs"
@@ -133,6 +199,7 @@ def test_audit_history_hit_survives_removal(tmp_path: pathlib.Path, git_repo: pa
     assert result["ok"] is False
     assert result["sources"]["project"]["hits"] == 0  # working tree clean …
     assert result["sources"]["git-blobs"]["hits"] == 1  # … history is not
+    assert result["sources"]["git-blobs"]["hits_by_kind"] == {"raw": 0, "nonce": 1}
 
 
 def test_audit_manifest_does_not_self_hit(tmp_path: pathlib.Path, git_repo: pathlib.Path) -> None:

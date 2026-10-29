@@ -5,30 +5,33 @@ Proves the private held-out seeds never leaked into anything the builder
 could see: ralph-loop transcripts, the full git history, worktree
 checkouts, or the project folder itself.
 
-Reads each private file's nonce and seed **in memory only**, plus its
-sha256, then scans every source for any occurrence of a nonce, a seed
-file's sha256, or a seed file's raw bytes.  Output is one line per
-source with counts (never secret values)::
+Reads each private file's raw bytes and its nonce **in memory only**,
+then scans every source for any occurrence of raw file bytes or a nonce.
+Output is one line per source with counts (never secret values)::
 
-    transcripts: 0 hits in 109 files
-    git-blobs: 0 hits in 2140 blobs
-    worktrees: 0 hits in 312 files
-    project: 0 hits in 4001 files (excluded: 2 public-manifest blobs/files)
+    transcripts: 0 hits in 109 files (raw: 0, nonce: 0)
+    git-blobs: 0 hits in 2140 blobs (raw: 0, nonce: 0)
+    worktrees: 0 hits in 312 files (raw: 0, nonce: 0)
+    project: 0 hits in 4001 files (raw: 0, nonce: 0; excluded: 2 public-manifest blobs, 1 public-manifest files, 0 post-reveal files)
 
 Exit 0 when clean, 1 on any hit, 2 on usage errors (missing
 ``HELDOUT_DIR``, missing manifest, or ``HELDOUT_DIR`` inside the repo).
 
-Bare seed integers are deliberately NOT searched: seeds are small ints
-that occur everywhere (false positives).  The exact raw file bytes
-(which contain the ``seed:`` line verbatim) cover that case with no
-false positives.
+Only genuinely secret material is searched: the raw seed-file bytes and
+the nonce.  The seed files hold ``id`` (the scenario id, public by
+design — it is the file name in the manifest), ``seed`` (a small int,
+deliberately NOT searched: small ints occur everywhere and the exact raw
+file bytes, which contain the ``seed:`` line verbatim, cover that case
+with no false positives) and ``nonce`` (random hex).  The seed files'
+sha256 hashes are public by design — they are the committed manifest
+(``verifier/hidden_cases/heldout/SHA256SUMS``) — so they are NEVER
+searched: a transcript or file that merely quotes the public manifest
+is not a leak.  Every copy of the manifest, anywhere it is found
+(working tree, worktrees, git history), is excluded by content and
+reported as excluded.
 
-The committed manifest (``verifier/hidden_cases/heldout/SHA256SUMS``)
-legitimately contains the seed files' sha256 hashes, so the manifest
-file itself — and any git blob identical to a committed manifest — is
-excluded from the scan and reported as excluded.  The owner-held
-``HELDOUT_DIR`` must live outside the repo; pointing it inside is
-refused.  The post-reveal folder
+The owner-held ``HELDOUT_DIR`` must live outside the repo; pointing it
+inside is refused.  The post-reveal folder
 ``verifier/hidden_cases/heldout/revealed/`` (owner-published after the
 Nov 3 run) is likewise excluded from the project scan and reported.
 
@@ -90,14 +93,17 @@ def read_manifest_entries(manifest: pathlib.Path) -> list[tuple[str, str]]:
     return entries
 
 
-def load_secrets(heldout_dir: pathlib.Path, manifest: pathlib.Path) -> tuple[list[bytes], list[str]]:
+def load_secrets(heldout_dir: pathlib.Path, manifest: pathlib.Path) -> tuple[list[tuple[str, bytes]], list[str]]:
     """Read private files; return ``(secret_tokens, rel_names)``.
 
-    Tokens are the raw file bytes, the nonce bytes and the sha256 hex
-    bytes — never logged, printed or serialized by any caller.
+    Tokens are ``(kind, bytes)`` pairs — ``kind`` is ``"raw"`` (the whole
+    file bytes) or ``"nonce"`` (the high-entropy token inside the YAML).
+    Manifest sha256 hashes are public and are NEVER tokens: quoting the
+    public manifest is not a leak.  Tokens are never logged, printed or
+    serialized by any caller.
     """
     entries = read_manifest_entries(manifest)
-    tokens: list[bytes] = []
+    tokens: list[tuple[str, bytes]] = []
     rels: list[str] = []
     for expected_sha, rel in entries:
         target = heldout_dir / rel
@@ -109,14 +115,13 @@ def load_secrets(heldout_dir: pathlib.Path, manifest: pathlib.Path) -> tuple[lis
             raise ValueError(f"heldout file {rel} does not match manifest (refusing to audit against wrong data)")
         rels.append(rel)
         if len(raw) >= MIN_SECRET_LEN:
-            tokens.append(raw)
-        tokens.append(expected_sha.encode("ascii"))
+            tokens.append(("raw", raw))
         # Nonce: the high-entropy token inside the YAML (REQ-024: scan nonces).
         m = re.search(rb"nonce:\s*([A-Za-z0-9_+-]{8,})", raw)
         if m and len(m.group(1)) >= MIN_SECRET_LEN:
-            tokens.append(m.group(1))
+            tokens.append(("nonce", m.group(1)))
     # Longest first so raw-bytes kinds win over short nonces in reporting.
-    tokens.sort(key=len, reverse=True)
+    tokens.sort(key=lambda item: len(item[1]), reverse=True)
     return tokens, rels
 
 
@@ -135,28 +140,41 @@ def _is_manifest_blob(data: bytes, rels: set[str]) -> bool:
     return True
 
 
-def scan_bytes(data: bytes, tokens: list[bytes]) -> bool:
-    """True when any secret token occurs in *data*."""
-    return any(tok in data for tok in tokens)
+def scan_bytes(data: bytes, tokens: list[tuple[str, bytes]]) -> str | None:
+    """Kind of the first (longest) secret token occurring in *data*, else ``None``."""
+    for kind, tok in tokens:
+        if tok in data:
+            return kind
+    return None
+
+
+def _empty_kinds() -> dict[str, int]:
+    return {"raw": 0, "nonce": 0}
 
 
 def scan_working_tree(
     root: pathlib.Path,
-    tokens: list[bytes],
+    tokens: list[tuple[str, bytes]],
     *,
-    exclude_files: set[pathlib.Path],
+    manifest_rels: set[str],
     extra_skip_dirs: set[str] | None = None,
-) -> tuple[int, list[str]]:
-    """Walk *root*; return ``(files_scanned, hit_paths)`` (hit paths capped)."""
+) -> tuple[int, list[tuple[str, str]], dict[str, int], int]:
+    """Walk *root*; return ``(files_scanned, hits, hits_by_kind, excluded_manifests)``.
+
+    *hits* are ``(path, kind)`` pairs (capped at ``MAX_HIT_PATHS``).
+    Any file whose content is a copy of the public manifest is excluded
+    by content — wherever it lives — and counted in
+    *excluded_manifests*, never as a hit (manifest hashes are public).
+    """
     skip = set(SKIP_DIRS) | (extra_skip_dirs or set())
     scanned = 0
-    hits: list[str] = []
+    excluded = 0
+    hits: list[tuple[str, str]] = []
+    kinds = _empty_kinds()
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in skip)
         for name in sorted(filenames):
             path = pathlib.Path(dirpath) / name
-            if path in exclude_files:
-                continue
             try:
                 if path.stat().st_size > MAX_BLOB_BYTES:
                     continue
@@ -164,13 +182,18 @@ def scan_working_tree(
             except OSError:
                 continue
             scanned += 1
-            if scan_bytes(data, tokens):
+            if _is_manifest_blob(data, manifest_rels):
+                excluded += 1
+                continue
+            kind = scan_bytes(data, tokens)
+            if kind is not None:
+                kinds[kind] += 1
                 if len(hits) < MAX_HIT_PATHS:
-                    hits.append(str(path))
+                    hits.append((str(path), kind))
                 else:
-                    hits.append("… (more)")
-                    return scanned, hits
-    return scanned, hits
+                    hits.append(("… (more)", "?"))
+                    return scanned, hits, kinds, excluded
+    return scanned, hits, kinds, excluded
 
 
 def git_blob_list(repo: pathlib.Path) -> list[tuple[str, int]]:
@@ -196,17 +219,22 @@ def git_blob_list(repo: pathlib.Path) -> list[tuple[str, int]]:
 
 
 def scan_git_blobs(
-    repo: pathlib.Path, tokens: list[bytes], rels: set[str]
-) -> tuple[int, int, list[str]]:
-    """Scan every git blob; return ``(blobs_scanned, excluded_manifests, hit_shas)``."""
+    repo: pathlib.Path, tokens: list[tuple[str, bytes]], rels: set[str]
+) -> tuple[int, int, list[tuple[str, str]], dict[str, int]]:
+    """Scan every git blob; return ``(blobs_scanned, excluded_manifests, hits, hits_by_kind)``.
+
+    *hits* are ``(sha, kind)`` pairs.  Manifest blobs are excluded by
+    content and counted, never hits.
+    """
     blobs = git_blob_list(repo)
-    min_len = min((len(t) for t in tokens), default=MIN_SECRET_LEN)
+    min_len = min((len(tok) for _, tok in tokens), default=MIN_SECRET_LEN)
     candidates = [(sha, size) for sha, size in blobs if min_len <= size <= MAX_BLOB_BYTES]
     scanned = 0
     excluded = 0
-    hits: list[str] = []
+    hits: list[tuple[str, str]] = []
+    kinds = _empty_kinds()
     if not candidates:
-        return 0, 0, []
+        return 0, 0, [], kinds
     proc = subprocess.Popen(
         ["git", "cat-file", "--batch"],
         cwd=repo,
@@ -231,17 +259,19 @@ def scan_git_blobs(
             if _is_manifest_blob(data, rels):
                 excluded += 1
                 continue
-            if scan_bytes(data, tokens):
+            kind = scan_bytes(data, tokens)
+            if kind is not None:
+                kinds[kind] += 1
                 if len(hits) < MAX_HIT_PATHS:
-                    hits.append(sha)
+                    hits.append((sha, kind))
                 else:
-                    hits.append("… (more)")
+                    hits.append(("… (more)", "?"))
                     break
     finally:
         with contextlib.suppress(BrokenPipeError):
             proc.stdin.close()
         proc.wait(timeout=60)
-    return scanned, excluded, hits
+    return scanned, excluded, hits, kinds
 
 
 def audit(
@@ -263,47 +293,61 @@ def audit(
     if inside:
         raise ValueError(f"HELDOUT_DIR {heldout_dir} is inside the repo {repo} — move it outside")
 
-    manifest_abs = manifest.resolve()
-    exclude_files = {manifest_abs}
+    # Manifest copies are excluded by content (in scan_working_tree /
+    # scan_git_blobs), never by path, so every copy is reported.
 
     # 1. transcripts
     transcript_dir = repo / "ralph-logs"
     transcripts = sorted(transcript_dir.glob("*.jsonl")) if transcript_dir.is_dir() else []
     t_hits: list[str] = []
+    t_kinds = _empty_kinds()
     for path in transcripts:
         try:
             data = path.read_bytes()
         except OSError:
             continue
-        if scan_bytes(data, tokens):
+        kind = scan_bytes(data, tokens)
+        if kind is not None:
+            t_kinds[kind] += 1
             t_hits.append(path.name)
             if len(t_hits) >= MAX_HIT_PATHS:
                 t_hits.append("… (more)")
                 break
 
     # 2. git blobs
-    b_scanned, b_excluded, b_hits = scan_git_blobs(repo, tokens, rel_set)
+    b_scanned, b_excluded, b_hit_pairs, b_kinds = scan_git_blobs(repo, tokens, rel_set)
+    b_hits = [sha for sha, _kind in b_hit_pairs]
 
     # 3. worktrees
     w_scanned = 0
+    w_excluded = 0
+    w_kinds = _empty_kinds()
     w_hits: list[str] = []
     for wdir in worktrees_dirs:
         if not wdir.is_dir():
             continue
-        scanned, hits = scan_working_tree(
-            wdir, tokens, exclude_files=exclude_files, extra_skip_dirs={".git"}
+        scanned, hit_pairs, kinds, excluded = scan_working_tree(
+            wdir, tokens, manifest_rels=rel_set, extra_skip_dirs={".git"}
         )
         w_scanned += scanned
-        w_hits.extend(hits[: max(0, MAX_HIT_PATHS - len(w_hits))])
+        w_excluded += excluded
+        for kind, count in kinds.items():
+            w_kinds[kind] += count
+        for path, _kind in hit_pairs:
+            if len(w_hits) < MAX_HIT_PATHS:
+                w_hits.append(path)
+            else:
+                w_hits.append("… (more)")
+                break
 
-    # 4. project folder (repo working tree minus .git/skips/manifest).
+    # 4. project folder (repo working tree minus .git/skips).
     # NOTE: the post-reveal folder is NOT skipped in the walk — hits under
     # it are counted separately below as excluded, so a pre-reveal leak
     # there would still be visible in the exclusion count.
-    p_scanned, p_hits = scan_working_tree(
+    p_scanned, p_hit_pairs, p_kinds, p_excluded = scan_working_tree(
         repo,
         tokens,
-        exclude_files=exclude_files,
+        manifest_rels=rel_set,
     )
     # NOTE: excluding the whole verifier/ tree would blind the audit to a
     # real leak there; instead exclude only the post-reveal folder below by
@@ -311,30 +355,40 @@ def audit(
     # walk above skipped nothing under verifier/, so filter here:
     p_hits_filtered: list[str] = []
     revealed_excluded = 0
-    for h in p_hits:
+    for h in p_hit_pairs:
+        path, _kind = h
         try:
-            rel = pathlib.Path(h).resolve().relative_to(repo_resolved)
+            rel = pathlib.Path(path).resolve().relative_to(repo_resolved)
         except ValueError:
-            p_hits_filtered.append(h)
+            p_hits_filtered.append(path)
             continue
         if rel.parts[:3] == REVEALED_DIR.parts[:3]:
             revealed_excluded += 1
         else:
-            p_hits_filtered.append(h)
+            p_hits_filtered.append(path)
 
     ok = not (t_hits or b_hits or w_hits or p_hits_filtered)
+
+    def _source(hits: int, total: int, paths: list[str], kinds: dict[str, int], unit: str) -> dict:
+        return {
+            "hits": hits,
+            unit: total,
+            "hit_paths" if unit == "files" else "hit_shas": paths,
+            "hits_by_kind": dict(kinds),
+        }
+
     return {
         "ok": ok,
         "manifest_sha": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "sources": {
-            "transcripts": {"hits": len(t_hits), "files": len(transcripts), "hit_paths": t_hits},
-            "git-blobs": {"hits": len(b_hits), "blobs": b_scanned, "hit_shas": b_hits},
-            "worktrees": {"hits": len(w_hits), "files": w_scanned, "hit_paths": w_hits},
-            "project": {"hits": len(p_hits_filtered), "files": p_scanned, "hit_paths": p_hits_filtered},
+            "transcripts": _source(len(t_hits), len(transcripts), t_hits, t_kinds, "files"),
+            "git-blobs": _source(len(b_hits), b_scanned, b_hits, b_kinds, "blobs"),
+            "worktrees": _source(len(w_hits), w_scanned, w_hits, w_kinds, "files"),
+            "project": _source(len(p_hits_filtered), p_scanned, p_hits_filtered, p_kinds, "files"),
         },
         "excluded": {
             "public_manifest_blobs": b_excluded,
-            "public_manifest_files": 1,
+            "public_manifest_files": w_excluded + p_excluded,
             "post_reveal_files": revealed_excluded,
         },
     }
@@ -383,12 +437,20 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(str(exc))
 
     sources = result["sources"]
-    print(f"transcripts: {sources['transcripts']['hits']} hits in {sources['transcripts']['files']} files")
-    print(f"git-blobs: {sources['git-blobs']['hits']} hits in {sources['git-blobs']['blobs']} blobs")
-    print(f"worktrees: {sources['worktrees']['hits']} hits in {sources['worktrees']['files']} files")
+
+    def _kinds(entry: dict) -> str:
+        kinds = entry.get("hits_by_kind", {}) if isinstance(entry, dict) else {}
+        raw = kinds.get("raw", "?") if isinstance(kinds, dict) else "?"
+        nonce = kinds.get("nonce", "?") if isinstance(kinds, dict) else "?"
+        return f"raw: {raw}, nonce: {nonce}"
+
+    print(f"transcripts: {sources['transcripts']['hits']} hits in {sources['transcripts']['files']} files ({_kinds(sources['transcripts'])})")
+    print(f"git-blobs: {sources['git-blobs']['hits']} hits in {sources['git-blobs']['blobs']} blobs ({_kinds(sources['git-blobs'])})")
+    print(f"worktrees: {sources['worktrees']['hits']} hits in {sources['worktrees']['files']} files ({_kinds(sources['worktrees'])})")
     print(
-        f"project: {sources['project']['hits']} hits in {sources['project']['files']} files "
-        f"(excluded: {result['excluded']['public_manifest_blobs']} public-manifest blobs/files, "
+        f"project: {sources['project']['hits']} hits in {sources['project']['files']} files ({_kinds(sources['project'])}; "
+        f"excluded: {result['excluded']['public_manifest_blobs']} public-manifest blobs, "
+        f"{result['excluded']['public_manifest_files']} public-manifest files, "
         f"{result['excluded']['post_reveal_files']} post-reveal files)"
     )
     if args.write:
