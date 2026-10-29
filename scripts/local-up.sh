@@ -72,6 +72,11 @@ export HARBOR_API_KEY="${HARBOR_API_KEY:-sim-demo-key}"
 export LEGACYSTAY_API_KEY="${LEGACYSTAY_API_KEY:-sim-demo-key}"
 export MERIDIAN_CLIENT_TOKEN="${MERIDIAN_CLIENT_TOKEN:-meridian-client-token}"
 export MERIDIAN_ACCESS_TOKEN="${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}"
+# REQ-035: simulator admin writes need a shared token (AR-1-1). Ship the
+# labelled demo value by default so a fresh clone never runs header-only;
+# an explicit value (.env / shell) always wins. Simulator demo value, not
+# a secret — never a real credential.
+export SIM_ADMIN_TOKEN="${SIM_ADMIN_TOKEN:-sim-admin-dev-token}"
 export EDGE_RELAY_DB="$LOCAL_DIR/edge_relay.db"
 export EDGE_STORE_PATH="$LOCAL_DIR/edge_agent.db"
 # Persist the effective env for local-down diagnostics (values only used
@@ -92,8 +97,8 @@ echo ">> local-up: starting services as local processes (AUTOBRIDGE_RUNTIME=loca
 echo "   DB: $DATABASE_URL"
 echo "   NOTE: local mode: no network isolation — Docker vendor-net / verifier-net /"
 echo "   admin-net / edge-net separation is NOT enforced here (all loopback). The engine"
-echo "   still never imports verifier/ or simulators/; admin writes still need"
-echo "   SIM_ADMIN_TOKEN when set. See docs/safety-model.md."
+echo "   still never imports verifier/ or simulators/; admin writes need"
+echo "   SIM_ADMIN_TOKEN (demo default, override in .env). See docs/safety-model.md."
 
 cd "$REPO_ROOT"
 start_svc control 8101 uv run uvicorn autobridge.control.app:app --host 127.0.0.1 --port 8101

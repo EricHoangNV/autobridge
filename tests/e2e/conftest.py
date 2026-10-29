@@ -206,8 +206,9 @@ def admin_headers() -> dict[str, str]:
     """Headers authorizing simulator admin calls (AR-1-1).
 
     ``X-Admin-Network`` is only a routing hint; the real credential is
-    ``SIM_ADMIN_TOKEN`` (server-side env only, never logged). Sent only
-    when configured so header-only dev stacks keep working.
+    ``SIM_ADMIN_TOKEN`` (server-side env only, never logged). Sent when
+    configured — the default since REQ-035, so header-only sends happen
+    only when the operator explicitly empties the token.
     """
     headers = {"X-Admin-Network": "admin-net"}
     token = os.environ.get("SIM_ADMIN_TOKEN", "")

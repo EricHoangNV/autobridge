@@ -21,7 +21,8 @@ from simulators.common.state import get_state, reset_state, set_scenario
 
 #: Env key naming the shared secret that authorizes simulator admin writes
 #: (AR-1-1). The value is read at request time and never logged or echoed.
-#: When unset/empty the admin API falls back to the header-only dev mode.
+#: Ships a non-empty demo default (REQ-035); only an explicitly emptied var
+#: falls back to the header-only dev mode.
 ADMIN_TOKEN_ENV_VAR = "SIM_ADMIN_TOKEN"
 
 #: Header carrying the admin token (sent alongside the routing hint below).
@@ -58,11 +59,14 @@ def _require_admin_network(request: Request) -> None:
     The ``X-Admin-Network: admin-net`` header is only a routing hint: its
     value is published in this source tree, so any vendor-net peer can send
     it. Real authorization is the shared secret in ``SIM_ADMIN_TOKEN``,
-    presented as ``X-Admin-Token`` and compared in constant time. When the
-    env var is unset/empty (local dev), the header-only check applies; when
-    it is set, a missing or wrong token is 403 even with a correct header.
-    The smoke probe (runtime → sim:8001) sends no token and therefore gets
-    403, which the probe treats as "down" — preserving the negative check.
+    presented as ``X-Admin-Token`` and compared in constant time. The token
+    ships a non-empty demo default (REQ-035: ``sim-admin-dev-token`` in
+    ``.env.example``, ``compose.yaml`` and ``scripts/local-up.sh``); only an
+    explicitly emptied env var falls back to the header-only dev check.
+    When a token is in force, a missing or wrong token is 403 even with a
+    correct header. The smoke probe (``probe_admin_denied`` in
+    ``scripts/smoke.sh``) sends no token: 403 counts as "rejected — the
+    authorization boundary holds", and only a 2xx without a token fails.
     Host-based e2e and the control proxy send both headers.
     """
     hdr = request.headers.get("x-admin-network")

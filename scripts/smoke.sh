@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Stack smoke test (P1.W1.2): every service's /healthz + /readyz, plus the
 # trust-boundary negative network checks from plan §2.1:
-#   runtime-sandbox -/-> verifier fixtures, sandbox -/-> simulator admin,
-#   ui -/-> simulators.
+#   runtime-sandbox -/-> verifier fixtures, sandbox refused by the simulator
+#   admin authorization boundary, ui -/-> simulators.
+# REQ-035: the simulator admin API is an authorization boundary, not a
+# no-route one — vendor-net peers may reach sim-*:8001 but get 401/403
+# without SIM_ADMIN_TOKEN. The admin probes below distinguish "no route"
+# from "reachable but rejected" and fail only when an unauthorized admin
+# access is ACCEPTED (2xx).
 # Positive reachability is asserted too (sandbox -> sim public API,
 # control -> verifier), so a blanket network outage cannot pass as "isolated".
 set -euo pipefail
@@ -89,6 +94,34 @@ probe_post() {
   fi
 }
 
+# Admin GET probe (REQ-035): passes when the peer is REFUSED the admin API —
+# either no route (connection failure) or reachable-but-rejected (401/403,
+# the authorization boundary in simulators/common/admin.py). Fails only when
+# the admin API answers 2xx with no token (unauthorized access accepted).
+# $1=service $2=url (no auth headers are ever sent here)
+probe_admin_denied() {
+  local svc="$1" url="$2" out
+  local runner="python -c \"import urllib.request, urllib.error
+try:
+    print(urllib.request.urlopen('$url', timeout=5).status)
+except urllib.error.HTTPError as e:
+    print(e.code)
+except Exception:
+    print('NOROUTE')\""
+  out="$(docker compose exec -T "$svc" sh -c "$runner" 2>/dev/null | tr -d '[:space:]' || true)"
+  case "$out" in
+    401|403)
+      echo "  ok $svc -/-> $url rejected (HTTP $out: reachable, unauthorized — auth boundary holds)"
+      ;;
+    NOROUTE|"")
+      echo "  ok $svc -/-> $url no route (expected)"
+      ;;
+    *)
+      fail "$svc reached simulator admin $url without a token (HTTP $out) — must be refused"
+      ;;
+  esac
+}
+
 echo ">> smoke: positive reachability (guards against blanket outages)"
 probe runtime-sandbox http://sim-atlas:8000/healthz up
 probe runtime-sandbox http://sim-harbor:8000/healthz up
@@ -102,10 +135,12 @@ probe control http://mcp-hotel:8000/healthz up
 
 echo ">> smoke: negative network checks (plan §2.1 trust boundaries + §5 S2 edge)"
 probe runtime-sandbox http://verifier:8000/healthz down
-probe runtime-sandbox http://sim-atlas:8001/healthz down
-probe runtime-sandbox http://sim-harbor:8001/healthz down
-probe runtime-sandbox http://sim-legacystay:8001/healthz down
-probe runtime-sandbox http://sim-meridian:8001/healthz down
+# Simulator admin API (REQ-035): authorization boundary, not no-route —
+# refuse (no route or 401/403) is a pass; 2xx without a token is a fail.
+probe_admin_denied runtime-sandbox http://sim-atlas:8001/healthz
+probe_admin_denied runtime-sandbox http://sim-harbor:8001/healthz
+probe_admin_denied runtime-sandbox http://sim-legacystay:8001/healthz
+probe_admin_denied runtime-sandbox http://sim-meridian:8001/healthz
 probe ui http://sim-atlas:8000/healthz down
 probe ui http://sim-harbor:8000/healthz down
 probe ui http://sim-legacystay:8000/healthz down
@@ -118,11 +153,11 @@ probe ui http://sim-fias-pabx:8000/healthz down
 probe worker http://sim-fias-pabx:8000/healthz down
 probe edge-worker http://verifier:8000/healthz down
 probe edge-worker http://sim-atlas:8000/healthz down
-probe edge-worker http://sim-fias-pabx:8001/healthz down
+probe_admin_denied edge-worker http://sim-fias-pabx:8001/healthz
 probe edge-worker http://mcp-hotel:8000/healthz down
 probe edge-relay http://verifier:8000/healthz down
-probe edge-relay http://sim-atlas:8001/healthz down
-probe edge-relay http://sim-fias-pabx:8001/healthz down
+probe_admin_denied edge-relay http://sim-atlas:8001/healthz
+probe_admin_denied edge-relay http://sim-fias-pabx:8001/healthz
 
 echo ">> smoke: FIAS admin reachable from control on admin-net only (REQ-034)"
 # The FIAS data plane (:8000, edge-net only) stays unreachable from control
@@ -130,22 +165,26 @@ echo ">> smoke: FIAS admin reachable from control on admin-net only (REQ-034)"
 # from control through the sim-fias-pabx-admin sidecar (which carries the
 # sim-fias-pabx DNS alias on admin-net), or /demo/reset + /demo/inject-fault
 # cannot touch FIAS.
-# The admin API 403s bare probes, so send the admin headers (plus the
-# token when one is configured — forward-compatible with REQ-035).
+# The admin API 403s bare probes, so send the admin headers (with the token:
+# non-empty by default since REQ-035, via the shell or .env).
 ADMIN_HDR="{'X-Admin-Network': 'admin-net'}"
 if [ -n "${SIM_ADMIN_TOKEN:-}" ]; then
   ADMIN_HDR="{'X-Admin-Network': 'admin-net', 'X-Admin-Token': '${SIM_ADMIN_TOKEN}'}"
 fi
 probe_headers control http://sim-fias-pabx:8001/healthz "$ADMIN_HDR" up
 
-echo ">> smoke: simulator admin writes need authorization, not just the published header (AR-1-1)"# A vendor-net peer with no headers must always be rejected on admin writes.
+echo ">> smoke: simulator admin writes need authorization, not just the published header (AR-1-1)"
+# A vendor-net peer with no headers must always be rejected on admin writes.
+# REQ-035: these fail only when an unauthorized write is ACCEPTED (2xx),
+# never when it is merely reachable — reachability without the token is
+# covered by the probe_admin_denied checks above.
 probe_post runtime-sandbox http://sim-atlas:8001/admin/reset "{}" down
 if [ -n "${SIM_ADMIN_TOKEN:-}" ]; then
-  # With the token configured, the published X-Admin-Network header alone
-  # must NOT authorize a write — only the token does.
+  # With the token configured (the default since REQ-035), the published
+  # X-Admin-Network header alone must NOT authorize a write — only the token does.
   probe_post runtime-sandbox http://sim-atlas:8001/admin/reset "{'X-Admin-Network': 'admin-net'}" down
 else
-  echo "  WARN SIM_ADMIN_TOKEN unset — admin runs header-only dev mode (set a random value in .env)"
+  echo "  WARN SIM_ADMIN_TOKEN explicitly empty — admin runs header-only dev mode (fresh clones default to sim-admin-dev-token)"
 fi
 
 echo "smoke OK"

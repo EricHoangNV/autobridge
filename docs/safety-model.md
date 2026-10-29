@@ -177,10 +177,13 @@ intentionally wrong `net→total_amount` mapping that the verifier must reject).
 Admin writes are authorized by `SIM_ADMIN_TOKEN` (`X-Admin-Token`,
 constant-time compare); `X-Admin-Network: admin-net` is only a routing hint
 (AR-1-1 — the header value is published in this repo, so it cannot be the
-credential). `runtime-sandbox` (vendor-net only) has no token and gets
-`403/down` even when it replays the header; smoke asserts exactly that when
-the token is configured. The host and `control` (admin-net) proxy send both
-headers when the token is set.
+credential). The token ships a non-empty demo default (REQ-035:
+`sim-admin-dev-token`), so even a fresh clone never runs header-only.
+`runtime-sandbox` (vendor-net only) holds no token and gets `403` even when
+it replays the header; smoke (`probe_admin_denied` in `scripts/smoke.sh`)
+distinguishes that rejection from "no route" and fails only when an
+unauthorized admin access is accepted. The host and `control` (admin-net)
+proxy send both headers.
 
 ## 6. Response schema and leakage guard
 
@@ -342,8 +345,9 @@ No `internal: true` — host ports are required for `make smoke`/`make e2e`.
 A dedicated unit test (`test_autobridge_compose.py`) asserts the intended
 attachments statically; smoke probes assert reachability and isolation live.
 Negative test: `DockerSandbox` cannot reach the verifier or simulator admin
-(runtime target allowlist); host and `control` (admin-net) are the only paths
-with `X-Admin-Network: admin-net`.
+(runtime target allowlist); only paths holding `SIM_ADMIN_TOKEN` (host and
+`control` via admin-net) can authorize simulator admin writes — the
+`X-Admin-Network: admin-net` header alone authorizes nothing.
 
 ### 9.1 On-premise agent boundary (REQ-022 B)
 
@@ -463,8 +467,9 @@ What still holds in local mode (asserted in code, not by topology):
 
 * the engine never imports `verifier`/`simulators` (import-linter contract);
 * the verifier and simulator admin still run as separate processes;
-* simulator admin writes still need `SIM_ADMIN_TOKEN` when set
-  (header-only dev mode otherwise, exactly as in containers);
+* simulator admin writes still need `SIM_ADMIN_TOKEN` (set to the demo
+  default unless the operator overrides it; header-only dev mode only when
+  it is explicitly emptied, exactly as in containers);
 * the in-process target allowlist (`DockerSandboxTarget`/`EdgeTarget`
   host + `/admin` path guards, checked by runtime-sandbox `/readyz`)
   still rejects blocked hosts — it just cannot stop a process from

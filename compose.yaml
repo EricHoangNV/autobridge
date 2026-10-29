@@ -54,7 +54,9 @@ services:
       AUTOBRIDGE_RUNTIME: "docker"
       AUTOBRIDGE_OPERATOR: ${AUTOBRIDGE_OPERATOR:-operator}
       AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
-      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+      # REQ-035: non-empty demo default (labelled demo value, like the
+      # sim-demo-key defaults) so a fresh clone never runs header-only.
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-sim-admin-dev-token}
       # AR-2-4: HMAC key for edge release signatures. Control signs releases
       # with it; the edge worker verifies with it. Empty (local dev) means
       # unkeyed integrity checksums — set a random value before exposing the
@@ -216,7 +218,7 @@ services:
       dockerfile: Dockerfile
     environment:
       APP_MODULE: simulators.atlaspms.app:app
-      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-sim-admin-dev-token}
     networks:
       - vendor-net
       - admin-net
@@ -233,7 +235,7 @@ services:
       dockerfile: Dockerfile
     environment:
       APP_MODULE: simulators.harborpms.app:app
-      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-sim-admin-dev-token}
     networks:
       - vendor-net
       - admin-net
@@ -250,7 +252,7 @@ services:
       dockerfile: Dockerfile
     environment:
       APP_MODULE: simulators.legacystay.app:app
-      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-sim-admin-dev-token}
     networks:
       - vendor-net
       - admin-net
@@ -267,7 +269,7 @@ services:
       dockerfile: Dockerfile
     environment:
       APP_MODULE: simulators.meridianpms.app:app
-      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-sim-admin-dev-token}
     networks:
       - vendor-net
       - admin-net
@@ -293,7 +295,7 @@ services:
     environment:
       APP_MODULE: simulators.fias_pabx.app:app
       ADMIN_EXTRA_ROUTER: simulators.fias_pabx.admin:router
-      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
+      SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-sim-admin-dev-token}
       SIM_STATE_FILE: /tmp/sim_fias_state.json
       FIAS_HOST: edge-worker
       FIAS_PORT: 5010

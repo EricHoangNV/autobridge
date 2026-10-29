@@ -81,7 +81,9 @@ def _admin_headers() -> dict[str, str]:
 
     ``X-Admin-Network`` is only a routing hint (AR-1-1); the real credential
     is ``SIM_ADMIN_TOKEN`` (server-side env only, never logged or echoed).
-    Sent only when configured so header-only dev stacks keep working.
+    Sent when configured — which is the default since REQ-035 ships a
+    non-empty demo token, so header-only sends happen only when the
+    operator explicitly empties it.
     """
     headers = {"X-Admin-Network": "admin-net"}
     token = os.environ.get("SIM_ADMIN_TOKEN", "")
