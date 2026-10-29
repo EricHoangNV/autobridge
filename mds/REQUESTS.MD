@@ -128,6 +128,35 @@ with `"…"` (`bench/demo.py:735`). `/knowledge` → `connectors` (list) → pro
 97e682c3 cannot help. Fix: assert on the raw response (keep `_redact_body` for printing only), and check every other
 `_assert_live` that reads nested values for the same trap. Gate: `make demo` 8/8 twice on a keyed local stack.
 
+### REQ-028 — Benchmark-driven engine fixes (owner rehearsal 2026-10-29) (2026-10-29)
+Status: OPEN
+Priority: right after REQ-027 (the rename fix in progress there covers item 1). This is development rehearsal, not
+the pre-registered run: iterate until the numbers are honest and good, then the owner does one live run.
+Owner ran `BENCH_TRIALS=1 make bench-ablation` on the keyed local stack (main at d169e216; files in
+`experiments/benchmark_runs/`). AutoBridge cold: repair scenarios fixed 4/6 (`page_to_cursor`, `offset_to_cursor`,
+`cursor_repeat_token`, `meridian_cursor_renamed`), no-patch/question scenarios handled 6/6, 0 wrong patches, 0
+tokens. Gaps, in order:
+1. **Field renames are never repaired** (`rename_guest_id`, `meridian_state_renamed`: every engine arm V=0, E=0).
+   The live detector emits `SCHEMA_RENAME` but the ladder and `rename_field` expect `FIELD_RENAME` (found by the
+   REQ-027 iteration in progress). One taxonomy, end to end, and both scenarios verified with 0 tokens.
+2. **Warm does worse than cold.** `autobridge_warm` proposes patches where none belong: `rate_limit_429` and
+   `transient_503` (expected `no_patch`) come back as verified patches (E=0), and `duplicate_late_records` loses its
+   correct escalation. A learned fix from the dev split is being reused on an unrelated drift: the L0 key is too
+   coarse (or a no-patch drift matches a cached delta). L0 may only hit when the drift class *and* the wire delta match
+   what it learned from; transient/rate-limit/auth drifts never consult or populate L0. Add the invariant as a test:
+   on every scenario, warm is never worse than cold (verified and correct-escalation).
+3. **No frontier baseline ran, so there is no comparison yet.** `frontier_oneshot` stops before calling the model:
+   `BudgetExhausted: max_frontier_tokens 20000 exceeded (now 312xx)` — the prompt alone is over the ceiling,
+   apparently because it carries the whole docs volume. Give it the same docs the engine arm reads for that connector
+   (one vendor's docs, not all of `simulators/docs`), so it fits the shared 20k budget; if it still cannot fit, report
+   that honestly as the result rather than raising the ceiling for one arm. `frontier_agent` fails with `opencode CLI
+   not found` on the host: make the bench say up front which arms can run and why, and document running the bench
+   inside the sandbox (OpenCode is there) as the supported path for that arm.
+4. **Grading labels:** `success: true` on every engine row while the verifier grade says otherwise; rename the raw
+   field (e.g. `ran`) or drop it so nobody reads it as a pass.
+Acceptance: rerun `BENCH_TRIALS=1 make bench-ablation` and record the table in BUILD-NOTES each time; target
+AutoBridge cold 6/6 repairs, warm ≥ cold everywhere, 0 wrong patches, frontier_oneshot actually called (tokens > 0).
+
 ### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 19:10; matrix full-climb merged, remaining: owner record-frontier capture + live step-4 check)
 Owner: every demo scenario must run the same way every time, including REQ-020's "before" refusal after the vocabulary
