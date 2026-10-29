@@ -1874,3 +1874,13 @@ provenance holding what the L1 rules need — derived from observed responses on
   (environmental, verified via stash). Multi-op narrowing + cursor_param-from-wire were tried
   and reverted (broke oracle / fake param contract) — see learnings.
 Files: src/autobridge/drift/{signals,classifier}.py, src/autobridge/repair/rules/{wire,page_to_cursor,offset_to_cursor,rename_field,cursor_next_path_shift,nested_path_shift}.py, bench/ablation.py (docstring), tests + docs.
+
+### REQ-027 sub-step 3 — the live chain (sbx1, 2026-10-29)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+- New `src/autobridge/engine/detect_repair.py`: `detect_and_repair_after_sync` (signals from observed responses only -> classify -> DriftEvent open -> `handle_from_signals` with detector-derived inputs only -> RepairRun -> candidate release via `create_release_from_patch`, verifier-gated when `VERIFIER_URL` set, fail-closed) + `build_detector_delta` (spec-previous/wire-current `pagination_details`/`types_details`, names only, stable per drift so repeats hit L0).
+- `run_sync_handler` calls it after every sync row (worker + POST /sync both covered); detection errors are result data, never sync failures.
+- `RepairController.handle` no longer caches when `fingerprint_delta is None` (a content-free key would poison L0 across drift types).
+- Key finding: a page->cursor fault syncs `Complete` with 0 records — silent data loss, no invariant failure. The Complete-early-exit was wrong; any signals now count as drift.
+- Verified live numbers: faulted atlas page_to_cursor -> PAGINATION_CHANGE, L1 page_to_cursor rung 1, 0 tokens, candidate release; repeat -> L0 rung 0; approve -> resync Complete 30+85 records.
+- Tests: `tests/unit/test_autobridge_detect_repair.py` (8 tests: no-drift baseline, full propose/approve chain, L0 repeat, delta stability, rate-limit escalate, None-delta guard, handler inline, real served fault). Targeted suites green (111 + 8), lint/typecheck green, full `make test` green except one flaky simulators FIAS replay test (`test_replay_postings_resend_same_pno` fails under full-suite random order, passes alone and on file re-run; package untouched by this change).
+- Remaining: sub-steps 4 (demo steps 3-4 drive the chain), 5 (live e2e per scenario), 6 (honest bench rerun).

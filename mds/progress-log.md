@@ -3075,3 +3075,6 @@ nested_path_shift). Engine cold arm on page_to_cursor now proposes (rung 1, 0 to
 warm hits L0; gross_to_net still semantic. Gates: make test 2484+134+396 / ui 158 green;
 e2e test_03 fake path 5/5; live-stack error pre-existing (verified on base via stash).
 Next: REQ-027 sub-step 3 (the live chain: sync -> detect -> handle -> gate -> approve).
+
+## 2026-10-29 — REQ-027 sub-step 3 MERGED (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). The live chain is wired: every worker/POST-/sync sync detects drift from its own summary and repairs it deterministically (DriftEvent + RepairRun + candidate release persisted inline, visible in /drift and /repairs; approve flips the active release; next sync Complete). L1 page_to_cursor fires from real wire evidence with 0 tokens; repeats hit L0; None deltas never poison the cache. 8 new unit tests green; lint/typecheck/full-suite green (one flaky simulators FIAS failure, pre-existing, passes on re-run). Next: REQ-027 sub-step 4 (demo steps 3-4 drive the chain, no hand-built inputs).
