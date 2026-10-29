@@ -160,7 +160,7 @@ queued after this run) has nothing to re-open. The verdict line in FEEDBACKS is 
 Gates: `make test`, keyed `make local-up && make e2e && make demo` 8/8, `make up` likewise. Do not weaken guards.
 
 ### REQ-038 — Flaky FIAS replay test makes `make test` randomly red (Code Review Cycle 4, AR-4-4) (2026-10-29)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-29 12:03)
 `tests/unit/test_simulators_fias_pabx.py::test_replay_postings_resend_same_pno` failed in the Cycle 4 review's full
 `make test` (`assert 7 == (6 + 2)` on `postings_sent`, line ~665) and passed on rerun; the earlier owner run also saw
 it as "one load-sensitive FIAS timing flake". It races wall-clock deadlines (8 s pumps). Make it deterministic: drive
