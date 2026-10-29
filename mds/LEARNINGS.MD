@@ -523,3 +523,11 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - `EvidenceStore.append` raises `UnknownParentError` for parent ids with no row, and the first version of the derivation persist passed raw signal evidence ids — which don't exist in the fast path — so the whole append died inside a best-effort `try/except` and repairs silently carried no derivation.
 - Fixed with `_existing_evidence_ids()`: link only parents that resolve to stored rows (usually none on the fast path), and say so in the stage source instead of inventing a funnel.
 - **Rule:** when a store enforces referential integrity, resolve-then-link at the call site; a silent best-effort write that fails closed on integrity is a silent data gap — assert the row exists in tests with realistic (unpersisted-id) inputs.
+
+## 57. Verify the fix against the faulted vendor — healing first scars deterministically
+**Context:** REQ-033 UI journey (a `page_to_cursor` repair approved after the sim was healed kept Degrading `no_loss` and escalating to `SEMANTIC_VALUE_DRIFT`, bricking the connector to error until reset)
+
+- The L1 patch flips pagination strategy page→cursor. Verified against the faulted (cursor-shape) sim it syncs `Complete` and the drift retires. Verified after a heal, the cursor-strategy spec runs against the clean page-shape sim, which ignores the cursor param and repeats page 1: `repeated_cursor` stops the loop, the partial fetch trips `no_loss`, and the run escalates with empty evidence.
+- The scar is deterministic, not flaky: any heal-while-shape-fixed-release-is-active plus one scheduler tick produces it, and there is no dismiss-drift affordance (reject leaves the drift open), so only a reset recovers.
+- The journey now approves and verifies first, heals only where the active spec matches clean sims, and reactivates the base release before healing after a shape fix.
+- **Rule:** repairs verify against the fault they were built for — never heal/clear the fault between approve and the verifying sync; when a demo or e2e needs a clean frame afterwards, reactivate the pre-patch release first, then heal, and assert no escalate repair was left behind.

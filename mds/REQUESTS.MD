@@ -130,35 +130,8 @@ Tests: component tests for the states, the four repair sections (an L1 repair wi
 the funnel, 1 model call, the rejected proposal and the question), the approve preview text against the API, the
 after-approve progress, the PABX panel.
 
-### REQ-033 — UI-first demo, part D: README "How to run the demo", docs, UI e2e journeys (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 16:35)
-Depends on REQ-031 and REQ-032.
-1. **README.md "How to run the demo"**, short enough to follow while recording: start (`make local-up` or `make up`);
-   `make demo-reset && make demo-seed`, open `http://localhost:8107`, wait until every connector shows ● Working; then
-   one block per scenario with the command, where to look, what should happen and the expected model calls:
-   - What AutoBridge knows (Knowledge page); Reusable artifact (Connectors, Atlas Working, 0 tokens)
-   - Unfamiliar API: build Harbor from its docs in the UI
-   - Zero-token fix: `make demo-break SCENARIO=page_to_cursor` → Atlas Degrading → repair "fix ready · 0 model calls" →
-     Approve → Working; learning: break it again → fixed at L0, "reused 1×"
-   - Hard semantic failure: `make demo-break SCENARIO=gross_to_net TARGET=harbor` → Harbor Error → funnel, "1 model
-     call", rejected proposal, the operator question
-   - New kind of API: Meridian page (v1 refused, v2 in use); `make demo-break SCENARIO=meridian_cursor_renamed` →
-     fix at L1 → Approve → Working
-   - On-premise PABX: `make demo-break SCENARIO=fias_record_layout_change` → `rename_field` TA → TM → Approve →
-     postings flow; `make demo-break SCENARIO=agent_restart_inflight` → "lost 0 · duplicated 0"
-   - retakes (`make demo-heal`, `make demo-reset && make demo-seed`), the terminal-only `make demo`, settings
-     (`AUTOBRIDGE_SYNC_INTERVAL_S`, `FRONTIER_API_KEY`: live vs replay for the semantic scenario).
-2. `docs/demo.md`: a "Recording from the UI" section with the same sequence and what to point at on screen.
-3. **UI e2e (Playwright, `make e2e-ui`)**: seed → all Working; break `page_to_cursor` → Degrading → "fix ready"
-   appears without a manual sync → click Approve → Working, and the four repair sections are present; break
-   `gross_to_net` → Error, funnel and "1 model call" (replay when no key) and the question visible; PABX layout break
-   → fixed after Approve, postings resume.
-Gates: `make test`, keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` green; `make up`
-likewise.
-
 Owner priority (2026-10-29 17:00): **REQ-029 next**, before any other open item, so the Muse Wonder audit that follows
 this run can close Code Review Cycle 2.
-
 ### REQ-029 — Close the last review gaps before the audit: worker release gate, docs_path builds (2026-10-29)
 Status: IN_PROGRESS (sbx1 2026-10-29 — CODE DONE: worker gate via control proxy + require-flag, docs_path 422, tests + demo 8/8 green; Muse Wonder audit validate run DONE 2026-10-29: both gaps re-verified fixed, Code Review Cycle 3 stays FAIL on the new REQ-034/REQ-035 findings — see mds/AUDIT.md; closing this item is the owner's call once REQ-034 is decided)
 Context: owner re-checked every Code Review Cycle 2 finding against main (2026-10-29): AR-1-1, AR-1-3, AR-1-4,
@@ -645,6 +618,34 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-033 — UI-first demo, part D: README "How to run the demo", docs, UI e2e journeys (2026-10-29)
+Status: DONE (sbx1 2026-10-29)
+Depends on REQ-031 and REQ-032.
+1. **README.md "How to run the demo"**, short enough to follow while recording: start (`make local-up` or `make up`);
+   `make demo-reset && make demo-seed`, open `http://localhost:8107`, wait until every connector shows ● Working; then
+   one block per scenario with the command, where to look, what should happen and the expected model calls:
+   - What AutoBridge knows (Knowledge page); Reusable artifact (Connectors, Atlas Working, 0 tokens)
+   - Unfamiliar API: build Harbor from its docs in the UI
+   - Zero-token fix: `make demo-break SCENARIO=page_to_cursor` → Atlas Degrading → repair "fix ready · 0 model calls" →
+     Approve → Working; learning: break it again → fixed at L0, "reused 1×"
+   - Hard semantic failure: `make demo-break SCENARIO=gross_to_net TARGET=harbor` → Harbor Error → funnel, "1 model
+     call", rejected proposal, the operator question
+   - New kind of API: Meridian page (v1 refused, v2 in use); `make demo-break SCENARIO=meridian_cursor_renamed` →
+     fix at L1 → Approve → Working
+   - On-premise PABX: `make demo-break SCENARIO=fias_record_layout_change` → `rename_field` TA → TM → Approve →
+     postings flow; `make demo-break SCENARIO=agent_restart_inflight` → "lost 0 · duplicated 0"
+   - retakes (`make demo-heal`, `make demo-reset && make demo-seed`), the terminal-only `make demo`, settings
+     (`AUTOBRIDGE_SYNC_INTERVAL_S`, `FRONTIER_API_KEY`: live vs replay for the semantic scenario).
+2. `docs/demo.md`: a "Recording from the UI" section with the same sequence and what to point at on screen.
+3. **UI e2e (Playwright, `make e2e-ui`)**: seed → all Working; break `page_to_cursor` → Degrading → "fix ready"
+   appears without a manual sync → click Approve → Working, and the four repair sections are present; break
+   `gross_to_net` → Error, funnel and "1 model call" (replay when no key) and the question visible; PABX layout break
+   → fixed after Approve, postings resume.
+Gates: `make test`, keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` green; `make up`
+likewise.
+
+Resolution: README 'How to run the demo' + docs/demo.md 'Recording from the UI' (honest live gaps labelled: gross_to_net stays Complete on the docs-built spec; PABX layout break is agent-absorbed); new live-only Playwright spec tests/e2e/test_08_recording_journey.spec.ts (seed frame, zero-token UI approve, L0 re-hit + reused, semantic gap + recorded funnel/call/question, PABX panel), registered in playwright.config.ts (runs first), `make e2e-ui` sources load_dotenv.sh for the control token. Gates: 6/6 journeys green live unkeyed (recorded half after `make demo` step 4), make test 2640+134+408+192 green (90/91/90%), lint/typecheck/ui-typecheck/openapi-check green.
 
 ### REQ-036 — Directive: stale rules — DIRECTIVES §§1/2/3/6/7 contradict the shipped code (2026-10-29)
 Status: DONE (2026-10-29)

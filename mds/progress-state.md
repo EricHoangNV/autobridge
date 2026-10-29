@@ -2,7 +2,11 @@
 
 ## Current State
 
-REQ-032 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): live states everywhere (--ok token, badge, ticking age, 2s poll), repairs list (connector/class/rung/rule/calls/status), repair page four sections from persisted rows + approve-preview endpoint + after-approve tracker, PABX panel, derivation persisted on deterministic path, startup orphan-job reaper. Full gates green.
+REQ-033 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): README "How to run the demo"
+recording script, docs/demo.md "Recording from the UI" section, new live-only Playwright spec
+test_08_recording_journey (6 journeys: seed frame, zero-token UI approve, L0 re-hit + reused, semantic gap +
+recorded funnel/call/question, PABX panel), registered first in playwright.config.ts, `make e2e-ui` sources
+load_dotenv.sh for the control token. Full gates green unkeyed.
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
@@ -22,12 +26,13 @@ REQ-032 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): li
   - REQ-030 DONE (scheduler/state/learn-on-approve/persistence; keyed re-run is owner step)
   - REQ-031 DONE (seed/break/heal + UI docs build; keyed re-run is owner step)
   - REQ-032 DONE (live states + self-explaining repair page; keyed re-run is owner step)
+  - REQ-033 DONE (README/demo docs/UI e2e journeys; keyed re-run is owner step)
   - Edge readyz closed-store 500 fixed (honest degraded + regression test)
-- Tests: 2631 + 134 + 408 pass / 0 fail (autobridge 90%, verifier 91%, simulators 90%; ui 192 pass); lint + typecheck + openapi-check + ui-typecheck green
-- Stack: local-up verified this run (demo-seed/break/heal + test_06_ui_journey 8/8 green unkeyed); left up unkeyed on a clean seed
+- Tests: 2640 + 134 + 408 pass / 0 fail (autobridge 90%, verifier 91%, simulators 90%; ui 192 pass); lint + typecheck + openapi-check + ui-typecheck green
+- Stack: local-up verified this run (6/6 journeys green unkeyed + recorded half after demo step 4); left up with journey + step-4 rows (harbor shows recorded drift — reseed before recording)
 
 ## Next tasks
-1. **REQ-033** — owner UI-first demo part D (depends on REQ-031/REQ-032)
+1. **REQ-033 (VERIFY)** — owner: keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` (covers REQ-033; note e2e-ui composition: test_08 runs first on the seed, test_027/test_s6 need post-demo/s6 state)
 2. **REQ-032 (VERIFY)** — owner: keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` (covers REQ-032)
 3. **REQ-031 (VERIFY)** — owner: keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` (covers REQ-030/031)
 4. **REQ-030 (VERIFY)** — owner: keyed `make local-up && make e2e && make demo` (L3 live numbers in step 4)

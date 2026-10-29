@@ -85,8 +85,10 @@ ui-e2e-deps: ui-deps
 # stack is down, so it never blocks `make e2e`. NODE_PATH is required: the
 # root playwright.config.ts and the specs in tests/e2e import
 # `@playwright/test`, which lives in ui/node_modules (no root node_modules).
+# Sources .env first (REQ-014): the REQ-033 recording journey calls the
+# control API directly and needs AUTOBRIDGE_CONTROL_TOKEN when set.
 e2e-ui: ui-e2e-deps
-	cd ui && NODE_PATH="$$PWD/node_modules" npm run test:e2e
+	. ./scripts/load_dotenv.sh && cd ui && NODE_PATH="$$PWD/node_modules" npm run test:e2e
 
 # Env: BENCH_SCENARIOS (csv) · BENCH_SEED · BENCH_TRIALS (bench defaults 5
 # for publishable 95% intervals, REQ-024 B3) · BENCH_VISIBILITY (dev|heldout|all) ·

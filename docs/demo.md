@@ -24,6 +24,88 @@ API on `admin-net`; every request carries `demo: true, labelled: true`).
 Related: [Architecture](architecture.md) §9 (control API + UI),
 [Safety model](safety-model.md) §4 (scenario catalog), `docs/benchmark.md`.
 
+## Recording from the UI (REQ-033 — the same story, presenter + browser)
+
+This is the UI-first version of the script above: the presenter runs one
+command per scenario in a terminal while the browser (`http://localhost:8107`)
+reacts by itself. Start with `make local-up` (or `make up`), then
+`make demo-reset && make demo-seed`, and wait until every connector shows
+● Working with "last sync N s ago" ticking. Every state badge is colour +
+shape + word, never colour alone; the Repairs list polls every 2 s, so new
+repairs appear at the top without a reload. The presenter clicks every
+approval — nothing auto-applies, so every transition stays on screen.
+
+- **What AutoBridge knows.** Point at `/knowledge` (top bar): vocabulary
+  v1, v2, v3 rows each list "used by" their seed connector (atlaspms v1
+  with no refusal, meridianpms v2 with v1 refused, PABX edge v3), and the
+  right-hand column fills with learned fixes as repairs are approved
+  ("learned from approval … by …", "reused N×").
+- **Reusable artifact.** On `/connectors`, AtlasPMS ● Working with
+  0 model tokens: the reference release from step 1 below, healed
+  through the ladder, not rebuilt.
+- **Unfamiliar API — build Harbor from its docs in the UI.** On
+  `/connectors/new` pick the Harbor docs (the picker lists the simulator
+  docs from `config/demo_targets.yaml`; the server fetches the text, the
+  browser only sends `docs_text` back, so the AR-2-2 SSRF guard stays
+  shut). Watch the five-stage progress — docs read → draft → probes →
+  result → release — the same stages as step 2 below, then the new
+  connector's page with its spec, releases and sync runs.
+- **Zero-token fix.** Left: `make demo-break SCENARIO=page_to_cursor`.
+  Right, on `/connectors`: AtlasPMS turns ▲ Degrading ("drift detected
+  … · repairing at L1"). On `/repairs`: the new row reads connector
+  AtlasPMS, class `PAGINATION_CHANGE`, rung L1, rule `page_to_cursor`,
+  "0 model calls", status "fix ready". Open it and scroll the four
+  sections in order: **What happened** (connector + detecting sync with
+  its outcome and unmet criterion, the wire before/after
+  "page → cursor", affected entities/records, redacted samples);
+  **What the engine did** (rung timeline "L0: no known fix …" →
+  "L1: rule page_to_cursor matched", the hypothesis funnel
+  "24 explanations → … → 1 distinct" with expandable stages, probes,
+  the model-call box saying "0 model calls", the verifier run);
+  **What the engine decided** (the "Fix ready: verified, 0 model calls"
+  line, the JSON-Patch diff against the current spec with the raw patch
+  one click away); **What happens when you click Approve** (the server's
+  own preview: "creates release r2 from r1 … activates r2 … this fix is
+  kept as known … rollback to r1 stays available"). Click **Approve** at
+  the top: the page follows approval → release → verifying sync →
+  Complete, and the connector returns to ● Working. Break it again:
+  the same drift resolves at L0 and the Knowledge entry reads "reused 1×".
+- **Hard semantic failure.** Left: `make demo-break
+  SCENARIO=gross_to_net TARGET=harbor`. Right: the syncs stay Complete —
+  the docs-built Harbor spec carries no money invariant, so the semantic
+  drift cannot surface live (this is the labelled gap from step 4; the
+  step asserts it instead of pretending). After `make demo` has run once,
+  open the recorded step-4 repair (`SEMANTIC_VALUE_DRIFT`, decision escalate): the funnel with
+  its surviving "net" reading, the model-call box with the single
+  frontier call — live ("muse-spark-1.3, N tokens") with
+  `FRONTIER_API_KEY` set, otherwise the labelled replay ("replayed from
+  a live Muse capture on …") — the rejected `net_amount → total_amount`
+  decoy with the trap verdict, and the operator question
+  ("map `total_amount` to …" / "add a canonical field"). Point at the
+  decision line: "Needs your decision: the engine is not confident".
+- **New kind of API.** Meridian's connector page shows the refused v1
+  build with its reason and v2 in use (step 7). Break
+  `meridian_cursor_renamed`, watch the L1 fix land, **Approve**, Working.
+- **On-premise PABX.** The PABX edge connector page carries the PABX
+  panel: link state, postings arriving (count rising, last posting
+  time), current record layout (v3, announced in the handshake), and the
+  last restart result. Break `fias_record_layout_change`: the link drops
+  and the agent re-handshakes on the new shape (TM renamed, CX added —
+  point at the layout line), postings resume, the connector stays
+  Working. No repair lands and none is needed: the edge agent absorbs
+  the firmware change (catalogue kind "agent"); the L1 `rename_field`
+  (TA → TM) patch is proven in-process by step 8, which also records
+  the restart line. Break `agent_restart_inflight`, then compare with
+  the recorded row: "lost 0 · duplicated 0".
+
+Retakes are `make demo-heal` (clears faults, keeps connectors) and
+`make demo-reset && make demo-seed` (the opening frame). The terminal
+`make demo` approves the same repairs through the API; everything it
+does lands in the database exactly like the clicks do (REQ-030), so the
+repair page, the Knowledge page and this recording agree.
+`AUTOBRIDGE_SYNC_INTERVAL_S` sets the scheduler tick (default 10 s);
+`FRONTIER_API_KEY` selects live vs replay for the semantic climb.
+
 ## 1. Reusable artifact — Atlas release, zero inference
 
 Open the Atlas reference release spec, run a sync, show `ModelUsageLedger = 0`.

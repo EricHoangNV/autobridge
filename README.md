@@ -72,6 +72,73 @@ with real credentials. To force or forbid it explicitly:
 `AUTOBRIDGE_RUNTIME=local|docker` (default: local when Docker is
 unavailable, docker otherwise).
 
+## How to run the demo (recording script, ~10 minutes)
+
+Terminal on the right, browser on the left (`http://localhost:8107`).
+The presenter runs one command per scenario; the UI reacts by itself —
+**every state change stays visible, and the presenter clicks every
+approval** (repairs never auto-apply).
+
+```bash
+make local-up                  # or: make up (Docker). Wait for "all services readyz green"
+make demo-reset && make demo-seed
+```
+
+Open `http://localhost:8107` and wait until every connector shows
+● Working ("last sync N s ago" ticking underneath). The seed leaves four
+connectors `working`, 0 model tokens, nothing waiting
+(`make demo-seed` fails loud otherwise). Each block below is one
+command, then watch:
+
+- **What AutoBridge knows.** Open `/knowledge` (top bar): vocabulary
+  v1/v2/v3 with "used by" per version, and any learned fixes with
+  "reused N×". Back on `/connectors`, AtlasPMS is the reusable
+  artifact: Working, 0 tokens.
+- **Unfamiliar API — build Harbor from its docs in the UI.** Open
+  `/connectors/new`, pick the Harbor docs, watch docs read → draft →
+  probes → result → release. The refused v1 / working v2 pair for
+  Meridian is already on its connector page from the seed
+  (deck 3 in `docs/demo.md`).
+- **Zero-token fix.** `make demo-break SCENARIO=page_to_cursor` →
+  AtlasPMS turns ▲ Degrading ("drift detected … · repairing at L1");
+  a repair appears at the top of `/repairs` **without reloading** as
+  "fix ready · 0 model calls". Open it: the page answers what happened,
+  what the engine did, what it decided, and what Approve does — then
+  click **Approve** and watch the connector return to ● Working
+  (approval → release → verifying sync → Complete). Run the break again:
+  the same drift now resolves at L0 and the Knowledge entry reads
+  "reused 1×".
+- **Hard semantic failure.** `make demo-break SCENARIO=gross_to_net
+  TARGET=harbor` → the syncs stay Complete: the docs-built Harbor spec
+  carries no money invariant, so the semantic drift cannot surface live
+  (known gap, labelled in `make demo` step 4). After `make demo`, open
+  the recorded step-4 repair (`/repairs`, the `SEMANTIC_VALUE_DRIFT`
+  escalation) and point at the four sections: the funnel, the model-call
+  box (live call with `FRONTIER_API_KEY`, labelled replay otherwise),
+  the rejected `net_amount → total_amount` decoy, the operator question,
+  the "Needs your decision" line.
+- **New kind of API.** Meridian's page shows the refused v1 build with
+  its reason and v2 in use. `make demo-break
+  SCENARIO=meridian_cursor_renamed` → fix at L1 → **Approve** → Working.
+- **On-premise PABX.** Open the PABX edge connector page (link state,
+  postings arriving, layout v3). `make demo-break
+  SCENARIO=fias_record_layout_change` → the link drops and re-handshakes
+  on the new layout (TM, CX announced), postings resume, the connector
+  stays Working — the edge agent absorbs it, no approval; the L1
+  `rename_field` (TA → TM) patch itself is proven in-process by `make
+  demo` step 8. `make demo-break SCENARIO=agent_restart_inflight` →
+  after `make demo`, the panel's restart line reads
+  "lost 0 · duplicated 0".
+
+Retakes: `make demo-heal` clears injected faults without a reset;
+`make demo-reset && make demo-seed` restores the opening frame.
+`make demo` (terminal-only, 8 steps) approves through the API and lands
+everything in the database exactly like the clicks do.
+Settings: `AUTOBRIDGE_SYNC_INTERVAL_S` (default 10; the scheduler syncs
+every connector each tick and never approves); `FRONTIER_API_KEY` —
+with a key the semantic climb calls Muse live, without it the step
+replays a captured run and labels it replayed.
+
 ## How it works
 
 1. **Connect** — a vendor's docs become a declarative `ConnectorSpec` (YAML/JSON) via

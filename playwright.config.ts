@@ -5,9 +5,11 @@ import { defineConfig, devices } from "@playwright/test";
  *
  * Base URL is the Next.js UI (compose: http://localhost:8107, dev: http://localhost:3000).
  * The spec files live in tests/e2e/test_06_ui_journey.spec.ts (plan §4 W7),
- * tests/e2e/test_s6_richer_ui.spec.ts (plan §5 S6) and
+ * tests/e2e/test_s6_richer_ui.spec.ts (plan §5 S6),
  * tests/e2e/test_027_knowledge.spec.ts (REQ-027 post-demo knowledge state;
- * live-stack only, skips without the stack).
+ * live-stack only, skips without the stack) and
+ * tests/e2e/test_08_recording_journey.spec.ts (REQ-033 recording journey;
+ * live-stack only, skips without the seed frame).
  *
  * Usage:
  *   make up                          # bring stack up (or npm run dev in ui/)
@@ -19,7 +21,11 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "tests/e2e",
-  testMatch: ["test_06_ui_journey.spec.ts", "test_s6_richer_ui.spec.ts", "test_027_knowledge.spec.ts"],
+  // REQ-033: the recording journey runs first — it needs the seed opening
+  // frame (`make demo-seed`; skips otherwise), while the later specs adapt
+  // to whatever rows exist (test_06), need post-demo state (test_027) or
+  // s6-shaped rows that only the mocks provide (test_s6 live branch).
+  testMatch: ["test_08_recording_journey.spec.ts", "test_06_ui_journey.spec.ts", "test_s6_richer_ui.spec.ts", "test_027_knowledge.spec.ts"],
   timeout: 30_000,
   expect: { timeout: 5000 },
   fullyParallel: false,

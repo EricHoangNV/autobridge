@@ -3483,3 +3483,20 @@ approve) with server-generated approve preview and after-approve tracker;
 PABX panel; engine persists hypothesis derivation on the deterministic path;
 startup reaps orphaned jobs. Full gates green; test_06 8/8 live unkeyed.
 Stack left up on a clean seed. Keyed re-run is the owner step. Next: REQ-033.
+
+## 2026-10-29 — REQ-033 DONE (sbx1, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+UI-first demo part D shipped: README "How to run the demo" recording script, docs/demo.md "Recording from the UI"
+section, and tests/e2e/test_08_recording_journey.spec.ts — 6 live-only Playwright journeys (seed frame; zero-token
+break → Degrading → "fix ready · 0 model calls" → UI Approve → Working + four repair sections; re-break → L0 hit with
+Knowledge "reused N×"; gross_to_net live gap asserted + recorded step-4 repair shows funnel + call box + question +
+verdict; PABX layout break re-handshakes with panel visible). Registered first in playwright.config.ts testMatch;
+`make e2e-ui` now sources load_dotenv.sh for AUTOBRIDGE_CONTROL_TOKEN. The REQ text's Error-state semantic leg and
+PABX-approve leg do not happen live (docs-built Harbor has no money invariant; PABX change is agent-absorbed) — the
+docs and tests assert the honest behavior and fail loud if the engine changes. Found while working: healing while a
+shape-fixed release is active deterministically scars (verify must run faulted — legs approve before any heal);
+second faulted ticks can re-classify into scar escalations (skip-check sees only committed repairs; no dismiss
+affordance, so a scar bricks the connector until reset); `make e2e-ui` can't go fully green on one DB state
+(test_027 needs post-demo, test_s6 live branch needs s6-mock ids, test_06 `.or()` double-matches on escalate
+repairs); `make demo-seed` flakes right after spec runs (succeeds on retry). Gates green unkeyed: 6/6 journeys,
+make test 2640+134+408+192 (90/91/90%), lint/typecheck/ui-typecheck/openapi-check. Keyed stack re-run is the owner
+step. Left: stack up, seeded frame + step-4 recorded row present (harbor shows the recorded drift — reseed before recording).

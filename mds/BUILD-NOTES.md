@@ -2214,3 +2214,48 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
   (incl. live approve through the new path + rollback/re-break cycle).
   Stack left up, clean seed (4 working, 0 tokens). Keyed re-run
   (FRONTIER_API_KEY) is the owner step.
+
+### REQ-033 — UI-first demo, part D: README, docs, UI e2e journeys (sbx1 2026-10-29, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Files: README.md ("How to run the demo" after No-Docker), docs/demo.md ("Recording from the UI" after intro),
+tests/e2e/test_08_recording_journey.spec.ts (NEW, 6 tests, live-only skip without stack/seed), playwright.config.ts
+(testMatch + test_08 first with rationale comment), Makefile (e2e-ui sources load_dotenv.sh so AUTOBRIDGE_CONTROL_TOKEN reaches the spec).
+Journeys: seed frame (4 Working, 0 tokens); break page_to_cursor → scheduler Degrading → "fix ready · 0 model calls"
+appears without manual sync → click Approve in the browser → Working + four repair sections; break again after base
+reactivation → L0 hit, Knowledge "reused N×"; break gross_to_net → gap asserted (no engine repair) + recorded step-4
+repair shows funnel + call-box/empty + question + verdict; break fias_record_layout_change → agent re-handshakes,
+stays Working, PABX panel visible.
+Decisions (all verified live on keyed-local-shaped unkeyed stack; deviations from the REQ text are honest gaps, asserted in-test so they fail loud if the engine changes):
+- Semantic leg: docs-built Harbor has no money invariant → live syncs stay Complete (same labelled gap as demo step 4,
+  which asserts it too). The recorded-climb repair (POST /demo/record-climb) carries funnel + 1 call (live/replay) or
+  explicit "0 model calls" + L3-skipped reason + question; spec branches on the ledger.
+- PABX leg: layout break is agent-absorbed (re-handshake on TM/CX, postings continue, no engine repair — proven
+  in-process by demo step 8); panel asserts link/postings/layout instead of an approval.
+- Recorded half needs `make demo` step 4 first (needs only the row, not the seed frame); gap half needs the seed frame.
+- Verify-against-faulted-vendor is load-bearing: healing while a shape-fixed release is active scars deterministically
+  (cursor-spec vs clean page-shape sim → repeated_cursor → no_loss → SEMANTIC escalate; see product notes). Legs heal
+  only where the active spec matches clean sims; atlas fault is left active through leg 3, then base is reactivated +
+  healed, leaving a clean frame.
+- `sinceBreak` is stamped before reactivation in the learning leg: reactivation itself lets the next tick detect, so a
+  post-break filter would miss the L0 repair and time out waiting for a second repair the open-repair skip suppresses.
+- testMatch order test_08 first: the journey needs the seed opening frame before test_06's live journey dirties it
+  ("E2E Test Connector" + repairs); opening frame is a subset check (seed names working) since test_09 owns the exact
+  seed contract. `make e2e-ui` sources load_dotenv.sh (REQ-014 pattern) for the control token the spec needs.
+Product notes for the owner (observed, not fixed — out of scope):
+1. REQ-033's literal flow (break gross_to_net → Harbor Error; PABX break → Approve) does not happen live today; the
+   journeys assert the honest behavior instead. Either the REQ text or the engine (money-invariant inference, PABX
+   handshake→ladder path) needs a follow-up.
+2. A second faulted tick can re-classify the same fault (observed PAGINATION → SEMANTIC_VALUE_DRIFT, no_loss on
+   identical counts, empty evidence, L4-only trace). The skip-check only sees committed propose/escalate repairs, so a
+   tick landing during the still-open gate window syncs again. Candidate engine fix: commit drift+repair atomically
+   pre-gate (or skip on open drift), owned by REQ-027/REQ-028.
+3. No dismiss affordance: a scar (open drift + waiting escalate) bricks a connector to error until reset, and the
+   recorded-climb drift keeps seeded Harbor non-Working after `make demo` (test_027's post-demo state shows it).
+4. `make e2e-ui` cannot go fully green on any single DB state (pre-existing): test_027 needs post-demo state, test_s6's
+   live branch asserts s6-mock ids (run-s6-a) that live repairs never carry, test_06's approve-preview `.or()` locator
+   double-matches on escalate repairs (parent div + child blocked note). None touched here.
+5. `make demo-seed` flakes intermittently right after spec runs (Error 1, succeeds on retry ~20 s later) — looks like
+   a reset/seed-vs-scheduler race; retried in this task, needs a look (REQ-021/REQ-031 area).
+Gates: 6/6 journeys green live unkeyed (5 on fresh seed + recorded after `make demo` step 4); make test
+2640 (autobridge 90%) + 134 (verifier 91%) + 408 (simulators 90%) + ui 192 pass; lint + typecheck + ui-typecheck +
+openapi-check green. Keyed re-run (`make local-up && make demo-seed && make e2e && make e2e-ui && make demo`) is the
+owner step (no FRONTIER_API_KEY in sandbox; semantic leg exercises the L3-skipped branch unkeyed).
