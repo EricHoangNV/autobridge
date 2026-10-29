@@ -659,10 +659,24 @@ def test_replay_postings_resend_same_pno(host: Host) -> None:
         sent_before = link.snapshot()["counters"]["postings_sent"]
         with link.lock:
             link.faults.replay_postings = 2
-        dupes = [r for r in host.wait_for_records(2, timeout=8) if r.record_type == "PS"]
-        assert len(dupes) == 2
-        assert {r.field("P#") for r in dupes} <= seen  # same P#s, nothing invented
+        # Event-driven, never "first two frames": the engine's counter proves
+        # both business replays went out. A link-level ACK-timeout retransmit
+        # (a slow host under parallel load) puts a byte-identical copy on the
+        # wire WITHOUT bumping postings_sent, so collecting the first two
+        # frames can count one replay twice and read 7 == 6 + 2 (Cycle 4
+        # AR-4-4). Every PS collected while waiting must still be a replayed
+        # P# — nothing invented.
+        replayed: list[Record] = []
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            for rec in host.pump(0.2):
+                if rec.record_type == "PS":
+                    replayed.append(rec)
+            if link.snapshot()["counters"]["postings_sent"] >= sent_before + 2:
+                break
         assert link.snapshot()["counters"]["postings_sent"] == sent_before + 2
+        assert len(replayed) >= 2
+        assert {r.field("P#") for r in replayed} <= seen  # same P#s, nothing invented
     finally:
         link.stop()
         link.join(timeout=5)
@@ -680,7 +694,10 @@ def test_flood_queues_identical_records(host: Host) -> None:
             for rec in host.pump(0.3):
                 if rec.record_type == "PS" and rec.field("P#") == "000000":
                     floods.append(rec)
-        assert len(floods) == 5
+        # >= : a link-level ACK-timeout retransmit under load lands a
+        # byte-identical copy in the same pump batch (same pattern as the
+        # replay test above); it is still a flood record, never an invention.
+        assert len(floods) >= 5
         bodies = {(r.record_type, r.fields) for r in floods}
         assert len(bodies) == 1  # byte-identical repeats
     finally:
