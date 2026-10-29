@@ -149,6 +149,16 @@ tokens. Gaps, in order:
    coarse (or a no-patch drift matches a cached delta). L0 may only hit when the drift class *and* the wire delta match
    what it learned from; transient/rate-limit/auth drifts never consult or populate L0. Add the invariant as a test:
    on every scenario, warm is never worse than cold (verified and correct-escalation).
+   **Root cause, traced by the owner (2026-10-29):** the warm cache from `warm_knowledge(dev split)` has 3 entries;
+   one is `atlaspms::5242d3f029ee9349 → offset_to_cursor`. That signature is the *empty* delta (every flag false,
+   every detail empty): the offset_to_cursor repair was derived from signals/drift class, but its fingerprint delta
+   carries nothing, and it was cached anyway (the existing guard only skips a `None` delta, not an all-empty one).
+   `rate_limit_429` (class UNKNOWN), `transient_503` (UNKNOWN) and `duplicate_late_records` (SEMANTIC_VALUE_DRIFT)
+   all derive the same empty delta on Atlas, so L0 hits and replays the offset_to_cursor patch at rung 0 — reproduced
+   directly with `run_engine_arm` (cold: escalate rung 4; warm: propose rung 0, rule offset_to_cursor). Fix all three:
+   (a) never cache, and never look up, a delta that carries no change; (b) the L0 key includes the drift class, so a
+   cached pagination fix can never answer an UNKNOWN or semantic drift; (c) offset_to_cursor's derived delta must
+   carry the pagination evidence it was repaired from (it is empty today), or it can never be learned safely.
 3. **No frontier baseline ran, so there is no comparison yet.** `frontier_oneshot` stops before calling the model:
    `BudgetExhausted: max_frontier_tokens 20000 exceeded (now 312xx)` — the prompt alone is over the ceiling,
    apparently because it carries the whole docs volume. Give it the same docs the engine arm reads for that connector
