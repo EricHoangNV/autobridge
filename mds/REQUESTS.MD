@@ -456,7 +456,7 @@ a FAIL says what leaked; (4) unit tests: a transcript quoting the public manifes
 a nonce or raw bytes is a fail. Expected on the owner's host after the fix: `OK`, 0 hits. Keep "never prints secrets".
 
 ### REQ-025 — Beacon evaluation: faults generated from public randomness nobody could know in advance (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-29 00:08; generator foundation items 1-2 first)
 Owner: prove we could not have prepared for the test even if we wanted to. The private-seed held-out split (REQ-007)
 only seals instance data for four public fault types, and the builder has tests for those types. The headline
 evaluation becomes a **beacon run**: the test's data *and* fault details are derived from a public random value that
