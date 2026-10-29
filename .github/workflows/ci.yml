@@ -55,6 +55,14 @@ jobs:
       - name: Unit tests (90% coverage gate per package + Vitest)
         run: make test
 
+      # ---- API contract + UI types (DIRECTIVES §7) ----
+      # The generated UI client must compile against the live schema:
+      # these checks existed as make targets but nothing ran them in CI.
+      - name: OpenAPI schema/client in sync + UI typecheck
+        run: |
+          make openapi-check
+          make ui-typecheck
+
       # ---- AR-2-5: images build from hash-pinned lockfiles, bases pinned ----
       # Fail if the committed requirements locks drift from uv.lock, then
       # rebuild the verifier image twice and diff `pip freeze`: the acceptance

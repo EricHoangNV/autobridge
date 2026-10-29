@@ -18,6 +18,7 @@ from autobridge.control.models import (
 )
 from autobridge.engine.releases import (
     ReleaseError,
+    activate_release,
     approve_release,
     create_release,
     create_release_from_patch,
@@ -311,6 +312,45 @@ def test_approve_release_activates(tmp_path) -> None:
         assert approval.to_release_id == r2.id
         s.refresh(conn)
         assert conn.active_release_id == r2.id
+
+
+def test_gate_required_blocks_activation_of_unverified_release(tmp_path, monkeypatch) -> None:
+    """AUDIT 2026-10-29 (REQ-029 residual): with the require-flag set, a
+    pre-gate release without a verification_report_id can be neither
+    explicitly activated nor approved into the active slot; a verified
+    release activates normally."""
+    factory = _session(tmp_path)
+    with factory() as s:
+        conn = _make_connector(s)
+        # Pre-gate rows: created before the flag was switched on, so the
+        # persist-time gate was skipped (the legacy state being guarded).
+        legacy = create_release(s, connector_id=conn.id, spec=_minimal_spec())
+        verified = create_release(
+            s, connector_id=conn.id, spec=_minimal_spec(), verification_report_id="report-1"
+        )
+        rr = _repair_run(s)
+        candidate = create_release(
+            s,
+            connector_id=conn.id,
+            spec=_minimal_spec(),
+            parent_release_id=legacy.id,
+            provenance_repair_run_id=rr.id,
+        )
+        s.commit()
+        monkeypatch.setenv("AUTOBRIDGE_REQUIRE_VERIFIER_GATE", "1")
+        assert legacy.verification_report_id is None
+        with pytest.raises(ReleaseError, match="no verification_report_id"):
+            activate_release(s, connector_id=conn.id, release_id=legacy.id, actor="alice")
+        s.rollback()
+        with pytest.raises(ReleaseError, match="no verification_report_id"):
+            approve_release(
+                s, repair_run_id=rr.id, actor="alice", from_release_id=legacy.id, to_release_id=candidate.id
+            )
+        s.rollback()
+        activate_release(s, connector_id=conn.id, release_id=verified.id, actor="alice")
+        s.commit()
+        s.refresh(conn)
+        assert conn.active_release_id == verified.id
 
 
 def test_approve_release_inferred_connector(tmp_path) -> None:

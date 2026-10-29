@@ -41,6 +41,10 @@ services:
       dockerfile: Dockerfile.engine
     environment:
       APP_MODULE: autobridge.control.app:app
+      # REQ-017/AUDIT-2026-10-29: inside a container there is no docker
+      # binary/socket, so auto-detection would report "local" and readyz/UI
+      # would claim no network isolation on the Compose stack. Pin it.
+      AUTOBRIDGE_RUNTIME: "docker"
       AUTOBRIDGE_OPERATOR: ${AUTOBRIDGE_OPERATOR:-operator}
       AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
       SIM_ADMIN_TOKEN: ${SIM_ADMIN_TOKEN:-}
@@ -89,6 +93,7 @@ services:
       dockerfile: Dockerfile.engine
     environment:
       APP_MODULE: autobridge.engine.app:app
+      AUTOBRIDGE_RUNTIME: "docker"
       # AR-2-4: repair jobs persisted by the worker sign releases with the
       # same HMAC key control uses; must match edge-worker or edge
       # execution refuses the release.
@@ -128,6 +133,7 @@ services:
       dockerfile: Dockerfile.engine
     environment:
       APP_MODULE: autobridge.runtime.app:app
+      AUTOBRIDGE_RUNTIME: "docker"
     networks:
       - engine-net
       - vendor-net

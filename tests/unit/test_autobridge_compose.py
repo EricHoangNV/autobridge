@@ -351,6 +351,15 @@ def test_worker_has_no_verifier_url(compose: dict) -> None:
     assert "VERIFIER_URL" not in env
 
 
+@pytest.mark.parametrize("service", ["control", "worker", "runtime-sandbox"])
+def test_engine_services_pin_docker_runtime_mode(compose: dict, service: str) -> None:
+    """AUDIT 2026-10-29: a container has no docker binary/socket, so
+    AUTOBRIDGE_RUNTIME auto-detection reports "local" and readyz/UI claim
+    no network isolation on the Compose stack. Compose pins docker."""
+    env = compose["services"][service].get("environment") or {}
+    assert env.get("AUTOBRIDGE_RUNTIME") == "docker"
+
+
 @pytest.mark.parametrize("service", ["control", "worker", "edge-worker"])
 def test_edge_release_secret_shared(compose: dict, service: str) -> None:
     """AR-2-4: signer (control/worker) and verifier (edge-worker) read the

@@ -3312,3 +3312,30 @@ Gotchas: restarting the stack mid-task is required after engine/sim/catalog edit
 **Notes for next iteration:**
 - Remaining: the Muse Wonder audit validate run (queued after this run); FEEDBACKS verdict line is the auditor's, not this run's.
 - `make up` (Compose) run left to owner/CI — only `docker compose config` validated here; local stack verified (`make demo` 8/8, e2e subsets green). L3-live demo numbers still need `FRONTIER_API_KEY` (owner step, unchanged).
+
+## [Directives audit 2026-10-29 — validation run]
+**Date:** 2026-10-29
+**Ref:** Mode VALIDATION (mds/AUDIT.md scope); Code Review Cycle 2 re-verification; REQ-029 remaining auditor step
+
+**What was done:**
+- Audited 3e4093b8..2cea2072 (282 commits) against DIRECTIVES §§1-8; REQ-030/REQ-031 commits in range were owner-reverted in range (net zero)
+- Re-verified AR-1-1…AR-1-5, AR-2-1…AR-2-6 and REQ-029 (worker gate via control /internal/verify proxy, docs_path 422) as fixed in code
+- Fixed: Compose services pin AUTOBRIDGE_RUNTIME=docker (readyz reported local/no-isolation on Docker); demo step 4 prices configured model tiers instead of a hardcoded id; activate/approve refuse unverified releases while AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1; CI runs make openapi-check + make ui-typecheck
+- Filed REQ-034 (FIAS admin unreachable from control in Compose; 4 live e2e fail on make up), REQ-035 (sim admin vendor-net reachable, token-only, empty default; smoke probe counts 403 as unreachable), REQ-036 (stale Directive bullets §§1/2/3/6/7), REQ-037 (stale .local/ACTIVE misroutes mode detection)
+- Updated FEEDBACKS Code Review verdict to Cycle 3 FAIL on REQ-034/REQ-035; rewrote mds/AUDIT.md with Last audited: 2cea20724eb4fd9ce4a1e997dcc28521c07bb314
+
+**Key decisions:**
+- FIAS Compose routing and sim-admin default-token questions are owner design decisions (edge isolation vs admin reachability is a stated REQ-022 intent); filed as REQs rather than weakening smoke/e2e guards
+- Directive wording contradictions are owner amendments per DIRECTIVES-INSTRUCTIONS; the Quick Reference itself is within size limits and unchanged
+
+**Files changed:**
+- `compose.yaml` — AUTOBRIDGE_RUNTIME=docker on control/worker/runtime-sandbox
+- `tests/unit/test_autobridge_compose.py` — parametrised pin test
+- `bench/demo.py` — step-4 cost priced from config model tiers
+- `src/autobridge/engine/releases.py` + `tests/unit/test_autobridge_releases.py` — verified-activation guard + test
+- `.github/workflows/ci.yml` — openapi-check + ui-typecheck step
+- `mds/AUDIT.md`, `mds/REQUESTS.MD`, `mds/FEEDBACKS.MD`, `mds/progress-state.md`, `mds/BUILD-NOTES.md` — audit record and bookkeeping
+
+**Notes for next iteration:**
+- Agent: opencode meta/muse-wonder-1.0 (escalation)
+- Owner decides REQ-034 before keyed Compose gates (REQ-027/029, P1.W10.3 CI confirmation) can go green; full make e2e remains the owner's run

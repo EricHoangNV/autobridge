@@ -69,6 +69,24 @@ def _ensure_repair_run(session: Session, repair_run_id: str) -> RepairRun:
     return run
 
 
+def _require_verified_release(rel: ConnectorRelease) -> None:
+    """Fail closed on activation of an unverified release (REQ-029).
+
+    Gate-before-persist means a release persisted under
+    ``AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1`` already carries a
+    ``verification_report_id``. A pre-gate/legacy row without one must not
+    become runnable by approve/activate/rollback while the flag is set:
+    persist-time gating alone would leave activation as a bypass.
+    Without the flag (unit tests, fakes) activation is unchanged.
+    """
+    if os.environ.get("AUTOBRIDGE_REQUIRE_VERIFIER_GATE") == "1" and not rel.verification_report_id:
+        raise ReleaseError(
+            f"release {rel.id!r} has no verification_report_id and cannot be activated "
+            "while AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1 (no process may activate a "
+            "release without a passing verifier verdict)"
+        )
+
+
 def _maybe_verify(
     spec: dict[str, Any],
     *,
@@ -298,6 +316,7 @@ def _activate(session: Session, connector_id: str, release_id: str, *, actor: st
     rel = _ensure_release(session, release_id)
     if rel.connector_id != connector_id:
         raise ReleaseError("release belongs to a different connector")
+    _require_verified_release(rel)
     conn.active_release_id = rel.id
     session.flush()
     # Emit release.activated and pause dependents (plan §2.3 reusability hook).

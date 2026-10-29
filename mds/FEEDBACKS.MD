@@ -5,13 +5,19 @@
 ### Security: Cycle 0 — (no review yet)
 - (awaiting first security review)
 
-### Code Review: Cycle 2 — FAIL (2026-10-28)
-- Daily Architecture Review (full-codebase sweep, supersedes Cycle 1's diff-only scope): Cycle 1 findings AR-1-1…AR-1-5 re-verified still open; new AR-2-1 vendor-controlled unbounded `Retry-After` stall (Medium), AR-2-2 build `docs_url`/`docs_path` SSRF + local-file read (Medium), AR-2-3…AR-2-6 (Low). See the full report below.
-- test coverage: unchanged (autobridge 91.40%, verifier 93.76%, simulators 96.66%; 1890+97+241 pytest and 143 Vitest tests passed in the review worktree)
+### Code Review: Cycle 3 — FAIL (2026-10-29)
+- Daily directives audit re-verification (`3e4093b8..2cea2072`): AR-1-1…AR-1-5, AR-2-1…AR-2-6 and the REQ-029 worker-gate/docs_path gaps are fixed in code; audit fixed 4 residuals (Compose readyz misreporting local mode, hardcoded demo model id, unverified-release activation under the require-flag, CI missing openapi/ui-typecheck gates). Verdict stays FAIL on REQ-034: in Compose, control has no route to the FIAS simulator admin API, so `/demo/reset` + `/demo/inject-fault` fail for `sim-fias-pabx` and 4 live e2e tests are red on `make up`; plus REQ-035 (sim admin reachable from vendor-net, token-only, empty by default). See `mds/AUDIT.md` (2026-10-29).
+- test coverage: autobridge 90.33%, verifier 91.49%, simulators 90.50%; 2555+134+396 pytest and 160 Vitest tests passed (margins thin)
 - type safety / lint: PASS (`make lint` incl. import-linter contracts, `make typecheck`, `make ui-typecheck`, `make openapi-check` all green)
 
 ### Product Review: Cycle 0 — (no review yet)
 - (awaiting first product review)
+
+---
+
+## Daily Directives Audit — Re-verification of Cycle 2 (Code Review Cycle 3, 2026-10-29)
+
+**Verdict: FAIL** — Cycle 2's findings (AR-1-1…AR-1-5, AR-2-1…AR-2-6) and the two REQ-029 gaps are re-verified fixed in code at `2cea2072`, and the audit fixed four further residuals itself (Compose `/readyz` reporting `local` mode, a hardcoded frontier model id in demo cost pricing, activation of unverified pre-gate releases under `AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1`, and CI never running `make openapi-check`/`make ui-typecheck`). The FAIL rests on one material open item: in the Compose stack, control cannot reach the FIAS simulator's admin API (edge-net only by design), so `POST /demo/reset` and `POST /demo/inject-fault` fail for `sim-fias-pabx` and four live e2e tests fail on `make up` (REQ-034). A lower residual (REQ-035): the simulator admin listener is reachable from vendor-net peers and is protected only by a token that defaults to empty. Full findings, evidence and the loops run are in `mds/AUDIT.md`; the open items are REQ-034…REQ-037 in `mds/REQUESTS.MD`.
 
 ---
 

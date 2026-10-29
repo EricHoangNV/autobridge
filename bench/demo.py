@@ -1829,15 +1829,18 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         live_evidence = _step4_live(seed, base_url, calls)
     else:
         live_evidence = {"mode": "in-process evidence only (no live connector)"}
+    from autobridge.config import small_model as _small_model  # noqa: PLC0415
     from autobridge.llm.provider import Usage, estimate_cost  # noqa: PLC0415
 
+    # Model ids live in config, not code (DIRECTIVES §3): price the call
+    # the climb actually made, at the configured tiers.
     frontier_cost = estimate_cost(
         "frontier",
         Usage(usage.get("frontier_input", 0), usage.get("frontier_output", 0)),
-        model="muse-spark-1.3",
+        model=l3_model,
     )
     small_cost = estimate_cost(
-        "small", Usage(usage.get("small_input", 0), usage.get("small_output", 0)), model="muse-spark-1.3"
+        "small", Usage(usage.get("small_input", 0), usage.get("small_output", 0)), model=_small_model()
     )
     replay_label = ""
     if mode == "replay" and not l3_skipped:
