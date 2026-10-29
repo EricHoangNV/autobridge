@@ -4,8 +4,10 @@ import { defineConfig, devices } from "@playwright/test";
  * Playwright config for AutoBridge W7.8 — UI journey + network isolation.
  *
  * Base URL is the Next.js UI (compose: http://localhost:8107, dev: http://localhost:3000).
- * The spec files live in tests/e2e/test_06_ui_journey.spec.ts (plan §4 W7)
- * and tests/e2e/test_s6_richer_ui.spec.ts (plan §5 S6).
+ * The spec files live in tests/e2e/test_06_ui_journey.spec.ts (plan §4 W7),
+ * tests/e2e/test_s6_richer_ui.spec.ts (plan §5 S6) and
+ * tests/e2e/test_027_knowledge.spec.ts (REQ-027 post-demo knowledge state;
+ * live-stack only, skips without the stack).
  *
  * Usage:
  *   make up                          # bring stack up (or npm run dev in ui/)
@@ -17,7 +19,7 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "tests/e2e",
-  testMatch: ["test_06_ui_journey.spec.ts", "test_s6_richer_ui.spec.ts"],
+  testMatch: ["test_06_ui_journey.spec.ts", "test_s6_richer_ui.spec.ts", "test_027_knowledge.spec.ts"],
   timeout: 30_000,
   expect: { timeout: 5000 },
   fullyParallel: false,

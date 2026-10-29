@@ -50,6 +50,7 @@ type KnowledgeConnector = {
   connector_id: string;
   name: string;
   vocabulary: string;
+  refused_vocabularies: string[];
   builds: number;
   confirmed_hypotheses: string[];
   last_built_at: string | null;
@@ -230,7 +231,11 @@ export default function KnowledgePage() {
                 <div key={conn.connector_id} data-testid={`knowledge-connector-${conn.connector_id}`} className="py-1 text-[15px]">
                   <code className="font-mono text-sm">{conn.name}</code>{" "}
                   <span className="font-mono text-xs text-ink-2">
-                    vocabulary {conn.vocabulary || "?"} · {conn.confirmed_hypotheses.length} confirmed{" "}
+                    vocabulary {conn.vocabulary || "?"}
+                    {(conn.refused_vocabularies ?? []).length > 0
+                      ? ` · ${(conn.refused_vocabularies ?? []).join(", ")} refused`
+                      : ""}{" "}
+                    · {conn.confirmed_hypotheses.length} confirmed{" "}
                     {conn.confirmed_hypotheses.length === 1 ? "hypothesis" : "hypotheses"}
                   </span>
                 </div>

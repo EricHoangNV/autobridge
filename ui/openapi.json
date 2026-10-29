@@ -1479,6 +1479,13 @@
             "title": "Name",
             "type": "string"
           },
+          "refused_vocabularies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Refused Vocabularies",
+            "type": "array"
+          },
           "vocabulary": {
             "default": "",
             "title": "Vocabulary",

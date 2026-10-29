@@ -41,7 +41,9 @@ const KNOWLEDGE = {
     },
   ],
   connectors: [
-    { connector_id: "c1", name: "Atlas", vocabulary: "v1", builds: 1, confirmed_hypotheses: ["pagination:/reservations:cursor"], last_built_at: null },
+    { connector_id: "c1", name: "Atlas", vocabulary: "v1", refused_vocabularies: [], builds: 1, confirmed_hypotheses: ["pagination:/reservations:cursor"], last_built_at: null },
+    { connector_id: "c2", name: "meridianpms", vocabulary: "v2", refused_vocabularies: ["v1"], builds: 2, confirmed_hypotheses: [], last_built_at: null },
+    { connector_id: "c3", name: "PABX edge", vocabulary: "v3", refused_vocabularies: [], builds: 1, confirmed_hypotheses: [], last_built_at: null },
   ],
   counts: { entries: 1, reuses: 1, tokens_saved: 0 },
 };
@@ -67,6 +69,16 @@ describe("KnowledgePage", () => {
     expect(screen.getByTestId("knowledge-entry-0").textContent).toContain("AtlasPMS / PAGINATION_CHANGE");
     expect(screen.getByTestId("knowledge-entry-0").textContent).toContain("reused 1x");
     expect(screen.getByTestId("knowledge-connector-c1").textContent).toContain("Atlas");
+  });
+
+  it("shows the refused vocabulary beside the release in use", () => {
+    mockBoth(CAPABILITIES, KNOWLEDGE);
+    render(<KnowledgePage />);
+    expect(screen.getByTestId("knowledge-connector-c2").textContent).toContain("meridianpms");
+    expect(screen.getByTestId("knowledge-connector-c2").textContent).toContain("vocabulary v2");
+    expect(screen.getByTestId("knowledge-connector-c2").textContent).toContain("v1 refused");
+    expect(screen.getByTestId("knowledge-connector-c3").textContent).toContain("PABX edge");
+    expect(screen.getByTestId("knowledge-connector-c3").textContent).toContain("vocabulary v3");
   });
 
   it("shows the empty state when nothing is learned", () => {

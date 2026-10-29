@@ -330,11 +330,19 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
                     if hyp not in confirmed:
                         confirmed.append(hyp)
         vocabulary = ""
+        refused_vocabularies: list[str] = []
         last_built_at = None
         if successful:
             last = successful[-1]
             vocabulary = str((last.inputs or {}).get("spec_vocabulary", "") or "")
             last_built_at = last.created_at
+        for b in builds:
+            if isinstance(b.result, dict) and b.result.get("success") is False:
+                refused = str((b.inputs or {}).get("spec_vocabulary", "") or "")
+                if refused and refused not in refused_vocabularies and refused != vocabulary:
+                    refused_vocabularies.append(refused)
+        if not last_built_at and builds:
+            last_built_at = builds[-1].created_at
         if not vocabulary:
             # Builds that predate the pinned-vocabulary input (or connectors
             # built outside the build route) still show their vocabulary:
@@ -357,6 +365,7 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
                 "connector_id": conn.id,
                 "name": conn.name,
                 "vocabulary": vocabulary,
+                "refused_vocabularies": refused_vocabularies,
                 "builds": len(builds),
                 "confirmed_hypotheses": confirmed,
                 "last_built_at": last_built_at,

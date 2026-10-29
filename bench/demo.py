@@ -870,18 +870,34 @@ def step2_unfamiliar_api(seed: int, live: bool, base_url: str) -> dict[str, Any]
     }
     calls: list[dict[str, Any]] = []
     if live:
-        calls.extend(
-            _live_ensure_connector(
-                base_url,
-                {
-                    "name": "Harbor demo",
-                    "vendor_docs_ref": "demo:harbor-excerpt",
-                    "base_url": "https://api.harborpms.example.com",
-                    "credential_ref": "HARBOR_API_KEY",
-                    "target_entities": ["Reservation", "FolioCharge"],
-                },
-            )
+        ensure_calls = _live_ensure_connector(
+            base_url,
+            {
+                "name": "Harbor demo",
+                "vendor_docs_ref": "demo:harbor-excerpt",
+                "base_url": "https://api.harborpms.example.com",
+                "credential_ref": "HARBOR_API_KEY",
+                "target_entities": ["Reservation", "FolioCharge"],
+            },
         )
+        calls.extend(ensure_calls)
+        harbor_demo_id = _connector_id_from_calls(ensure_calls, "Harbor demo")
+        if harbor_demo_id is None:
+            _assert_live(calls, "connector Harbor demo id", False, "no connector id from ensure calls")
+        else:
+            # Build the excerpt through the control API with the pinned v1
+            # vocabulary, so the connector profile records it and the
+            # knowledge page lists it under v1 instead of "?".
+            build_result = _live_build_and_poll(
+                base_url, harbor_demo_id,
+                {"docs_text": DEMO_HARBOR_DOCS, "spec_vocabulary": "v1"},
+                calls,
+            )
+            _assert_live(
+                calls, "Harbor demo docs build with v1",
+                build_result.get("success") is True,
+                f"excerpt build result: {build_result}",
+            )
     return _finish_step(
         "Unfamiliar API — Harbor docs to draft spec",
         evidence,
@@ -1051,17 +1067,42 @@ def step3_zero_token_recovery(seed: int, live: bool, base_url: str) -> dict[str,
     )
 
 
-def _step_live_ensure_active_release(
-    base_url: str, connector_id: str, docs_path: str, calls: list[dict[str, Any]]
-) -> str | None:
-    """Build from docs text and activate the release (first build auto-activates)."""
-    docs_text = (REPO_ROOT / docs_path).read_text(encoding="utf-8")
-    build_rec = _control_call(base_url, "POST", f"/connectors/{connector_id}/build", {"docs_text": docs_text})
+def _live_build_and_poll(
+    base_url: str, connector_id: str, payload: dict[str, Any], calls: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """POST a build and poll its job; returns the job result dict (may be empty).
+
+    The job result carries the bootstrap outcome (``success``, ``release_id``,
+    ``degradation_reason``): a refused vocabulary still answers HTTP 200 with
+    ``success: False`` and no release, which the caller asserts on.
+    """
+    build_rec = _control_call(base_url, "POST", f"/connectors/{connector_id}/build", payload)
     calls.append(build_rec)
     build_body = build_rec.get("body") if isinstance(build_rec.get("body"), dict) else {}
     job_id = build_body.get("job_id") if isinstance(build_body, dict) else None
-    if job_id:
-        _poll_job_terminal(base_url, str(job_id), calls)
+    if not job_id:
+        return {}
+    job_rec = _poll_job_terminal(base_url, str(job_id), calls)
+    job_body = (job_rec or {}).get("body")
+    if isinstance(job_body, dict) and isinstance(job_body.get("result"), dict):
+        return dict(job_body["result"])
+    return {}
+
+
+def _step_live_ensure_active_release(
+    base_url: str, connector_id: str, docs_path: str, calls: list[dict[str, Any]],
+    spec_vocabulary: str | None = None,
+) -> str | None:
+    """Build from docs text and activate the release (first build auto-activates).
+
+    ``spec_vocabulary`` pins the vocabulary the build may use (REQ-021 item 2);
+    it is recorded on the connector profile the knowledge page reads.
+    """
+    docs_text = (REPO_ROOT / docs_path).read_text(encoding="utf-8")
+    payload: dict[str, Any] = {"docs_text": docs_text}
+    if spec_vocabulary is not None:
+        payload["spec_vocabulary"] = spec_vocabulary
+    _live_build_and_poll(base_url, connector_id, payload, calls)
     detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
     calls.append(detail)
     detail_body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
@@ -1093,8 +1134,86 @@ def _step_live_sync_terminal(
     return {}
 
 
+def _live_latest_repair(
+    base_url: str, connector_id: str, calls: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Newest repair row for a connector (the list endpoint orders newest first)."""
+    repair_rec = _control_call(base_url, "GET", f"/repairs?connector_id={connector_id}")
+    calls.append(repair_rec)
+    repair_body: Any = repair_rec.get("body")
+    if isinstance(repair_body, list) and repair_body and isinstance(repair_body[0], dict):
+        return dict(repair_body[0])
+    return {}
+
+
+def _live_latest_drift(
+    base_url: str, connector_id: str, calls: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Newest drift row for a connector (the list endpoint orders newest first)."""
+    drift_rec = _control_call(base_url, "GET", f"/drift?connector_id={connector_id}")
+    calls.append(drift_rec)
+    drift_body = drift_rec.get("body")
+    if isinstance(drift_body, list) and drift_body and isinstance(drift_body[0], dict):
+        return dict(drift_body[0])
+    return {}
+
+
+def _live_candidate_for_repair(
+    base_url: str, connector_id: str, repair_run_id: str | None, calls: list[dict[str, Any]]
+) -> str | None:
+    """Release id whose provenance names a repair run, or None."""
+    if not repair_run_id:
+        return None
+    detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
+    calls.append(detail)
+    detail_body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
+    releases = detail_body.get("releases") if isinstance(detail_body, dict) else []
+    if isinstance(releases, list):
+        for rel in releases:
+            if isinstance(rel, dict) and rel.get("provenance_repair_run_id") == repair_run_id:
+                candidate = rel.get("id")
+                return str(candidate) if candidate else None
+    return None
+
+
+def _live_approve_repair(
+    base_url: str, connector_id: str, repair_run_id: str, candidate_id: str,
+    calls: list[dict[str, Any]],
+) -> None:
+    calls.append(
+        _control_call(
+            base_url, "POST", f"/repairs/{repair_run_id}/approve",
+            {"to_release_id": candidate_id, "connector_id": connector_id},
+        )
+    )
+
+
+def _live_knowledge(base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """Current /knowledge body (entries + connector profiles)."""
+    rec = _control_call(base_url, "GET", "/knowledge")
+    calls.append(rec)
+    body = rec.get("body")
+    return dict(body) if isinstance(body, dict) else {}
+
+
+def _knowledge_reuses_for_rule(knowledge: dict[str, Any], rule_id: str) -> int:
+    entries = knowledge.get("entries")
+    if not isinstance(entries, list):
+        return 0
+    return sum(
+        int(e.get("times_reused", 0) or 0)
+        for e in entries
+        if isinstance(e, dict) and e.get("rule_id") == rule_id
+    )
+
+
 def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """Live half of step 3: build, sync, inject, sync, assert, approve, resync."""
+    """Live half of step 3: build, sync, inject, sync, assert, approve, resync.
+
+    Then the inject-again leg: the pre-patch release is reactivated, the same
+    fault is injected again, and the engine must reuse the learned patch at
+    L0 with 0 model calls — /knowledge shows ``times_reused`` going up.
+    """
     ensure_calls = _live_ensure_connector(
         base_url,
         {
@@ -1111,8 +1230,19 @@ def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         _assert_live(calls, "connector atlaspms id", False, "no connector id from ensure calls")
         return {"connector_id": None}
     _step_live_ensure_active_release(
-        base_url, connector_id, "simulators/docs/atlas-openapi.yaml", calls
+        base_url, connector_id, "simulators/docs/atlas-openapi.yaml", calls,
+        spec_vocabulary="v1",
     )
+    # The pre-patch release the inject-again leg reactivates: the newest
+    # release right after the docs build (before any repair candidate).
+    base_release_id: str | None = None
+    _detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
+    calls.append(_detail)
+    _detail_body = _detail.get("body") if isinstance(_detail.get("body"), dict) else {}
+    _releases = _detail_body.get("releases") if isinstance(_detail_body, dict) else []
+    if isinstance(_releases, list) and _releases:
+        _last = _releases[-1]
+        base_release_id = str(_last.get("id")) if isinstance(_last, dict) and _last.get("id") else None
     sync_result = _step_live_sync_terminal(base_url, connector_id, calls)
     _assert_live(
         calls, "baseline sync Complete", sync_result.get("outcome") == "Complete",
@@ -1120,24 +1250,14 @@ def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
     )
     calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-atlas", "scenario_id": "page_to_cursor", "seed": seed}))
     _step_live_sync_terminal(base_url, connector_id, calls)
-    drift_rec = _control_call(base_url, "GET", f"/drift?connector_id={connector_id}")
-    calls.append(drift_rec)
-    drift_body = drift_rec.get("body")
-    drift_row = drift_body[0] if isinstance(drift_body, list) and drift_body else {}
-    if not isinstance(drift_row, dict):
-        drift_row = {}
+    drift_row = _live_latest_drift(base_url, connector_id, calls)
     _assert_live(
         calls, "drift PAGINATION_CHANGE", drift_row.get("drift_class") == "PAGINATION_CHANGE",
         f"latest drift row: {drift_row}",
     )
-    repair_rec = _control_call(base_url, "GET", f"/repairs?connector_id={connector_id}")
-    calls.append(repair_rec)
-    repair_body: Any = repair_rec.get("body")
-    repair_row: dict[str, Any] = (
-        repair_body[0] if isinstance(repair_body, list) and repair_body and isinstance(repair_body[0], dict) else {}
-    )
-    model_usage_raw: Any = repair_row.get("model_usage")
-    usage: dict[str, Any] = model_usage_raw if isinstance(model_usage_raw, dict) else {}
+    repair_row = _live_latest_repair(base_url, connector_id, calls)
+    _raw_usage = repair_row.get("model_usage")
+    usage: dict[str, Any] = _raw_usage if isinstance(_raw_usage, dict) else {}
     _assert_live(
         calls, "repair proposed by page_to_cursor with 0 tokens",
         repair_row.get("decision") == "propose"
@@ -1146,23 +1266,11 @@ def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         and int(usage.get("small_tokens", 0) or 0) == 0,
         f"latest repair row: {repair_row}",
     )
-    repair_run_id = repair_row.get("id")
-    detail2 = _control_call(base_url, "GET", f"/connectors/{connector_id}")
-    calls.append(detail2)
-    detail2_body = detail2.get("body") if isinstance(detail2.get("body"), dict) else {}
-    releases2 = detail2_body.get("releases") if isinstance(detail2_body, dict) else []
-    candidate_id = None
-    if isinstance(releases2, list):
-        for rel in releases2:
-            if isinstance(rel, dict) and rel.get("provenance_repair_run_id") == repair_run_id:
-                candidate_id = rel.get("id")
+    repair_run_id = str(repair_row.get("id")) if repair_row.get("id") else None
+    first_rung = repair_row.get("ladder_level_reached")
+    candidate_id = _live_candidate_for_repair(base_url, connector_id, repair_run_id, calls)
     if repair_run_id and candidate_id:
-        calls.append(
-            _control_call(
-                base_url, "POST", f"/repairs/{repair_run_id}/approve",
-                {"to_release_id": candidate_id, "connector_id": connector_id},
-            )
-        )
+        _live_approve_repair(base_url, connector_id, repair_run_id, candidate_id, calls)
         resync_result = _step_live_sync_terminal(base_url, connector_id, calls)
         _assert_live(
             calls, "resync Complete after approval", resync_result.get("outcome") == "Complete",
@@ -1170,15 +1278,73 @@ def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         )
     else:
         _assert_live(calls, "candidate release for repair run", False, f"run {repair_run_id}: no candidate release found")
+    knowledge_before = _live_knowledge(base_url, calls)
+    reuses_before = _knowledge_reuses_for_rule(knowledge_before, "page_to_cursor")
+    # Inject-again leg: back to the pre-patch release, same fault, same
+    # vendor+delta — the engine must answer from learned knowledge (L0,
+    # 0 model calls), and /knowledge must show times_reused going up.
+    again: dict[str, Any] = {"l0_hit": False, "rung": None, "reuses_before": reuses_before}
+    if base_release_id:
+        calls.append(
+            _control_call(
+                base_url, "POST",
+                f"/connectors/{connector_id}/releases/{base_release_id}/activate", {},
+            )
+        )
+        calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-atlas", "scenario_id": "page_to_cursor", "seed": seed}))
+        _step_live_sync_terminal(base_url, connector_id, calls)
+        again_row = _live_latest_repair(base_url, connector_id, calls)
+        _raw_again_usage = again_row.get("model_usage")
+        again_usage: dict[str, Any] = _raw_again_usage if isinstance(_raw_again_usage, dict) else {}
+        _assert_live(
+            calls, "inject-again repair reuses the learned patch with 0 tokens",
+            again_row.get("decision") == "propose"
+            and again_row.get("rule_id") == "page_to_cursor"
+            and int(again_usage.get("frontier_tokens", 0) or 0) == 0
+            and int(again_usage.get("small_tokens", 0) or 0) == 0,
+            f"inject-again repair row: {again_row}",
+        )
+        again["rung"] = again_row.get("ladder_level_reached")
+        again["l0_hit"] = again_row.get("ladder_level_reached") == 0
+        _assert_live(
+            calls, "inject-again repair is an L0 knowledge hit",
+            again_row.get("ladder_level_reached") == 0,
+            f"inject-again rung: {again_row.get('ladder_level_reached')} (expected 0): {again_row}",
+        )
+        again_repair_id = str(again_row.get("id")) if again_row.get("id") else None
+        again_candidate = _live_candidate_for_repair(base_url, connector_id, again_repair_id, calls)
+        if again_repair_id and again_candidate:
+            _live_approve_repair(base_url, connector_id, again_repair_id, again_candidate, calls)
+            again_resync = _step_live_sync_terminal(base_url, connector_id, calls)
+            _assert_live(
+                calls, "resync Complete after inject-again approval",
+                again_resync.get("outcome") == "Complete",
+                f"resync outcome {again_resync.get('outcome')}: {again_resync.get('unmet_criteria')}",
+            )
+        else:
+            _assert_live(calls, "candidate release for inject-again run", False, f"run {again_repair_id}: no candidate release found")
+    else:
+        _assert_live(calls, "pre-patch release for the inject-again leg", False, "no base release id recorded after the docs build")
+    knowledge_after = _live_knowledge(base_url, calls)
+    reuses_after = _knowledge_reuses_for_rule(knowledge_after, "page_to_cursor")
+    again["reuses_after"] = reuses_after
+    _assert_live(
+        calls, "times_reused went up after inject-again",
+        reuses_after > reuses_before,
+        f"page_to_cursor reuses before={reuses_before} after={reuses_after}: {knowledge_after.get('entries')}",
+    )
     return {
         "connector_id": connector_id,
+        "spec_vocabulary": "v1",
+        "vocabulary_source": "explicit spec_vocabulary=v1 on the docs build (recorded on the connector profile)",
         "drift_class": drift_row.get("drift_class"),
         "drift_id": drift_row.get("id"),
         "repair_run_id": repair_run_id,
         "rule_id": repair_row.get("rule_id"),
-        "ladder_level_reached": repair_row.get("ladder_level_reached"),
+        "ladder_level_reached": first_rung,
         "model_usage": usage,
         "candidate_release_id": candidate_id,
+        "inject_again": again,
     }
 
 
@@ -1209,7 +1375,8 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         _assert_live(calls, "connector harborpms id", False, "no connector id from ensure calls")
         return {"connector_id": None}
     _step_live_ensure_active_release(
-        base_url, connector_id, "simulators/docs/harborpms.md", calls
+        base_url, connector_id, "simulators/docs/harborpms.md", calls,
+        spec_vocabulary="v1",
     )
     before_drift = _control_call(base_url, "GET", f"/drift?connector_id={connector_id}")
     calls.append(before_drift)
@@ -1769,9 +1936,9 @@ def step7_new_api_style(seed: int, live: bool, base_url: str) -> dict[str, Any]:
     assert isinstance(total, Decimal) and total == Decimal("20.00"), total
 
     calls: list[dict[str, Any]] = []
+    live_evidence: dict[str, Any] = {"mode": "in-process evidence only (no live connector)"}
     if live:
-        # Read-only: show which vocabulary the control plane advertises.
-        calls.append(_control_call(base_url, "GET", "/capabilities"))
+        live_evidence = _step7_live(docs_text, base_url, calls)
     return _finish_step(
         "New API style — Meridian v1 refuses, v2 connects",
         {
@@ -1810,9 +1977,116 @@ def step7_new_api_style(seed: int, live: bool, base_url: str) -> dict[str, Any]:
                 },
             ],
             "why_escalated": "v1 cannot express POST with body auth (deterministic); v2 connects, 0 model calls either half",
+            "live": live_evidence,
         },
         calls,
     )
+
+
+def _step7_live(docs_text: str, base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """Live half of step 7: the same v1-refuses/v2-connects pair through the API.
+
+    The v1 attempt is a refused build (recorded on the connector profile as
+    refused); the v2 build succeeds and becomes the release in use, so the
+    knowledge page lists the Meridian connector under v2 with v1 refused.
+    """
+    ensure_calls = _live_ensure_connector(
+        base_url,
+        {
+            "name": "meridianpms",
+            "vendor_docs_ref": MERIDIAN_DOCS_SOURCE,
+            "base_url": "http://sim-meridian:8000",
+            "credential_ref": "MERIDIAN_CLIENT_TOKEN",
+            "target_entities": ["Reservation", "FolioCharge"],
+        },
+    )
+    calls.extend(ensure_calls)
+    connector_id = _connector_id_from_calls(ensure_calls, "meridianpms")
+    if connector_id is None:
+        _assert_live(calls, "connector meridianpms id", False, "no connector id from ensure calls")
+        return {"connector_id": None}
+    calls.append(_control_call(base_url, "GET", "/capabilities"))
+
+    def _release_ids() -> list[str]:
+        detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
+        calls.append(detail)
+        body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
+        releases = body.get("releases") if isinstance(body, dict) else []
+        if not isinstance(releases, list):
+            return []
+        return [str(r.get("id")) for r in releases if isinstance(r, dict) and r.get("id")]
+
+    releases_before = _release_ids()
+    refused = _live_build_and_poll(
+        base_url, connector_id,
+        {"docs_text": docs_text, "spec_vocabulary": "v1"},
+        calls,
+    )
+    _assert_live(
+        calls, "v1 docs build refused (no release, named reason)",
+        refused.get("success") is False and not refused.get("release_id"),
+        f"v1 build result: {refused}",
+    )
+    reason = str(refused.get("degradation_reason") or "")
+    _assert_live(
+        calls, "v1 refusal names POST and ConnectorSpec v1",
+        "POST" in reason and "ConnectorSpec v1" in reason,
+        f"v1 degradation_reason: {reason!r}",
+    )
+    _assert_live(
+        calls, "refused v1 build persisted no release",
+        _release_ids() == releases_before,
+        "a refused build must not persist a release",
+    )
+    granted = _live_build_and_poll(
+        base_url, connector_id,
+        {"docs_text": docs_text, "spec_vocabulary": "v2"},
+        calls,
+    )
+    _assert_live(
+        calls, "v2 docs build succeeds",
+        granted.get("success") is True,
+        f"v2 build result: {granted}",
+    )
+    release_id = granted.get("release_id")
+    _assert_live(
+        calls, "v2 build persisted a release",
+        isinstance(release_id, str) and bool(release_id),
+        f"v2 build result: {granted}",
+    )
+    # First build auto-activates on a fresh connector; otherwise activate.
+    detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
+    calls.append(detail)
+    detail_body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
+    active_id = detail_body.get("active_release_id") if isinstance(detail_body, dict) else None
+    if isinstance(release_id, str) and release_id and active_id != release_id:
+        calls.append(
+            _control_call(
+                base_url, "POST",
+                f"/connectors/{connector_id}/releases/{release_id}/activate", {},
+            )
+        )
+    knowledge = _live_knowledge(base_url, calls)
+    profile: dict[str, Any] = {}
+    connectors = knowledge.get("connectors")
+    if isinstance(connectors, list):
+        for conn in connectors:
+            if isinstance(conn, dict) and conn.get("name") == "meridianpms":
+                profile = conn
+                break
+    _assert_live(
+        calls, "knowledge lists meridianpms under v2 with v1 refused",
+        profile.get("vocabulary") == "v2" and "v1" in (profile.get("refused_vocabularies") or []),
+        f"meridianpms profile: {profile}",
+    )
+    return {
+        "connector_id": connector_id,
+        "spec_vocabulary_refused": "v1",
+        "refusal_reason": reason,
+        "spec_vocabulary_release": "v2",
+        "release_id": release_id,
+        "knowledge_profile": profile,
+    }
 
 
 def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
@@ -1934,10 +2208,9 @@ def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
     assert replayed["canonical_records"]["FolioCharge"][0]["amount"] == Decimal("12.50")
 
     calls: list[dict[str, Any]] = []
+    live_evidence: dict[str, Any] = {"mode": "in-process evidence only (no live connector)"}
     if live:
-        calls.append(_control_call(base_url, "POST", "/demo/inject-fault",
-                                   {"target": "sim-fias-pabx", "scenario_id": "fias_record_layout_change", "seed": seed}))
-        calls.append(_control_call(base_url, "GET", "/demo/simulators"))
+        live_evidence = _step8_live(seed, base_url, calls)
     return _finish_step(
         "On-premise PABX — firmware layout change repaired, restart loses nothing",
         {
@@ -1965,9 +2238,71 @@ def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
             ],
             "why_escalated": "L0 miss: no known fix for fias+layout delta; "
                              "L1 rename_field matched the handshake delta, 0 model calls",
+            "live": live_evidence,
         },
         calls,
     )
+
+
+def _step8_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """Live half of step 8: the PABX connector exists on the control plane.
+
+    Ensures the on-premise connector and builds the committed FIAS docs with
+    the pinned v3 vocabulary, so the knowledge page lists the PABX connector
+    under v3. The firmware fault itself is injected through the control API
+    (the edge agent drives the repair live; the in-process half above proves
+    the L1 mapping patch and the restart guarantee).
+    """
+    ensure_calls = _live_ensure_connector(
+        base_url,
+        {
+            "name": "PABX edge",
+            "vendor_docs_ref": FIAS_DOCS_SOURCE,
+            "base_url": "edge-relay://queue/fias-commands",
+            "credential_ref": "EDGE_TOKEN",
+            "target_entities": ["FolioCharge"],
+            "runtime_target": {"kind": "edge"},
+        },
+    )
+    calls.extend(ensure_calls)
+    connector_id = _connector_id_from_calls(ensure_calls, "PABX edge")
+    if connector_id is None:
+        _assert_live(calls, "connector PABX edge id", False, "no connector id from ensure calls")
+        return {"connector_id": None}
+    fias_docs = FIAS_DOCS_PATH.read_text(encoding="utf-8")
+    build_result = _live_build_and_poll(
+        base_url, connector_id,
+        {"docs_text": fias_docs, "spec_vocabulary": "v3"},
+        calls,
+    )
+    _assert_live(
+        calls, "PABX docs build with v3",
+        build_result.get("success") is True,
+        f"v3 build result: {build_result}",
+    )
+    calls.append(_control_call(base_url, "POST", "/demo/inject-fault",
+                               {"target": "sim-fias-pabx", "scenario_id": "fias_record_layout_change", "seed": seed}))
+    calls.append(_control_call(base_url, "GET", "/demo/simulators"))
+    knowledge = _live_knowledge(base_url, calls)
+    profile: dict[str, Any] = {}
+    connectors = knowledge.get("connectors")
+    if isinstance(connectors, list):
+        for conn in connectors:
+            if isinstance(conn, dict) and conn.get("name") == "PABX edge":
+                profile = conn
+                break
+    _assert_live(
+        calls, "knowledge lists PABX edge under v3",
+        profile.get("vocabulary") == "v3",
+        f"PABX edge profile: {profile}",
+    )
+    return {
+        "connector_id": connector_id,
+        "spec_vocabulary": "v3",
+        "vocabulary_source": "explicit spec_vocabulary=v3 on the docs build (recorded on the connector profile)",
+        "build_success": build_result.get("success"),
+        "knowledge_profile": profile,
+    }
 
 
 SCENARIOS_DIR = REPO_ROOT / "simulators" / "scenarios"

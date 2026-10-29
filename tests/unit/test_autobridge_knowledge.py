@@ -233,6 +233,44 @@ def test_knowledge_learn_reuse_flow(tmp_path: pathlib.Path) -> None:
         app.dependency_overrides.clear()
 
 
+def test_knowledge_connector_refused_vocabulary(tmp_path: pathlib.Path) -> None:
+    """Owner check 2026-10-29: a refused build shows as refused, the good
+    build as the release in use (Meridian v1-refused / v2-in-use)."""
+    client, factory = _client_for(tmp_path)
+    try:
+        with factory() as s:
+            conn = Connector(
+                name="meridianpms", base_url="http://localhost:8116", credential_ref="MERIDIAN_CLIENT_TOKEN",
+                target_entities=["Reservation"], runtime_target={"kind": "local_process"},
+            )
+            s.add(conn)
+            s.flush()
+            s.add(BuildRun(
+                connector_id=conn.id, state="succeeded",
+                inputs={"spec_vocabulary": "v1", "docs_text": "x"},
+                ladder_trace=[{"stage": "vocabulary_guard", "reason": "needs POST"}],
+                model_usage={},
+                result={"success": False, "degradation_reason": "needs POST"},
+            ))
+            s.add(BuildRun(
+                connector_id=conn.id, state="succeeded",
+                inputs={"spec_vocabulary": "v2", "docs_text": "x"},
+                ladder_trace=[],
+                model_usage={},
+                result={"success": True},
+            ))
+            s.commit()
+        r = client.get("/knowledge")
+        assert r.status_code == 200, r.text
+        connectors = r.json()["connectors"]
+        assert len(connectors) == 1
+        assert connectors[0]["name"] == "meridianpms"
+        assert connectors[0]["vocabulary"] == "v2"
+        assert connectors[0]["refused_vocabularies"] == ["v1"]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_knowledge_connector_profile(tmp_path: pathlib.Path) -> None:
     client, factory = _client_for(tmp_path)
     try:

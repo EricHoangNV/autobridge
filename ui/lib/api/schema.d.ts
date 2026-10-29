@@ -1542,6 +1542,8 @@ export interface components {
              * @default
              */
             name: string;
+            /** Refused Vocabularies */
+            refused_vocabularies?: string[];
             /**
              * Vocabulary
              * @default

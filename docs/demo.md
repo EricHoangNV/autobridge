@@ -60,15 +60,26 @@ The Harbor quirks this exercises: wrong pagination example in the docs, opaque
 
 ## 3. Zero-token recovery — `page_to_cursor`
 
-Inject the pagination drift, watch L1 fix it with no frontier model call.
+Live, every input comes from the engine: the docs build pins
+`spec_vocabulary: v1`, the baseline sync is `Complete`, the faulted sync is
+detected by the detector (wire signals only), the controller proposes the
+`page_to_cursor` rule at L1 with 0 model calls, approval activates the
+candidate, and the resync is `Complete`. Then the inject-again leg reactivates
+the pre-patch release, injects the same fault, and the engine answers from
+learned knowledge (L0, 0 model calls) — `/knowledge` shows `times_reused`
+going up.
 
 ```
+POST /connectors                       { name: atlaspms, base_url: http://sim-atlas:8000, … }
+POST /connectors/{atlas_id}/build      { docs_text, spec_vocabulary: v1 } → release (page pagination)
+POST /connectors/{atlas_id}/sync       → SyncRun Complete (baseline)
 POST /demo/inject-fault                { target: sim-atlas, scenario_id: page_to_cursor, seed }
-POST /connectors/{atlas_id}/sync       → SyncRun Degraded (or Blocked), unmet: [pagination_shape],
-                                         fingerprint changed, DriftEvent PAGINATION_CHANGE
-POST /repairs (auto) or ladder         → L0 miss → L1 rule pagination_strategy_swap → JSON Patch diff
-POST /verify { spec, scenario_id }     → verdict pass (visible), regression pass
-POST /repairs/{id}/approve             → new release activated; canary green
+POST /connectors/{atlas_id}/sync       → DriftEvent PAGINATION_CHANGE (detector, wire signals only)
+GET  /repairs?connector_id=…           → L0 miss → L1 rule page_to_cursor, frontier_tokens 0, small_tokens 0
+POST /repairs/{id}/approve             → candidate release activated; resync Complete
+POST /connectors/{id}/releases/{base}/activate + inject + sync
+                                       → L0 knowledge hit (same rule, 0 tokens); approve; resync Complete
+GET  /knowledge                        → page_to_cursor entry times_reused 1; atlaspms under vocabulary v1
 GET  /metrics/model-usage?run_id=…     → frontier_tokens 0 (L0/L1 only)
 ```
 
@@ -146,6 +157,8 @@ Renders in the simulators index (live up/down, active fault, connectors using
 the PABX) and in `/repairs/[id]` (handshake evidence, ladder badges L0→L1, old/
 new mapping diff, verifier verdict). Money stays `Decimal` throughout; the agent
 ACKs the PABX after a durable local write, so the link never stalls on the cloud.
+Live, step 8 also builds the committed FIAS docs through the control API with
+`spec_vocabulary: v3`, so `/knowledge` lists the `PABX edge` connector under v3.
 ```
 
 ## 7. New API style — Meridian refuses safely, then connects (REQ-020)
@@ -175,7 +188,10 @@ Renders wherever builds surface, with the vocabulary each half used (`v1` /
 `v2`) beside the evidence. The refusal is deterministic — detecting "needs
 POST with body auth" costs nothing — so the demo never pretends the v2
 vocabulary does not exist: the before half stays repeatable forever after v2
-ships (REQ-021 item 2).
+ships (REQ-021 item 2). Live, step 7 drives both halves through the control
+API on one `meridianpms` connector (the v1 attempt is a refused build, the v2
+build becomes the release in use), so `/knowledge` lists it under v2 with v1
+refused.
 
 ## Fault-scenario catalogue (REQ-023)
 

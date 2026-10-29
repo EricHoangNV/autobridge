@@ -275,62 +275,136 @@ def test_step6_signatures_match_build_reports() -> None:
 
 def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
     seen: list[tuple[str, str]] = []
+    # Stateful stub stack: connectors with builds/releases, atlas repairs
+    # that reuse the learned patch at L0 on the inject-again leg, and a
+    # /knowledge view derived from the same rows.
+    connectors: dict[str, dict[str, Any]] = {}
+    jobs: dict[str, dict[str, Any]] = {}
+    counters = {"job": 0, "rel": 0}
+    atlas_injects = {"n": 0}
+    atlas_repairs: list[dict[str, Any]] = []
+
+    def _connector_id(name: str) -> str:
+        return f"c-{name.lower().replace(' ', '-')}"
+
+    def _new_release(conn: dict[str, Any], provenance: str | None = None) -> dict[str, Any]:
+        counters["rel"] += 1
+        rel: dict[str, Any] = {"id": f"r-{counters['rel']}"}
+        if provenance:
+            rel["provenance_repair_run_id"] = provenance
+        conn["releases"].append(rel)
+        if conn["active_release_id"] is None:
+            conn["active_release_id"] = rel["id"]
+        return rel
 
     def fake_call(base_url: str, method: str, path: str, _payload: dict[str, Any] | None = None) -> dict[str, Any]:
         seen.append((method, path))
         assert "localhost:9" not in base_url  # uses the passed base
         if path == "/connectors" and method == "GET":
-            return {"method": method, "path": path, "status": 200, "body": {"connectors": []}}
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"connectors": [{"id": c["id"], "name": c["name"]} for c in connectors.values()]}}
         if path == "/connectors" and method == "POST":
-            return {"method": method, "path": path, "status": 201, "body": {"id": "c-1", "name": (_payload or {}).get("name")}}
+            payload = _payload or {}
+            conn = {"id": _connector_id(str(payload.get("name", "x"))), "name": str(payload.get("name", "x")),
+                    "base_url": str(payload.get("base_url", "")), "active_release_id": None,
+                    "releases": [], "builds": []}
+            connectors[conn["name"]] = conn
+            return {"method": method, "path": path, "status": 201, "body": {"id": conn["id"], "name": conn["name"]}}
         if path.endswith("/build") and method == "POST":
-            return {
-                "method": method, "path": path, "status": 200,
-                "body": {"job_id": "j-build", "build_run_id": "b-1", "state": "queued", "connector_id": "c-1"},
-            }
+            cid = path.split("/")[2]
+            conn = next((c for c in connectors.values() if c["id"] == cid), None)
+            assert conn is not None, f"unknown connector {cid}"
+            payload = _payload or {}
+            vocab = str(payload.get("spec_vocabulary") or "")
+            counters["job"] += 1
+            jid = f"j-build-{counters['job']}"
+            if conn["name"] == "meridianpms" and vocab == "v1":
+                conn["builds"].append({"spec_vocabulary": "v1", "success": False})
+                jobs[jid] = {"success": False, "release_id": None,
+                             "degradation_reason": "operations need POST with a JSON body and body-field auth; not expressible in ConnectorSpec v1"}
+            else:
+                conn["builds"].append({"spec_vocabulary": vocab or "v1", "success": True})
+                rel = _new_release(conn)
+                jobs[jid] = {"success": True, "release_id": rel["id"], "connector_id": cid}
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"job_id": jid, "build_run_id": "b-1", "state": "queued", "connector_id": cid}}
         if path.endswith("/sync") and method == "POST":
-            return {
-                "method": method, "path": path, "status": 200,
-                "body": {"job_id": "j-sync", "sync_run_id": None, "state": "queued", "release_id": "r-1"},
-            }
+            counters["job"] += 1
+            jid = f"j-sync-{counters['job']}"
+            jobs[jid] = {"sync_run_id": f"s-{counters['job']}", "outcome": "Complete", "unmet_criteria": []}
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"job_id": jid, "sync_run_id": None, "state": "queued", "release_id": "r-1"}}
         if path.startswith("/jobs/"):
-            result: dict[str, Any] = {}
-            if "j-sync" in path:
-                result = {"sync_run_id": "s-1", "outcome": "Complete", "unmet_criteria": []}
-            return {
-                "method": method, "path": path, "status": 200,
-                "body": {"id": "j", "kind": "sync", "state": "succeeded", "attempts": 1,
-                         "max_attempts": 3, "result": result},
-            }
+            jid = path.split("/")[2]
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"id": jid, "kind": "sync", "state": "succeeded", "attempts": 1,
+                             "max_attempts": 3, "result": jobs.get(jid, {})}}
+        if path == "/demo/inject-fault" and method == "POST":
+            if (_payload or {}).get("target") == "sim-atlas":
+                atlas_injects["n"] += 1
+            return {"method": method, "path": path, "status": 200, "body": {"ok": True}}
         if path.startswith("/drift"):
-            return {
-                "method": method, "path": path, "status": 200,
-                "body": [{"id": "d-1", "connector_id": "c-1", "drift_class": "PAGINATION_CHANGE",
-                          "severity": "high", "evidence_ids": [], "source_sync_run_id": "s-1",
-                          "status": "open"}],
-            }
+            query = path.split("connector_id=")[-1] if "connector_id=" in path else ""
+            conn = next((c for c in connectors.values() if c["id"] == query), None)
+            if conn is not None and conn["name"] == "atlaspms" and atlas_injects["n"] > 0:
+                return {"method": method, "path": path, "status": 200,
+                        "body": [{"id": "d-1", "connector_id": conn["id"], "drift_class": "PAGINATION_CHANGE",
+                                  "severity": "high", "evidence_ids": [], "source_sync_run_id": "s-1",
+                                  "status": "open"}]}
+            return {"method": method, "path": path, "status": 200, "body": []}
         if path.startswith("/repairs"):
             if method == "POST":
-                return {
-                    "method": method, "path": path, "status": 200,
-                    "body": {"id": "ap-1", "repair_run_id": "rr-1", "actor": "demo",
-                             "decision": "approve", "to_release_id": "rel-c"},
-                }
-            return {
-                "method": method, "path": path, "status": 200,
-                "body": [{"id": "rr-1", "drift_event_ids": ["d-1"], "ladder_level_reached": 1,
-                          "rule_id": "page_to_cursor", "decision": "propose",
-                          "model_usage": {"frontier_tokens": 0, "small_tokens": 0, "calls": 0}}],
-            }
+                rid = path.split("/")[2]
+                conn = next((c for c in connectors.values() if c["name"] == "atlaspms"), None)
+                assert conn is not None
+                rel = _new_release(conn, provenance=rid)
+                conn["active_release_id"] = rel["id"]
+                return {"method": method, "path": path, "status": 200,
+                        "body": {"id": "ap-1", "repair_run_id": rid, "actor": "demo",
+                                 "decision": "approve", "to_release_id": rel["id"]}}
+            query = path.split("connector_id=")[-1] if "connector_id=" in path else ""
+            conn = next((c for c in connectors.values() if c["id"] == query), None)
+            if conn is not None and conn["name"] == "atlaspms":
+                while len(atlas_repairs) < atlas_injects["n"]:
+                    rid = f"rr-{len(atlas_repairs) + 1}"
+                    atlas_repairs.append({
+                        "id": rid, "drift_event_ids": ["d-1"],
+                        "ladder_level_reached": 0 if atlas_repairs else 1,
+                        "rule_id": "page_to_cursor", "decision": "propose",
+                        "model_usage": {"frontier_tokens": 0, "small_tokens": 0, "calls": 0}})
+                    # The engine persists the candidate release at repair time.
+                    counters["rel"] += 1
+                    conn["releases"].append({"id": f"rel-{rid}", "provenance_repair_run_id": rid})
+                return {"method": method, "path": path, "status": 200, "body": list(reversed(atlas_repairs))}
+            return {"method": method, "path": path, "status": 200, "body": []}
         if path.startswith("/connectors/"):
-            return {
-                "method": method, "path": path, "status": 200,
-                "body": {"id": "c-1", "name": "atlaspms", "base_url": "http://sim-atlas:8000",
-                         "active_release_id": "r-1",
-                         "releases": [{"id": "r-1"},
-                                      {"id": "rel-c", "provenance_repair_run_id": "rr-1"}]},
-            }
-        return {"method": method, "path": path, "status": 200, "body": {"ok": True}}
+            parts = path.split("/")
+            cid = parts[2] if len(parts) > 2 else ""
+            conn = next((c for c in connectors.values() if c["id"] == cid), None)
+            assert conn is not None, f"unknown connector path {path}"
+            if len(parts) == 5 and parts[4] == "activate" and method == "POST":
+                rid = parts[3]
+                assert any(r["id"] == rid for r in conn["releases"]), f"unknown release {rid}"
+                conn["active_release_id"] = rid
+                return {"method": method, "path": path, "status": 200, "body": {"ok": True}}
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"id": conn["id"], "name": conn["name"], "base_url": conn["base_url"],
+                             "active_release_id": conn["active_release_id"], "releases": conn["releases"]}}
+        if path == "/knowledge" and method == "GET":
+            entries: list[dict[str, Any]] = []
+            if atlas_repairs:
+                entries.append({"vendor": "atlaspms", "rule_id": "page_to_cursor",
+                                "drift_class": "PAGINATION_CHANGE", "drift_signature": "s", "patch": [],
+                                "learned_from": {"run_id": atlas_repairs[0]["id"]}, "times_reused": len(atlas_repairs) - 1})
+            conns = [{"connector_id": c["id"], "name": c["name"],
+                      "vocabulary": next((b["spec_vocabulary"] for b in reversed(c["builds"]) if b["success"]), ""),
+                      "refused_vocabularies": [b["spec_vocabulary"] for b in c["builds"] if not b["success"]],
+                      "builds": len(c["builds"])} for c in connectors.values()]
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"entries": entries, "connectors": conns,
+                             "counts": {"entries": len(entries),
+                                        "reuses": sum(e["times_reused"] for e in entries), "tokens_saved": 0}}}
+        return {"method": method, "path": path, "status": 200, "body": {"ok": True, "total": 0}}
 
     monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
     monkeypatch.setattr(demo_mod, "_control_call", fake_call)
@@ -351,6 +425,20 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
     assert any(p.endswith("/sync") for _, p in seen)
     assert any(p.startswith("/jobs/") for _, p in seen)
     assert any(p.startswith("/repairs") for _, p in seen)
+    assert any(p == "/knowledge" for _, p in seen)
+    # Step 3's inject-again leg reuses the learned patch at L0 with 0 model
+    # calls; /knowledge shows times_reused going up.
+    step3 = report["steps"][2]
+    again = step3["evidence"]["live"]["inject_again"]
+    assert again["l0_hit"] is True and again["rung"] == 0, again
+    assert again["reuses_after"] == 1 and again["reuses_before"] == 0, again
+    # Step 7 records the refused v1 build and the v2 release in use.
+    step7 = report["steps"][6]
+    profile7 = step7["evidence"]["live"]["knowledge_profile"]
+    assert profile7["vocabulary"] == "v2" and profile7["refused_vocabularies"] == ["v1"], profile7
+    # Step 8 lists the PABX connector under v3.
+    step8 = report["steps"][7]
+    assert step8["evidence"]["live"]["knowledge_profile"]["vocabulary"] == "v3"
 
 
 def test_live_scorecard_total_recorded(monkeypatch: Any) -> None:

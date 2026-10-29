@@ -495,6 +495,7 @@ class KnowledgeConnectorOut(BaseModel):
     connector_id: str
     name: str = ""
     vocabulary: str = ""
+    refused_vocabularies: list[str] = Field(default_factory=list)
     builds: int = 0
     confirmed_hypotheses: list[str] = Field(default_factory=list)
     last_built_at: UtcDatetime | None = None
