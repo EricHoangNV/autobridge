@@ -3267,3 +3267,23 @@ Gotchas: restarting the stack mid-task is required after engine/sim/catalog edit
 **Notes for next iteration:**
 - Remaining for REQ-025: rehearsals 4-5 (any past rounds, same command), live frontier numbers (needs `FRONTIER_API_KEY`), the real frozen run (owner, `make beacon-eval`).
 - Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+## REQ-025 rehearsals 4-5 (rounds 6594434, 6594314)
+**Date:** 2026-10-29
+**Ref:** REQ-025 item 6 (rehearsals on past rounds; 5/5 now recorded)
+
+**What was done:**
+- Stack was stale-down (`local-up` refused, readyz dark); `make local-down` (stale pids) + `make local-up`, all services readyz green — same as rehearsal 3.
+- Rehearsal 4 `make bench-beacon REHEARSE=6594434` (~1h-old round, verified LoE mainnet chain 8990e7a9…, eval_seed 59999637…): 10 instances (atlas pagination/rename, harbor semantic/pagination, legacystay rename/code_list, meridian code_list x2, fias-pabx layout x2), 50 grades.
+- Rehearsal 5 `make bench-beacon REHEARSE=6594314` (~2h-old round, eval_seed 42ec339d…): 10 instances incl. transport_auth, semantic, nesting, fias_link; 50 grades.
+- verify-repro byte-match on both (`--output-dir experiments/beacon/rehearsals/<round>`: "10 instances match the published set"). Note: `make verify-beacon ROUND=` looks under `experiments/beacon/<round>/` and fails for rehearsals; the `--output-dir` form is the rehearsal path (same gap as rehearsal 3, worth a Makefile note later).
+
+**Results (honest, losses as-is):**
+- R4: every arm V=0.0 E=0.0. No escalate-expected instance in this draw (all 10 repair-expected). New signature vs R1-R3: cold+warm record wrong_patch_released=2 — legacystay rename (folio.posted_at→postingDate) and harbor offset pagination (maxResults/from) sync Complete with patch=False but records fail (silent-shape loss: sync claims success, data wrong). engine_no_knowledge Blocked on both (wrong=0); frontier arms Blocked everywhere. 0 frontier tokens on engine arms.
+- R5: every arm V=0.1 E=0.1, wrong=0 — legacystay transport_auth escalate scores on all arms; other 9 repair-expected end Blocked. Same signature as R1-R3.
+- 5-rehearsal range: engine cold V in {0.0, 0.1, 0.2}, E in {0.0, 0.1, 0.2}, wrong in {0, 2}; 0 frontier tokens throughout (no key); frontier_agent 30 fake tokens every run.
+
+**Notes for next iteration:**
+- R4's false-Complete is the first wrong>0 in 5 rehearsals and the inverse of the REQ-028 item-2 shape (there warm<cold via L0 replay; here cold==warm but both worse than no_knowledge on 2 instances). Do NOT tune mid-rehearsal; flagged as a candidate REQ-028 follow-up after the owner keyed rerun (built-in knowledge turning a silent rename/truncation into Complete instead of Blocked/degraded).
+- Remaining for REQ-025: live frontier numbers (needs `FRONTIER_API_KEY`), the real frozen run (owner, `make beacon-eval`). Rehearsal quota (5+) met.
+- Agent: opencode meta/muse-spark-1.3-contributor (escalation)
