@@ -2,6 +2,31 @@
 
 ## Open Requests (read this section only)
 
+Owner priority (2026-10-30 03:40): **REQ-039 next**, before anything else.
+
+### REQ-039 — The live semantic break must run the real climb: funnel and the model call on the repair page (2026-10-30)
+Status: OPEN
+Owner check on 0d294693: Harbor now seeds from its reference release and `make demo-break SCENARIO=gross_to_net
+TARGET=harbor` goes `Degraded → SEMANTIC_VALUE_DRIFT → escalate → error` live: good. But the live repair escalates
+deterministically (L0 miss → L1 no rule → **L4**, **0 model calls**, no hypothesis funnel), and `bench/demo.py`
+`_step4_live` now *asserts* "live engine repair costs 0 model calls (frontier lives in the instrumented climb)". The
+funnel and the model call exist only in the instrumented in-process climb recorded via `record-climb`. On camera
+that means the repair the break produced shows 0 calls and no funnel, and a second, recorded repair carries the
+story: exactly the stand-in the plan rejected. The deck-5 scenario is: break → the engine's own climb → funnel
+(24 → 6 → 2 → 1) → L2 skipped (one explanation) → **L3 frontier call (live with `FRONTIER_API_KEY`, replay recording
+otherwise)** → proposal rejected by the verifier → operator question → `error`.
+Fix: the scheduler/worker repair path for a `SEMANTIC_VALUE_DRIFT` runs the same semantic climb the in-process path
+runs (`RepairController._handle_semantic_climb`: hypothesis enumeration from the wire signals and spec, wire filter,
+L2 when ≥ 2, L3 through the frontier provider and budget when < 2, verifier on the proposal, escalation question),
+with the provider resolved the same way (`resolve_frontier_provider`: live key → live; recording → replay labelled
+with its capture date; neither → L3 "skipped: no provider", stated on the page). The live repair row carries the
+derivation, the model call(s) and the rejected proposal. Remove the "0 model calls" assertion from `_step4_live`;
+assert instead that the repair produced by the break has the funnel and exactly one L3 attempt (live or replay).
+`record-climb` stays only as the documented fallback when there is no key and no recording, and is never used by the
+UI journey when either exists. Update `test_08_recording_journey` (semantic leg asserts from the break) and the
+README/docs wording. Gates: `make test`, keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make
+demo` green.
+
 Owner priority (2026-10-29 18:40): **REQ-030 → REQ-031 → REQ-032 → REQ-033** (the UI-first demo), after the findings of
 the Muse Wonder audit and the owner's external audit are fixed, and **before** the benchmark rounds (the scheduler
 touches the sync/repair path the benchmark measures).
