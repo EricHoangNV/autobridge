@@ -74,6 +74,16 @@ call, rejected proposal, operator question) → Harbor `error` happens live, and
 the break, not from `record-climb` rows (keep `record-climb` only as the documented no-key fallback). Atlas may stay
 docs-built.
 
+**Owner check (2026-10-30, from the REQ-033 iteration's findings): fix the reset/seed-vs-scheduler race, don't retry
+around it.** The REQ-033 iteration found `make demo-seed` failing intermittently after `demo-reset`, and stray
+("scar") drift rows appearing ~10 s after a break before any approval. Both come from the sync scheduler running
+during reset/seed (and possibly the verifier gate's regression syncs against a still-faulted simulator writing drift
+rows). A retry in the seed only hides it; on camera a take must start clean every time. Fix the cause: the scheduler
+pauses while `demo-reset` / `demo-seed` / `demo-heal` run (an explicit pause/resume or a lock the scheduler honours),
+reset waits for any in-flight sync to finish, and gate-internal syncs never create drift or repair rows. Acceptance:
+`make demo-reset && make demo-seed` green 20 times in a row with the scheduler on and no retry; after one
+`make demo-break`, exactly one drift and one repair appear for that connector.
+
 ### REQ-032 — UI-first demo, part C: live states and a repair page that explains itself (2026-10-29)
 Status: DONE (sbx1 2026-10-29) — code + docs + full gates green unkeyed (see BUILD-NOTES); keyed re-run (make local-up && make e2e && make demo) is the owner step. Next: REQ-033.
 Depends on REQ-030.
