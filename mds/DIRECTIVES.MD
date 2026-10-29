@@ -34,7 +34,7 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 
 ## 1. Spec and repairs (plan §1.1, §2.4, §2.5)
 
-- A `ConnectorSpec` validates against `schemas/connector-spec.v1.json` before it is stored, executed or patched; invalid specs are rejected with path-level errors (`src/autobridge/spec/models.py`).
+- A `ConnectorSpec` validates against `schemas/connector-spec.v3.json` (v1 and v2 documents still validate and behave exactly as before); v2/v3-only constructs are gated by vocabulary (`src/autobridge/spec/models.py`, `schemas/connector-spec.v{1,2,3}.json`). Invalid specs are rejected with path-level errors.
 - The transform set is closed: `date_local`, `datetime_utc`, `money`, `enum_map`, `flatten`, `coalesce`, `const`, `concat`, `business_date` (`src/autobridge/runtime/transforms/`). Adding one is a plan change, not a task-level decision.
 - A repair is a JSON Patch (`src/autobridge/spec/patch.py`): applied to a copy, validated against the schema, diffable, reversible. No rule or model ever writes Python.
 - Each deterministic rule in `src/autobridge/repair/rules/` is one module with a precondition, a patch generator, a confidence and a required verification level, and has unit tests for precondition true/false and patch shape.
@@ -47,7 +47,8 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 
 - `src/autobridge` never imports `verifier` or `simulators`; `verifier/` and `simulators/` never import `autobridge`. Sanctioned exception: `verifier/` may import the shared simulator data-generator code — `simulators/common/` (generator, faults) and `simulators/scenarios/` (catalog) — and nothing else under `simulators/` (checked by import-linter contracts in `pyproject.toml` and `tests/unit/test_autobridge_trust_boundaries.py`).
 - `bench/` (top-level harness, outside `src/autobridge`) imports the engine like the tests do and may drive simulator serving code — but never imports `verifier` (grading is HTTP-only; checked by `test_bench_never_imports_verifier` and `test_engine_never_imports_bench`).
-- Docker networks: `engine-net`, `vendor-net`, `verifier-net`, `admin-net` as in plan §2.1. The worker and `runtime-sandbox` have no route to the verifier's fixture volume; the simulator admin API (`simulators/common/admin.py`) is an authorization boundary, not a no-route one — vendor-net peers may reach `sim-*:8001` but writes need `SIM_ADMIN_TOKEN` (`X-Admin-Token`, non-empty demo default); the UI never calls simulators or the verifier directly. `make smoke` (`scripts/smoke.sh`) asserts the negative checks, failing only when an unauthorized admin access is accepted.
+- Docker networks (`compose.yaml`): `engine-net`, `vendor-net`, `verifier-net`, `admin-net`, plus `edge-net` for the FIAS data plane; `bench` attaches to `verifier-net` only. The worker and `runtime-sandbox` have no route to the verifier's fixture volume or to `edge-net`; FIAS admin goes through the `sim-fias-pabx-admin` sidecar (admin-net alias only).
+- The simulator admin API (`simulators/common/admin.py`) is an authorization boundary, not a no-route one — vendor-net peers may reach `sim-*:8001` but writes need `SIM_ADMIN_TOKEN` (`X-Admin-Token`, non-empty demo default); the UI never calls simulators or the verifier directly. `make smoke` (`scripts/smoke.sh`) asserts the negative checks, failing only when an unauthorized admin access is accepted.
 - The verifier API returns aggregate verdicts only (`verdict, score, failed_checks` as bounded names + counts, `regression`): never fixture rows (response-schema test, `verifier/`).
 - `verifier/hidden_cases/heldout/` is frozen at the end of W2 with its sha256 manifest committed; it is opened only for the final benchmark run (`make bench` checks the sha first).
 - Fault injection from the UI goes through `POST /demo/inject-fault` on `control`, which proxies to the simulator admin API; nothing else reaches `admin-net`.
@@ -58,7 +59,7 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 
 - Every model call goes through `LLMProvider.complete` (`src/autobridge/llm/provider.py`) wrapped by `Budget`; `BudgetExhausted` escalates to L4, never a silent retry. Model ids live in config, not code.
 - The ladder stops at the first level whose patch passes visible tests; the verifier decides acceptance; a rejected patch gets at most one bounded retry at the next level, then escalation (`src/autobridge/repair/ladder.py`).
-- L3 is invoked only when the `HypothesisEnumerator` yields fewer than two hypotheses (asserted in tests). Every hypothesis links to at least one evidence record.
+- L3 is invoked only when the surviving-hypothesis count after wire filtering is fewer than two — the `enumerator_yield_count` passed to `run_frontier_climb` (`src/autobridge/repair/ladder.py`); `RepairController` derives it as `len()` of the hypotheses passed in, never a default (`src/autobridge/repair/controller.py`, asserted in tests). Every hypothesis links to at least one evidence record.
 - Prompts carry only redacted docs and responses as untrusted data blocks; tool permissions are enforced in code, not in the prompt.
 
 ---
@@ -86,14 +87,14 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 
 - A spec names credentials by `credential_ref` (an env key name); the value is read at runtime from the environment and never written to a spec, release, evidence record, log, prompt or API response. A test replays a full run's event stream and asserts no credential value appears.
 - Every probe, observation, hypothesis, decision, patch, verification and approval is an `EvidenceRecord` with `parent_ids[]` (`src/autobridge/evidence/`); the dashboard renders stored records, never narrated text.
-- `.env` is git-ignored; `.env.example` lists every secret with an empty value.
+- `.env` is git-ignored; `.env.example` leaves real secrets empty, while simulator demo values (`ATLAS_API_KEY=sim-demo-key`, `MERIDIAN_*`, the `SIM_ADMIN_TOKEN` demo default) are labelled non-secrets (`.env.example`, `scripts/local-up.sh`, `compose.yaml`).
 
 ---
 
 ## 7. Control API and UI (plan §2.11, §4 W7)
 
 - The API surface is the list in plan §2.11; OpenAPI is the contract (schemathesis tests). The UI client in `ui/lib/api` is generated with `openapi-typescript` and must compile against the live schema; never hand-write API types in `ui/`.
-- The UI is four screens, capped at ~15% of effort; `/connectors/new` folds into `/connectors` and detail merges with repair if the engine workstreams slip. "Inject Fault" lives only in a clearly labelled demo drawer.
+- The UI is eight routes (`ui/app/`): `/`, `/connectors`, `/connectors/new`, `/connectors/[id]`, `/repairs`, `/repairs/[id]`, `/knowledge`, `/simulators`; capped at ~15% of effort. "Inject Fault" lives only in a clearly labelled demo drawer.
 
 ---
 

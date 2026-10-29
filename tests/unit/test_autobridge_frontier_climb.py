@@ -535,3 +535,74 @@ def test_tapping_provider_records_reasoning_tokens() -> None:
     tap.complete([{"role": "user", "content": "hi"}], tier="frontier", purpose="p")
     key = prompt_hash([{"role": "user", "content": "hi"}])
     assert tap.recordings[key]["reasoning_tokens"] == 15
+
+
+# ---------------------------------------------------------------------------
+# AR-4-3 / REQ-036: the controller derives the L3 gate count
+# ---------------------------------------------------------------------------
+
+
+def test_controller_derives_l3_gate_count_from_surviving_hypotheses() -> None:
+    """`RepairController.handle` without an explicit count passes
+    ``len(surviving hypotheses)`` to the climb — never a default 1 — and the
+    L3 rung reason names that counted number."""
+    from autobridge.repair.controller import RepairController
+
+    ctrl = RepairController(knowledge_cache=KnowledgeCache())
+    fake = FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(4, 4)
+            ),
+            "frontier": Completion(text="not json{{{", usage=Usage(10, 10)),
+        }
+    )
+    # Two surviving hypotheses, no explicit count: L2 ranks (unconfident at
+    # 0.41), then L3 is skipped by the gate naming the counted 2.
+    res = ctrl.handle(
+        spec=_spec(),
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=None,
+        provider=fake,
+        budget=Budget(),
+        fingerprint_delta=_delta(),
+        vendor="harbor",
+    )
+    assert res.decision == "escalate"
+    l3 = next(t for t in res.ladder_trace if t.get("level") == 3)
+    assert l3["action"] == "l3_skipped"
+    assert "enumerator yielded 2 >= 2" in l3["reason"], l3["reason"]
+    assert int(res.model_usage.get("frontier_tokens", 0)) == 0
+
+    # One surviving hypothesis, no explicit count: L2 is skipped and L3 is
+    # invoked by the gate naming the counted 1.
+    hyps = gross_net_hypotheses()
+    res1 = ctrl.handle(
+        spec=_spec(),
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=[hyps[0]],
+        enumerator_yield_count=None,
+        provider=fake,
+        budget=Budget(),
+        fingerprint_delta=_delta(),
+        vendor="harbor",
+    )
+    l3_1 = next(t for t in res1.ladder_trace if t.get("level") == 3)
+    assert "enumerator yielded 1 < 2" in l3_1["reason"], l3_1["reason"]
+    assert int(res1.model_usage.get("frontier_tokens", 0)) > 0
+
+    # An explicit caller count still wins over the derived one.
+    res2 = ctrl.handle(
+        spec=_spec(),
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=[hyps[0]],
+        enumerator_yield_count=5,
+        provider=fake,
+        budget=Budget(),
+        fingerprint_delta=_delta(),
+        vendor="harbor",
+    )
+    l3_2 = next(t for t in res2.ladder_trace if t.get("level") == 3)
+    assert l3_2["action"] == "l3_skipped"
+    assert "enumerator yielded 5 >= 2" in l3_2["reason"], l3_2["reason"]

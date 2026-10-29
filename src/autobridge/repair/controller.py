@@ -242,11 +242,18 @@ class RepairController:
         from autobridge.repair.ladder import run_frontier_climb  # noqa: PLC0415
 
         active_run_id = run_id or f"repair-{_uuid.uuid4().hex[:12]}"
+        # AR-4-3 / REQ-036: never fabricate the L3 gate count. The gate on
+        # L3 is the enumerator's yield — the surviving hypotheses after wire
+        # filtering — so derive it from the hypotheses actually passed in.
+        # An explicit caller count still wins.
+        surviving = list(hypotheses or [])
+        if enumerator_yield_count is None:
+            enumerator_yield_count = len(surviving)
         climb = run_frontier_climb(
             spec=spec,
             drift_class=drift_class,
-            hypotheses=list(hypotheses or []),
-            enumerator_yield_count=1 if enumerator_yield_count is None else enumerator_yield_count,
+            hypotheses=surviving,
+            enumerator_yield_count=enumerator_yield_count,
             provider=provider,
             budget=budget,
             session=session,
