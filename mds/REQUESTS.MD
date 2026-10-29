@@ -7,7 +7,7 @@ the Muse Wonder audit and the owner's external audit are fixed, and **before** t
 touches the sync/repair path the benchmark measures).
 
 ### REQ-030 — UI-first demo, part A: sync scheduler, every step persisted, connector state (2026-10-29)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-29 13:02)
 Plan: the owner's reviewed plan (summarised here; this text is the spec). **Recording flow:** browser on the left
 (UI `localhost:8107`), terminal on the right. Every connector shows Working; the presenter runs one command per
 scenario; the UI reacts by itself (state changes, drift and repair appear with all details); **the presenter clicks
