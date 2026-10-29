@@ -7,7 +7,7 @@ Owner priority (2026-10-29 10:40, supersedes the list below): **REQ-027 first.**
 describe the REQ-027 demo, so finish REQ-023 after REQ-027 lands (or update it then).
 
 ### REQ-027 — Auto-detect + auto-heal end to end on the live stack, and a demo that proves it (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 03:31; sub-steps 1-3 MERGED 2026-10-29, sub-step 4 demo steps next)
+Status: IN_PROGRESS (sbx1 since 2026-10-29 03:31; sub-steps 1-3 MERGED 2026-10-29, sub-step 4 demo steps next) **Open: owner check after sub-step 3 (below), do it before sub-step 4.**
 Why: it is the product's headline claim and today only FIAS (demo step 8) shows it. Owner checks on the host
 (2026-10-29, main at f61274b8, keyed local stack):
 - After REQ-024's honest fix (a62013dc) every engine arm escalates with 0 fixes: the detector output does not carry
@@ -49,6 +49,28 @@ model-usage table), then REQ-020 step 7 → REQ-022 (with REQ-026, the per-test 
 Do these before any remaining review FAIL item. Constraint for all of them: someone who downloads the repo may have no
 Docker and no sandbox; the demo must still run on their machine (REQ-017), and nothing here may assume Docker is
 present.
+
+**Owner check after sub-step 3 (2026-10-29, on 6eb0b785): the chain works in-process, not yet through the stack.**
+The sub-step's proof (`tests/unit/test_autobridge_detect_repair.py`, the iteration's checks) uses the Atlas
+*reference* spec against an in-process faulted client. Owner ran the real path on the keyed local stack through the
+control API: `POST /demo/reset` → `POST /connectors` (atlas, `base_url http://localhost:8105`) → `POST
+/connectors/{id}/build {"docs_path":"simulators/docs/atlas-openapi.yaml"}` (auto-activated) → `POST /sync`:
+1. **Baseline sync is `Blocked: http_error`; the simulator log shows no request at all.** The built release spec has
+   `source.base_url: "${ATLAS_BASE_URL}"` (an unset env placeholder, ignoring the connector's base_url and the docs'
+   `servers: http://localhost:8105`), `GET /reservations` and `/folios` with `offset` pagination; Atlas is
+   `GET /api/v1.3/getReservations` etc. with page pagination (REQ-019). `connector.vendor` is the truncated docs path
+   `"simulators/docs/atlas-openapi.ya"`. So building Atlas from its own OpenAPI docs produces a generic placeholder spec,
+   and nothing built that way can sync.
+2. **A blocked sync opens drift.** Each `Blocked: http_error` sync created a `SEMANTIC_VALUE_DRIFT` DriftEvent and an
+   L4 escalation repair (0 tokens). A sync that never reached the vendor has no evidence of drift: classify it as a
+   connectivity/config failure (its own outcome, no DriftEvent, no repair), never as semantic drift.
+Fix: (a) the docs build reads OpenAPI `servers`, `paths`, parameters and pagination from the document (it already does
+for Meridian v2; Atlas v1.3 must compile too), resolves `base_url` from the connector record when the docs or
+placeholder disagree, and keeps `vendor` as the connector name; (b) no drift from a sync that got no response;
+(c) add the stack-level test the REQ asks for in item 5 now, using exactly the calls above (create → build from docs →
+baseline Complete → inject page_to_cursor → sync → `/repairs` shows `page_to_cursor`, rung 1, 0 tokens → approve →
+sync Complete), keyed local stack; it must not use the reference spec. Do this before sub-step 4, since the demo
+steps will drive exactly this path.
 
 ### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-28 19:10; matrix full-climb merged, remaining: owner record-frontier capture + live step-4 check)
