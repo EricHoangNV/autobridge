@@ -62,6 +62,18 @@ Depends on REQ-030.
    database (REQ-030 item 3).
 Tests: seed end state; demo-break only injects; heal clears; UI build from Harbor docs; SSRF tests still green.
 
+**Owner check (2026-10-29, on 488e9dff): Harbor is seeded from docs, so the semantic scenario never breaks live.**
+Item 1 says HarborPMS is seeded from its **reference release with its money check**; `bench/demo_seed.py` builds
+`harborpms` (and `atlaspms`) from docs instead (`"harborpms — docs-built release with its checks"`). The docs-built
+Harbor spec has no money invariant, so `make demo-break SCENARIO=gross_to_net TARGET=harbor` leaves Harbor `Complete`
+and deck 5 never appears in the UI from the break (found by the REQ-033 iteration, which reached for `record-climb`
+rows instead). Fix: seed Harbor as the reusable reference release with its money check, through the control API
+(the same path demo step 1 uses for Atlas's reusable artifact; add an API route to register a reference release if
+none exists, verifier-gated like any release). Then the break → scheduled sync → `Degraded` → climb (funnel, 1 model
+call, rejected proposal, operator question) → Harbor `error` happens live, and the REQ-033 UI journey asserts it from
+the break, not from `record-climb` rows (keep `record-climb` only as the documented no-key fallback). Atlas may stay
+docs-built.
+
 ### REQ-032 — UI-first demo, part C: live states and a repair page that explains itself (2026-10-29)
 Status: DONE (sbx1 2026-10-29) — code + docs + full gates green unkeyed (see BUILD-NOTES); keyed re-run (make local-up && make e2e && make demo) is the owner step. Next: REQ-033.
 Depends on REQ-030.
