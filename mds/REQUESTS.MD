@@ -275,7 +275,7 @@ engine, like the tests do) and revert the carve-out. From now on, never widen a 
 REQUESTS saying why.
 
 ### REQ-025 — Beacon evaluation: faults generated from public randomness nobody could know in advance (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 00:55; sub-step A merged 2026-10-29; sub-step B code DONE 2026-10-29: client, serving, make eval-freeze/bench-beacon/verify-beacon/beacon-eval, docs, 2 live rehearsals + live repair proof; KNOWN DEPENDENCY: beacon engine arms reuse run_engine_arm with descriptor-built diagnostics (same pre-diagnosed pattern as the REQ-024 owner check on f32b4b4b — rewiring to the real end-to-end engine path pending that fix); remaining: owner/CI rehearsals 3-5, live frontier numbers, the real frozen run)
+Status: IN_PROGRESS (sbx1 since 2026-10-29 00:55; sub-step A merged 2026-10-29; sub-step B code DONE 2026-10-29: client, serving, make eval-freeze/bench-beacon/verify-beacon/beacon-eval, docs, 2 live rehearsals + live repair proof; dependency RESOLVED 2026-10-29 (REQ-024 owner check fix: beacon engine arms now observe instances end-to-end via derive_beacon_diagnostics); remaining: owner/CI rehearsals 3-5, live frontier numbers, the real frozen run)
 Owner: prove we could not have prepared for the test even if we wanted to. The private-seed held-out split (REQ-007)
 only seals instance data for four public fault types, and the builder has tests for those types. The headline
 evaluation becomes a **beacon run**: the test's data *and* fault details are derived from a public random value that
