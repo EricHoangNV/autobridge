@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
 
 import pytest
@@ -13,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from autobridge.control.app import app
 from autobridge.control.deps import get_db
 from autobridge.control.jobs import JobRunner
-from autobridge.control.models import Base, BuildRun, Connector
+from autobridge.control.models import Base, BuildRun, Connector, Job
 from autobridge.control.routes.builds import _docs_url_resolves_internal, validate_docs_url
 from autobridge.engine.build_run import run_build_handler
 
@@ -174,18 +173,16 @@ def test_docs_url_public_host_still_fetched(tmp_path: pathlib.Path) -> None:
 
 
 def test_docs_path_is_identifier_server_never_reads_file(tmp_path: pathlib.Path) -> None:
+    # REQ-029: docs_path alone is 422 (identifier only) — still never read.
     marker = "MARKER-STRING-should-never-appear-in-spec-xyz"
     docs_file = tmp_path / "secret-docs.md"
     docs_file.write_text(f"# Secret vendor docs\n{marker}\nGET /things\n")
     client, factory, cid = _client_and_factory(tmp_path)
     r = client.post(f"/connectors/{cid}/build", json={"docs_path": str(docs_file)})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 422, r.text
+    assert "identifier only" in r.json()["detail"]
     with factory() as s:  # type: ignore[operator]
-        br = s.query(BuildRun).order_by(BuildRun.created_at.desc()).first()
-        assert br is not None
-        assert marker not in json.dumps(br.draft_spec or {})
-        assert marker not in json.dumps(br.inputs or {})
-        assert (br.inputs or {}).get("docs_text") == f"docs from {docs_file}"
+        assert s.query(BuildRun).count() == 0  # rejected before submit: nothing read, nothing stored
 
 
 def test_engine_handler_never_reads_docs_path_file(
@@ -217,6 +214,10 @@ def test_engine_handler_never_reads_docs_path_file(
     runner.run_until_empty()
     with factory() as s:
         br = s.query(BuildRun).first()
-        assert br is not None
-        assert br.state == "succeeded", br.result
+        # REQ-029: identifier only — the job fails naming the reason, and no
+        # release is persisted. read_text was never called (no Boom).
+        job = s.query(Job).order_by(Job.created_at.desc()).first()
+        assert job is not None and job.state == "failed"
+        assert "identifier only" in (job.last_error or "")
+        assert br is None or br.state != "succeeded"
     engine.dispose()

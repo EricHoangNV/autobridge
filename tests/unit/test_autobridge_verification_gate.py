@@ -692,3 +692,132 @@ def test_maybe_verify_import_failure_fails_closed(monkeypatch: pytest.MonkeyPatc
                 verifier_url="http://verifier:8000",
                 scenario_id="baseline",
             )
+
+
+# ---------------------------------------------------------------------------
+# REQ-029: worker gate via control proxy + fail-closed (AR-1-2 residual)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_via_control_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The proxy verdict parses like a direct one (scenario/mode bound)."""
+    from autobridge.engine.verification import verify_via_control
+
+    _mock_verifier(monkeypatch, verdict="pass", regression="pass")
+    out = verify_via_control(_minimal_spec(), "rename_guest_id", "http://control:8000")
+    assert out.allowed is True
+    assert out.verdict == "pass"
+    assert out.scenario_id == "rename_guest_id"
+
+
+def test_verify_via_control_fail_verdict_returned_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fail verdict returns allowed=False (ensure_* raises, mirroring direct)."""
+    from autobridge.engine.verification import ensure_control_gate_passes, verify_via_control
+
+    _mock_verifier(monkeypatch, verdict="fail", regression="pass")
+    out = verify_via_control(_minimal_spec(), "baseline", "http://control:8000")
+    assert out.allowed is False
+    assert "field_missing" in (out.block_reason or "")
+    with pytest.raises(GateBlockedError, match="field_missing"):
+        ensure_control_gate_passes(_minimal_spec(), "baseline", "http://control:8000")
+
+
+def test_verify_via_control_scenario_mismatch_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A proxy verdict bound to another scenario never counts."""
+    from autobridge.engine.verification import verify_via_control
+
+    _mock_verifier(monkeypatch, verdict="pass", regression="pass", scenario_id="baseline")
+    with pytest.raises(GateBlockedError, match="scenario mismatch"):
+        verify_via_control(_minimal_spec(), "rename_guest_id", "http://control:8000")
+
+
+def test_verify_via_control_unreachable_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unreachable proxy raises (the worker persists nothing)."""
+    from autobridge.engine.verification import verify_via_control
+
+    _mock_verifier(monkeypatch, raise_exc=httpx.ConnectError("refused"))
+    with pytest.raises(GateBlockedError, match="proxy unreachable"):
+        verify_via_control(_minimal_spec(), "baseline", "http://control:8000")
+
+
+def test_verify_via_control_sends_bearer_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The proxy call presents AUTOBRIDGE_CONTROL_TOKEN when set."""
+    import json as _json
+
+    from autobridge.engine.verification import verify_via_control
+
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("authorization")
+        body = _json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "verdict": "pass",
+                "score": 1.0,
+                "failed_checks": [],
+                "regression": "pass",
+                "scenario_id": body.get("scenario_id", "baseline"),
+                "mode": body.get("mode", "visible"),
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    class FakeClient:
+        def __init__(self, *a: Any, **kw: Any) -> None:  # noqa: ARG002
+            self._client = _REAL_HTTPX_CLIENT(transport=transport)
+
+        def __enter__(self) -> httpx.Client:
+            return self._client
+
+        def __exit__(self, *a: Any) -> None:
+            self._client.close()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    out = verify_via_control(_minimal_spec(), "baseline", "http://control:8000", token="tok-123")
+    assert out.allowed is True
+    assert seen["auth"] == "Bearer tok-123"
+
+
+def test_create_release_via_proxy_mints_report_id(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Worker path (no VERIFIER_URL, CONTROL_URL set): gate passes, report id stored."""
+    monkeypatch.delenv("VERIFIER_URL", raising=False)
+    monkeypatch.setenv("CONTROL_URL", "http://control:8000")
+    monkeypatch.delenv("AUTOBRIDGE_CONTROL_TOKEN", raising=False)
+    _mock_verifier(monkeypatch, verdict="pass", regression="pass")
+    factory = _session(tmp_path)
+    with factory() as s:
+        conn = _make_connector(s)
+        rel = create_release(s, connector_id=conn.id, spec=_minimal_spec())
+        s.commit()
+        assert rel.verification_report_id
+
+
+def test_create_release_require_gate_no_verifier_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Fail-closed: require-gate set, nothing reachable → GateBlockedError, nothing persists."""
+    monkeypatch.delenv("VERIFIER_URL", raising=False)
+    monkeypatch.delenv("CONTROL_URL", raising=False)
+    monkeypatch.setenv("AUTOBRIDGE_REQUIRE_VERIFIER_GATE", "1")
+    factory = _session(tmp_path)
+    with factory() as s:
+        conn = _make_connector(s)
+        with pytest.raises(GateBlockedError, match="no verifier reachable"):
+            create_release(s, connector_id=conn.id, spec=_minimal_spec())
+        from autobridge.engine.releases import next_version
+
+        assert next_version(s, conn.id) == 1  # nothing persisted
+
+
+def test_create_release_skips_without_verifier_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Backward compat: without the require-gate flag, no verifier still skips."""
+    monkeypatch.delenv("VERIFIER_URL", raising=False)
+    monkeypatch.delenv("CONTROL_URL", raising=False)
+    monkeypatch.delenv("AUTOBRIDGE_REQUIRE_VERIFIER_GATE", raising=False)
+    factory = _session(tmp_path)
+    with factory() as s:
+        conn = _make_connector(s)
+        rel = create_release(s, connector_id=conn.id, spec=_minimal_spec())
+        s.commit()
+        assert rel.verification_report_id is None

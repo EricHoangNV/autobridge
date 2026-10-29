@@ -18,6 +18,7 @@ Usage:
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -278,5 +279,147 @@ def ensure_gate_passes(
     if not allowed:
         msg = outcome.block_reason or f"gate blocked for {scenario_id}: verdict={outcome.verdict} regression={outcome.regression}"
         # Include failed checks for diagnostics
+        raise GateBlockedError(msg, result=outcome.raw, reason=outcome.block_reason)
+    return outcome
+
+
+#: Env var for control's verify proxy (REQ-029). The worker in Compose has
+#: no verifier-net route but shares engine-net with control, so when no
+#: direct ``VERIFIER_URL`` is configured the gate is attempted through
+#: ``{CONTROL_URL}/internal/verify`` before giving up.
+CONTROL_URL_ENV = "CONTROL_URL"
+
+#: Env var for the control write token the proxy call presents (REQ-012).
+#: Unset/empty means the control plane is open (same rule as
+#: ``require_control_token``); the value is never logged.
+CONTROL_TOKEN_ENV = "AUTOBRIDGE_CONTROL_TOKEN"
+
+#: Env var that makes the gate fail-closed (REQ-029, AR-1-2 residual).
+#: When ``"1"``, a release is never persisted without a passing verdict:
+#: no direct verifier and no reachable control proxy raises
+#: ``GateBlockedError`` instead of skipping. Set on control + worker in
+#: ``compose.yaml`` and ``scripts/local-up.sh``; unit tests leave it unset
+#: so the library default (skip without a verifier) keeps working.
+REQUIRE_VERIFIER_GATE_ENV = "AUTOBRIDGE_REQUIRE_VERIFIER_GATE"
+
+
+def mint_verification_report_id() -> str:
+    """Mint the id stored on a gate-passed release (fits ``String(36)``)."""
+    return str(uuid.uuid4())
+
+
+def verify_via_control(
+    spec: dict[str, Any],
+    scenario_id: str,
+    control_url: str,
+    *,
+    token: str | None = None,
+    mode: str = "visible",
+    regression_suite: list[str] | None = None,
+    timeout: float = 30.0,
+) -> GateOutcome:
+    """Verify a spec through control's ``POST /internal/verify`` proxy.
+
+    The worker calls this when it has no direct verifier route: control
+    (which sits on verifier-net) forwards the spec to the verifier and
+    returns the verifier JSON verbatim. Scenario/mode binding (AR-1-5) is
+    enforced here, same as :func:`verify_spec`.
+
+    Raises ``GateBlockedError`` when control is unreachable, answers
+    non-200, returns non-JSON, or binds the verdict to a different
+    scenario/mode. Fail verdicts are returned (not raised) so the caller
+    can record ``allowed == False`` like the direct path.
+
+    Never imports ``verifier``/``simulators`` (HTTP only, trust boundary).
+    """
+    if not control_url or not control_url.strip():
+        raise ValueError("control_url must be non-empty")
+
+    import httpx  # noqa: PLC0415 - local import to keep module importable without httpx at typecheck
+
+    base = control_url.rstrip("/")
+    url = base if base.endswith("/internal/verify") else base + "/internal/verify"
+
+    payload: dict[str, Any] = {"spec": spec, "scenario_id": scenario_id, "mode": mode}
+    if regression_suite is not None:
+        payload["regression_suite"] = list(regression_suite)
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(url, json=payload, headers=headers)
+    except Exception as exc:
+        raise GateBlockedError(f"control verify proxy unreachable at {url}: {exc}") from exc
+
+    if resp.status_code != 200:
+        detail = ""
+        try:
+            detail = str(resp.json().get("detail", resp.text)[:500])
+        except Exception:
+            detail = resp.text[:500]
+        raise GateBlockedError(
+            f"control verify proxy returned HTTP {resp.status_code} for {scenario_id}: {detail}",
+            result=None,
+            reason=f"proxy_http_{resp.status_code}",
+        )
+
+    try:
+        data = resp.json()
+    except Exception as exc:
+        raise GateBlockedError(f"control verify proxy returned non-JSON for {scenario_id}: {exc}") from exc
+
+    outcome = _parse_verifier_response(data)
+    # AR-1-5, same binding as verify_spec: a verdict for another scenario
+    # or mode must never count — fail closed.
+    if outcome.scenario_id != scenario_id:
+        raise GateBlockedError(
+            f"verify proxy response scenario mismatch: requested {scenario_id!r}, got {outcome.scenario_id!r}",
+            result=data,
+            reason="scenario_mismatch",
+        )
+    if outcome.mode != mode:
+        raise GateBlockedError(
+            f"verify proxy response mode mismatch: requested {mode!r}, got {outcome.mode!r}",
+            result=data,
+            reason="mode_mismatch",
+        )
+    if outcome.spec_signature is None:
+        from autobridge.control.models import spec_signature  # noqa: PLC0415 - local to keep the client import-light
+
+        outcome = replace(outcome, spec_signature=spec_signature(spec))
+    return outcome
+
+
+def ensure_control_gate_passes(
+    spec: dict[str, Any],
+    scenario_id: str,
+    control_url: str,
+    *,
+    token: str | None = None,
+    verified_scenarios: list[str] | None = None,
+    mode: str = "visible",
+    timeout: float = 30.0,
+) -> GateOutcome:
+    """Ensure the control-proxy gate passes or raise ``GateBlockedError``.
+
+    Mirrors :func:`ensure_gate_passes` for the worker path (REQ-029):
+    transport problems raise from :func:`verify_via_control`; a fail
+    verdict/regression raises here with the block reason.
+    """
+    outcome = verify_via_control(
+        spec,
+        scenario_id,
+        control_url,
+        token=token,
+        mode=mode,
+        regression_suite=verified_scenarios,
+        timeout=timeout,
+    )
+    if not outcome.allowed:
+        msg = outcome.block_reason or (
+            f"gate blocked for {scenario_id}: verdict={outcome.verdict} regression={outcome.regression}"
+        )
         raise GateBlockedError(msg, result=outcome.raw, reason=outcome.block_reason)
     return outcome

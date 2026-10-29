@@ -407,12 +407,15 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
     inputs: dict[str, Any] = dict(run.inputs or {})
     docs_text = inputs.get("docs_text") or inputs.get("docs") or inputs.get("docs_content") or ""
     if not docs_text and inputs.get("docs_path"):
-        # AR-2-2: the server never reads local files. docs_path is an opaque
-        # identifier (callers read files client-side and send docs_text).
+        # REQ-029: docs_path is an identifier only, stored as provenance
+        # (docs_source). The server never reads local files (AR-2-2), and
+        # since the placeholder synthesis was removed it also never builds
+        # from the identifier — callers must read the file client-side and
+        # send docs_text (or docs_url).
         p = inputs["docs_path"]
         if "generated/connectors" in p:
             raise ValueError("build must not read reference specs")
-        docs_text = f"docs from {p}"
+        raise ValueError("docs_path is an identifier only; send docs_text (or docs_url)")
 
     if not docs_text:
         raise ValueError("build inputs missing docs_text (or docs/docs_content)")
@@ -497,12 +500,14 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
             # Fallback: create from spec
             spec_auth = build_out["draft_spec"].get("source", {}).get("auth", {})
             conn = _ensure_connector(ctx.session, run.connector_id, spec_conn, spec_auth=spec_auth)
-        # Create release — gate-before-persist (AR-1-2): when a verifier URL
-        # is configured, the candidate spec is verified before persisting.
-        # A blocked/unreachable verifier raises GateBlockedError and NO
+        # Create release — gate-before-persist (AR-1-2, REQ-029): the
+        # candidate spec is verified before persisting. Direct verifier_url
+        # first (control-inline path); otherwise control's /internal/verify
+        # proxy via CONTROL_URL (worker path, no verifier-net route). A
+        # blocked/unreachable verifier raises GateBlockedError and NO
         # release is persisted, so there is nothing to approve or sync.
-        # Without a verifier URL (unit tests, worker without verifier-net
-        # route) the gate is skipped, preserving backward compatibility.
+        # Without any verifier (unit tests, fakes) the gate is skipped
+        # unless AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1, which fails closed.
         try:
             from autobridge.engine.releases import create_release  # noqa: PLC0415
             from autobridge.engine.verification import GateBlockedError  # noqa: PLC0415
@@ -520,24 +525,26 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
             result["release_id"] = release_id
             result["connector_id"] = conn.id
             # REQ-013: first-build activation. A persisted candidate is
-            # either gate-passed (verifier_url set, gate-before-persist) or
-            # gate-skipped (no verifier configured: unit tests, fakes). When
-            # the connector has no active release yet, that candidate becomes
-            # runnable immediately so create → build → sync works; later
-            # builds stay candidates until the operator activates (or the
-            # repair flow approves) them. A gate-blocked build persists
-            # nothing, so it stays unrunnable.
+            # either gate-passed (verifier or control proxy ran, the release
+            # carries a verification_report_id) or gate-skipped (no verifier
+            # configured: unit tests, fakes). When the connector has no
+            # active release yet, that candidate becomes runnable immediately
+            # so create → build → sync works; later builds stay candidates
+            # until the operator activates (or the repair flow approves)
+            # them. A gate-blocked build persists nothing, so it stays
+            # unrunnable.
             if conn.active_release_id is None:
                 from autobridge.engine.releases import _activate  # noqa: PLC0415
 
                 _activate(ctx.session, conn.id, release.id, actor="system:first-build")
                 ctx.session.flush()
                 result["activated"] = True
-            if verifier_url:
+            if verifier_url or release.verification_report_id:
                 # Gate-before-persist passed: the persisted candidate is
                 # verifier-checked, even if the best-effort inline check
                 # above failed spuriously.
                 result["verified"] = True
+                result["verification_report_id"] = release.verification_report_id
                 run.ladder_trace = [
                     *list(run.ladder_trace or []),
                     _now_trace_entry("verifier", verdict="pass", scenario=scenario_id, gate="before_persist"),

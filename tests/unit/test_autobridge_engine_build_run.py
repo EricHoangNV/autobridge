@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx as _httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -22,6 +23,10 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HARBOR_MD = (REPO_ROOT / "simulators" / "docs" / "harborpms.md").read_text()
 ATLAS_YAML = (REPO_ROOT / "simulators" / "docs" / "atlaspms-openapi.yaml").read_text()
+
+# Save the real httpx client before any monkeypatching (the FakeClient below
+# must not recurse into itself once httpx.Client is patched).
+_REAL_HTTPX_CLIENT = _httpx.Client
 
 
 def _sessions(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -147,18 +152,23 @@ def test_run_build_handler_creates_release_provenance(tmp_path: Path) -> None:
 
 
 def test_run_build_handler_docs_path(tmp_path: Path) -> None:
+    # REQ-029: docs_path alone is refused (identifier only) — the job fails
+    # naming the reason and no release is persisted.
     SessionLocal, engine = _sessions(tmp_path)
     cid = _connector_id(SessionLocal)
     # Write temp docs file
     docs_file = tmp_path / "harbor.md"
     docs_file.write_text(HARBOR_MD)
     runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
-    runner.submit_build(cid, inputs={"docs_path": str(docs_file)})
+    job_id = runner.submit_build(cid, inputs={"docs_path": str(docs_file)})
     runner.run_until_empty()
     with SessionLocal() as s:
-        br = s.query(BuildRun).first()
-        assert br.state == "succeeded"  # type: ignore[union-attr]
-        assert br.draft_spec is not None  # type: ignore[union-attr]
+        from autobridge.control.models import Job
+
+        job = s.get(Job, job_id)
+        assert job is not None and job.state == "failed"
+        assert "identifier only" in (job.last_error or "")
+        assert s.query(ConnectorRelease).count() == 0
     engine.dispose()
 
 
@@ -389,9 +399,146 @@ def test_run_build_handler_gate_pass_persists_release(tmp_path: Path, monkeypatc
         assert br.result["release_id"]
         rel = s.get(ConnectorRelease, br.result["release_id"])
         assert rel is not None
+        # REQ-029: a passed gate mints the report id the release carries.
+        assert rel.verification_report_id
+        assert br.result.get("verification_report_id") == rel.verification_report_id
     # Gate-before-persist was actually invoked with the build's scenario
     assert capture.get("scenario_id") == "baseline"
     assert capture.get("verifier_url") == "http://127.0.0.1:9"
+    engine.dispose()
+
+
+def _mock_control_proxy(monkeypatch: pytest.MonkeyPatch, *, verdict: str = "pass", raise_exc: Exception | None = None) -> None:  # type: ignore[no-untyped-def]
+    """Fake httpx.Client so the worker's control-proxy gate gets a verdict.
+
+    The handler echoes the request's scenario_id/mode (like the real
+    verifier through the real proxy), so AR-1-5 binding passes.
+    """
+    import json as _json
+
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if raise_exc is not None:
+            raise raise_exc
+        try:
+            req_body = _json.loads(request.content.decode())
+        except Exception:
+            req_body = {}
+        body = {
+            "verdict": verdict,
+            "score": 1.0 if verdict == "pass" else 0.5,
+            "failed_checks": [] if verdict == "pass" else [{"name": "field_missing", "count": 1}],
+            "regression": "pass",
+            "scenario_id": req_body.get("scenario_id", "baseline"),
+            "mode": req_body.get("mode", "visible"),
+        }
+        return httpx.Response(200, json=body)
+
+    transport = httpx.MockTransport(handler)
+
+    class FakeClient:
+        def __init__(self, *a: object, **kw: object) -> None:  # noqa: ARG001, ARG002
+            self._client = _REAL_HTTPX_CLIENT(transport=transport)
+
+        def __enter__(self) -> httpx.Client:
+            return self._client
+
+        def __exit__(self, *a: object) -> None:  # noqa: ARG001, ARG002
+            self._client.close()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+
+
+def test_run_build_handler_worker_no_verifier_require_gate_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """REQ-029: a worker-executed build with no reachable verifier persists nothing.
+
+    No VERIFIER_URL, no CONTROL_URL, AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1
+    (the deployed setting): the gate fails closed, the draft spec stays on
+    the BuildRun, and the reason names the missing verifier.
+    """
+    monkeypatch.delenv("VERIFIER_URL", raising=False)
+    monkeypatch.delenv("CONTROL_URL", raising=False)
+    monkeypatch.setenv("AUTOBRIDGE_REQUIRE_VERIFIER_GATE", "1")
+    SessionLocal, engine = _sessions(tmp_path)
+    cid = _connector_id(SessionLocal)
+    runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
+    job_id = runner.submit_build(
+        cid,
+        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "scenario_id": "baseline"},
+    )
+    runner.run_until_empty()
+    with SessionLocal() as s:
+        from autobridge.control.models import Job
+
+        job = s.get(Job, job_id)
+        # Quarantined, not crashed: the job succeeds with gate_blocked naming
+        # the reason, and nothing persists.
+        assert job is not None and job.state == "succeeded"
+        br = s.query(BuildRun).first()
+        assert br is not None
+        assert br.result.get("release_id") is None
+        assert br.result.get("verified") is False
+        assert "gate_blocked" in br.result
+        assert "no verifier reachable" in br.result["gate_blocked"]
+        assert s.query(ConnectorRelease).count() == 0
+    engine.dispose()
+
+
+def test_run_build_handler_worker_proxy_gate_pass_mints_report_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """REQ-029: the worker verifies through control's proxy; the release carries the report id."""
+    monkeypatch.delenv("VERIFIER_URL", raising=False)
+    monkeypatch.setenv("CONTROL_URL", "http://control:8000")
+    monkeypatch.delenv("AUTOBRIDGE_CONTROL_TOKEN", raising=False)
+    monkeypatch.delenv("AUTOBRIDGE_REQUIRE_VERIFIER_GATE", raising=False)
+    _mock_control_proxy(monkeypatch, verdict="pass")
+    SessionLocal, engine = _sessions(tmp_path)
+    cid = _connector_id(SessionLocal)
+    runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
+    runner.submit_build(
+        cid,
+        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "scenario_id": "baseline"},
+    )
+    runner.run_until_empty()
+    with SessionLocal() as s:
+        br = s.query(BuildRun).first()
+        assert br is not None
+        assert br.state == "succeeded", br.result
+        assert br.result.get("release_id")
+        assert br.result["verified"] is True
+        rel = s.get(ConnectorRelease, br.result["release_id"])
+        assert rel is not None
+        assert rel.verification_report_id
+        assert br.result.get("verification_report_id") == rel.verification_report_id
+    engine.dispose()
+
+
+def test_run_build_handler_worker_proxy_unreachable_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """REQ-029: an unreachable control proxy blocks the worker build (nothing persists)."""
+    import httpx
+
+    monkeypatch.delenv("VERIFIER_URL", raising=False)
+    monkeypatch.setenv("CONTROL_URL", "http://control:8000")
+    _mock_control_proxy(monkeypatch, raise_exc=httpx.ConnectError("refused"))
+    SessionLocal, engine = _sessions(tmp_path)
+    cid = _connector_id(SessionLocal)
+    runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
+    job_id = runner.submit_build(
+        cid,
+        inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "scenario_id": "baseline"},
+    )
+    runner.run_until_empty()
+    with SessionLocal() as s:
+        from autobridge.control.models import Job
+
+        job = s.get(Job, job_id)
+        # Quarantined, not crashed: gate_blocked names the proxy failure.
+        assert job is not None and job.state == "succeeded"
+        br = s.query(BuildRun).first()
+        assert br is not None
+        assert "gate_blocked" in br.result
+        assert "control verify proxy unreachable" in br.result["gate_blocked"]
+        assert s.query(ConnectorRelease).count() == 0
     engine.dispose()
 
 

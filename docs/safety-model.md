@@ -244,10 +244,18 @@ create_release(..., spec=candidate_spec)  # only on pass
 ```
 
 `verified_scenarios` is the connector's previously verified set
-(e.g. `["baseline", "rename_guest_id", "offset_to_cursor"]`);
-when `verifier_url` is `None` the gate is skipped for backward compat
-(unit tests without Docker). `GateBlockedError` carries `block_reason`
-and the raw verifier `result` for the ladder trace.
+(e.g. `["baseline", "rename_guest_id", "offset_to_cursor"]`).
+Without a direct `verifier_url` the gate goes through control's
+`POST /internal/verify` proxy (`CONTROL_URL` env): the worker has no
+verifier-net route but shares engine-net with control, so it verifies
+through control instead of persisting unverified (REQ-029, AR-1-2
+residual). With neither configured the gate raises `GateBlockedError`
+when `AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1` (set on control + worker in
+`compose.yaml` and `scripts/local-up.sh`); only without that flag is the
+gate skipped for backward compat (unit tests without Docker).
+`GateBlockedError` carries `block_reason` and the raw verifier `result`
+for the ladder trace. A passed gate mints a verification report id that
+the release carries as `verification_report_id`.
 
 Proven in `tests/unit/test_autobridge_verification_gate.py` (28 tests):
 verdict/regression parsing, `invalid_patch_trap` wording, HTTP 500 and
@@ -256,7 +264,7 @@ unreachable handling, `regression_suite` forwarding, `create_release` and
 `oracle_verdict` check that the trap spec is rejected and a wrong pagination
 spec fails `pagination_shape`.
 
-Build path, same rule (AR-1-2): `run_build_handler` passes its
+Build path, same rule (AR-1-2, REQ-029): `run_build_handler` passes its
 `verifier_url`/`scenario_id` into `create_release`, so a build candidate is
 also verified before persisting. A blocked or unreachable verifier raises
 `GateBlockedError` and **no release is persisted** — the draft spec stays on
@@ -264,7 +272,11 @@ the `BuildRun` (`verified: false`, `gate_blocked` reason) but there is
 nothing to approve or sync. `compose.yaml` sets
 `VERIFIER_URL=http://verifier:8000` on `control` (which has a
 `verifier-net` route); the `worker` deliberately has none (engine-net only,
-no verifier route). Sync additionally refuses to fall back to the latest
+no verifier route) and verifies through control's
+`POST /internal/verify` proxy instead (`CONTROL_URL=http://control:8000`,
+same control token). `AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1` on both makes the
+gate fail-closed: no process persists or activates a release without a
+passing verdict. Sync additionally refuses to fall back to the latest
 unapproved release: with no active release it returns 422.
 
 ### 7.1 How a first build becomes runnable (REQ-013)
@@ -276,8 +288,9 @@ becomes runnable in exactly two ways:
    the connector has no active release yet, `run_build_handler` activates
    it immediately (`actor="system:first-build"`, recorded in the
    `release.activated` evidence). A persisted candidate is either
-   gate-passed (verifier configured, gate-before-persist) or gate-skipped
-   (no verifier configured: unit tests, fakes). A gate-blocked build
+   gate-passed (direct verifier or control proxy ran — the release carries
+   a `verification_report_id`) or gate-skipped (no verifier configured and
+   no require-gate flag: unit tests, fakes). A gate-blocked build
    persists nothing, so it stays unrunnable: the draft spec sits on the
    `BuildRun` with `gate_blocked`, and sync answers 422 (no active
    release).

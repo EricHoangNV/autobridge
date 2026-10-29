@@ -53,6 +53,10 @@ services:
       # before persisting (gate-before-persist). Control has a verifier-net
       # route, so this default works on the stock stack.
       VERIFIER_URL: ${VERIFIER_URL:-http://verifier:8000}
+      # REQ-029: fail-closed gate. With this set, a build/repair persists a
+      # release only after a passing verifier verdict — never on an
+      # unreachable verifier or a skipped check.
+      AUTOBRIDGE_REQUIRE_VERIFIER_GATE: "1"
       # REQ-027: simulator demo keys by default (.env / explicit env wins).
       # The sims accept these values, so a fresh clone syncs green without
       # exporting keys first. Demo values only — never real credentials.
@@ -89,11 +93,16 @@ services:
       # same HMAC key control uses; must match edge-worker or edge
       # execution refuses the release.
       EDGE_RELEASE_SECRET: ${EDGE_RELEASE_SECRET:-}
-      # NOTE (AR-1-2): no VERIFIER_URL here on purpose. The worker is on
-      # engine-net only with no verifier-net route, so it cannot reach the
-      # verifier; verification happens on the control-inline build path
-      # above. A worker-executed build persists without a gate check only
-      # when control's inline execution did not claim the job first.
+      # REQ-029 (AR-1-2 residual, fail-closed): still no VERIFIER_URL here —
+      # the worker is on engine-net only with no verifier-net route. The
+      # worker verifies every candidate release through control's
+      # POST /internal/verify proxy instead (control sits on verifier-net;
+      # same engine-net, same control token). With no reachable verifier at
+      # all the gate raises and NO release is persisted — an unverified
+      # release can never be stored or activated from any process.
+      CONTROL_URL: http://control:8000
+      AUTOBRIDGE_CONTROL_TOKEN: ${AUTOBRIDGE_CONTROL_TOKEN:-}
+      AUTOBRIDGE_REQUIRE_VERIFIER_GATE: "1"
       # REQ-021 item 5: same frontier/small model env as control (the ladder
       # runs here on worker-executed repairs; values never logged/stored).
       FRONTIER_API_KEY: ${FRONTIER_API_KEY:-}

@@ -102,7 +102,7 @@
                 "type": "null"
               }
             ],
-            "description": "Local path (for demo)",
+            "description": "Provenance label only (REQ-029): the server never reads it and a build with only docs_path is 422 \u2014 send docs_text (or docs_url)",
             "title": "Docs Path"
           },
           "docs_text": {
@@ -1346,6 +1346,50 @@
           "message"
         ],
         "title": "InjectFaultResponse",
+        "type": "object"
+      },
+      "InternalVerifyRequest": {
+        "description": "Spec-verification proxy body (mirrors the verifier's /verify).",
+        "properties": {
+          "mode": {
+            "default": "visible",
+            "enum": [
+              "visible",
+              "hidden"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "regression_suite": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regression Suite"
+          },
+          "scenario_id": {
+            "default": "baseline",
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "description": "Candidate ConnectorSpec dict (credential_ref only, no secrets)",
+            "title": "Spec",
+            "type": "object"
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "title": "InternalVerifyRequest",
         "type": "object"
       },
       "JobOut": {
@@ -5817,6 +5861,109 @@
         "summary": "Get Healthz",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/internal/verify": {
+      "post": {
+        "description": "Proxy a spec to the verifier and return its JSON verbatim.\n\n503 when control itself has no verifier configured (``VERIFIER_URL``\nunset); 502 when the verifier is unreachable or answers non-200\n(fail-closed: the worker treats both as gate-blocked and persists\nnothing). The response is the verifier's aggregate verdict only \u2014\nnever fixture rows (the verifier's own response-schema guarantee).",
+        "operationId": "internal_verify_internal_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InternalVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Internal Verify Internal Verify Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Internal Verify",
+        "tags": [
+          "internal"
         ]
       }
     },

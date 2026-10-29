@@ -555,6 +555,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Internal Verify
+         * @description Proxy a spec to the verifier and return its JSON verbatim.
+         *
+         *     503 when control itself has no verifier configured (``VERIFIER_URL``
+         *     unset); 502 when the verifier is unreachable or answers non-200
+         *     (fail-closed: the worker treats both as gate-blocked and persists
+         *     nothing). The response is the verifier's aggregate verdict only —
+         *     never fixture rows (the verifier's own response-schema guarantee).
+         */
+        post: operations["internal_verify_internal_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs": {
         parameters: {
             query?: never;
@@ -931,7 +957,7 @@ export interface components {
             credential_ref?: string | null;
             /**
              * Docs Path
-             * @description Local path (for demo)
+             * @description Provenance label only (REQ-029): the server never reads it and a build with only docs_path is 422 — send docs_text (or docs_url)
              */
             docs_path?: string | null;
             /**
@@ -1486,6 +1512,32 @@ export interface components {
             seed?: number | null;
             /** Target */
             target: string;
+        };
+        /**
+         * InternalVerifyRequest
+         * @description Spec-verification proxy body (mirrors the verifier's /verify).
+         */
+        InternalVerifyRequest: {
+            /**
+             * Mode
+             * @default visible
+             * @enum {string}
+             */
+            mode: "visible" | "hidden";
+            /** Regression Suite */
+            regression_suite?: string[] | null;
+            /**
+             * Scenario Id
+             * @default baseline
+             */
+            scenario_id: string;
+            /**
+             * Spec
+             * @description Candidate ConnectorSpec dict (credential_ref only, no secrets)
+             */
+            spec: {
+                [key: string]: unknown;
+            };
         };
         /** JobOut */
         JobOut: {
@@ -3938,6 +3990,74 @@ export interface operations {
                     "application/json": {
                         detail: string;
                     };
+                };
+            };
+        };
+    };
+    internal_verify_internal_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InternalVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

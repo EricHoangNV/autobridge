@@ -146,11 +146,14 @@ def test_build_wait_timeout_returns_1(monkeypatch: Any, capsys: Any) -> None:
     assert "timed out" in capsys.readouterr().err
 
 
-def test_build_body_sources_and_errors(tmp_path: Any) -> None:
+def test_build_body_sources_and_errors(tmp_path: Any, capsys: Any) -> None:
     ns = build_parser().parse_args(["build", "c-1", "--docs-text", "abc"])
     assert _build_body(ns) is not None  # type: ignore[arg-type]
     ns2 = build_parser().parse_args(["build", "c-1"])
-    assert _build_body(ns2) is not None  # type: ignore[arg-type]
+    # REQ-029: no docs source is a usage error (the server no longer accepts
+    # docs_path-only builds, so the CLI must not send a placeholder).
+    assert _build_body(ns2) is None  # type: ignore[arg-type]
+    assert "needs docs" in capsys.readouterr().err
     f = tmp_path / "docs.md"
     f.write_text("file docs", encoding="utf-8")
     ns3 = build_parser().parse_args(["build", "c-1", "--docs-file", str(f)])

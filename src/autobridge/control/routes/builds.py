@@ -192,15 +192,20 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
             safe_err = str(exc).replace(body.docs_url, safe_url)
             raise HTTPException(status_code=422, detail=f"cannot fetch docs_url {safe_url}: {safe_err}") from exc
     if not docs_text and body.docs_path:
-        # AR-2-2: the server never reads local files. docs_path is an opaque
-        # identifier (callers read files client-side and send docs_text);
-        # only the reference-spec guard below still inspects the value.
+        # REQ-029: docs_path is an identifier only, kept as provenance
+        # (docs_source below). The server never reads local files (AR-2-2),
+        # and it no longer synthesizes placeholder docs from the identifier
+        # (that built a generic spec — e.g. Atlas with /reservations +
+        # offset pagination — from any string). Callers read the file
+        # client-side and send docs_text (or docs_url).
         if "generated/connectors" in body.docs_path:
             raise HTTPException(status_code=422, detail="build must not read reference specs")
-        # Synthesize placeholder docs from the identifier.
-        docs_text = f"docs from {body.docs_path}"
+        raise HTTPException(
+            status_code=422,
+            detail="docs_path is an identifier only; send docs_text (or docs_url)",
+        )
     if not docs_text:
-        raise HTTPException(status_code=422, detail="build requires docs_text, docs_url, or docs_path")
+        raise HTTPException(status_code=422, detail="build requires docs_text (or docs_url)")
 
     # Guard: block reference spec reads even via docs_text that looks like path
     if docs_text and "generated/connectors" in docs_text and len(docs_text) < 500:

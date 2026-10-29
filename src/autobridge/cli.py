@@ -204,7 +204,11 @@ def _build_body(args: argparse.Namespace) -> dict[str, Any] | None:
     elif args.docs_url:
         body["docs_url"] = args.docs_url
     else:
-        body["docs_path"] = "inline-ci-docs"
+        # REQ-029: docs_path is an identifier only — the server never reads
+        # it and a build with only docs_path is 422. Fail fast here.
+        print("ab: error: build needs docs: pass --docs-text, --docs-file or --docs-url",
+              file=sys.stderr)
+        return None
     return body
 
 

@@ -259,7 +259,7 @@ class ConnectorDetail(ConnectorOut):
 class BuildRequest(BaseModel):
     docs_text: str | None = Field(default=None, description="Inline docs content")
     docs_url: str | None = Field(default=None, description="URL to fetch docs from")
-    docs_path: str | None = Field(default=None, description="Local path (for demo)")
+    docs_path: str | None = Field(default=None, description="Provenance label only (REQ-029): the server never reads it and a build with only docs_path is 422 — send docs_text (or docs_url)")
     base_url_override: str | None = None
     vendor: str | None = None
     credential_ref: str | None = None

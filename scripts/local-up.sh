@@ -49,6 +49,12 @@ export AUTOBRIDGE_RUNTIME=local
 export PYTHONPATH="$REPO_ROOT:$REPO_ROOT/src"
 export DATABASE_URL="${DATABASE_URL:-sqlite:///$LOCAL_DIR/autobridge.db}"
 export VERIFIER_URL="http://localhost:8104"
+# REQ-029 (AR-1-2 residual, fail-closed): the gate never skips on this
+# stack — a release persists only after a passing verifier verdict. The
+# worker verifies through control's /internal/verify proxy when it has no
+# direct verifier route (CONTROL_URL below; same loopback here).
+export CONTROL_URL="http://localhost:8101"
+export AUTOBRIDGE_REQUIRE_VERIFIER_GATE="1"
 unset ADMIN_NET_HOST
 export ATLAS_BASE_URL="http://localhost:8105"
 export HARBOR_BASE_URL="http://localhost:8106"

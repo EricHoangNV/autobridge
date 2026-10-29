@@ -54,6 +54,13 @@ def _is_literal_host(host: Any) -> bool:
 
 @pytest.fixture(autouse=True)
 def _no_real_dns(monkeypatch: pytest.MonkeyPatch) -> Any:
+    # REQ-029: the verifier gate reads VERIFIER_URL / CONTROL_URL /
+    # AUTOBRIDGE_REQUIRE_VERIFIER_GATE from the environment. Scrub them so
+    # unit tests are hermetic regardless of the developer's shell (a stale
+    # CONTROL_URL would otherwise route the gate at a phantom proxy).
+    # Tests that need them set it explicitly via monkeypatch.
+    for _var in ("VERIFIER_URL", "CONTROL_URL", "AUTOBRIDGE_REQUIRE_VERIFIER_GATE", "AUTOBRIDGE_CONTROL_TOKEN"):
+        monkeypatch.delenv(_var, raising=False)
     trips: list[str] = []
     real_getaddrinfo = socket.getaddrinfo
 

@@ -14,6 +14,7 @@ Secrets never appear: specs carry ``credential_ref`` only.
 from __future__ import annotations
 
 import contextlib
+import os
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
@@ -75,29 +76,72 @@ def _maybe_verify(
     scenario_id: str,
     verified_scenarios: list[str] | None,
     mode: str = "visible",
-) -> None:
-    """If verifier_url given, verify spec against scenario + regression suite.
+) -> str | None:
+    """Run the verifier gate; return the report id, or None when skipped.
+
+    Direct ``verifier_url`` first (control-inline path). Without one, the
+    gate goes through control's ``POST /internal/verify`` proxy
+    (``CONTROL_URL`` env): the worker in Compose has no verifier-net route
+    but shares engine-net with control, so it verifies through control
+    instead of persisting unverified (REQ-029, AR-1-2 residual). A passed
+    gate mints a verification report id the release carries
+    (``verification_report_id``).
 
     Raises GateBlockedError (from verification.py) when verdict or regression
-    fail. Caller translates to ReleaseError with the same message.
+    fail, or when no verifier is reachable at all and
+    ``AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1`` (set on control + worker in
+    ``compose.yaml`` and ``scripts/local-up.sh``). Without that env flag the
+    gate is skipped for backward compat (unit tests without Docker).
 
     AR-1-5: fail closed. If the gate module itself cannot be imported, raise
     instead of silently skipping verification — an unverified candidate must
     never persist.
     """
-    if not verifier_url:
-        return
-    try:
-        from autobridge.engine.verification import ensure_gate_passes  # noqa: PLC0415
-    except Exception as exc:
-        raise ReleaseError(f"verification gate unavailable: {exc}") from exc
-    ensure_gate_passes(
-        spec,
-        scenario_id,
-        verifier_url,
-        verified_scenarios=verified_scenarios,
-        mode=mode,
-    )
+    if verifier_url:
+        try:
+            from autobridge.engine.verification import ensure_gate_passes  # noqa: PLC0415
+        except Exception as exc:
+            raise ReleaseError(f"verification gate unavailable: {exc}") from exc
+        ensure_gate_passes(
+            spec,
+            scenario_id,
+            verifier_url,
+            verified_scenarios=verified_scenarios,
+            mode=mode,
+        )
+        from autobridge.engine.verification import mint_verification_report_id  # noqa: PLC0415
+
+        return mint_verification_report_id()
+    control_url = os.environ.get("CONTROL_URL", "").strip()
+    if control_url:
+        try:
+            from autobridge.engine.verification import (  # noqa: PLC0415
+                CONTROL_TOKEN_ENV,
+                ensure_control_gate_passes,
+                mint_verification_report_id,
+            )
+        except Exception as exc:
+            raise ReleaseError(f"verification gate unavailable: {exc}") from exc
+        ensure_control_gate_passes(
+            spec,
+            scenario_id,
+            control_url,
+            token=os.environ.get(CONTROL_TOKEN_ENV) or None,
+            verified_scenarios=verified_scenarios,
+            mode=mode,
+        )
+        return mint_verification_report_id()
+    if os.environ.get("AUTOBRIDGE_REQUIRE_VERIFIER_GATE") == "1":
+        from autobridge.engine.verification import GateBlockedError  # noqa: PLC0415
+
+        raise GateBlockedError(
+            "no verifier reachable: VERIFIER_URL and CONTROL_URL are both unset "
+            "(worker has no verifier route; set CONTROL_URL so the gate runs "
+            "through control's /internal/verify proxy)",
+            result=None,
+            reason="no_verifier_configured",
+        )
+    return None
 
 
 def create_release(
@@ -150,8 +194,12 @@ def create_release(
     # Canonical JSON for signature uses dumped data
     spec_data: dict[str, Any] = validated.model_dump(mode="json", by_alias=True)
 
-    # Regression gate (when verifier_url provided) — before persisting
-    _maybe_verify(
+    # Regression gate (before persisting) — REQ-029: direct verifier_url,
+    # else control's /internal/verify proxy (CONTROL_URL), else skip unless
+    # AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1. A passed gate mints the report id
+    # the release carries; a blocked/unreachable gate raises and nothing
+    # persists.
+    report_id = _maybe_verify(
         spec_data,
         verifier_url=verifier_url,
         scenario_id=scenario_id,
@@ -169,7 +217,7 @@ def create_release(
         parent_release_id=parent_release_id,
         provenance_build_run_id=provenance_build_run_id,
         provenance_repair_run_id=provenance_repair_run_id,
-        verification_report_id=verification_report_id,
+        verification_report_id=verification_report_id or report_id,
         signature=sig,
     )
     session.add(release)

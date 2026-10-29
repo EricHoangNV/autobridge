@@ -96,15 +96,26 @@ def test_build_docs_url_and_path(tmp_path: pathlib.Path) -> None:
         assert r2.status_code == 200, r2.text
         assert r2.json()["state"] == "succeeded"
 
-    # Test docs_path with actual file
+    # REQ-029: docs_path alone is 422 — it is an identifier only, never
+    # read and never synthesized. The file content must arrive as docs_text.
     docs_file = tmp_path / "docs.md"
     docs_file.write_text("# HarborPMS API\nBase URL: http://sim-harbor:8000\nGET /reservations\nGET /folios\n")
     r3 = client.post(f"/connectors/{cid}/build", json={"docs_path": str(docs_file)})
-    assert r3.status_code == 200, r3.text
+    assert r3.status_code == 422, r3.text
+    assert "identifier only" in r3.json()["detail"]
+    assert "docs_text" in r3.json()["detail"]
 
-    # Test docs_path non-existing synthesizes
+    # Test docs_path non-existing: still 422, never synthesized
     r4 = client.post(f"/connectors/{cid}/build", json={"docs_path": "/tmp/nonexistent_docs_xyz.md"})
-    assert r4.status_code == 200
+    assert r4.status_code == 422, r4.text
+    assert "identifier only" in r4.json()["detail"]
+
+    # docs_path as a provenance label alongside docs_text is fine
+    r5 = client.post(
+        f"/connectors/{cid}/build",
+        json={"docs_text": docs_file.read_text(), "docs_path": str(docs_file)},
+    )
+    assert r5.status_code == 200, r5.text
 
     app.dependency_overrides.clear()
 
