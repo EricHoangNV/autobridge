@@ -107,8 +107,12 @@ function vocabularyLine(ver: Vocabulary, deltaOnly: boolean): string {
 }
 
 export default function KnowledgePage() {
-  const { data: capabilities, error: capError } = useSWR<Capabilities>("/capabilities", fetcher);
-  const { data: knowledge, error: knowledgeError } = useSWR<Knowledge>("/knowledge", fetcher);
+  const { data: capabilities, error: capError } = useSWR<Capabilities>("/capabilities", fetcher, {
+    refreshInterval: 2000,
+  });
+  const { data: knowledge, error: knowledgeError } = useSWR<Knowledge>("/knowledge", fetcher, {
+    refreshInterval: 2000,
+  });
 
   return (
     <div data-testid="knowledge-page" className="px-5 py-8 sm:px-8">

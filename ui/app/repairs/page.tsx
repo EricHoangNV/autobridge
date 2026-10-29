@@ -3,8 +3,12 @@
 import useSWR from "swr";
 import Link from "next/link";
 
-// Same-origin /api base (REQ-018): the rewrite + middleware forward to control.
 import { apiBaseUrl as getBaseUrl } from "@/lib/api/base";
+import type {
+  ConnectorOut,
+  DriftEventOut,
+  RepairRunOut,
+} from "@/lib/api/client";
 
 const fetcher = async <T,>(path: string): Promise<T> => {
   const base = getBaseUrl();
@@ -13,25 +17,55 @@ const fetcher = async <T,>(path: string): Promise<T> => {
   return (await res.json()) as T;
 };
 
-type RepairOut = {
-  id: string;
-  drift_event_ids: string[];
-  ladder_level_reached: number;
-  candidate_patch?: unknown[] | null;
-  rule_id?: string | null;
-  hypothesis_ids: string[];
-  visible_test_results: unknown[];
-  verifier_report_id?: string | null;
-  decision: string;
-  model_usage: Record<string, unknown>;
-  escalation_bundle?: Record<string, unknown> | null;
-  created_at: string;
-};
+export type RepairStatus = "fix ready" | "needs your decision" | "approved" | "applied" | "rejected";
 
-function decisionBadge(decision: string) {
-  if (decision === "propose") return "bg-emerald-100 text-emerald-800 border-emerald-200";
-  if (decision === "escalate") return "bg-band text-stop border-stop";
-  if (decision === "reject") return "bg-ground text-ink-2 border-rule";
+function toNumber(v: unknown): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return 0;
+}
+
+export function modelCallsOf(repair: RepairRunOut): { calls: number; frontierTokens: number } {
+  const mu = (repair.model_usage ?? {}) as Record<string, unknown>;
+  const calls =
+    toNumber(mu["calls"] ?? mu["total_calls"]) ||
+    toNumber(mu["frontier_calls"]) + toNumber(mu["small_calls"]);
+  const frontierTokens = toNumber(mu["frontier_tokens"] ?? mu["frontier_tokens_total"]);
+  return { calls, frontierTokens };
+}
+
+/**
+ * Live repair status (REQ-032 §2), from persisted rows only:
+ * rejected (decision or reject approval) · applied (approved release is
+ * active) · approved (approved but superseded) · fix ready (verified patch
+ * waiting) · needs your decision (escalated or still climbing).
+ */
+export function repairStatus(
+  repair: RepairRunOut,
+  activeReleaseByConnector: Record<string, string | null>,
+  connectorByDrift: Map<string, string>,
+): RepairStatus {
+  if (repair.decision === "reject") return "rejected";
+  const approval = repair.approval;
+  if (approval?.decision === "reject") return "rejected";
+  if (approval?.decision === "approve" && approval.to_release_id) {
+    const applied = Object.values(activeReleaseByConnector).some((id) => id === approval.to_release_id);
+    return applied ? "applied" : "approved";
+  }
+  if (repair.decision === "escalate") return "needs your decision";
+  if (repair.verifier_report_id || (repair.candidate_patch ?? []).length > 0) return "fix ready";
+  void connectorByDrift;
+  return "needs your decision";
+}
+
+function statusClass(status: RepairStatus): string {
+  if (status === "fix ready") return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  if (status === "needs your decision") return "bg-band text-stop border-stop";
+  if (status === "applied") return "bg-ground text-ink border-rule";
+  if (status === "approved") return "bg-ground text-ink-2 border-rule";
   return "bg-ground text-ink-2 border-rule";
 }
 
@@ -41,7 +75,11 @@ function levelBadge(level: number) {
 }
 
 export default function RepairsPage() {
-  const { data: repairs, error, isLoading } = useSWR<RepairOut[]>("/repairs", fetcher, { refreshInterval: 5000 });
+  const { data: repairs, error, isLoading } = useSWR<RepairRunOut[]>("/repairs", fetcher, {
+    refreshInterval: 2000,
+  });
+  const { data: drifts } = useSWR<DriftEventOut[]>("/drift", fetcher, { refreshInterval: 2000 });
+  const { data: connectors } = useSWR<ConnectorOut[]>("/connectors", fetcher, { refreshInterval: 2000 });
 
   if (isLoading) {
     return (
@@ -61,6 +99,13 @@ export default function RepairsPage() {
     );
   }
 
+  const driftToConnector = new Map((drifts ?? []).map((d) => [d.id, d.connector_id]));
+  const connectorById = new Map((connectors ?? []).map((c) => [c.id, c]));
+  const activeReleaseByConnector: Record<string, string | null> = Object.fromEntries(
+    (connectors ?? []).map((c) => [c.id, c.active_release_id ?? null]),
+  );
+  const sorted = [...(repairs ?? [])].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+
   return (
     <div data-testid="repairs-page">
       <div className="mb-6 flex items-center justify-between">
@@ -75,7 +120,7 @@ export default function RepairsPage() {
         </a>
       </div>
 
-      {!repairs?.length ? (
+      {!sorted.length ? (
         <div data-testid="repairs-empty" className="border border-dashed px-4 py-6 text-center text-sm text-ink-2">
           No repairs yet. Inject a fault or trigger a sync that drifts to create one.
         </div>
@@ -85,50 +130,66 @@ export default function RepairsPage() {
             <thead className="bg-ground text-xs uppercase tracking-wide text-ink-2">
               <tr>
                 <th className="px-4 py-2 font-medium">Repair</th>
-                <th className="px-4 py-2 font-medium">Decision</th>
-                <th className="px-4 py-2 font-medium">Ladder</th>
+                <th className="px-4 py-2 font-medium">Connector</th>
+                <th className="px-4 py-2 font-medium">Drift class</th>
+                <th className="px-4 py-2 font-medium">Rung</th>
                 <th className="px-4 py-2 font-medium">Rule</th>
-                <th className="px-4 py-2 font-medium">Created</th>
+                <th className="px-4 py-2 font-medium">Model calls</th>
+                <th className="px-4 py-2 font-medium">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-rule">
-              {repairs.map((r) => (
-                <tr key={r.id} data-testid={`repair-row-${r.id}`} className="hover:bg-ground">
-                  <td className="px-4 py-3">
-                    <Link href={`/repairs/${encodeURIComponent(r.id)}`} className="font-mono text-xs font-medium text-ink hover:underline">
-                      {r.id.slice(0, 8)}
-                    </Link>
-                    <div className="font-mono text-[11px] text-ink-2">{r.id.slice(0, 12)}…</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex border px-2 py-0.5 text-xs font-medium ${decisionBadge(r.decision)}`}>
-                      {r.decision}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span data-testid={`repair-ladder-${r.id}`} className="inline-flex bg-ground px-2 py-0.5 text-xs font-medium text-ink-2">
-                      {levelBadge(r.ladder_level_reached)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-ink-2">{r.rule_id ?? "—"}</td>
-                  <td className="px-4 py-3 text-xs text-ink-2">
-                    {(() => {
-                      try {
-                        return new Date(r.created_at).toLocaleString();
-                      } catch {
-                        return r.created_at;
-                      }
-                    })()}
-                  </td>
-                </tr>
-              ))}
+              {sorted.map((r) => {
+                const connectorIds = [...new Set(
+                  (r.drift_event_ids ?? [])
+                    .map((id) => driftToConnector.get(id))
+                    .filter((v): v is string => typeof v === "string"),
+                )];
+                const connectorNames = connectorIds.map(
+                  (id) => connectorById.get(id)?.name ?? id.slice(0, 8),
+                );
+                const status = repairStatus(r, activeReleaseByConnector, driftToConnector);
+                const { calls, frontierTokens } = modelCallsOf(r);
+                return (
+                  <tr key={r.id} data-testid={`repair-row-${r.id}`} className="hover:bg-ground">
+                    <td className="px-4 py-3">
+                      <Link href={`/repairs/${encodeURIComponent(r.id)}`} className="font-mono text-xs font-medium text-ink hover:underline">
+                        {r.id.slice(0, 8)}
+                      </Link>
+                      <div className="font-mono text-[11px] text-ink-2">{r.id.slice(0, 12)}…</div>
+                    </td>
+                    <td data-testid={`repair-connector-${r.id}`} className="px-4 py-3 text-xs">
+                      {connectorNames.length ? connectorNames.join(", ") : "—"}
+                    </td>
+                    <td data-testid={`repair-class-${r.id}`} className="px-4 py-3 font-mono text-xs text-ink-2">
+                      {r.drift_class ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span data-testid={`repair-ladder-${r.id}`} className="inline-flex bg-ground px-2 py-0.5 text-xs font-medium text-ink-2">
+                        {levelBadge(r.ladder_level_reached)}
+                      </span>
+                    </td>
+                    <td data-testid={`repair-rule-${r.id}`} className="px-4 py-3 font-mono text-xs text-ink-2">
+                      {r.rule_id ?? "—"}
+                    </td>
+                    <td data-testid={`repair-calls-${r.id}`} className="num px-4 py-3 text-xs text-ink-2">
+                      {calls === 0 ? "0 model calls" : `${calls} calls · ${frontierTokens.toLocaleString("en-US")} frontier`}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span data-testid={`repair-status-${r.id}`} className={`inline-flex border px-2 py-0.5 text-xs font-medium ${statusClass(status)}`}>
+                        {status}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
-      <p data-testid="repairs-count" className="mt-3 text-xs text-ink-2">
-        {repairs?.length ?? 0} repair{(repairs?.length ?? 0) === 1 ? "" : "s"} · polling every 5s
+      <p data-testid="repairs-count" className="num mt-3 text-xs text-ink-2">
+        {sorted.length} repair{sorted.length === 1 ? "" : "s"} · newest first · polling every 2s
       </p>
     </div>
   );

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen } from "@testing-library/react";
 
 vi.mock("swr", () => ({
   default: vi.fn(),
@@ -14,14 +14,25 @@ const mockRepair = {
   id: "repair-abc-123",
   drift_event_ids: ["drift-1"],
   ladder_level_reached: 1,
+  vendor: "atlaspms",
+  drift_class: "PAGINATION_CHANGED",
+  fingerprint_delta: {
+    pagination_changed: true,
+    pagination_details: { list_reservations: { previous: { strategy: "page" }, current: { strategy: "cursor" } } },
+  },
   candidate_patch: [{ op: "replace", path: "/operations/list/pagination/strategy", value: "cursor" }],
-  rule_id: "offset_to_cursor",
+  rule_id: "page_to_cursor",
   hypothesis_ids: ["hyp-1"],
   visible_test_results: [{ name: "records_match", passed: true }],
   verifier_report_id: "report-xyz",
   decision: "propose",
   model_usage: { frontier_tokens: 0, small_tokens: 0, calls: 0 },
+  ladder_trace: [
+    { level: 0, action: "knowledge lookup", reason: "L0 miss: no known fix for atlaspms + PAGINATION_CHANGED" },
+    { level: 1, action: "rule page_to_cursor matched", reason: "pagination shape page → cursor on the wire" },
+  ],
   escalation_bundle: null,
+  approval: null,
   created_at: new Date().toISOString(),
 };
 
@@ -37,9 +48,82 @@ const mockDrift = {
   updated_at: new Date().toISOString(),
 };
 
+const mockEvidence = {
+  id: "ev-1",
+  kind: "observation",
+  payload: { url: "GET /reservations", note: "page param ignored" },
+  parent_ids: [],
+  run_id: "sync-1",
+  created_at: new Date().toISOString(),
+};
+
+const mockDerivation = {
+  id: "deriv-1",
+  kind: "hypothesis",
+  payload: {
+    stages: [
+      { name: "generated", count: 24, ids: ["h-1", "h-2"] },
+      { name: "distinct", count: 1, ids: ["h-1"] },
+    ],
+  },
+  parent_ids: [],
+  run_id: "repair_runs:repair-abc-123",
+  created_at: new Date().toISOString(),
+};
+
+const mockLedger = {
+  repair_run_id: "repair-abc-123",
+  decision: "propose",
+  resolved_rung: 1,
+  attempts: [
+    { rung: 0, action: "knowledge lookup", reason: "L0 miss: no known fix", calls: [] },
+    { rung: 1, action: "rule page_to_cursor matched", reason: "wire shape matches", calls: [] },
+  ],
+  total_calls: 0,
+  small_tokens: 0,
+  frontier_tokens: 0,
+  total_cost: "0",
+};
+
+const mockConnector = {
+  id: "c1",
+  name: "AtlasPMS",
+  state: "degrading",
+  activity: "repair waiting",
+  target_entities: ["Reservation"],
+};
+
+const mockSyncRun = {
+  kind: "sync",
+  payload: {
+    sync_run: {
+      id: "sync-1",
+      release_id: "rel-1",
+      started_at: new Date(Date.now() - 5000).toISOString(),
+      finished_at: new Date().toISOString(),
+      records_observed: { Reservation: 4 },
+      records_emitted: { Reservation: 4 },
+      outcome: "Degraded",
+      unmet_criteria: ["records_match"],
+    },
+  },
+};
+
+function mockAll(repair: unknown = mockRepair) {
+  mockedUseSWR
+    .mockReturnValueOnce({ data: repair, error: undefined, isLoading: false, mutate: vi.fn() })
+    .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false })
+    .mockReturnValueOnce({ data: [mockEvidence], error: undefined, isLoading: false })
+    .mockReturnValueOnce({ data: [mockDerivation], error: undefined, isLoading: false })
+    .mockReturnValueOnce({ data: mockLedger, error: undefined, isLoading: false })
+    .mockReturnValueOnce({ data: mockConnector, error: undefined, isLoading: false })
+    .mockReturnValueOnce({ data: mockSyncRun, error: undefined, isLoading: false })
+    .mockReturnValueOnce({ data: { rules: [{ id: "page_to_cursor", fixes: "page→cursor", confidence: 0.95 }] }, error: undefined, isLoading: false })
+    .mockReturnValue({ data: undefined, error: undefined, isLoading: false });
+}
+
 describe("RepairDetailPage", () => {
   beforeEach(() => vi.resetAllMocks());
-  afterEach(() => vi.unstubAllGlobals());
 
   it("shows loading when params is Promise", () => {
     mockedUseSWR.mockReturnValue({ data: undefined, error: undefined, isLoading: true, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
@@ -47,130 +131,76 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("repair-detail-page")).toBeInTheDocument();
   });
 
-  it("renders repair detail with all sections", () => {
-    // First SWR: repair, second: drift events, third: evidence
-    mockedUseSWR
-      .mockReturnValueOnce({ data: mockRepair, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+  it("renders the decision line and actions at the top", () => {
+    mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    expect(screen.getByTestId("repair-detail-page")).toBeInTheDocument();
-    expect(screen.getByTestId("repair-title")).toBeInTheDocument();
-    expect(screen.getByTestId("ladder-trace")).toBeInTheDocument();
-    expect(screen.getByTestId("patch-diff")).toBeInTheDocument();
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Fix ready: verified, 0 model calls");
     expect(screen.getByTestId("repair-actions")).toBeInTheDocument();
     expect(screen.getByTestId("inject-fault-drawer")).toBeInTheDocument();
-    // P2.S6.1 richer views: graph renders from drift links, chart shows its
-    // empty state until /metrics/model-usage resolves.
-    expect(screen.getByTestId("evidence-graph")).toBeInTheDocument();
-    expect(screen.getByTestId("model-usage-chart-empty")).toBeInTheDocument();
   });
 
-  it("shows drift evidence section", () => {
-    mockedUseSWR
-      .mockReturnValueOnce({ data: mockRepair, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+  it("answers what happened from persisted rows", () => {
+    mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    const section = screen.getByTestId("repair-section-happened");
+    expect(section).toBeInTheDocument();
+    expect(screen.getByTestId("happened-connector")).toHaveTextContent("AtlasPMS");
+    expect(screen.getByTestId("happened-sync-outcome")).toHaveTextContent("Degraded");
+    expect(screen.getByTestId("happened-sync-outcome")).toHaveTextContent("records_match");
+    expect(screen.getByTestId("wire-change-line-0")).toHaveTextContent("page → cursor");
+    expect(screen.getByTestId("happened-affects")).toHaveTextContent("Reservation");
     expect(screen.getByTestId("drift-evidence-section")).toBeInTheDocument();
   });
 
-  it("shows model usage with zero-frontier badge", () => {
-    mockedUseSWR
-      .mockReturnValueOnce({ data: mockRepair, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+  it("answers what the engine did: rungs, funnel, probes, model calls, verifier", () => {
+    mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    expect(screen.getAllByTestId("model-usage-zero-frontier").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByTestId("repair-section-did")).toBeInTheDocument();
+    expect(screen.getByTestId("rung-timeline-0")).toHaveTextContent("L0 miss");
+    expect(screen.getByTestId("rung-timeline-1")).toHaveTextContent("page_to_cursor");
+    expect(screen.getByTestId("hypothesis-funnel-headline")).toHaveTextContent("24 → 1");
+    expect(screen.getByTestId("repair-probe-0")).toHaveTextContent("GET /reservations");
+    expect(screen.getByTestId("model-call-box-empty")).toHaveTextContent("0 model calls");
+    expect(screen.getByTestId("verifier-checks-line")).toHaveTextContent("1/1 checks pass");
   });
 
-  it("shows error when repair fetch fails", () => {
-    mockedUseSWR.mockReturnValue({ data: undefined, error: new Error("not found"), isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
-    render(<RepairDetailPage params={{ id: "missing" }} />);
-    expect(screen.getByTestId("repair-detail-error")).toBeInTheDocument();
-  });
-
-  it("has back navigation", () => {
-    mockedUseSWR
-      .mockReturnValueOnce({ data: mockRepair, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
-      .mockReturnValueOnce({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+  it("answers what the engine decided: patch diff, touches, raw patch", () => {
+    mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    expect(screen.getByTestId("back-to-repairs")).toBeInTheDocument();
+    expect(screen.getByTestId("repair-section-decided")).toBeInTheDocument();
+    expect(screen.getByTestId("decided-line")).toHaveTextContent("Fix ready");
+    expect(screen.getByTestId("patch-line-0")).toHaveTextContent("set /operations/list/pagination/strategy");
+    expect(screen.getByTestId("patch-touches")).toHaveTextContent("touches: operations");
+    expect(screen.getByTestId("patch-raw")).toHaveTextContent("cursor");
+    expect(screen.getByTestId("patch-diff")).toBeInTheDocument();
   });
 
-  it("hides verdict and action while climbing without a patch", () => {
-    const climbingRepair = {
+  it("answers what approve will do from the server preview", () => {
+    mockAll();
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-section-approve")).toBeInTheDocument();
+    // ApprovePreviewSection fetches the preview endpoint (last SWR mock).
+    expect(screen.getByTestId("approve-preview-loading")).toBeInTheDocument();
+  });
+
+  it("shows the escalation question and rejected proposals for escalations", () => {
+    mockAll({
       ...mockRepair,
-      id: "repair-climbing-1",
-      ladder_level_reached: 2,
-      rule_id: null,
-      candidate_patch: null,
-      visible_test_results: [],
+      decision: "escalate",
       verifier_report_id: null,
-    };
-    // Key-based mock: survives the re-renders that live updates cause.
-    mockedUseSWR.mockImplementation(
-      ((key: unknown) => {
-        const base = { error: undefined, isLoading: false, mutate: vi.fn() };
-        if (typeof key === "string" && key.startsWith("drift-for-repair")) return { ...base, data: [mockDrift] };
-        if (typeof key === "string" && key.startsWith("evidence-for-repair")) return { ...base, data: [] };
-        if (typeof key === "string" && key.startsWith("/repairs/")) return { ...base, data: climbingRepair };
-        return { ...base, data: undefined, isLoading: true };
-      }) as unknown as typeof useSWR,
-    );
-    render(<RepairDetailPage params={{ id: "repair-climbing-1" }} />);
-    expect(screen.getByTestId("repair-detail-page")).toHaveAttribute("data-state", "climbing");
-    expect(screen.getByTestId("repair-title")).toHaveTextContent("Climbing");
-    expect(screen.getByText(/Not run yet/)).toBeInTheDocument();
-    const approve = screen.getByTestId("repair-approve-btn");
-    expect(approve).toBeDisabled();
-    expect(approve).toHaveTextContent("No patch to approve yet");
-    // 0 "so far" is not the verdict yet: no zero badge, counter holds at 0.
-    expect(screen.queryByTestId("model-usage-zero-frontier")).not.toBeInTheDocument();
-    expect(screen.getByTestId("model-usage-frontier-tokens")).toHaveTextContent("0");
+      candidate_patch: [],
+      ladder_trace: [{ level: 3, action: "proposal_rejected", reason: "patch does not apply" }],
+      escalation_bundle: { reason: "no verified fix", question: "Which mapping is correct?", suggested_action: "pick one" },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Needs your decision");
+    expect(screen.getByTestId("decided-question")).toHaveTextContent("Which mapping is correct?");
+    expect(screen.getByTestId("decided-rejected")).toHaveTextContent("proposal_rejected");
   });
 
-  it("advances the rung from live SSE ladder events", () => {
-    const listeners = new Map<string, Array<(e: { data: string }) => void>>();
-    class FakeEventSource {
-      onmessage: ((e: { data: string }) => void) | null = null;
-      onerror: (() => void) | null = null;
-      constructor(public url: string) {
-        FakeEventSource.live.push(this);
-      }
-      addEventListener(type: string, fn: (e: { data: string }) => void) {
-        const arr = listeners.get(type) ?? [];
-        arr.push(fn);
-        listeners.set(type, arr);
-      }
-      removeEventListener() {}
-      close() {}
-      static live: FakeEventSource[] = [];
-    }
-    vi.stubGlobal("EventSource", FakeEventSource);
-    mockedUseSWR.mockImplementation(
-      ((key: unknown) => {
-        const base = { error: undefined, isLoading: false, mutate: vi.fn() };
-        if (typeof key === "string" && key.startsWith("drift-for-repair")) return { ...base, data: [mockDrift] };
-        if (typeof key === "string" && key.startsWith("evidence-for-repair")) return { ...base, data: [] };
-        if (typeof key === "string" && key.startsWith("/repairs/")) return { ...base, data: mockRepair };
-        return { ...base, data: undefined, isLoading: true };
-      }) as unknown as typeof useSWR,
-    );
+  it("keeps the evidence graph appendix", () => {
+    mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    expect(FakeEventSource.live.length).toBeGreaterThan(0);
-    expect(FakeEventSource.live[0].url).toContain("/runs/sync-1/events");
-    expect(screen.getByTestId("ladder-level-badge")).toHaveTextContent("L1");
-    act(() => {
-      for (const fn of listeners.get("hypothesis") ?? []) {
-        fn({ data: JSON.stringify({ id: "h-1", kind: "hypothesis", payload: { prior: 0.4 }, run_id: "sync-1" }) });
-      }
-    });
-    expect(screen.getByTestId("ladder-level-badge")).toHaveTextContent("L2");
+    expect(screen.getByTestId("evidence-graph")).toBeInTheDocument();
   });
 });

@@ -71,6 +71,40 @@ def require_control_token(
     return
 
 
+def approval_for_repair(db: Session, repair_run_id: str):
+    """Latest approval row on a repair as an ``ApprovalSummaryOut`` (REQ-032).
+
+    Returns ``None`` when no operator has decided on the repair yet. Used
+    to populate ``RepairRunOut.approval`` so the repairs list and the
+    repair page show approved/applied without extra round trips.
+    """
+    from sqlalchemy import select
+
+    from autobridge.control.models import Approval
+    from autobridge.control.schemas import ApprovalSummaryOut
+
+    row = (
+        db.execute(
+            select(Approval)
+            .where(Approval.repair_run_id == repair_run_id)
+            .order_by(Approval.created_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if row is None:
+        return None
+    return ApprovalSummaryOut(
+        id=row.id,
+        actor=row.actor,
+        decision=row.decision,
+        from_release_id=row.from_release_id,
+        to_release_id=row.to_release_id,
+        created_at=row.created_at,
+    )
+
+
 def approved_by_for_releases(db: Session, release_ids: list[str]) -> dict[str, str]:
     """Map release id -> actor of its latest approval (REQ-001).
 

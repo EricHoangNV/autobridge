@@ -910,6 +910,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repairs/{repair_id}/approve-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Approve Preview
+         * @description Preview of what Approve/Reject will do, from the real path (REQ-032 §4).
+         *
+         *     Read-only: derives every line from the same rows ``POST
+         *     .../approve`` acts on (candidate release, active release, dependents,
+         *     scheduler interval, learn-on-approve rule), so the UI text follows the
+         *     server even when the behaviour changes. Never approves, rejects,
+         *     activates or writes knowledge.
+         */
+        get: operations["approve_preview_repairs__repair_id__approve_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repairs/{repair_id}/ledger": {
         parameters: {
             query?: never;
@@ -1053,6 +1079,51 @@ export interface components {
             rollback_of_release_id?: string | null;
             /** To Release Id */
             to_release_id?: string | null;
+        };
+        /**
+         * ApprovalSummaryOut
+         * @description Latest approval/decision row on a repair (REQ-032 repairs list status).
+         */
+        ApprovalSummaryOut: {
+            /** Actor */
+            actor: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decision */
+            decision: string;
+            /** From Release Id */
+            from_release_id?: string | null;
+            /** Id */
+            id: string;
+            /** To Release Id */
+            to_release_id?: string | null;
+        };
+        /**
+         * ApprovePreviewOut
+         * @description What Approve/Reject will do, computed from the real path (REQ-032 §4).
+         *
+         *     Every line is derived from live rows (candidate release, active
+         *     release, dependents, scheduler interval, learn-on-approve rule) — the
+         *     same state ``POST /repairs/{id}/approve`` acts on — never hard-coded.
+         */
+        ApprovePreviewOut: {
+            /** Approvable */
+            approvable: boolean;
+            /** Approve Lines */
+            approve_lines?: string[];
+            /** Facts */
+            facts?: {
+                [key: string]: unknown;
+            };
+            /** Reason */
+            reason: string;
+            /** Reject Lines */
+            reject_lines?: string[];
+            /** Repair Run Id */
+            repair_run_id: string;
         };
         /** BuildRequest */
         BuildRequest: {
@@ -2167,6 +2238,7 @@ export interface components {
         };
         /** RepairRunOut */
         RepairRunOut: {
+            approval?: components["schemas"]["ApprovalSummaryOut"] | null;
             /** Candidate Patch */
             candidate_patch?: {
                 [key: string]: unknown;
@@ -5339,6 +5411,59 @@ export interface operations {
             };
             /** @description Missing or invalid control token */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_preview_repairs__repair_id__approve_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                repair_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovePreviewOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

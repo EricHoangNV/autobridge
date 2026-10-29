@@ -2,18 +2,19 @@
 
 import { useState, useEffect } from "react";
 import useSWR from "swr";
-import { LadderTrace } from "@/components/LadderTrace";
 import { PatchDiff } from "@/components/PatchDiff";
 import { ModelUsageView } from "@/components/ModelUsageView";
-import { ModelUsageChart } from "@/components/ModelUsageChart";
 import { DriftEvidenceSection } from "@/components/DriftEvidenceSection";
 import { EvidenceGraph } from "@/components/EvidenceGraph";
 import { HypothesesPanel } from "@/components/HypothesesPanel";
-import { VisibleTestsPanel } from "@/components/VisibleTestsPanel";
 import { VerifierVerdict } from "@/components/VerifierVerdict";
 import { RepairActions } from "@/components/RepairActions";
-import { RungLedger } from "@/components/RungLedger";
 import { InjectFaultDrawer } from "@/components/InjectFaultDrawer";
+import { WireChangeSummary } from "@/components/WireChangeSummary";
+import { HypothesisFunnel, type FunnelStage } from "@/components/HypothesisFunnel";
+import { ModelCallBox, type LedgerAttempt } from "@/components/ModelCallBox";
+import { ApprovePreviewSection } from "@/components/ApprovePreview";
+import { AfterApproveTracker } from "@/components/AfterApproveTracker";
 import { useRunEvents } from "@/lib/sse";
 import { maxLadderLevel } from "@/lib/ladder-events";
 import { useFrontierTicker } from "@/lib/use-frontier-ticker";
@@ -32,6 +33,10 @@ type RepairOut = {
   id: string;
   drift_event_ids: string[];
   ladder_level_reached: number;
+  vendor?: string | null;
+  drift_class?: string | null;
+  drift_signature?: string | null;
+  fingerprint_delta?: Record<string, unknown> | null;
   candidate_patch?: Array<{ op: string; path: string; value?: unknown; from?: string }> | null;
   rule_id?: string | null;
   hypothesis_ids: string[];
@@ -39,7 +44,16 @@ type RepairOut = {
   verifier_report_id?: string | null;
   decision: string;
   model_usage: Record<string, unknown>;
+  ladder_trace: Array<Record<string, unknown>>;
   escalation_bundle?: Record<string, unknown> | null;
+  approval?: {
+    id: string;
+    actor: string;
+    decision: string;
+    from_release_id?: string | null;
+    to_release_id?: string | null;
+    created_at: string;
+  } | null;
   created_at: string;
 };
 
@@ -64,28 +78,38 @@ type EvidenceOut = {
   created_at: string;
 };
 
-type ModelUsageEntryOut = {
-  provider: string;
-  model: string;
-  tier: string;
-  total_calls: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_cost: string;
-  by_run?: Array<{ run_id?: string; purpose?: string; tokens?: unknown; [key: string]: unknown }>;
+type SyncRunPayload = {
+  id: string;
+  release_id: string;
+  started_at: string;
+  finished_at?: string | null;
+  records_observed: Record<string, number>;
+  records_emitted: Record<string, number>;
+  outcome: string;
+  unmet_criteria: string[];
 };
 
-type ModelUsageResponseOut = {
+type ConnectorLite = {
+  id: string;
+  name: string;
+  state?: string | null;
+  activity?: string | null;
+  target_entities?: string[];
+};
+
+type LedgerOut = {
+  repair_run_id: string;
+  decision: string;
+  resolved_rung: number;
+  attempts: LedgerAttempt[];
   total_calls: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_cost: string;
-  frontier_tokens: number;
   small_tokens: number;
-  by_tier: Record<string, number>;
-  by_provider: Record<string, number>;
-  entries?: ModelUsageEntryOut[];
-  by_purpose?: Record<string, number>;
+  frontier_tokens: number;
+  total_cost: string;
+};
+
+type CapabilitiesOut = {
+  rules: { id: string; fixes: string; confidence: number }[];
 };
 
 type PageProps = {
@@ -101,8 +125,8 @@ function toNumber(v: unknown): number {
   return 0;
 }
 
-function formatInt(n: number): string {
-  return n.toLocaleString("en-US");
+function formatInt(n: number): number | string {
+  return Number.isFinite(n) ? n.toLocaleString("en-US") : "0";
 }
 
 function humanizeDriftClass(dc: string): string {
@@ -117,6 +141,25 @@ function shortTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function shortDuration(startedAt: string, finishedAt: string | null | undefined): string | null {
+  if (!finishedAt) return null;
+  const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** One readable line per JSON Patch op, against the current spec. */
+function describePatchOp(op: { op: string; path: string; value?: unknown; from?: string }): string {
+  const path = op.path || "/";
+  if (op.op === "add") return `add ${path}: ${JSON.stringify(op.value)?.slice(0, 80) ?? ""}`;
+  if (op.op === "remove") return `remove ${path}`;
+  if (op.op === "move" || op.op === "copy") return `${op.op} ${op.from ?? "?"} → ${path}`;
+  if (op.op === "test") return `check ${path} is ${JSON.stringify(op.value)?.slice(0, 80) ?? ""}`;
+  if ("value" in op) return `set ${path} to ${JSON.stringify(op.value)?.slice(0, 80) ?? ""}`;
+  return `${op.op} ${path}`;
 }
 
 export default function RepairDetailPage({ params }: PageProps) {
@@ -139,7 +182,7 @@ export default function RepairDetailPage({ params }: PageProps) {
     isLoading: repairLoading,
     mutate: mutateRepair,
   } = useSWR<RepairOut>(repairId ? `/repairs/${encodeURIComponent(repairId)}` : null, fetcher, {
-    refreshInterval: 5000,
+    refreshInterval: 2000,
   });
 
   // Fetch drift events linked to this repair
@@ -157,10 +200,10 @@ export default function RepairDetailPage({ params }: PageProps) {
       }
       return events;
     },
-    { refreshInterval: 8000 },
+    { refreshInterval: 2000 },
   );
 
-  // Fetch evidence records linked to drift events
+  // Fetch evidence records linked to drift events (+ hypothesis ids)
   const { data: evidenceRecords } = useSWR<EvidenceOut[]>(
     driftEvents?.length ? `evidence-for-repair-${repair!.id}` : null,
     async () => {
@@ -175,11 +218,9 @@ export default function RepairDetailPage({ params }: PageProps) {
           }
         }
       }
-      // Also fetch hypothesis evidence if hypothesis_ids look like evidence ids
       for (const hid of repair!.hypothesis_ids) {
         try {
           const e = await fetcher<EvidenceOut>(`/evidence/${encodeURIComponent(hid)}`);
-          // Avoid duplicates
           if (!records.some((r) => r.id === e.id)) records.push(e);
         } catch {
           // hypothesis id may not be an evidence id
@@ -187,24 +228,48 @@ export default function RepairDetailPage({ params }: PageProps) {
       }
       return records;
     },
+    { refreshInterval: 2000 },
   );
 
-  // P2.S6.1 — fleet-wide per-run usage (existing endpoint, no new API
-  // surface); runs linked to this repair's evidence are highlighted.
-  const { data: modelUsageResponse } = useSWR<ModelUsageResponseOut>("/metrics/model-usage", fetcher, {
-    refreshInterval: 15000,
-  });
-  const relatedRunIds = (evidenceRecords ?? []).map((e) => e.run_id).filter(Boolean);
+  // All evidence owned by the repair run (derivation record with stages,
+  // verification records) — persisted rows, not recomputed.
+  const { data: runEvidence } = useSWR<EvidenceOut[]>(
+    repair ? `/runs/${encodeURIComponent(repair.id)}/evidence` : null,
+    fetcher,
+    { refreshInterval: 2000 },
+  );
 
-  // The climb on live SSE: the source sync run's evidence stream carries the
-  // ladder events, and the track advances as they arrive — no replay timers
-  // (REQ-002 slice 3). Falls back to the polled record when SSE is unavailable.
+  // The rung ledger: per-rung action/reason plus every model call.
+  const { data: ledger } = useSWR<LedgerOut>(
+    repair ? `/repairs/${encodeURIComponent(repair.id)}/ledger` : null,
+    fetcher,
+    { refreshInterval: 2000 },
+  );
+
+  // Connector for the primary drift (name, entities, state).
+  const primaryConnectorId = driftEvents?.[0]?.connector_id ?? null;
+  const { data: connector } = useSWR<ConnectorLite>(
+    primaryConnectorId ? `/connectors/${encodeURIComponent(primaryConnectorId)}` : null,
+    fetcher,
+    { refreshInterval: 2000 },
+  );
+
+  // The failing sync that detected the drift (outcome + unmet criterion).
+  const sourceSyncId = driftEvents?.[0]?.source_sync_run_id ?? null;
+  const { data: sourceSyncRun } = useSWR<{ kind: string; payload: { sync_run: SyncRunPayload } }>(
+    sourceSyncId ? `/runs/${encodeURIComponent(sourceSyncId)}` : null,
+    fetcher,
+    { refreshInterval: 20000 },
+  );
+
+  // Rule confidence for "confidence and why".
+  const { data: capabilities } = useSWR<CapabilitiesOut>("/capabilities", fetcher);
+  const ruleConfidence = capabilities?.rules.find((r) => r.id === repair?.rule_id)?.confidence;
+
   const sseRunId = driftEvents?.[0]?.source_sync_run_id ?? null;
   const runEvents = useRunEvents(sseRunId);
   const sseLevel = maxLadderLevel(runEvents);
 
-  // These hooks run before the early returns below, so derive the ticker
-  // inputs from the possibly-still-loading repair with safe fallbacks.
   const earlyMu = (repair?.model_usage ?? {}) as Record<string, unknown>;
   const earlyFrontier = toNumber(
     earlyMu["frontier_tokens"] ?? earlyMu["frontier_tokens_total"] ?? earlyMu["frontier_tokens_legacy"],
@@ -212,21 +277,12 @@ export default function RepairDetailPage({ params }: PageProps) {
   const earlyLevel = repair?.ladder_level_reached ?? 0;
   const earlyTrack = Math.max(earlyLevel, sseLevel ?? earlyLevel);
   const earlyReport = !!repair?.verifier_report_id;
-  // The frontier counter moves only at L3 (or once the verifier has run).
   const tickingFrontier = useFrontierTicker(earlyFrontier, earlyTrack >= 3 || earlyReport);
 
   if (repairLoading || !repairId) {
     return (
       <div data-testid="repair-detail-page" data-state="loading" aria-busy="true">
-        <div className="repair-banner" role="status">
-          <p>Loading repair…</p>
-        </div>
-        <div className="repair-stage">
-          <div className="repair-call">
-            <p className="text-sm text-ink-2">Loading repair…</p>
-          </div>
-          <div className="repair-bug" aria-hidden="true" />
-        </div>
+        <div className="py-8 text-center text-sm text-ink-2">Loading repair…</div>
       </div>
     );
   }
@@ -237,13 +293,10 @@ export default function RepairDetailPage({ params }: PageProps) {
         <a href="/repairs" data-testid="back-to-repairs" className="text-xs text-ink-2 hover:text-ink hover:underline">
           ← Back to repairs
         </a>
-        <div className="repair-banner" role="alert">
-          <p>Can&apos;t reach the control API at :8101. Showing the last stored state.</p>
-        </div>
         <div
           data-testid="repair-detail-error"
-          className="mt-4 border px-4 py-3 text-sm"
-          style={{ borderColor: "var(--stop)", color: "var(--stop)" }}
+          className="mt-4 border border-stop px-4 py-3 text-sm"
+          style={{ color: "var(--stop)" }}
         >
           Failed to load repair {(repairError as Error).message}
         </div>
@@ -259,7 +312,6 @@ export default function RepairDetailPage({ params }: PageProps) {
     );
   }
 
-  // Derive probes + hypotheses from evidence records
   const probes = evidenceRecords?.filter((e) => e.kind === "probe" || e.kind === "observation") ?? null;
   const hypotheses = evidenceRecords?.filter((e) => e.kind === "hypothesis")
     ? evidenceRecords
@@ -267,79 +319,60 @@ export default function RepairDetailPage({ params }: PageProps) {
         .map((e) => ({ id: e.id, ...e.payload, _evidence: e }))
     : null;
 
+  // Funnel stages from the persisted derivation record (engine or demo
+  // record-climb), oldest first; the derivation owns the counts.
+  const derivation = (runEvidence ?? []).find(
+    (e) => e.kind === "hypothesis" && Array.isArray((e.payload as Record<string, unknown>)["stages"]),
+  );
+  const funnelStages: FunnelStage[] = (() => {
+    const raw = (derivation?.payload as Record<string, unknown> | undefined)?.["stages"];
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null)
+      .map((s) => ({
+        name: String(s["name"] ?? "stage"),
+        count: typeof s["count"] === "number" ? s["count"] : 0,
+        ids: Array.isArray(s["ids"]) ? s["ids"].map(String) : [],
+        families: Array.isArray(s["families"]) ? s["families"].map(String) : [],
+        source: typeof s["source"] === "string" ? s["source"] : undefined,
+      }));
+  })();
+
   const level = repair.ladder_level_reached ?? 0;
   const isEscalated = repair.decision === "escalate";
   const hasReport = !!repair.verifier_report_id;
+  const hasPatch = (repair.candidate_patch ?? []).length > 0;
   const climbingNow = !hasReport && repair.decision === "propose";
-  // Live rung: the polled record, raised by any newer SSE ladder event.
   const trackLevel = Math.max(level, sseLevel ?? level);
   const pageState = isEscalated ? "escalated" : climbingNow ? "climbing" : "ready";
 
   const shortId = repair.id.slice(0, 8);
   const primaryDrift = driftEvents?.[0] ?? null;
-  const connectorLabel = primaryDrift ? primaryDrift.connector_id : "unknown connector";
-  const driftClass = primaryDrift ? primaryDrift.drift_class : null;
-
-  // Rung headlines while the repair is still climbing (the prototype's climb
-  // frames). The final headline, the verdict and the action appear only once
-  // a patch has passed (REQ-002 slice 3).
-  const CLIMB_HEADLINES = [
-    "Checking known fixes for this change",
-    "Checking the rule registry",
-    "Climbing: the small model is ranking hypotheses",
-  ];
-  const headline = isEscalated
-    ? `Needs you at L${trackLevel}`
-    : climbingNow && trackLevel <= 2
-      ? CLIMB_HEADLINES[trackLevel]
-      : climbingNow
-        ? "Frontier patch proposed — waiting for the verifier."
-        : repair.rule_id && trackLevel <= 1
-          ? `Rule ${repair.rule_id} matched at L${trackLevel}`
-          : driftClass
-            ? `${humanizeDriftClass(driftClass)} at L${trackLevel}`
-            : `Repair ${shortId} at L${trackLevel}`;
-
-  const story = (() => {
-    const since = primaryDrift ? shortTime(primaryDrift.created_at) : null;
-    const n = repair.drift_event_ids.length;
-    const sev = primaryDrift ? primaryDrift.severity : null;
-    const bits: string[] = [];
-    if (since && driftClass) {
-      bits.push(
-        `Since ${since} ${connectorLabel} shows ${humanizeDriftClass(driftClass).toLowerCase()}${sev ? ` (severity ${sev})` : ""} across ${n} linked drift event${n === 1 ? "" : "s"}.`,
-      );
-    } else {
-      bits.push(
-        `Repair ${shortId} links ${n} drift event${n === 1 ? "" : "s"}${sev ? ` at severity ${sev}` : ""}.`,
-      );
-    }
-    if (repair.rule_id && trackLevel <= 1) {
-      bits.push(`Rule ${repair.rule_id} repairs it with zero frontier tokens.`);
-    } else if (isEscalated) {
-      bits.push(`No rule repairs that without evidence, so the ladder stopped at L${trackLevel} and asks you.`);
-    } else if (climbingNow) {
-      bits.push(`The ladder is still climbing at L${trackLevel}; the verifier has not run yet.`);
-    } else if (repair.decision === "reject") {
-      bits.push(`The ladder reached L${trackLevel} and the patch was rejected.`);
-    } else {
-      bits.push(`The ladder reached L${trackLevel} and the verifier checked the candidate patch.`);
-    }
-    return bits.join(" ");
-  })();
+  const connectorLabel = connector?.name ?? primaryDrift?.connector_id ?? "unknown connector";
+  const driftClass = repair.drift_class ?? primaryDrift?.drift_class ?? null;
 
   const mu = repair.model_usage ?? {};
   const frontierTokens = toNumber(mu["frontier_tokens"] ?? mu["frontier_tokens_total"] ?? mu["frontier_tokens_legacy"]);
   const smallTokens = toNumber(mu["small_tokens"] ?? mu["small_tokens_total"]);
   const totalCalls =
     toNumber(mu["calls"] ?? mu["total_calls"]) || toNumber(mu["frontier_calls"]) + toNumber(mu["small_calls"]);
-  const levelTokens = {
-    0: "0 tokens",
-    1: "0 tokens",
-    2: smallTokens > 0 ? formatInt(smallTokens) : "—",
-    3: hasReport || frontierTokens > 0 ? formatInt(frontierTokens) : climbingNow ? "not yet" : "0",
-    4: isEscalated ? "you" : hasReport ? "approve" : "not yet",
-  } as Partial<Record<0 | 1 | 2 | 3 | 4, string>>;
+
+  const decisionLine = isEscalated
+    ? "Needs your decision: the engine is not confident"
+    : hasReport && hasPatch
+      ? `Fix ready: verified, ${frontierTokens === 0 && smallTokens === 0 ? "0 model calls" : `${formatInt(frontierTokens + smallTokens)} tokens`}`
+      : repair.decision === "reject"
+        ? "Rejected"
+        : "Still climbing: the verifier has not run yet";
+
+  const syncPayload = sourceSyncRun?.kind === "sync" ? sourceSyncRun.payload.sync_run : null;
+  const syncDuration = syncPayload ? shortDuration(syncPayload.started_at, syncPayload.finished_at) : null;
+
+  // "What the engine decided": rejected proposals from the persisted trace.
+  const rejectedProposals = (repair.ladder_trace ?? []).filter((e) => {
+    const action = String(e["action"] ?? "");
+    return action.includes("reject") || action.includes("fail");
+  });
 
   const passedCount = repair.visible_test_results.filter((t) => {
     const v = t as Record<string, unknown>;
@@ -349,9 +382,11 @@ export default function RepairDetailPage({ params }: PageProps) {
   }).length;
   const totalTests = repair.visible_test_results.length;
 
-  const traceTag = primaryDrift ? `${shortTime(primaryDrift.created_at)} · ${primaryDrift.drift_class}` : "no drift linked yet";
-  // Marker position: spread markers across the trace when several drifts link here.
-  const markerXs = (driftEvents ?? []).map((_, i, arr) => (arr.length === 1 ? 703 : 120 + Math.round((i * 760) / Math.max(1, arr.length - 1))));
+  // Touched vs untouched spec sections, from the patch paths themselves.
+  const touchedSections = [...new Set((repair.candidate_patch ?? []).map((op) => String(op.path ?? "").split("/").filter(Boolean)[0] || "/"))];
+
+  const attempts = ledger?.attempts ?? [];
+  const rungByLevel = new Map(attempts.map((a) => [a.rung, a]));
 
   return (
     <div data-testid="repair-detail-page" data-state={pageState}>
@@ -369,170 +404,101 @@ export default function RepairDetailPage({ params }: PageProps) {
         </a>
       </div>
 
-      <div className="repair-banner" role="status">
-        <p>Can&apos;t reach the control API at :8101. Showing the last stored state.</p>
-      </div>
-
-      {/* Stage: the call (left) + the scorebug (right) */}
-      <section className="repair-stage" aria-label="Repair call and verdict">
-        <div className="repair-call">
-          <div className="repair-who">
-            <b>{connectorLabel}</b>
-            <span>·</span>
-            <span>
-              repair <span className="font-mono">{shortId}</span>
-            </span>
-            {driftClass ? (
-              <>
-                <span>·</span>
-                <code>{driftClass}</code>
-              </>
-            ) : null}
-          </div>
-
-          <div className="repair-rung">
-            <span className={`repair-big${frontierTokens === 0 && trackLevel <= 1 ? " is-zero" : ""}`} aria-hidden="true">
-              L{trackLevel}
-            </span>
-            <h1 data-testid="repair-title" id="repair-headline" className="repair-headline">
-              <span className="sr-only">L{trackLevel}: </span>
-              {headline}
-            </h1>
-          </div>
-
-          {isEscalated && repair.escalation_bundle?.["question"] ? (
-            <p className="repair-ask" data-testid="repair-escalation-ask">
-              The engine&apos;s question: {String(repair.escalation_bundle["question"])}
-            </p>
-          ) : null}
-
-          <p className="repair-story">{story}</p>
-          <p className="sr-only" data-testid="repair-id-short">
-            {repair.id}
-          </p>
-          <p className="sr-only" data-testid="repair-ladder-level">
-            L{trackLevel}
-          </p>
-
-          <figure
-            className="repair-trace"
-            aria-label={
-              primaryDrift
-                ? `Drift trace for ${primaryDrift.drift_class}: ${driftEvents?.length ?? 0} linked event(s), first at ${primaryDrift.created_at}`
-                : "Drift trace: no drift events linked yet"
-            }
-          >
-            <span className="tag num">{traceTag}</span>
-            <svg viewBox="0 0 1000 132" preserveAspectRatio="none" aria-hidden="true">
-              <line className="base" x1="0" y1="40" x2="1000" y2="40" />
-              <line className="line" x1="0" y1="40" x2="1000" y2="40" />
-              {markerXs.map((x) => (
-                <line key={x} className="mark-l" x1={x} y1="18" x2={x} y2="132" />
-              ))}
-            </svg>
-            <figcaption className="num">
-              <span>{primaryDrift ? shortTime(primaryDrift.created_at) : "—"}</span>
-              <span>Drift evidence, per linked event</span>
-              <span>{hasReport ? "candidate patch checked" : pageState === "climbing" ? "climbing…" : "waiting for you"}</span>
-            </figcaption>
-          </figure>
-
-          <LadderTrace
-            ladderLevelReached={trackLevel}
-            ruleId={repair.rule_id}
+      {/* Decision line + actions at the top, one click from the Repairs list */}
+      <section aria-label="Decision and actions" className="mb-6 border border-rule bg-band px-4 py-3">
+        <p data-testid="repair-decision-line" className="text-base font-semibold">
+          {decisionLine}
+        </p>
+        <div id="repair-acts" className="mt-2">
+          <RepairActions
+            repairId={repair.id}
             decision={repair.decision}
-            escalationBundle={repair.escalation_bundle as Record<string, unknown> | null}
-            levelTokens={levelTokens}
+            candidatePatch={repair.candidate_patch as never}
+            patchReady={hasReport && hasPatch}
+            connectorId={primaryConnectorId}
+            onActionComplete={() => mutateRepair()}
           />
         </div>
+        <AfterApproveTracker repairId={repair.id} connectorId={primaryConnectorId} />
+      </section>
 
-        <aside className="repair-bug" aria-label="Verdict and action">
-          <VerifierVerdict
-            verifierReportId={repair.verifier_report_id}
-            visibleTestResults={repair.visible_test_results}
-            escalationBundle={repair.escalation_bundle as never}
-            decision={repair.decision}
-          />
-          <ModelUsageView modelUsage={repair.model_usage} liveFrontierTokens={tickingFrontier} pending={climbingNow} />
-          <div id="repair-acts">
-            <RepairActions
-              repairId={repair.id}
-              decision={repair.decision}
-              candidatePatch={repair.candidate_patch as never}
-              patchReady={hasReport && (repair.candidate_patch?.length ?? 0) > 0}
-              onActionComplete={() => mutateRepair()}
-            />
+      <h1 data-testid="repair-title" className="sr-only">
+        Repair {shortId} at L{trackLevel}
+      </h1>
+
+      {/* §1 What happened */}
+      <section data-testid="repair-section-happened" aria-label="What happened" className="mb-8">
+        <h2 className="sec">What happened</h2>
+        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-ink-2">Connector and vendor</dt>
+            <dd data-testid="happened-connector" className="font-mono">
+              {connectorLabel}
+              {repair.vendor ? <span className="text-ink-2"> · vendor {repair.vendor}</span> : null}
+            </dd>
           </div>
-        </aside>
-      </section>
-
-      {/* Detail: hypotheses, probes, visible tests */}
-      <section className="repair-detail" aria-label="Hypotheses, probes and visible tests">
-        <div>
-          <h2 className="sec">Hypotheses</h2>
-          <HypothesesPanel hypothesisIds={repair.hypothesis_ids} hypotheses={hypotheses as never} probes={probes} />
-        </div>
-        <div>
-          <h2 className="sec">Probes, GET only</h2>
-          {probes?.length ? (
-            <div>
-              {probes.map((p, idx) => {
-                let summary = p.kind;
-                try {
-                  const pay = p.payload as Record<string, unknown>;
-                  if (typeof pay["url"] === "string") summary = String(pay["url"]);
-                  else if (typeof pay["path"] === "string") summary = String(pay["path"]);
-                  else summary = JSON.stringify(p.payload).slice(0, 120);
-                } catch {
-                  summary = p.kind;
-                }
-                return (
-                  <p key={p.id} className="repair-probe">
-                    <span className="pn num">{idx + 1}</span>
-                    <code>{summary}</code>
-                    <span>
-                      {p.kind} · <span className="font-mono">{p.id.slice(0, 8)}</span>
-                    </span>
-                  </p>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-ink-2">No probe records linked — see Hypotheses for the probe list.</p>
-          )}
-        </div>
-        <div>
-          <h2 className="sec">Visible tests</h2>
-          <p className="mb-2 text-xs text-ink-2 num">
-            {totalTests > 0 ? `${passedCount}/${totalTests} pass` : "No visible tests recorded"}
-          </p>
-          <VisibleTestsPanel visibleTestResults={repair.visible_test_results as never} />
-        </div>
-        <div>
-          <h2 className="sec">Rung ledger</h2>
-          <p className="mb-2 text-xs text-ink-2 num">
-            Every rung the ladder tried, why it moved up, and the model calls it made.
-          </p>
-          <RungLedger repairId={repair.id} />
-        </div>
-      </section>
-
-      {/* Patch */}
-      <section className="repair-patch" aria-label="Patch diff">
-        <div className="repair-patch-head">
-          <h2 className="sec">Patch, JSON Patch on the spec</h2>
-          <p className="num">
-            {(repair.candidate_patch ?? []).length} operation{(repair.candidate_patch ?? []).length === 1 ? "" : "s"}
-            {hasReport ? " · checked by the verifier" : " · not checked yet"}
-          </p>
-        </div>
-        <h3 className="mb-2 text-sm font-semibold">JSON Patch diff (old → new)</h3>
-        <PatchDiff candidatePatch={repair.candidate_patch as never} />
-      </section>
-
-      {/* Drift evidence */}
-      <section className="mt-6" aria-label="Drift evidence">
-        <h2 className="sec">Drift evidence</h2>
+          <div>
+            <dt className="text-ink-2">Detected</dt>
+            <dd data-testid="happened-detected" className="font-mono">
+              {primaryDrift ? (
+                <>
+                  {shortTime(primaryDrift.created_at)}
+                  {sourceSyncId ? <span className="text-ink-2"> · by sync {sourceSyncId.slice(0, 8)}</span> : null}
+                </>
+              ) : (
+                "no drift event linked yet"
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-ink-2">Sync outcome</dt>
+            <dd data-testid="happened-sync-outcome" className="font-mono">
+              {syncPayload ? (
+                <>
+                  {syncPayload.outcome}
+                  {syncPayload.unmet_criteria.length ? (
+                    <span className="text-ink-2"> · unmet: {syncPayload.unmet_criteria.join(", ")}</span>
+                  ) : null}
+                  {syncDuration ? <span className="text-ink-2"> · took {syncDuration}</span> : null}
+                </>
+              ) : sourceSyncId ? (
+                "sync record unavailable"
+              ) : (
+                "no source sync recorded"
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-ink-2">Drift class and severity</dt>
+            <dd data-testid="happened-class" className="font-mono">
+              {driftClass ? humanizeDriftClass(driftClass) : "—"}
+              {primaryDrift ? <span className="text-ink-2"> · severity {primaryDrift.severity}</span> : null}
+            </dd>
+          </div>
+        </dl>
+        <h3 className="mb-1 mt-4 text-sm font-semibold">What changed on the wire, before → after</h3>
+        <WireChangeSummary driftClass={driftClass} delta={repair.fingerprint_delta as never} />
+        <h3 className="mb-1 mt-4 text-sm font-semibold">What it affects</h3>
+        <p data-testid="happened-affects" className="font-mono text-xs">
+          {[
+            (connector?.target_entities ?? []).length
+              ? `entities: ${(connector?.target_entities ?? []).join(", ")}`
+              : null,
+            syncPayload
+              ? `records observed: ${Object.entries(syncPayload.records_observed ?? {})
+                  .map(([k, v]) => `${k} ${v}`)
+                  .join(", ") || "none"}`
+              : null,
+            syncPayload
+              ? `records emitted: ${Object.entries(syncPayload.records_emitted ?? {})
+                  .map(([k, v]) => `${k} ${v}`)
+                  .join(", ") || "none"}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || "nothing recorded"}
+        </p>
+        <h3 className="mb-1 mt-4 text-sm font-semibold">Evidence records</h3>
         <DriftEvidenceSection
           driftEvents={driftEvents ?? []}
           evidenceRecords={evidenceRecords}
@@ -540,7 +506,145 @@ export default function RepairDetailPage({ params }: PageProps) {
         />
       </section>
 
-      {/* P2.S6.1 — evidence graph: drift→evidence and evidence→parent links */}
+      {/* §2 What the engine did */}
+      <section data-testid="repair-section-did" aria-label="What the engine did" className="mb-8">
+        <h2 className="sec">What the engine did</h2>
+        <h3 className="mb-1 text-sm font-semibold">Rung timeline</h3>
+        <ol data-testid="rung-timeline" className="list-none space-y-1 p-0 text-sm">
+          {[0, 1, 2, 3, 4].map((rung) => {
+            const attempt = rungByLevel.get(rung);
+            return (
+              <li key={rung} data-testid={`rung-timeline-${rung}`}>
+                <b className="num">L{rung}</b>{" "}
+                {attempt ? (
+                  <>
+                    {attempt.action} — <span className="text-ink-2">{attempt.reason}</span>
+                  </>
+                ) : (
+                  <span className="text-ink-2">no attempt recorded</span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+        <h3 className="mb-1 mt-4 text-sm font-semibold">Hypothesis funnel</h3>
+        <HypothesisFunnel stages={funnelStages} />
+        {hypotheses?.length ? (
+          <div className="mt-3">
+            <HypothesesPanel hypothesisIds={repair.hypothesis_ids} hypotheses={hypotheses as never} probes={probes} />
+          </div>
+        ) : null}
+        <h3 className="mb-1 mt-4 text-sm font-semibold">Probes run</h3>
+        {probes?.length ? (
+          <ul className="list-none space-y-1 p-0 text-sm">
+            {probes.map((p, idx) => (
+              <li key={p.id} data-testid={`repair-probe-${idx}`} className="font-mono text-xs">
+                {(() => {
+                  const pay = p.payload as Record<string, unknown>;
+                  if (typeof pay["url"] === "string") return String(pay["url"]);
+                  if (typeof pay["path"] === "string") return String(pay["path"]);
+                  try {
+                    return JSON.stringify(p.payload).slice(0, 120);
+                  } catch {
+                    return p.kind;
+                  }
+                })()}{" "}
+                <span className="text-ink-2">
+                  {p.kind} · {p.id.slice(0, 8)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-ink-2">No probe records linked.</p>
+        )}
+        <h3 className="mb-1 mt-4 text-sm font-semibold">Model calls</h3>
+        <ModelCallBox attempts={attempts} />
+        <div className="mt-2">
+          <ModelUsageView modelUsage={repair.model_usage} liveFrontierTokens={tickingFrontier} pending={climbingNow} />
+        </div>
+        <h3 className="mb-1 mt-4 text-sm font-semibold">Verifier run</h3>
+        <VerifierVerdict
+          verifierReportId={repair.verifier_report_id}
+          visibleTestResults={repair.visible_test_results}
+          escalationBundle={repair.escalation_bundle as never}
+          decision={repair.decision}
+        />
+        <p data-testid="verifier-checks-line" className="num mt-1 font-mono text-xs text-ink-2">
+          {totalTests > 0 ? `${passedCount}/${totalTests} checks pass` : "no visible checks recorded"}
+          {repair.verifier_report_id ? ` · report ${repair.verifier_report_id.slice(0, 12)}…` : ""}
+        </p>
+      </section>
+
+      {/* §3 What the engine decided and recommends */}
+      <section data-testid="repair-section-decided" aria-label="What the engine decided" className="mb-8">
+        <h2 className="sec">What the engine decided and recommends</h2>
+        <p data-testid="decided-line" className="text-sm">
+          {decisionLine}
+          {typeof ruleConfidence === "number" && repair.rule_id ? (
+            <span className="text-ink-2"> · rule {repair.rule_id} confidence {ruleConfidence}</span>
+          ) : null}
+        </p>
+        {isEscalated && repair.escalation_bundle?.["question"] ? (
+          <div data-testid="decided-question" className="mt-2 border border-rule px-3 py-2 text-sm">
+            <p>The engine&apos;s question: {String(repair.escalation_bundle["question"])}</p>
+            {repair.escalation_bundle["reason"] ? (
+              <p className="mt-1 font-mono text-xs text-ink-2">{String(repair.escalation_bundle["reason"])}</p>
+            ) : null}
+            {repair.escalation_bundle["suggested_action"] ? (
+              <p className="mt-1 text-xs text-ink-2">
+                Suggested: {String(repair.escalation_bundle["suggested_action"])}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {rejectedProposals.length ? (
+          <div data-testid="decided-rejected" className="mt-2 text-sm">
+            <h3 className="mb-1 text-sm font-semibold">Rejected proposals</h3>
+            <ul className="list-disc space-y-1 pl-5">
+              {rejectedProposals.map((e, i) => (
+                <li key={i} className="font-mono text-xs">
+                  {String(e["action"] ?? "rejected")}: {String(e["reason"] ?? "no reason recorded")}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        <h3 className="mb-1 mt-4 text-sm font-semibold">Proposed change, against the current spec</h3>
+        {hasPatch ? (
+          <>
+            <ul className="mb-2 list-disc space-y-1 pl-5 text-sm">
+              {(repair.candidate_patch ?? []).map((op, i) => (
+                <li key={i} data-testid={`patch-line-${i}`} className="font-mono text-xs">
+                  {describePatchOp(op)}
+                </li>
+              ))}
+            </ul>
+            <p data-testid="patch-touches" className="mb-2 font-mono text-xs text-ink-2">
+              touches: {touchedSections.join(", ") || "—"} · everything else in the spec stays unchanged
+            </p>
+            <PatchDiff candidatePatch={repair.candidate_patch as never} />
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs text-ink-2 hover:text-ink hover:underline">
+                Raw JSON Patch
+              </summary>
+              <pre data-testid="patch-raw" className="mt-1 overflow-auto border border-rule bg-ground p-2 font-mono text-[11px]">
+                {JSON.stringify(repair.candidate_patch, null, 2)}
+              </pre>
+            </details>
+          </>
+        ) : (
+          <p className="text-sm text-ink-2">No patch proposed{isEscalated ? " — nothing verified to apply" : " yet"}.</p>
+        )}
+      </section>
+
+      {/* §4 What happens when you click Approve */}
+      <section data-testid="repair-section-approve" aria-label="What happens when you click Approve" className="mb-8">
+        <h2 className="sec">What happens when you click Approve</h2>
+        <ApprovePreviewSection repairId={repair.id} />
+      </section>
+
+      {/* Evidence graph + usage (appendix, persisted rows) */}
       <section className="mt-6" aria-label="Evidence graph">
         <h2 className="sec">Evidence graph</h2>
         <EvidenceGraph
@@ -560,47 +664,8 @@ export default function RepairDetailPage({ params }: PageProps) {
         />
       </section>
 
-      {/* P2.S6.1 — per-run token chart from GET /metrics/model-usage */}
-      <section className="mt-6" aria-label="Model usage per run">
-        <h2 className="sec">Model usage per run</h2>
-        <ModelUsageChart usage={modelUsageResponse} highlightRunIds={relatedRunIds} />
-      </section>
-
-      {/* Repair meta (compact, real data) */}
-      <section className="mt-6 border border-rule px-4 py-3" aria-label="Repair meta">
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs md:grid-cols-4">
-          <div>
-            <dt className="text-ink-2">Repair ID</dt>
-            <dd className="break-all font-mono text-ink-2">{repair.id}</dd>
-          </div>
-          <div>
-            <dt className="text-ink-2">Rule</dt>
-            <dd className="font-mono text-ink-2">{repair.rule_id ?? "—"}</dd>
-          </div>
-          <div>
-            <dt className="text-ink-2">Drift events</dt>
-            <dd>{repair.drift_event_ids.length} linked</dd>
-          </div>
-          <div>
-            <dt className="text-ink-2">Model calls</dt>
-            <dd className="num">{formatInt(totalCalls)}</dd>
-          </div>
-        </dl>
-      </section>
-
       <div className="mt-6">
         <InjectFaultDrawer onInjected={() => mutateRepair()} />
-      </div>
-
-      {/* Sticky phone dock: verdict + approve stay in the first screen */}
-      <div className="repair-dock" aria-label="Action">
-        <span className="v num">
-          {totalTests > 0 ? `${passedCount}/${totalTests}` : hasReport ? "checked" : "climbing"}
-          <small>{formatInt(tickingFrontier)} tokens</small>
-        </span>
-        <a className="btn" href="#repair-acts">
-          Approve release
-        </a>
       </div>
     </div>
   );

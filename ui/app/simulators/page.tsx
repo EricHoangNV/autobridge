@@ -3,6 +3,7 @@
 import useSWR from "swr";
 
 import { apiBaseUrl as getBaseUrl } from "@/lib/api/base";
+import { ConnectorStateBadge } from "@/components/ConnectorStateBadge";
 import type { SimulatorInfo, SimulatorsOut } from "@/lib/api/client";
 
 // Same-origin /api base (REQ-018): the rewrite + middleware forward to control.
@@ -13,7 +14,15 @@ const fetcher = async <T,>(path: string): Promise<T> => {
   return (await res.json()) as T;
 };
 
-function SimulatorRow({ sim }: { sim: SimulatorInfo }) {
+type ConnectorStateRow = {
+  id: string;
+  name: string;
+  state?: string | null;
+  activity?: string | null;
+  last_sync_at?: string | null;
+};
+
+function SimulatorRow({ sim, statesById }: { sim: SimulatorInfo; statesById: Record<string, ConnectorStateRow> }) {
   const usedBy = sim.connectors ?? [];
   return (
     <li
@@ -59,7 +68,29 @@ function SimulatorRow({ sim }: { sim: SimulatorInfo }) {
         <div className="flex gap-2">
           <dt className="shrink-0 font-bold">used by</dt>
           <dd data-testid={`simulators-usedby-${sim.id}`}>
-            {usedBy.length > 0 ? usedBy.map((c) => c.name).join(", ") : "no connectors yet"}
+            {usedBy.length > 0 ? (
+              <ul className="list-none p-0">
+                {usedBy.map((c) => {
+                  const st = statesById[c.id];
+                  return (
+                    <li key={c.id} data-testid={`simulators-usedby-${sim.id}-${c.id}`}>
+                      {c.name}{" "}
+                      {st ? (
+                        <ConnectorStateBadge
+                          state={st.state ?? "degrading"}
+                          activity={st.activity ?? null}
+                          lastSyncAt={st.last_sync_at ?? null}
+                        />
+                      ) : (
+                        <span className="text-ink-2">state unknown</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              "no connectors yet"
+            )}
           </dd>
         </div>
       </dl>
@@ -74,7 +105,11 @@ function SimulatorRow({ sim }: { sim: SimulatorInfo }) {
 }
 
 export default function SimulatorsPage() {
-  const { data, error } = useSWR<SimulatorsOut>("/demo/simulators", fetcher);
+  const { data, error } = useSWR<SimulatorsOut>("/demo/simulators", fetcher, { refreshInterval: 2000 });
+  const { data: connectors } = useSWR<ConnectorStateRow[]>("/connectors", fetcher, { refreshInterval: 2000 });
+  const statesById: Record<string, ConnectorStateRow> = Object.fromEntries(
+    (Array.isArray(connectors) ? connectors : []).map((c) => [c.id, c]),
+  );
 
   return (
     <div data-testid="simulators-page" className="px-5 py-8 sm:px-8">
@@ -102,11 +137,11 @@ export default function SimulatorsPage() {
             Loading simulators…
           </p>
         ) : (
-          <ul data-testid="simulators-list" className="list-none border-t border-rule p-0">
-            {data.simulators.map((sim) => (
-              <SimulatorRow key={sim.id} sim={sim} />
-            ))}
-          </ul>
+            <ul data-testid="simulators-list" className="list-none border-t border-rule p-0">
+              {data.simulators.map((sim) => (
+                <SimulatorRow key={sim.id} sim={sim} statesById={statesById} />
+              ))}
+            </ul>
         )}
       </section>
     </div>

@@ -399,7 +399,13 @@ The control plane is a FastAPI app (`src/autobridge/control/app.py`) with
 `POST /connectors`, `GET /connectors`, `GET /connectors/{id}`,
 `POST /connectors/{id}/build|sync`, `GET /runs/{id}`, `GET /runs/{id}/events`
 (SSE, redacted), `GET /drift`, `POST /repairs/{id}/approve|reject`,
-`POST /releases/{id}/rollback`, `GET /repairs/{id}/ledger` (rung-by-rung
+`GET /repairs/{id}/approve-preview` (read-only: what Approve/Reject will do,
+derived from the same rows the approve path acts on — candidate release,
+active release, pause-on-change dependents, scheduler interval,
+learn-on-approve — so the UI text follows the server; REQ-032),
+`RepairRunOut.approval` (latest approval row, so the repairs list shows
+fix-ready / needs-your-decision / approved / applied / rejected without
+extra round trips), `POST /releases/{id}/rollback`, `GET /repairs/{id}/ledger` (rung-by-rung
 ledger with linked model calls), `GET /operator` (server-configured operator
 name from `AUTOBRIDGE_OPERATOR`; approve/reject/rollback always record
 `Approval.actor` from it and ignore any client-sent actor; `ReleaseOut`
@@ -512,18 +518,37 @@ busy, state machine, learn/evict, record-climb, pabx) plus `make demo` 8/8
 with the scheduler ticking.
 
 ### 9.2 UI screens (Next.js 15, App Router, Tailwind, SWR + SSE)
-1. `/connectors` — table: health, active release, last sync outcome, open drift,
+1. `/connectors` — table: health, connector state (`● Working` / `▲ Degrading`
+   / `■ Error` with the server's activity line and a ticking last-sync age,
+   REQ-032), active release, last sync outcome, open drift,
    model-usage sparkline; plus the `DiscoveryList` section showing statically
    imported vendors and their lifecycle state (P2.S3.1).
 2. `/connectors/new` — docs upload/URL/paste, sandbox base URL, credential
    env-ref picker (known refs + custom), target entities, create & build two-step.
-3. `/connectors/[id]` — spec viewer (YAML), release history, sync runs with
-   `Complete|Degraded|Blocked`, fingerprints, dependency registrations.
-4. `/repairs/[id]` — drift evidence, ladder trace L0-L4 badges, hypotheses +
-   probes, JSON Patch diff old/new side by side, visible tests, verifier
-   verdict, model usage, Approve/Reject/Rollback + Inject Fault drawer +
-   model-usage view; list at `/repairs`. P2.S6.1 adds two read-only views on
-   this page with no new API surface: a per-run model-usage chart
+3. `/connectors/[id]` — state badge + activity in the masthead (REQ-032),
+   spec viewer (YAML), release history, sync runs with
+   `Complete|Degraded|Blocked`, fingerprints, dependency registrations;
+   edge (PABX) connectors also get a link panel (link state, arriving
+   postings count, announced record layout, last restart result).
+4. `/repairs/[id]` — four plain-language sections in order, all from
+   persisted rows, never recomputed in the browser (REQ-032): "What
+   happened" (connector/vendor, detecting sync + outcome + unmet
+   criterion, wire before/after from the fingerprint delta, affected
+   entities/records, evidence records); "What the engine did" (rung
+   timeline L0–L4 from the ledger, hypothesis funnel stages from the
+   derivation record, probes, per-call model-call box with an explicit
+   "0 model calls", verifier run); "What the engine decided and
+   recommends" (one-line decision, readable patch diff with the raw JSON
+   Patch one click away, confidence, verifier verdict, touched sections,
+   escalation question + rejected proposals); "What happens when you
+   click Approve" (from `GET /repairs/{id}/approve-preview`, plus the
+   after-approve live tracker: approval → activation → verifying sync →
+   connector working). Decision line + Approve/Reject sit at the top;
+   evidence graph and Inject Fault drawer stay as the appendix. The list
+   at `/repairs` shows connector, drift class, rung, rule, model calls
+   and status (fix ready / needs your decision / approved / applied /
+   rejected, from `RepairRunOut.approval`), newest first. P2.S6.1 keeps two
+   read-only views on this page with no new API surface: a per-run model-usage chart
    (`ModelUsageChart`, stacked frontier/small bars from
    `GET /metrics/model-usage` `entries[].by_run`, repair-linked runs
    highlighted) and an evidence graph (`EvidenceGraph`, SVG nodes for drift
@@ -537,12 +562,13 @@ with the scheduler ticking.
    simulator (display name, API style, `/developers` docs link, public
    port), live up/down probed server-side by `GET /demo/simulators`
    through the control plane (the browser never calls a simulator), the
-   active fault scenario if any, and the connectors using it; linked from
+   active fault scenario if any, and the connectors using it (each with its
+   live state badge, REQ-032); linked from
    the top bar's "System status" link. Generated from the one registry
    (`config/demo_targets.yaml`), never a hand-kept list.
 
 Theme (REQ-002, broadcast direction): dark-only on-air tokens in
-`ui/app/globals.css` (`--ground/--band/--ink/--ink-2/--rule/--off/--live/--stop`,
+`ui/app/globals.css` (`--ground/--band/--ink/--ink-2/--rule/--off/--live/--stop/--ok`,
 radius 0), mapped in `ui/tailwind.config.js`; Archivo (width axis) + Fragment
 Mono via `next/font/google`; shell top bar with LIVE, labelled "Demo: inject
 fault" button and healthz. Status is square-shape + word, never hue alone.

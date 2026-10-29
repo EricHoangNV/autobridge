@@ -79,6 +79,29 @@ def _signal_evidence_ids(signals_list: list[Any]) -> list[str]:
     return evidence_ids
 
 
+def _existing_evidence_ids(session: Any, candidate_ids: list[str]) -> list[str]:
+    """Keep only the candidate ids that exist as evidence rows.
+
+    The store rejects unknown parents, and fast-path ladder signals are
+    often never persisted as records — linking them would fail the whole
+    append, so the derivation keeps the signal ids in ``payload`` shape
+    only via stages and links what is really there.
+    """
+    if not candidate_ids:
+        return []
+    try:
+        from sqlalchemy import select as _select  # noqa: PLC0415
+
+        from autobridge.control.models import EvidenceRecord  # noqa: PLC0415
+
+        rows = session.execute(
+            _select(EvidenceRecord.id).where(EvidenceRecord.id.in_(candidate_ids))
+        ).scalars().all()
+        found = set(rows)
+        return [cid for cid in candidate_ids if cid in found]
+    except Exception:
+        return []
+
 class RepairController:
     """Deterministic repair orchestration (L0/L1 for W4.4)."""
 
@@ -200,6 +223,69 @@ class RepairController:
             # waiting can never be reused at L0, by any connector — the fix
             # is learned only once it is approved (engine approve path), so
             # this walk deliberately leaves the knowledge cache untouched.
+            # REQ-030 item 3 + REQ-032 §2: the hypothesis derivation persists
+            # as a kind=hypothesis evidence record owned by this repair run,
+            # with the stages that actually ran. A ladder that resolved at
+            # L0/L1 from wire signals never enumerated hypotheses, so the
+            # record says exactly that (one zero-count stage) instead of
+            # inventing a funnel. Best-effort: never breaks the decision.
+            try:
+                from autobridge.evidence.store import EvidenceStore  # noqa: PLC0415
+
+                _store = EvidenceStore(session)
+                _hyp_ids = _hypothesis_ids(hypotheses)
+                if _hyp_ids:
+                    _stages: list[dict[str, Any]] = [
+                        {
+                            "name": "distinct",
+                            "count": len(_hyp_ids),
+                            "ids": _hyp_ids,
+                            "source": (
+                                "hypotheses passed to the climb "
+                                "(engine-enumerated or caller-supplied)"
+                            ),
+                        }
+                    ]
+                else:
+                    _stages = [
+                        {
+                            "name": "resolved without enumeration",
+                            "count": 0,
+                            "ids": [],
+                            "source": (
+                                f"ladder resolved at L{result.ladder_level_reached} "
+                                "from wire signals; no hypotheses enumerated"
+                            ),
+                        }
+                    ]
+                if enumerator_yield_count is not None and _hyp_ids:
+                    _stages.insert(
+                        0,
+                        {
+                            "name": "generated",
+                            "count": int(enumerator_yield_count),
+                            "ids": [],
+                            "source": "enumerator yield count (ids not retained)",
+                        },
+                    )
+                _store.append(
+                    kind="hypothesis",
+                    payload={
+                        "drift_class": drift_class,
+                        "enumerator_yield_count": enumerator_yield_count,
+                        "stages": _stages,
+                    },
+                    run_id=f"repair_runs:{run.id}",
+                    # Parents must already exist as rows (store rule):
+                    # link only the signal evidence ids that were
+                    # persisted, never ids nobody stored.
+                    parent_ids=_existing_evidence_ids(
+                        session, _signal_evidence_ids(signals_list)
+                    ),
+                )
+                session.flush()
+            except Exception:
+                pass
 
         return result
 

@@ -177,6 +177,17 @@ class SyncRunOut(BaseModel):
     kind: Literal["sync"] = "sync"
 
 
+class ApprovalSummaryOut(BaseModel):
+    """Latest approval/decision row on a repair (REQ-032 repairs list status)."""
+
+    id: str
+    actor: str
+    decision: str
+    from_release_id: str | None = None
+    to_release_id: str | None = None
+    created_at: UtcDatetime
+
+
 class RepairRunOut(BaseModel):
     id: str
     drift_event_ids: list[str]
@@ -185,6 +196,8 @@ class RepairRunOut(BaseModel):
     drift_signature: str | None = None
     #: Drift class the ladder answered (REQ-030 item 3).
     drift_class: str | None = None
+    #: Latest approval row on this repair, if any (REQ-032 list status).
+    approval: ApprovalSummaryOut | None = None
     #: Fingerprint delta content (the wire before/after, REQ-030 item 3).
     fingerprint_delta: dict[str, Any] | None = None
     candidate_patch: list[dict[str, Any]] | None = None
@@ -198,6 +211,22 @@ class RepairRunOut(BaseModel):
     escalation_bundle: dict[str, Any] | None = None
     created_at: UtcDatetime
     kind: Literal["repair"] = "repair"
+
+
+class ApprovePreviewOut(BaseModel):
+    """What Approve/Reject will do, computed from the real path (REQ-032 §4).
+
+    Every line is derived from live rows (candidate release, active
+    release, dependents, scheduler interval, learn-on-approve rule) — the
+    same state ``POST /repairs/{id}/approve`` acts on — never hard-coded.
+    """
+
+    repair_run_id: str
+    approvable: bool
+    reason: str
+    approve_lines: list[str] = Field(default_factory=list)
+    reject_lines: list[str] = Field(default_factory=list)
+    facts: dict[str, Any] = Field(default_factory=dict)
 
 
 class DriftEventOut(BaseModel):

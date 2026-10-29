@@ -18,6 +18,8 @@
   --live: oklch(88% 0.17 96);
   --live-ink: oklch(20% 0.04 262);
   --stop: oklch(70% 0.19 25);
+  /* REQ-032: working green. 10.5:1 on the navy ground. */
+  --ok: oklch(80% 0.17 150);
 }
 
 body {
@@ -85,6 +87,57 @@ body {
 }
 .st-mut::before {
   background: var(--off);
+}
+
+/*
+ * Connector state badge (REQ-032 §1): ● Working green (--ok),
+ * ▲ Degrading yellow (--live), ■ Error red (--stop). Colour + shape +
+ * word always; the activity line and last-sync age are separate text.
+ */
+.cs {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.cs::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  flex: none;
+}
+.cs-ok {
+  color: var(--ok);
+}
+.cs-ok::before {
+  border-radius: 50%;
+  background: var(--ok);
+}
+.cs-deg {
+  color: var(--live);
+}
+.cs-deg::before {
+  width: 0;
+  height: 0;
+  background: transparent;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 10px solid var(--live);
+}
+.cs-err {
+  color: var(--stop);
+}
+.cs-err::before {
+  background: var(--stop);
+}
+.cs-unknown {
+  color: var(--ink-2);
+}
+.cs-unknown::before {
+  background: transparent;
+  outline: 1.5px solid var(--ink-2);
+  outline-offset: -1.5px;
 }
 
 /* On-air dot for the top bar LIVE indicator. */

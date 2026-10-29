@@ -909,3 +909,65 @@ def test_controller_never_caches_no_learn_classes_or_empty_delta() -> None:
     res2 = ctrl.handle(spec=spec, drift_class="UNKNOWN", fingerprint_delta=_empty_delta(), session=s2)
     s2.commit()
     assert cache.size() == 0, f"empty delta must not populate L0 (decision={res2.decision})"
+
+
+def test_controller_handle_persists_honest_derivation() -> None:
+    """REQ-032 §2: the deterministic path persists the derivation stages.
+
+    An L1 rule repair that never enumerated hypotheses records the honest
+    zero-count stage (never an invented funnel); a climb handed hypotheses
+    records the distinct stage with counts and ids.
+    """
+    from autobridge.control.sse import get_evidence_for_run
+
+    _, ctrl, SessionLocal = _make_controller_engine()
+    spec = _load_spec()
+
+    s = SessionLocal()
+    ctrl.handle(
+        spec=spec,
+        drift_class="SCHEMA_RENAME",
+        fingerprint_delta=_delta_types("Reservation", "guest_name", "guest_identifier"),
+        # Fast-path signals are often never persisted as records: unknown
+        # parent ids must not fail the derivation append.
+        signals=[{"kind": "keys", "evidence_ids": ["ghost-evidence-id"]}],
+        session=s,
+    )
+    s.commit()
+    run = s.query(RepairRun).order_by(RepairRun.created_at.desc()).first()
+    assert run is not None
+    records = get_evidence_for_run(s, run.id)
+    assert len(records) == 1 and records[0].kind == "hypothesis"
+    assert records[0].parent_ids == []
+    stages = records[0].payload["stages"]
+    assert stages == [
+        {
+            "name": "resolved without enumeration",
+            "count": 0,
+            "ids": [],
+            "source": "ladder resolved at L1 from wire signals; no hypotheses enumerated",
+        }
+    ]
+
+    s2 = SessionLocal()
+
+    class _H:
+        id = "h-1"
+
+    ctrl.handle(
+        spec=spec,
+        drift_class="SCHEMA_RENAME",
+        fingerprint_delta=_delta_types("Reservation", "guest_name", "guest_identifier"),
+        hypotheses=[_H()],
+        enumerator_yield_count=7,
+        session=s2,
+    )
+    s2.commit()
+    run2 = s2.query(RepairRun).order_by(RepairRun.created_at.desc()).first()
+    assert run2 is not None
+    records2 = get_evidence_for_run(s2, run2.id)
+    assert len(records2) == 1
+    stages2 = records2[0].payload["stages"]
+    assert stages2[0]["name"] == "generated" and stages2[0]["count"] == 7
+    assert stages2[1]["name"] == "distinct" and stages2[1]["count"] == 1
+    assert stages2[1]["ids"] == ["h-1"]

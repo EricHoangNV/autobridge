@@ -68,6 +68,101 @@
         "title": "ApprovalOut",
         "type": "object"
       },
+      "ApprovalSummaryOut": {
+        "description": "Latest approval/decision row on a repair (REQ-032 repairs list status).",
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "from_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Release Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "to_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Release Id"
+          }
+        },
+        "required": [
+          "id",
+          "actor",
+          "decision",
+          "created_at"
+        ],
+        "title": "ApprovalSummaryOut",
+        "type": "object"
+      },
+      "ApprovePreviewOut": {
+        "description": "What Approve/Reject will do, computed from the real path (REQ-032 \u00a74).\n\nEvery line is derived from live rows (candidate release, active\nrelease, dependents, scheduler interval, learn-on-approve rule) \u2014 the\nsame state ``POST /repairs/{id}/approve`` acts on \u2014 never hard-coded.",
+        "properties": {
+          "approvable": {
+            "title": "Approvable",
+            "type": "boolean"
+          },
+          "approve_lines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Approve Lines",
+            "type": "array"
+          },
+          "facts": {
+            "additionalProperties": true,
+            "title": "Facts",
+            "type": "object"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "reject_lines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reject Lines",
+            "type": "array"
+          },
+          "repair_run_id": {
+            "title": "Repair Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repair_run_id",
+          "approvable",
+          "reason"
+        ],
+        "title": "ApprovePreviewOut",
+        "type": "object"
+      },
       "BuildRequest": {
         "additionalProperties": true,
         "properties": {
@@ -2376,6 +2471,16 @@
       },
       "RepairRunOut": {
         "properties": {
+          "approval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalSummaryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "candidate_patch": {
             "anyOf": [
               {
@@ -7858,6 +7963,85 @@
           }
         ],
         "summary": "Approve Repair",
+        "tags": [
+          "repairs"
+        ]
+      }
+    },
+    "/repairs/{repair_id}/approve-preview": {
+      "get": {
+        "description": "Preview of what Approve/Reject will do, from the real path (REQ-032 \u00a74).\n\nRead-only: derives every line from the same rows ``POST\n.../approve`` acts on (candidate release, active release, dependents,\nscheduler interval, learn-on-approve rule), so the UI text follows the\nserver even when the behaviour changes. Never approves, rejects,\nactivates or writes knowledge.",
+        "operationId": "approve_preview_repairs__repair_id__approve_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repair_id",
+            "required": true,
+            "schema": {
+              "title": "Repair Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovePreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Preview",
         "tags": [
           "repairs"
         ]

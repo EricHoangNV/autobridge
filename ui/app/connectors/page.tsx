@@ -44,7 +44,7 @@ export default function ConnectorsPage() {
   const { data: connectors, error: connError, isLoading: connLoading } = useSWR<ConnectorOut[]>(
     "/connectors",
     fetcher,
-    { refreshInterval: 5000, revalidateOnFocus: true }
+    { refreshInterval: 2000, revalidateOnFocus: true }
   );
 
   const { data: modelUsage } = useSWR<ModelUsageResponse>("/metrics/model-usage", fetcher, {
@@ -70,7 +70,7 @@ export default function ConnectorsPage() {
       );
       return Object.fromEntries(entries) as Record<string, ConnectorDetail>;
     },
-    { refreshInterval: 5000 }
+    { refreshInterval: 2000 }
   );
 
   const { data: discoveries } = useSWR<DiscoveryRecordOut[]>("/discovery", fetcher, {
@@ -78,8 +78,8 @@ export default function ConnectorsPage() {
   });
 
   // Repairs + drift events resolve "who waits" and the recent-repairs list.
-  const { data: repairs } = useSWR<RepairRunOut[]>("/repairs", fetcher, { refreshInterval: 5000 });
-  const { data: drifts } = useSWR<DriftEventOut[]>("/drift", fetcher, { refreshInterval: 5000 });
+  const { data: repairs } = useSWR<RepairRunOut[]>("/repairs", fetcher, { refreshInterval: 2000 });
+  const { data: drifts } = useSWR<DriftEventOut[]>("/drift", fetcher, { refreshInterval: 2000 });
 
   const repairsByConnector =
     repairs && drifts ? groupRepairsByConnector(repairs, drifts) : undefined;
@@ -165,7 +165,7 @@ export default function ConnectorsPage() {
 
       {(connectors?.length ?? 0) > 0 ? (
         <p data-testid="connectors-count" className="num mt-3 px-10 text-xs text-ink-2">
-          {connectors?.length} connector{(connectors?.length ?? 0) === 1 ? "" : "s"} · polling every 5s
+          {connectors?.length} connector{(connectors?.length ?? 0) === 1 ? "" : "s"} · polling every 2s
         </p>
       ) : null}
 

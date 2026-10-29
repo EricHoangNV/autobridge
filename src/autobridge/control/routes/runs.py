@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
-from autobridge.control.deps import get_db
+from autobridge.control.deps import approval_for_repair, get_db
 from autobridge.control.models import BuildRun, EvidenceRecord, Job, RepairRun, SyncRun
 from autobridge.control.schemas import (
     BuildRunOut,
@@ -143,12 +143,14 @@ def get_run(run_id: str, db: Session = Depends(get_db)) -> RunOut:
         )
     r = db.get(RepairRun, run_id)
     if r is not None:
+        repair_out = _repair_to_out(r)
+        repair_out.approval = approval_for_repair(db, r.id)
         return RunOut(
             id=r.id,
             kind="repair",
             decision=r.decision,
             created_at=r.created_at,
-            payload={"repair_run": _repair_to_out(r).model_dump(mode="json")},
+            payload={"repair_run": repair_out.model_dump(mode="json")},
         )
     j = db.get(Job, run_id)
     if j is not None:
@@ -173,7 +175,9 @@ def get_run_detail(run_id: str, db: Session = Depends(get_db)) -> dict[str, Any]
         return {"kind": "sync", "run": _sync_to_out(s).model_dump(mode="json")}
     r = db.get(RepairRun, run_id)
     if r is not None:
-        return {"kind": "repair", "run": _repair_to_out(r).model_dump(mode="json")}
+        repair_out = _repair_to_out(r)
+        repair_out.approval = approval_for_repair(db, r.id)
+        return {"kind": "repair", "run": repair_out.model_dump(mode="json")}
     j = db.get(Job, run_id)
     if j is not None:
         return {"kind": "job", "run": _job_to_out(j).model_dump(mode="json")}

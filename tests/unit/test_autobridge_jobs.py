@@ -361,3 +361,32 @@ def test_migration_0002_job_queue(
             assert "jobs" in sa.inspect(conn).get_table_names()
     finally:
         engine.dispose()
+
+
+def test_lifespan_reclaims_orphaned_jobs(sessions: m.sessionmaker[Session], monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-032: startup reaps ``running`` rows so a restart never wedges a
+    connector in "sync running" (the scheduler skips busy connectors)."""
+    import autobridge.control.app as app_mod
+    import autobridge.control.runner as runner_mod
+    from autobridge.control.jobs import JobRunner
+
+    runner = JobRunner(sessions, worker_id="worker-dead")
+    with sessions() as s:
+        dead = Job(
+            kind="sync",
+            state="running",
+            worker_id="worker-dead",
+            attempts=1,
+            payload={"release_id": "rel-dead-001"},
+        )
+        s.add(dead)
+        s.commit()
+        dead_id = dead.id
+    monkeypatch.setattr(runner_mod, "get_runner", lambda _db: runner)
+    assert app_mod.reclaim_orphaned_jobs() == 1
+    with sessions() as s:
+        row = s.get(Job, dead_id)
+        assert row is not None
+        assert row.state == "queued"
+        assert row.worker_id is None
+        assert row.attempts == 1  # retry budget preserved

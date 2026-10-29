@@ -11,6 +11,13 @@ type Props = {
   candidatePatch?: unknown[] | null;
   onActionComplete?: () => void;
   /**
+   * Connector this repair belongs to (from its drift events). Sent as
+   * `connector_id` on approve so the server records the from-release in
+   * the approval audit row (the same inference `GET .../approve-preview`
+   * describes). Optional so existing callers are unaffected.
+   */
+  connectorId?: string | null;
+  /**
    * True once a patch has passed the verifier (report linked + candidate patch
    * present). While the repair is still climbing the verdict and the action
    * stay hidden: Approve/Reject are disabled with "No patch to approve yet"
@@ -19,7 +26,7 @@ type Props = {
   patchReady?: boolean;
 };
 
-export function RepairActions({ repairId, decision, candidatePatch: _candidatePatch, onActionComplete, patchReady = true }: Props) {
+export function RepairActions({ repairId, decision, candidatePatch: _candidatePatch, onActionComplete, patchReady = true, connectorId = null }: Props) {
   // Server-set operator (GET /operator); approvals are recorded under this name.
   const [operatorName, setOperatorName] = useState<string | null>(null);
   const [busy, setBusy] = useState<"approve" | "reject" | "rollback" | null>(null);
@@ -60,7 +67,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       const res = await fetch(`${base}/repairs/${encodeURIComponent(repairId)}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(connectorId ? { connector_id: connectorId } : {}),
       });
       if (!res.ok) {
         const body = await res.text();

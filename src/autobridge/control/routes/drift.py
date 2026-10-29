@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from autobridge.control.deps import get_db
+from autobridge.control.deps import approval_for_repair, get_db
 from autobridge.control.models import DriftEvent, ModelCall, RepairRun
 from autobridge.control.schemas import (
     DriftEventOut,
@@ -75,6 +75,7 @@ def list_repairs(connector_id: str | None = None, db: Session = Depends(get_db))
         vendor=r.vendor,
         drift_signature=r.drift_signature,
         drift_class=r.drift_class,
+        approval=approval_for_repair(db, r.id),
         fingerprint_delta=dict(r.fingerprint_delta) if r.fingerprint_delta else None,
             candidate_patch=list(r.candidate_patch) if r.candidate_patch else None,
             rule_id=r.rule_id,
@@ -103,6 +104,7 @@ def get_repair(repair_id: str, db: Session = Depends(get_db)) -> RepairRunOut:
         vendor=r.vendor,
         drift_signature=r.drift_signature,
         drift_class=r.drift_class,
+        approval=approval_for_repair(db, r.id),
         fingerprint_delta=dict(r.fingerprint_delta) if r.fingerprint_delta else None,
         candidate_patch=list(r.candidate_patch) if r.candidate_patch else None,
         rule_id=r.rule_id,

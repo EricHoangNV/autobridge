@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Security
 from sqlalchemy.orm import Session
 
 from autobridge.control.deps import (
+    approval_for_repair,
     approved_by_for_releases,
     get_db,
     get_operator_name,
@@ -16,6 +17,7 @@ from autobridge.control.models import ConnectorRelease, RepairRun
 from autobridge.control.schemas import (
     AUTH_401,
     ApprovalOut,
+    ApprovePreviewOut,
     OperatorOut,
     ReleaseOut,
     RepairDecisionRequest,
@@ -141,6 +143,156 @@ def reject_repair(repair_id: str, body: RepairDecisionRequest, db: Session = Dep
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/repairs/{repair_id}/approve-preview", response_model=ApprovePreviewOut)
+def approve_preview(repair_id: str, db: Session = Depends(get_db)) -> ApprovePreviewOut:
+    """Preview of what Approve/Reject will do, from the real path (REQ-032 §4).
+
+    Read-only: derives every line from the same rows ``POST
+    .../approve`` acts on (candidate release, active release, dependents,
+    scheduler interval, learn-on-approve rule), so the UI text follows the
+    server even when the behaviour changes. Never approves, rejects,
+    activates or writes knowledge.
+    """
+    from sqlalchemy import select
+
+    from autobridge.control.models import Connector, DependencyRegistration
+
+    run = db.get(RepairRun, repair_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"RepairRun {repair_id!r} not found")
+    approval = approval_for_repair(db, repair_id)
+
+    rel = (
+        db.execute(
+            select(ConnectorRelease)
+            .where(ConnectorRelease.provenance_repair_run_id == repair_id)
+            .order_by(ConnectorRelease.version.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    base_facts: dict[str, object] = {
+        "repair_run_id": repair_id,
+        "decision": run.decision,
+        "vendor": run.vendor,
+        "drift_class": run.drift_class,
+        "rule_id": run.rule_id,
+        "approval": approval.model_dump(mode="json") if approval is not None else None,
+    }
+    if run.decision != "propose":
+        return ApprovePreviewOut(
+            repair_run_id=repair_id,
+            approvable=False,
+            reason=f"Repair decision is {run.decision!r}, not 'propose': nothing to approve.",
+            facts=base_facts,
+        )
+    if rel is None:
+        return ApprovePreviewOut(
+            repair_run_id=repair_id,
+            approvable=False,
+            reason="No candidate release for this repair: Approve would fail the same way.",
+            facts=base_facts,
+        )
+
+    conn = db.get(Connector, rel.connector_id)
+    active_id = conn.active_release_id if conn is not None else None
+    active_rel = db.get(ConnectorRelease, active_id) if active_id else None
+    from_version = active_rel.version if active_rel is not None else None
+    to_version = rel.version
+
+    dependents = (
+        db.execute(
+            select(DependencyRegistration).where(
+                DependencyRegistration.connector_id == rel.connector_id,
+                DependencyRegistration.policy == "pause_on_release_change",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    try:
+        from autobridge.config import sync_interval_seconds  # noqa: PLC0415
+
+        interval_s = sync_interval_seconds()
+    except Exception:
+        interval_s = None
+
+    # Learn-on-approve: the same condition approve_release learns under
+    # (REQ-030 2b) — proposing caches nothing, approving writes the entry.
+    try:
+        from autobridge.repair.knowledge import NO_LEARN_CLASSES, delta_has_content  # noqa: PLC0415
+
+        drift_class = run.drift_class or ""
+        if not run.candidate_patch:
+            learnable, learn_why = False, "the repair carries no patch"
+        elif drift_class in NO_LEARN_CLASSES:
+            learnable, learn_why = False, f"{drift_class or 'unknown'} drifts are never learned"
+        elif not delta_has_content(run.fingerprint_delta):
+            learnable, learn_why = False, "the wire delta carries no change"
+        else:
+            learnable, learn_why = True, ""
+    except Exception:
+        learnable, learn_why = False, "knowledge check unavailable"
+
+    vendor = run.vendor or "unknown vendor"
+    drift_label = run.drift_class or "this change"
+    if from_version is None:
+        approve_lines = [f"Creates the first release r{to_version} with this change."]
+    else:
+        approve_lines = [f"Creates release r{to_version} from r{from_version} with this change."]
+    approve_lines.append(f"Activates r{to_version}.")
+    if dependents:
+        n = len(dependents)
+        approve_lines.append(f"Pauses {n} dependent consumer{'s' if n != 1 else ''} until the next sync.")
+    else:
+        approve_lines.append("No dependent consumers to pause.")
+    if interval_s is not None:
+        approve_lines.append(f"The next scheduled sync (in ~{interval_s:g} s) runs on r{to_version}.")
+    else:
+        approve_lines.append(f"The next sync runs on r{to_version} (scheduler off).")
+    if learnable:
+        approve_lines.append(
+            f"This fix is kept as known for {vendor} + {drift_label}: the same drift next time resolves at L0."
+        )
+    else:
+        approve_lines.append(f"This fix is not kept as learned knowledge ({learn_why}).")
+    if from_version is not None:
+        approve_lines.append(f"Rollback to r{from_version} stays available.")
+    else:
+        approve_lines.append("No earlier release to roll back to.")
+    if approval is not None and approval.decision == "reject":
+        approve_lines.append(f"Previously rejected by {approval.actor}: approving now still activates r{to_version}.")
+
+    reject_lines = [
+        "Discards the candidate release: no release is created or activated.",
+        "The fix is not kept as learned knowledge.",
+        "The drift stays open.",
+    ]
+    facts: dict[str, object] = {
+        **base_facts,
+        "candidate_release_id": rel.id,
+        "candidate_version": to_version,
+        "from_release_id": active_id,
+        "from_version": from_version,
+        "active_release_id": active_id,
+        "connector_id": rel.connector_id,
+        "connector_name": conn.name if conn is not None else rel.connector_id,
+        "dependent_pause_count": len(dependents),
+        "sync_interval_s": interval_s,
+        "learnable": learnable,
+        "learn_why": learn_why,
+    }
+    return ApprovePreviewOut(
+        repair_run_id=repair_id,
+        approvable=True,
+        reason="",
+        approve_lines=approve_lines,
+        reject_lines=reject_lines,
+        facts=facts,
+    )
 
 
 @router.get("/releases", response_model=list[ReleaseOut])

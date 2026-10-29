@@ -9,6 +9,7 @@ import type {
   RepairRunOut,
 } from "@/lib/api/client";
 import { HealthBadge } from "./HealthBadge";
+import { ConnectorStateBadge } from "./ConnectorStateBadge";
 import { SyncOutcomeBadge } from "./SyncOutcomeBadge";
 import { Sparkline } from "./Sparkline";
 
@@ -147,6 +148,11 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage: _modelUsa
                 {c.id.slice(0, 8)} · {c.base_url}
               </code>
               <HealthBadge status={c.health_status ?? "unknown"} />
+              <ConnectorStateBadge
+                state={c.state ?? "degrading"}
+                activity={c.activity ?? null}
+                lastSyncAt={c.last_sync_at ?? null}
+              />
             </div>
             <div className="out">
               <span className="clbl">Last sync</span>

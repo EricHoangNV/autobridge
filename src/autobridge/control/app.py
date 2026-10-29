@@ -34,6 +34,19 @@ from autobridge.control.routes.repairs import router as repairs_router
 from autobridge.control.routes.runs import router as runs_router
 
 
+def reclaim_orphaned_jobs() -> int:
+    """Re-queue ``running`` jobs left behind by a dead process (REQ-032).
+
+    The scheduler skips busy connectors, so an orphaned ``running`` row
+    would wedge its connector in "sync running" forever after a restart
+    or crash. Returns the number of jobs moved back to ``queued``; the
+    runner's retry budget (``attempts``/``max_attempts``) still applies.
+    """
+    from autobridge.control.runner import get_runner  # noqa: PLC0415
+
+    return get_runner(None).reclaim_orphaned()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Migrate on startup (REQ-021 owner check): create_all never adds
@@ -46,6 +59,21 @@ async def lifespan(app: FastAPI):
     from autobridge.control.migrate import ensure_migrated  # noqa: PLC0415
 
     ensure_migrated(get_engine())
+    # Re-queue jobs orphaned by a dead process (restart/crash path): a
+    # ``running`` row with no living worker would otherwise wedge its
+    # connector in "sync running" forever, because the scheduler skips
+    # busy connectors. Best-effort: a broken jobs table must not stop
+    # serving (migrations already ran above).
+    try:
+        reclaimed = reclaim_orphaned_jobs()
+        if reclaimed:
+            import logging  # noqa: PLC0415
+
+            logging.getLogger("autobridge.control").warning(
+                "reclaimed %d orphaned job(s) to queued", reclaimed
+            )
+    except Exception:
+        pass
     scheduler_task: asyncio.Task[None] | None = None
     try:
         interval = sync_interval_seconds()

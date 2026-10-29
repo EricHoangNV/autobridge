@@ -84,6 +84,9 @@ const mockConnectors = [
     name: "Atlas PMS",
     base_url: "http://sim-atlas:8000",
     health_status: "healthy",
+    state: "working",
+    activity: "in sync · Complete 5 s ago",
+    last_sync_at: new Date().toISOString(),
     active_release_id: "rel-1",
     credential_ref: "ATLAS_API_KEY",
     target_entities: ["Reservation", "FolioCharge"],
@@ -98,6 +101,9 @@ const mockConnectorDetail = {
   id: MOCK_CONNECTOR_ID,
   name: "Atlas PMS",
   base_url: "http://sim-atlas:8000",
+  state: "degrading",
+  activity: "repair waiting for approval",
+  last_sync_at: new Date().toISOString(),
   health_status: "healthy",
   active_release_id: "rel-1",
   credential_ref: "ATLAS_API_KEY",
@@ -128,6 +134,15 @@ const mockRepair = {
   id: MOCK_REPAIR_ID,
   drift_event_ids: [MOCK_DRIFT_ID],
   ladder_level_reached: 1,
+  vendor: "atlaspms",
+  drift_class: "PAGINATION_CURSOR",
+  drift_signature: "e2e-sig-001",
+  fingerprint_delta: {
+    pagination_changed: true,
+    pagination_details: {
+      list_reservations: { previous: { strategy: "page" }, current: { strategy: "cursor" } },
+    },
+  },
   candidate_patch: [{ op: "replace", path: "/operations/list_reservations/pagination/strategy", value: "cursor" }],
   rule_id: "offset_to_cursor",
   hypothesis_ids: [MOCK_EVIDENCE_ID],
@@ -135,8 +150,78 @@ const mockRepair = {
   verifier_report_id: "vr-001",
   decision: "propose" as const,
   model_usage: { frontier_tokens: 0, small_tokens: 120, model_calls: 0, tool_calls: 2 },
+  ladder_trace: [
+    { level: 0, action: "knowledge lookup", reason: "L0 miss: no known fix for atlaspms" },
+    { level: 1, action: "rule offset_to_cursor matched", reason: "page → cursor on the wire" },
+  ],
   escalation_bundle: null,
+  approval: null,
   created_at: new Date().toISOString(),
+};
+
+const mockLedger = {
+  repair_run_id: MOCK_REPAIR_ID,
+  decision: "propose",
+  resolved_rung: 1,
+  attempts: [
+    { rung: 0, action: "knowledge lookup", reason: "L0 miss: no known fix for atlaspms", calls: [] },
+    { rung: 1, action: "rule offset_to_cursor matched", reason: "page → cursor on the wire", calls: [] },
+  ],
+  total_calls: 0,
+  small_tokens: 0,
+  frontier_tokens: 0,
+  total_cost: "0",
+};
+
+const mockDerivation = {
+  id: "deriv-e2e-1",
+  kind: "hypothesis",
+  payload: {
+    drift_class: "PAGINATION_CURSOR",
+    stages: [
+      { name: "generated", count: 12, ids: [MOCK_EVIDENCE_ID, "ev-probe-1"] },
+      { name: "distinct", count: 1, ids: [MOCK_EVIDENCE_ID] },
+    ],
+  },
+  parent_ids: [],
+  run_id: `repair_runs:${MOCK_REPAIR_ID}`,
+  created_at: new Date().toISOString(),
+};
+
+const mockApprovePreview = {
+  repair_run_id: MOCK_REPAIR_ID,
+  approvable: true,
+  reason: "",
+  approve_lines: [
+    "Creates release r2 from r1 with this change.",
+    "Activates r2.",
+    "No dependent consumers to pause.",
+    "The next scheduled sync (in ~10 s) runs on r2.",
+    "This fix is kept as known for atlaspms + PAGINATION_CURSOR: the same drift next time resolves at L0.",
+    "Rollback to r1 stays available.",
+  ],
+  reject_lines: [
+    "Discards the candidate release: no release is created or activated.",
+    "The fix is not kept as learned knowledge.",
+    "The drift stays open.",
+  ],
+  facts: { candidate_version: 2, from_version: 1 },
+};
+
+const mockSyncPayload = {
+  kind: "sync",
+  payload: {
+    sync_run: {
+      id: "sync-2",
+      release_id: "rel-1",
+      started_at: new Date(Date.now() - 2000).toISOString(),
+      finished_at: new Date().toISOString(),
+      records_observed: { Reservation: 4 },
+      records_emitted: { Reservation: 4 },
+      outcome: "Degraded",
+      unmet_criteria: ["money_invariant"],
+    },
+  },
 };
 
 const mockDrift = {
@@ -144,7 +229,7 @@ const mockDrift = {
   connector_id: MOCK_CONNECTOR_ID,
   drift_class: "PAGINATION_CURSOR",
   severity: "medium",
-  evidence_ids: [MOCK_EVIDENCE_ID],
+  evidence_ids: [MOCK_EVIDENCE_ID, "ev-probe-1"],
   source_sync_run_id: "sync-2",
   status: "open",
   created_at: new Date().toISOString(),
@@ -157,6 +242,15 @@ const mockEvidence = {
   payload: { hypothesis: "cursor pagination needed", confidence: 0.9, probe_ids: [] },
   parent_ids: [],
   run_id: "run-1",
+  created_at: new Date().toISOString(),
+};
+
+const mockProbe = {
+  id: "ev-probe-1",
+  kind: "probe",
+  payload: { url: "GET /reservations?page=1", note: "page param ignored" },
+  parent_ids: [],
+  run_id: "sync-2",
   created_at: new Date().toISOString(),
 };
 
@@ -228,6 +322,13 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
         if (url.includes("/repairs") && !url.match(/\/repairs\/[^/]+/)) {
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([mockRepair]) });
         }
+        // REQ-032: preview + ledger before the generic repair-detail match.
+        if (url.includes("/approve-preview")) {
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockApprovePreview) });
+        }
+        if (url.includes("/ledger")) {
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockLedger) });
+        }
         if (url.match(/\/repairs\/[^/]+/)) {
           if (url.includes("/approve") || url.includes("/reject")) {
             return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok" }) });
@@ -241,6 +342,9 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([mockDrift]) });
         }
         if (url.match(/\/evidence\/[^/]+/)) {
+          if (url.endsWith("/ev-probe-1")) {
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockProbe) });
+          }
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockEvidence) });
         }
         if (url.includes("/evidence")) {
@@ -279,7 +383,17 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockRepair) });
         }
         if (url.includes("/runs/") && url.includes("/evidence")) {
-          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([mockDerivation, mockEvidence]) });
+        }
+        if (url.includes("/capabilities")) {
+          return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ rules: [{ id: "offset_to_cursor", fixes: "page→cursor", confidence: 0.95 }] }),
+          });
+        }
+        if (url.match(/\/runs\/sync-/)) {
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockSyncPayload) });
         }
         if (url.includes("/runs/")) {
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "run-1", status: "complete" }) });
@@ -310,7 +424,11 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "reset" }) });
         }
         if (url.includes("/approve") || url.includes("/reject")) {
-          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "approved" }) });
+          return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ id: "appr-e2e-1", repair_run_id: MOCK_REPAIR_ID, actor: "e2e-operator", decision: "approve", from_release_id: "rel-1", to_release_id: "rel-2", created_at: new Date().toISOString() }),
+          });
         }
         if (url.includes("/rollback")) {
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "rolled_back" }) });
@@ -459,6 +577,13 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
         .or(page.getByTestId("connectors-empty"))
         .or(page.getByTestId("connectors-error")),
     ).toBeVisible({ timeout: 15000 });
+    // REQ-032: every connector row carries colour + shape + word state with
+    // the server activity line (mocked fixture is working; live seed too).
+    if (await page.getByTestId("connectors-table").isVisible().catch(() => false)) {
+      const badge = page.getByTestId("connector-state").first();
+      await expect(badge).toBeVisible({ timeout: 8000 });
+      await expect(badge).toHaveAttribute("data-state", /working|degrading|error/);
+    }
     // Model-usage sparkline or panel should eventually appear when data loads
     // (may be loading, so we just ensure page didn't crash)
 
@@ -585,7 +710,7 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     }
   });
 
-  test("journey: /repairs/[id] shows drift evidence, ladder trace L0-L4, hypotheses+probes, patch diff, verdict, model usage, actions", async ({
+  test("journey: /repairs/[id] answers happened/did/decided/approve from persisted rows", async ({
     page,
     request,
   }) => {
@@ -622,40 +747,62 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
 
     await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 10000 });
 
-    // Drift evidence (section when linked events load, empty state otherwise)
+    // Decision line + actions at the top, one click from the Repairs list.
+    await expect(page.getByTestId("repair-decision-line")).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId("repair-actions")).toBeVisible();
+
+    // §1 What happened — connector, detecting sync + outcome, wire
+    // before/after, affected records, evidence.
+    await expect(page.getByTestId("repair-section-happened")).toBeVisible({ timeout: 8000 });
+    if (!uiReachable) {
+      await expect(page.getByTestId("happened-connector")).toContainText("Atlas PMS");
+      await expect(page.getByTestId("happened-sync-outcome")).toContainText("Degraded");
+      await expect(page.getByTestId("happened-sync-outcome")).toContainText("money_invariant");
+      await expect(page.getByTestId("wire-change-line-0")).toContainText("page → cursor");
+      await expect(page.getByTestId("happened-affects")).toContainText("Reservation");
+    } else {
+      // Live: the same rows render from the seeded/broken stack.
+      await expect(page.getByTestId("happened-connector")).toBeVisible();
+      await expect(page.getByTestId("wire-change-summary")).toBeVisible();
+    }
     await expect(
       page.getByTestId("drift-evidence-section").or(page.getByTestId("drift-evidence-empty")),
     ).toBeVisible({ timeout: 8000 });
-    const hasDriftSection = await page.getByTestId("drift-evidence-section").isVisible().catch(() => false);
-    const hasDriftText = await page.getByText(/Drift evidence/).isVisible().catch(() => false);
-    expect(hasDriftSection || hasDriftText).toBeTruthy();
 
-    // Ladder trace with L0-L4 badges
-    await expect(page.getByTestId("ladder-trace")).toBeVisible({ timeout: 5000 });
-    // At least one level badge should be visible
-    const ladderText = await page.getByTestId("ladder-trace").textContent();
-    expect(ladderText).toMatch(/L[0-4]/);
-
-    // Hypotheses + probes
-    const hasHypotheses = await page.getByTestId("hypotheses-panel").isVisible().catch(() => false);
-    expect(hasHypotheses || (await page.getByText(/Hypotheses/).isVisible().catch(() => false))).toBeTruthy();
-
-    // JSON Patch diff old/new side by side
-    const hasPatchDiff = await page.getByTestId("patch-diff").isVisible().catch(() => false);
-    const hasPatchText = await page.getByText(/JSON Patch diff/).isVisible().catch(() => false);
-    expect(hasPatchDiff || hasPatchText).toBeTruthy();
-
-    // Visible tests
-    await expect(page.getByRole("heading", { name: "Visible tests", exact: true })).toBeVisible();
-
-    // Verifier verdict
+    // §2 What the engine did — rung timeline, funnel, probes, model calls,
+    // verifier run.
+    await expect(page.getByTestId("repair-section-did")).toBeVisible();
+    await expect(page.getByTestId("rung-timeline-0")).toContainText(/L0/);
+    await expect(page.getByTestId("hypothesis-funnel-headline")).toBeVisible();
+    if (!uiReachable) {
+      await expect(page.getByTestId("hypothesis-funnel-headline")).toContainText("12 → 1");
+      await expect(page.getByTestId("repair-probe-0")).toContainText("GET /reservations");
+    }
+    await expect(
+      page.getByTestId("model-call-box-empty").or(page.getByTestId("model-call-box")),
+    ).toBeVisible();
     await expect(page.getByTestId("verifier-verdict")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("verifier-checks-line")).toBeVisible();
 
-    // Model usage (full + compact)
-    await expect(page.getByTestId("model-usage-view").first()).toBeVisible({ timeout: 5000 });
-    // Check zero-frontier badge when applicable
-    const modelUsageText = await page.getByTestId("model-usage-view").first().textContent();
-    expect(modelUsageText).toBeTruthy();
+    // §3 What the engine decided — diff, touches, raw patch one click away.
+    await expect(page.getByTestId("repair-section-decided")).toBeVisible();
+    await expect(page.getByTestId("decided-line")).toBeVisible();
+    const hasPatch = await page.getByTestId("patch-diff").isVisible().catch(() => false);
+    if (hasPatch) {
+      await expect(page.getByTestId("patch-line-0")).toBeVisible();
+      await expect(page.getByTestId("patch-touches")).toContainText("touches:");
+      await expect(page.getByTestId("patch-raw")).toContainText("cursor");
+    }
+
+    // §4 What happens when you click Approve — from the server preview.
+    await expect(page.getByTestId("repair-section-approve")).toBeVisible();
+    await expect(
+      page.getByTestId("approve-preview").or(page.getByTestId("approve-preview-blocked")),
+    ).toBeVisible({ timeout: 8000 });
+    if (!uiReachable) {
+      await expect(page.getByTestId("approve-preview-line-0")).toContainText("Creates release r2 from r1");
+      await expect(page.getByTestId("reject-preview-line-0")).toContainText("drift stays open");
+    }
 
     // Approve / Reject / Rollback actions
     const hasActions = await page.getByTestId("repair-actions").isVisible().catch(() => false);

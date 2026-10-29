@@ -7,6 +7,8 @@ import { SpecViewer } from "@/components/SpecViewer";
 import { ReleaseHistory } from "@/components/ReleaseHistory";
 import { SyncRunsTable } from "@/components/SyncRunsTable";
 import { DependencyList } from "@/components/DependencyList";
+import { ConnectorStateBadge } from "@/components/ConnectorStateBadge";
+import { PabxPanel } from "@/components/PabxPanel";
 import { frontierTokensOf, waitingRepairs } from "@/components/ConnectorsTable";
 import type {
   ConnectorDetail,
@@ -87,20 +89,20 @@ export default function ConnectorDetailPage({ params }: PageProps) {
     isLoading: detailLoading,
     mutate: mutateDetail,
   } = useSWR<ConnectorDetail>(`/connectors/${encodeURIComponent(connectorId)}`, fetcher, {
-    refreshInterval: 5000,
+    refreshInterval: 2000,
   });
 
   // Sync runs history (all runs for this connector's releases)
   const { data: syncRuns, mutate: mutateSyncRuns } = useSWR<SyncRunOut[]>(
     detail ? `/connectors/${encodeURIComponent(connectorId)}/sync-runs` : null,
     fetcher,
-    { refreshInterval: 5000 },
+    { refreshInterval: 2000 },
   );
 
   // Repairs for this connector (client-side match on open drift ids, so no
   // server-side filter is assumed): drives the waiting band.
   const { data: allRepairs } = useSWR<RepairRunOut[]>("/repairs", fetcher, {
-    refreshInterval: 5000,
+    refreshInterval: 2000,
   });
 
   const [syncState, setSyncState] = useState<"idle" | "sending" | "done" | "error">("idle");
@@ -218,6 +220,11 @@ export default function ConnectorDetailPage({ params }: PageProps) {
   const maxVersion = detail.releases?.length
     ? Math.max(...detail.releases.map((r) => r.version))
     : null;
+  const runtimeKind =
+    detail.runtime_target !== null && typeof detail.runtime_target === "object" && !Array.isArray(detail.runtime_target)
+      ? String((detail.runtime_target as Record<string, unknown>)["kind"] ?? "")
+      : "";
+  const isEdge = runtimeKind === "edge";
   const facts = specFacts(specRelease?.spec);
   const entityNames = (detail.target_entities ?? []).join(", ") || "—";
 
@@ -230,6 +237,13 @@ export default function ConnectorDetailPage({ params }: PageProps) {
         <div>
           <h1 data-testid="connector-name">{detail.name}</h1>
         </div>
+        <p className="mt-1 px-10" data-testid="connector-state-line">
+          <ConnectorStateBadge
+            state={detail.state ?? "degrading"}
+            activity={detail.activity ?? null}
+            lastSyncAt={detail.last_sync_at ?? detail.last_sync?.started_at ?? null}
+          />
+        </p>
         <p className="facts">
           {facts.map((f) => (
             <span key={f}>
@@ -308,6 +322,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
         <div>
           <h2 className="sec">Sync runs</h2>
           <SyncRunsTable syncRuns={syncRuns ?? (detail.last_sync ? [detail.last_sync as SyncRunOut] : [])} />
+          {isEdge ? <PabxPanel connectorId={detail.id} connectorName={detail.name} /> : null}
         </div>
         <div>
           <h2 className="sec">Releases</h2>
