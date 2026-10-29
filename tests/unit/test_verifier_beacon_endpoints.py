@@ -163,3 +163,48 @@ def test_grade_accepted_set_echoes_computable_key(client: TestClient) -> None:
     )
     assert r.status_code == 200
     assert r.json()["accepted"] == sorted(beacon_mod.accepted_outcomes_for(instance))
+
+
+def test_field_coverage_ignores_baseline_none() -> None:
+    """A baseline None matched by an absent key is equivalent (wire omits nulls)."""
+    instance = _repair_instance()
+    baseline = beacon_mod.baseline_for(instance)
+    none_key = None
+    for rec in baseline["reservations"] + baseline["folios"]:
+        for key, value in rec.items():
+            if value is None:
+                none_key = (rec, key)
+                break
+        if none_key:
+            break
+    if none_key is None:
+        pytest.skip("no nullable field in this baseline")
+    rec, key = none_key
+    produced = {
+        "reservations": [dict(r) for r in baseline["reservations"]],
+        "folios": [dict(f) for f in baseline["folios"]],
+    }
+    label = "reservations" if rec in baseline["reservations"] else "folios"
+    ident = "reservation_id" if label == "reservations" else "charge_id"
+    for out in produced[label]:
+        if str(out.get(ident)) == str(rec.get(ident)):
+            del out[key]
+    judged = beacon_mod.judge_produced_records(instance, produced)
+    assert judged["verdict"] == "pass", judged["failed_checks"]
+
+
+def test_field_coverage_fails_on_missing_present_value() -> None:
+    instance = _repair_instance()
+    baseline = beacon_mod.baseline_for(instance)
+    produced = {
+        "reservations": [dict(r) for r in baseline["reservations"]],
+        "folios": [dict(f) for f in baseline["folios"]],
+    }
+    rec = baseline["reservations"][0]
+    present_key = next(k for k, v in rec.items() if v is not None and k != "reservation_id")
+    for out in produced["reservations"]:
+        if str(out.get("reservation_id")) == str(rec.get("reservation_id")):
+            del out[present_key]
+    judged = beacon_mod.judge_produced_records(instance, produced)
+    assert judged["verdict"] == "fail"
+    assert any(f["name"] == "field_missing" for f in judged["failed_checks"])

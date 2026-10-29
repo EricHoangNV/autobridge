@@ -337,7 +337,9 @@ def _check_canonical_field_coverage(
     An unfixed rename serves the new name (canonical missing), an unfixed
     nesting serves a single parent wrapper (canonicals missing) — both fail
     here with the bounded ``field_missing`` name. Top-level only: nesting
-    is a canonical-shape breach, not a nested find. Extras are allowed.
+    is a canonical-shape breach, not a nested find. Extras are allowed, and
+    a baseline ``None`` matched by an absent key is equivalent (the wire
+    omits nulls) — only present values must survive.
     """
     fails: list[dict[str, Any]] = []
     for label, key in (("reservations", "reservation_id"), ("folios", "charge_id")):
@@ -352,7 +354,7 @@ def _check_canonical_field_coverage(
                 (r for r in produced.get(label, []) if isinstance(r, dict) and str(r.get(key)) == str(rec.get(key))),
                 {},
             )
-            absent = [k for k in rec if k not in prod]
+            absent = [k for k, v in rec.items() if v is not None and k not in prod]
             missing += len(absent)
         if missing:
             fails.append({"name": "field_missing", "count": missing})

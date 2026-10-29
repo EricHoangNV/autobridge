@@ -264,7 +264,13 @@ def _fake_verifier(monkeypatch: pytest.MonkeyPatch, records_verdict: str = "pass
             return self._payload
 
     def _post(url: str, **k: Any) -> Any:
-        body = k.get("json", {})
+        import json as _json
+
+        raw = k.get("content", "")
+        try:
+            body = _json.loads(raw) if isinstance(raw, str) else {}
+        except ValueError:
+            body = {}
         if url.endswith("/beacon/records"):
             return _Resp({"verdict": records_verdict, "score": 1.0, "failed_checks": []})
         if url.endswith("/beacon/grade"):
@@ -514,3 +520,52 @@ def test_placeholder_env_and_summarize_edges() -> None:
         beacon_run.BeaconArmGrade(arm="a", instance_index=0, trial=0, vendor="v", family="f",
                                   verified_completion=1, frontier_tokens=3)])
     assert single["overall"]["verified_completion"]["mean"] == 1.0
+
+
+def test_verifier_post_serializes_decimal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Money stays Decimal to the wire: Decimal serializes exactly."""
+    from decimal import Decimal as _Decimal
+
+    import httpx as _httpx
+
+    seen: dict[str, str] = {}
+
+    class _Ok:
+        status_code = 200
+
+        def json(self) -> object:
+            return {"verdict": "pass", "score": 1.0, "failed_checks": []}
+
+    def _capture(_url: str, content: str = "", **_k: object) -> object:
+        seen["content"] = content
+        return _Ok()
+
+    monkeypatch.setattr(_httpx, "post", _capture)
+    out = beacon_run._verifier_post("http://x", "/beacon/grade",
+                                    {"eval_seed_hex": "ab", "index": 0, "amount": _Decimal("125.00")})
+    assert out["verdict"] == "pass"
+    assert '"125.00"' in seen["content"]
+
+
+def test_run_guard_allows_protocol_only_dir(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A result dir holding only protocol.md (rehearsal freeze) does not trip the no-re-roll guard."""
+    out = tmp_path / "r"
+    out.mkdir()
+    (out / "protocol.md").write_text("# rehearsal\n", encoding="utf-8")
+    monkeypatch.setattr(beacon_run.beacon_client, "fetch_chain_info", lambda _b: dict(FAKE_INFO))
+    monkeypatch.setattr(beacon_run.beacon_client, "fetch_latest",
+                        lambda _b: {"round": 9999999, "randomness": "ab" * 32,
+                                    "signature": "cd" * 96, "previous_signature": "ef" * 96})
+    verified = beacon_run.beacon_client.VerifiedRound(
+        round=9999999, randomness_hex="ab" * 32, eval_seed_hex=EVAL_SEED_HEX, published_at_utc=1893456000)
+    monkeypatch.setattr(beacon_run.beacon_client, "fetch_verified_round",
+                        lambda _b, _r, **_: verified)
+    monkeypatch.setattr(beacon_run, "push_beacon", lambda _s, i, _v, **_: _descriptor(i))
+    monkeypatch.setattr(beacon_run, "sync_candidate",
+                        lambda _s, _u, **_k: {"outcome": "Complete", "canonical_records": {}})
+    _fake_verifier(monkeypatch, records_verdict="pass")
+    result = beacon_run.run_beacon(
+        _protocol(faults=1), config=None,
+        runners={"autobridge_cold": lambda _i: _engine_result()},
+        verifier_url="http://fake", base_url="https://example.invalid", output_dir=out)
+    assert len(result.grades) == 1

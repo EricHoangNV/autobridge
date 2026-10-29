@@ -655,8 +655,15 @@ def _mean_ci95(values: list[float]) -> dict[str, Any]:
 def _verifier_post(verifier_url: str, path: str, payload: dict[str, Any], timeout_s: float = 30.0) -> dict[str, Any]:
     import httpx as _httpx
 
+    # Money is Decimal end to end: serialize with default=str (ints stay
+    # ints; Decimal money becomes its exact string form, which the
+    # verifier parses exactly).
+    body = json.dumps(payload, default=str)
     try:
-        resp = _httpx.post(verifier_url.rstrip("/") + path, json=payload, timeout=timeout_s)
+        resp = _httpx.post(
+            verifier_url.rstrip("/") + path, content=body,
+            headers={"Content-Type": "application/json"}, timeout=timeout_s,
+        )
     except Exception as exc:
         raise BeaconError(f"verifier {path} unreachable: {type(exc).__name__}: {exc}") from exc
     if resp.status_code != 200:
@@ -743,6 +750,8 @@ def run_instance_trial(
         except (TypeError, ValueError):
             grade.cost_usd = None
         grade.model = getattr(result, "model", None)
+        if not grade.error and getattr(result, "error", None):
+            grade.error = str(result.error)[:500]
         arm_reports[arm] = _summarize_result(result)
         _grade_arm_result(grade, descriptor, result, eval_seed_hex, public_url, verifier_url,
                           http_sync=http_sync, vendors=vendors)

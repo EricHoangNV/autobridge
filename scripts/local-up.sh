@@ -84,12 +84,16 @@ start_svc worker 8102 uv run uvicorn autobridge.engine.app:app --host 127.0.0.1 
 start_svc runtime-sandbox 8103 uv run uvicorn autobridge.runtime.app:app --host 127.0.0.1 --port 8103
 start_svc verifier 8104 uv run uvicorn verifier.app:app --host 127.0.0.1 --port 8104
 APP_MODULE=simulators.atlaspms.app:app SIM_PUBLIC_PORT=8105 SIM_ADMIN_PORT=8109 \
+SIM_STATE_FILE=/tmp/sim_atlas_state.json \
   start_svc sim-atlas 8105 uv run python -m simulators.run
 APP_MODULE=simulators.harborpms.app:app SIM_PUBLIC_PORT=8106 SIM_ADMIN_PORT=8110 \
+SIM_STATE_FILE=/tmp/sim_harbor_state.json \
   start_svc sim-harbor 8106 uv run python -m simulators.run
 APP_MODULE=simulators.legacystay.app:app SIM_PUBLIC_PORT=8111 SIM_ADMIN_PORT=8112 \
+SIM_STATE_FILE=/tmp/sim_legacystay_state.json \
   start_svc sim-legacystay 8111 uv run python -m simulators.run
 APP_MODULE=simulators.meridianpms.app:app SIM_PUBLIC_PORT=8116 SIM_ADMIN_PORT=8117 \
+SIM_STATE_FILE=/tmp/sim_meridian_state.json \
   start_svc sim-meridian 8116 uv run python -m simulators.run
 # REQ-022 FIAS PABX (edge-net in Compose; loopback here): dials FIAS_HOST,
 # served below by the edge agent's host listener.

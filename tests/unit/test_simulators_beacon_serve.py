@@ -83,7 +83,7 @@ def test_record_shape_applies_to_app_dataset(_clean_state: None) -> None:
     beacon_serve.set_beacon(EVAL_SEED_HEX, target)
     instance = beacon_serve.active_instance()
     assert instance is not None
-    baseline = generate_dataset(seed=0)
+    baseline = generate_dataset(seed=int(instance["dataset_seed"]))
     served = get_dataset_for_current_state()
     expected = faultgen.apply_instance_records(baseline, instance)
     assert served == expected
@@ -103,7 +103,9 @@ def test_behaviour_instance_leaves_records_untouched(_clean_state: None) -> None
             break
     assert target is not None
     beacon_serve.set_beacon(EVAL_SEED_HEX, target)
-    assert get_dataset_for_current_state() == generate_dataset(seed=0)
+    instance = beacon_serve.active_instance()
+    assert instance is not None
+    assert get_dataset_for_current_state() == generate_dataset(seed=int(instance["dataset_seed"]))
 
 
 def test_transport_predicates_follow_beacon(_clean_state: None) -> None:

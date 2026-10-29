@@ -46,7 +46,9 @@ def set_beacon(eval_seed_hex: str, index: int) -> dict[str, Any]:
     if not isinstance(index, int) or isinstance(index, bool) or index < 0 or index > 10_000:
         raise ValueError("index must be an int in [0, 10000]")
     instance = faultgen.generate_instance(eval_seed, index)
-    set_beacon_state(eval_seed_hex.strip(), index)
+    # Pin the dataset seed: the served baseline must be byte-identical to
+    # what the verifier regenerates for this instance (answer-key alignment).
+    set_beacon_state(eval_seed_hex.strip(), index, int(instance["dataset_seed"]))
     return public_descriptor(instance)
 
 

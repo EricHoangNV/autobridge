@@ -89,13 +89,22 @@ def reset_state() -> dict[str, Any]:
     return set_scenario(DEFAULT_SCENARIO, DEFAULT_SEED)
 
 
-def set_beacon_state(eval_seed_hex: str | None, index: int | None) -> dict[str, Any]:
-    """Set (or clear, with Nones) the active REQ-025 beacon slot."""
+def set_beacon_state(eval_seed_hex: str | None, index: int | None, dataset_seed: int | None = None) -> dict[str, Any]:
+    """Set (or clear, with Nones) the active REQ-025 beacon slot.
+
+    Activating a beacon also pins the simulator dataset seed to the
+    instance's ``dataset_seed``: the served baseline is then byte-identical
+    to what the verifier regenerates, so live syncs grade against the
+    answer key. Clearing (scenario mode) leaves the seed untouched —
+    ``set_scenario`` owns it there.
+    """
     with _lock:
         if eval_seed_hex is None or index is None:
             _state["beacon"] = None
         else:
             _state["beacon"] = {"eval_seed_hex": eval_seed_hex, "index": index}
+            if dataset_seed is not None:
+                _state["seed"] = int(dataset_seed)
         _state["request_count"] = 0
         _save_file(dict(_state))
         return dict(_state)
