@@ -2997,3 +2997,36 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Fixed both items f
 - Owner/CI: 3+ more rehearsals (`make bench-beacon REHEARSE=<round>`), then the real frozen run (`make beacon-eval FAULTS=<N>`); live frontier numbers need `FRONTIER_API_KEY`.
 - `experiments/beacon/rehearsals/` is gitignored (labelled practice, never results).
 - The `test_edge_worker_app_health` full-suite flake is fixed at its root (edge readyz closed-store 500 → honest degraded); flake was pre-existing order dependence, not beacon code.
+
+## REQ-024 owner check on f32b4b4b: end-to-end engine arms + bench out of src/autobridge
+**Date:** 2026-10-29
+**Ref:** REQUESTS.md REQ-024 owner check (2026-10-29, on f32b4b4b)
+
+**What was done:**
+- Engine arms rewired to the real path: sync the pre-drift spec against the served fault -> detector (baseline-vs-faulted fingerprints) -> classifier -> the engine's own HypothesisEnumerator over vendor docs -> ladder (phase 1 deterministic, phase 2 model climb only for derived SEMANTIC_VALUE_DRIFT) -> verifier gate. No case-supplied drift class, delta, hypotheses, yield count, extra or validate_against anywhere in the arm path.
+- New `bench/faults.py`: ablation faults served in-process through real simulator wire functions (atlas/harbor/meridian); beacon instances served through the real vendor FastAPI apps in-process (TestClient + isolated sim state + spec auth + base path), deterministic from the public (eval_seed_hex, index).
+- `config/ablation_cases.yaml` trimmed to equal inputs (spec source, docs) + grading-only `expected`; loader refuses smuggled diagnostics. `config/beacon_vendors.yaml` gains per-vendor `docs`.
+- `beacon_case_for` rebuilt (spec + connector + docs only); `derive_beacon_diagnostics` observes the public descriptor; `_run_arm` wires the derive closure; freeze-protocol caveat replaced with the fixed statement.
+- Harness moved `src/autobridge/bench/` -> top-level `bench/` (git mv): all `autobridge.bench` imports, `parents[3]`->`parents[1]` (incl. latent record_frontier `parents[2]` bug), Makefile/compose/scripts module paths, Dockerfile.engine (COPY bench + PYTHONPATH), docs paths, `make typecheck` extended to `bench`. W5.7 guard carve-outs in `test_04_bootstrap_unfamiliar_api.py` reverted; `test_bench_never_imports_verifier` + `test_engine_never_imports_bench` added; DIRECTIVES §2 updated in place.
+- Parity tests: `assert_arm_task_setup_equal`, handle-kwargs spy test (drift/delta/hypotheses equal freshly derived values), case-smuggling refusal test, beacon params-blanked test, env-isolation regression test, in-process beacon observation test.
+- Rehearsal (offline, 12 scenarios x2 trials, all matched): every engine arm escalates with 0 frontier tokens; semantic climbs spend small tokens only (L2 ranks, L3 gate-skips on honest enumeration). Losses published per preregistration.
+- Follow-up engine gap exposed (not fixed here): derived detector output lacks the evidence L1 rules need (observed envelope strategy, rename pairs), so structural repairs escalate.
+
+**Key decisions:**
+- MockTransport fakes (real wire fns) for ablation + TestClient real apps for beacon, rather than unifying on one: fakes verified working, TestClient needed faultgen instances; unification is a contained follow-up in faults.py.
+- Phase 2 climbs only on derived SEMANTIC_VALUE_DRIFT (not UNKNOWN): self-healed transports stay zero-token; duplicates climbing is the classifier's genuine verdict, reported as-is.
+- No engine/detector/rule changes in this task: the bench must report what the engine does, not mask it; the detector gap is engine workstream follow-up.
+- `fake_env()` save/restore (not setdefault leak): bench serving leaked placeholder env into the pytest process and broke `test_sync_with_release` via the no-DNS guard.
+
+**Files changed:**
+- `bench/ablation.py` — derive machinery, trimmed case loader, rewired `run_engine_arm`/`warm_knowledge`, parity helpers
+- `bench/faults.py` — NEW fault + beacon serving
+- `bench/beacon_run.py` — new-style cases, `derive_beacon_diagnostics`, `_run_arm` derive wiring, caveat removed
+- `config/ablation_cases.yaml`, `config/beacon_vendors.yaml` — trimmed/added docs
+- `bench/*` moved from `src/autobridge/bench/`; `Makefile`, `compose.yaml`, `Dockerfile.engine`, `scripts/*`, `docs/benchmark.md`, `docs/architecture.md`, `mds/DIRECTIVES.MD`
+- `tests/unit/test_autobridge_bench_ablation.py`, `test_autobridge_beacon_run*.py`, `test_autobridge_bench_leak_audit.py`, `test_autobridge_trust_boundaries.py`, `tests/e2e/test_04_bootstrap_unfamiliar_api.py` (+ import renames across bench test files)
+- `mds/LEARNINGS.MD` — entries 36 (env save/restore), 37 (mypy set-dependent ignores)
+
+**Notes for next iteration:**
+- REQ-024 remaining is owner/CI: leak-audit re-run, live frontier numbers (`FRONTIER_API_KEY`), Nov 3 held-out run. REQ-025 beacon rehearsals reuse the fixed engine path.
+- Detector-evidence follow-up (engine workstream, not bench): fingerprint observed envelope strategy / rename pairs so L1 rules can fire on derived deltas.
