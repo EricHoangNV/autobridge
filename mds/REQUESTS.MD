@@ -130,7 +130,11 @@ with `"…"` (`bench/demo.py:735`). `/knowledge` → `connectors` (list) → pro
 
 ### REQ-028 — Benchmark-driven engine fixes (owner rehearsal 2026-10-29) (2026-10-29)
 Status: OPEN
-Priority: right after REQ-027 (the rename fix in progress there covers item 1). This is development rehearsal, not
+Priority: right after REQ-027 (the rename fix in progress there covers item 1).
+Owner decision (2026-10-29): **the benchmark runs in the sandbox** (OpenCode is there; the host has none). Provide one
+documented command that runs `make bench-ablation` (and later `make bench`) inside the sandbox against the stack, with
+the same keys and budgets for every arm, and writes results back to `experiments/`. The owner reruns it only after
+all REQ-027/REQ-028 fixes land. This is development rehearsal, not
 the pre-registered run: iterate until the numbers are honest and good, then the owner does one live run.
 Owner ran `BENCH_TRIALS=1 make bench-ablation` on the keyed local stack (main at d169e216; files in
 `experiments/benchmark_runs/`). AutoBridge cold: repair scenarios fixed 4/6 (`page_to_cursor`, `offset_to_cursor`,
