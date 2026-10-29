@@ -42,7 +42,7 @@ Tests: scheduler (interval, skip while busy, off when unset, never approves); pe
 and activity for each transition. Gates: `make test`, keyed `make local-up && make e2e && make demo` 8/8.
 
 ### REQ-031 — UI-first demo, part B: demo-seed, demo-break, demo-heal, build from docs in the UI (2026-10-29)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-29 14:48 — demo-seed, demo-break, demo-heal, UI docs build)
 Depends on REQ-030.
 1. **`make demo-seed`**: from `make demo-reset`, creates the recording's connectors **through the control API only**
    (the calls the UI makes), each baseline-synced `Complete`: AtlasPMS (the reusable reference release), HarborPMS
