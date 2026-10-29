@@ -2001,3 +2001,7 @@ the override derived `MERIDIAN_CLIENT_TOKEN_CLIENT_TOKEN` body refs and
 would 401 the sync). Items 2 (L3 output room / reasoning tokens) and 3
 (Harbor money-invariant inference) left open — frontier-provider territory.
 Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+### REQ-027 L3 output room + reasoning-token ledger (sbx1 2026-10-29)
+Owner check after sub-step 4, items 2–3. L3 empty live reply was a thinking-budget problem (4,319 tokens, empty text): frontier call now budgets 8192 output tokens (no reasoning-effort knob exists on the OpenAI-compatible wire shape, so budget is the lever). `Usage.reasoning_tokens` parsed from `completion_tokens_details` end to end: ModelCall/archive ledger (migration 0008, server_default 0; `_REVISION_EFFECTS` mirror updated — missing it 500s create_all DBs on upgrade, caught pre-commit), rung-ledger API, metrics totals, demo step-4 reason + usage-table row, replay recordings, repair-page UI. Empty-with-thinking now reads e.g. "L3 returned an empty response after 4,000 reasoning tokens". Harbor: docs state Decimal format, not gross totals — labelled gap kept, no inference (guessing would violate never-guess). Gates: 2509/134/396 + ui 160, lint/typecheck/ui-typecheck green (one random-order sim flake in untouched code, green on re-run). Needs owner keyed-stack run.
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)

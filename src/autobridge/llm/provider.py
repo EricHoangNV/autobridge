@@ -33,6 +33,12 @@ class Usage:
 
     input_tokens: int = 0
     output_tokens: int = 0
+    #: Reasoning/thinking tokens, a sub-count of ``output_tokens`` (the
+    #: provider bills them as completion/output tokens). Never added to
+    #: totals or cost on top of ``output_tokens``; reported separately so a
+    #: step can say a frontier call spent its budget thinking (owner check:
+    #: live L3 returned an empty message after 4k reasoning tokens).
+    reasoning_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -248,6 +254,7 @@ def record_model_call(
         tier=tier,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
+        reasoning_tokens=usage.reasoning_tokens,
         latency_ms=latency_ms,
         cost_estimate=cost_estimate,
         purpose=purpose,
@@ -471,6 +478,32 @@ def _to_openai_tool(spec: dict[str, Any]) -> dict[str, Any]:
     return {"type": "function", "function": function}
 
 
+def _reasoning_tokens(usage_obj: Any) -> int:
+    """Extract reasoning/thinking tokens from a Chat Completions usage object.
+
+    Reasoning models (Muse Spark via the OpenAI-compatible API, OpenAI
+    o-series) report thinking inside ``completion_tokens_details`` under the
+    ``reasoning_tokens`` key; non-reasoning responses omit it. Accepts both
+    attribute-style SDK objects and plain dicts; anything unexpected is 0 —
+    a missing split never fails a call.
+    """
+    if usage_obj is None:
+        return 0
+    details = getattr(usage_obj, "completion_tokens_details", None)
+    if details is None and isinstance(usage_obj, dict):
+        details = usage_obj.get("completion_tokens_details")
+    if details is None:
+        return 0
+    if isinstance(details, dict):
+        raw = details.get("reasoning_tokens", 0)
+    else:
+        raw = getattr(details, "reasoning_tokens", 0)
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _parse_openai_chat_response(resp: Any) -> Completion:
     """Parse an OpenAI Chat Completions response into a :class:`Completion`.
 
@@ -509,6 +542,7 @@ def _parse_openai_chat_response(resp: Any) -> Completion:
     usage = Usage(
         input_tokens=int(getattr(usage_obj, "prompt_tokens", 0) or 0),
         output_tokens=int(getattr(usage_obj, "completion_tokens", 0) or 0),
+        reasoning_tokens=_reasoning_tokens(usage_obj),
     )
     return Completion(text=text, tool_calls=tool_calls, usage=usage)
 
@@ -705,6 +739,7 @@ def _recording_to_completion(entry: dict[str, Any]) -> Completion:
     usage = Usage(
         input_tokens=int(entry.get("input_tokens", 0) or 0),
         output_tokens=int(entry.get("output_tokens", 0) or 0),
+        reasoning_tokens=int(entry.get("reasoning_tokens", 0) or 0),
     )
     return Completion(
         text=str(entry.get("text", "")),
@@ -720,7 +755,7 @@ class ReplayProvider:
 
     Recordings live under ``demo/recordings/`` (or ``REPLAY_DIR``), one JSON
     file per scenario mapping prompt sha256 -> ``{text, tool_calls,
-    input_tokens, output_tokens, model}``. A missing recording raises
+    input_tokens, output_tokens, reasoning_tokens, model}``. A missing recording raises
     :class:`ReplayMissing` — the demo fails loudly instead of inventing a
     response. Model ids recorded alongside are labels only; pricing follows
     the recorded model via :func:`estimate_cost`.

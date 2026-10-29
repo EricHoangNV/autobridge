@@ -43,6 +43,37 @@ describe("RungLedger", () => {
     expect(screen.getByTestId("rung-ledger-totals").textContent).toContain("150 frontier tokens");
   });
 
+  it("shows the reasoning split when a call spent its budget thinking", async () => {
+    const withReasoning = {
+      ...LEDGER,
+      attempts: LEDGER.attempts.map((a) =>
+        a.rung === 3
+          ? {
+              ...a,
+              calls: [
+                {
+                  tier: "frontier",
+                  purpose: "l3-generate-hypothesis",
+                  input_tokens: 319,
+                  output_tokens: 4319,
+                  reasoning_tokens: 4000,
+                  cost: "0.001125",
+                },
+              ],
+            }
+          : a,
+      ),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => withReasoning }) as Response),
+    );
+    render(<RungLedger repairId="repair-1" />);
+    await waitFor(() => expect(screen.getByTestId("rung-ledger")).toBeInTheDocument());
+    expect(screen.getByTestId("rung-calls-L3").textContent).toContain("4,638");
+    expect(screen.getByTestId("rung-calls-L3").textContent).toContain("4,000 reasoning");
+  });
+
   it("shows the empty state when no rungs were recorded", async () => {
     vi.stubGlobal(
       "fetch",

@@ -362,3 +362,11 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Setting `cursor_param` from the observed response leaf (`next_cursor`) broke the follow-up sync: the vendor reads the request param `cursor` while serving the response leaf `next_cursor`. Patch `next_path` from the wire leaf, keep `cursor_param` at its default unless explicit extra says otherwise.
 - Restricting the flip patch to ops that exhibited the contradiction under-patched: a small op fits on one page (null cursor, no signal) while its sibling flips. Strategy is a vendor-level contract — evidence on one op plus the same spec strategy on the others flips all of them; the verifier gate confirms.
 - **Rule:** Wire evidence names response fields only — never derive request-param names from it; and never narrow a vendor-level patch (strategy, auth) to exhibiting operations.
+
+## 40. Every Alembic migration needs a `_REVISION_EFFECTS` mirror entry — or old DBs 500 on upgrade
+
+**Context:** REQ-027 L3 reasoning-ledger (2026-10-29) — adding migration 0008
+
+- `src/autobridge/control/migrate.py::_detect_revision` decides what schema an unversioned database has by checking each revision's effects; a revision missing from `_REVISION_EFFECTS` is invisible to detection. A `create_all`-built DB (current models, no version row) then stamps 0007 and upgrades to head, re-running 0008's `ADD COLUMN` on a table that already has it → `duplicate column name: reasoning_tokens`, `POST /demo/reset` 500s.
+- Caught pre-commit by `test_demo_reset` (file DB via create_all + ensure_migrated), not by the head-cycle test (fresh DBs never exercise detection).
+- **Rule:** The migration and its `_REVISION_EFFECTS` entry land in the same commit, and the commit must include a test that upgrades a database built from current `create_all` metadata (detection path), not just `upgrade head` on an empty file.

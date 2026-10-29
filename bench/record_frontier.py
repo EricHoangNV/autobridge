@@ -3,7 +3,7 @@
 Runs the hard-semantic climb against the live Muse API (needs
 ``FRONTIER_API_KEY``; never replay) and writes the redacted recording to
 ``demo/recordings/<scenario>.json``: prompt sha256 -> {text, tool_calls,
-input/output tokens, model, captured_at}. The owner runs this once with
+input/output/reasoning tokens, model, captured_at}. The owner runs this once with
 their key and commits the capture; until a capture exists, replay says "no
 recording" and the demo labels L3 as skipped instead of inventing an answer.
 
@@ -65,6 +65,7 @@ class TappingProvider:
             ],
             "input_tokens": out.usage.input_tokens,
             "output_tokens": out.usage.output_tokens,
+            "reasoning_tokens": out.usage.reasoning_tokens,
             "model": self.model,
             "captured_at": datetime.date.today().isoformat(),
         }

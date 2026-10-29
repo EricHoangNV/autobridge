@@ -684,6 +684,9 @@ def rung_table_row(step: dict[str, Any]) -> str:
     small = int(usage.get("small_tokens", 0) or 0)
     frontier = int(usage.get("frontier_tokens", evidence.get("frontier_tokens", 0)) or 0)
     frontier_label = f"{frontier} frontier"
+    frontier_reasoning = int(usage.get("frontier_reasoning", evidence.get("frontier_reasoning", 0)) or 0)
+    if frontier_reasoning:
+        frontier_label += f" ({frontier_reasoning:,} reasoning)"
     if evidence.get("frontier_replayed"):
         frontier_label += f" ({evidence.get('replay_label') or 'replay'})"
     if evidence.get("l3_skipped"):
@@ -1689,6 +1692,8 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
 
     l3_model = _l3_model_name()
     frontier_tokens = int(usage.get("frontier_tokens", 0) or 0)
+    frontier_reasoning = int(usage.get("frontier_reasoning", 0) or 0)
+    reasoning_note = f" ({frontier_reasoning:,} reasoning)" if frontier_reasoning else ""
     l3_raw_preview = ""
     if l3_call is not None:
         l3_raw_preview = str(l3_call.get("raw_preview") or (climb.get("l3_text", "") or "").strip()[:300])
@@ -1710,7 +1715,7 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         rejection_reason = "total_amount must stay gross; net_amount is the decoy net"
     elif proposal:
         rejection_reason = (
-            f"frontier proposed {proposal} via {mode} ({l3_model}, {frontier_tokens:,} tokens); "
+            f"frontier proposed {proposal} via {mode} ({l3_model}, {frontier_tokens:,} tokens{reasoning_note}); "
             "no verified fix, operator decides"
         )
     else:
@@ -1719,7 +1724,7 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         else:
             no_patch_detail = str((l3_call or {}).get("parse_detail", "") or "no JSON Patch found in response")
         rejection_reason = (
-            f"L3 called {mode} ({l3_model}, {frontier_tokens:,} tokens): "
+            f"L3 called {mode} ({l3_model}, {frontier_tokens:,} tokens{reasoning_note}): "
             f"response contained no applicable patch ({no_patch_detail}); "
             f"raw response: {l3_raw_preview or '<empty>'}"
         )

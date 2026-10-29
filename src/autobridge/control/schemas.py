@@ -412,6 +412,7 @@ class RungCallOut(BaseModel):
     purpose: str
     input_tokens: int
     output_tokens: int
+    reasoning_tokens: int = 0
     cost: str
 
 
@@ -514,6 +515,7 @@ class ModelUsageEntry(BaseModel):
     total_calls: int
     total_input_tokens: int
     total_output_tokens: int
+    total_reasoning_tokens: int = 0
     total_cost: str
     by_run: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -522,6 +524,7 @@ class ModelUsageResponse(BaseModel):
     total_calls: int
     total_input_tokens: int
     total_output_tokens: int
+    total_reasoning_tokens: int = 0
     total_cost: str
     frontier_tokens: int
     small_tokens: int

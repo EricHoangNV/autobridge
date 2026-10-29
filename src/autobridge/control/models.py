@@ -577,6 +577,10 @@ class ModelCall(Base):
     tier: Mapped[str] = mapped_column(String(16), nullable=False)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Reasoning/thinking sub-count of ``output_tokens`` (REQ-027 owner
+    #: check): a reasoning model can spend its whole budget thinking and
+    #: return an empty message, so the split is stored, never inferred.
+    reasoning_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     latency_ms: Mapped[float] = mapped_column(nullable=False, default=0.0)
     #: Never float: Decimal end to end (DIRECTIVES Quick Reference 5).
     cost_estimate: Mapped[Decimal] = mapped_column(
@@ -619,6 +623,10 @@ class ModelCallArchive(Base):
     tier: Mapped[str] = mapped_column(String(16), nullable=False)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Reasoning/thinking sub-count of ``output_tokens`` (REQ-027 owner
+    #: check): a reasoning model can spend its whole budget thinking and
+    #: return an empty message, so the split is stored, never inferred.
+    reasoning_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     latency_ms: Mapped[float] = mapped_column(nullable=False, default=0.0)
     #: Never float: Decimal end to end (DIRECTIVES Quick Reference 5).
     cost_estimate: Mapped[Decimal] = mapped_column(

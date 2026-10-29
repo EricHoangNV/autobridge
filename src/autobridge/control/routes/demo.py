@@ -240,6 +240,7 @@ def demo_reset(
                 tier=call.tier,
                 input_tokens=call.input_tokens,
                 output_tokens=call.output_tokens,
+                reasoning_tokens=call.reasoning_tokens,
                 latency_ms=call.latency_ms,
                 cost_estimate=call.cost_estimate,
                 purpose=call.purpose,

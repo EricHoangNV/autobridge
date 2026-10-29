@@ -1651,6 +1651,11 @@ export interface components {
             total_input_tokens: number;
             /** Total Output Tokens */
             total_output_tokens: number;
+            /**
+             * Total Reasoning Tokens
+             * @default 0
+             */
+            total_reasoning_tokens: number;
         };
         /** ModelUsageResponse */
         ModelUsageResponse: {
@@ -1680,6 +1685,11 @@ export interface components {
             total_input_tokens: number;
             /** Total Output Tokens */
             total_output_tokens: number;
+            /**
+             * Total Reasoning Tokens
+             * @default 0
+             */
+            total_reasoning_tokens: number;
         };
         /** OperatorOut */
         OperatorOut: {
@@ -1854,6 +1864,11 @@ export interface components {
             output_tokens: number;
             /** Purpose */
             purpose: string;
+            /**
+             * Reasoning Tokens
+             * @default 0
+             */
+            reasoning_tokens: number;
             /** Tier */
             tier: string;
         };

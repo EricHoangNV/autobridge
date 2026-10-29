@@ -3131,3 +3131,31 @@ Sub-step 4 (demo steps on the live chain) plus the fixes for the owner check aft
 
 **Notes for next iteration:**
 - Same keyed-stack verification covers this: fresh `.env` from `.env.example`, no manual exports, `make local-up && make e2e && make demo` green
+
+## REQ-027 L3 output room + reasoning-token ledger (sbx1 2026-10-29)
+**Date:** 2026-10-29
+**Ref:** REQ-027 owner check after sub-step 4, items 2 (L3 output room / reasoning tokens) and 3 (Harbor money-invariant)
+
+**What was done:**
+- L3 frontier call in `run_frontier_climb` gets output room for thinking *and* an answer: `max_tokens` 4096 → 8192 (OpenAI-compatible wire shape takes no reasoning-effort knob, so budget is the only lever; Budget ceilings unchanged)
+- `Usage.reasoning_tokens` added as an explicit sub-count of output tokens (never double-counted in totals or cost); parsed from `completion_tokens_details.reasoning_tokens` (object + dict shapes, missing → 0)
+- Ledger: `model_calls.reasoning_tokens` + `model_call_archive.reasoning_tokens` via Alembic migration 0008 (server_default 0, upgrade-safe); `record_model_call`, demo-archive copy, `_REVISION_EFFECTS` mirror entry (the miss caused a duplicate-column failure on create_all DBs — caught by test_demo_reset before commit)
+- Surfaced separately in: ladder usage deltas (`frontier_reasoning`), rung-ledger call summaries + `RungCallOut`, `/metrics/model-usage` totals, demo step-4 rejection reason + `rung_table_row` ("4,319 tokens (4,000 reasoning)"), replay recordings + `TappingProvider`, repair-page `RungLedger` UI ("4,638 (4,000 reasoning)")
+- Empty L3 reply with thinking budget now reads "thought hard, said nothing": rung reason names the reasoning count instead of a bare "empty response"
+- Harbor money-invariant: `simulators/docs/harborpms.md#Money` states Decimal format only, no gross totals — per the owner instruction the labelled gap stands (`_step4_live` records it honestly; inferring gross-ness would be guessing a business rule)
+- Docs: `docs/architecture.md` (ModelCall split), `docs/demo.md` (ledger line); OpenAPI + UI types regenerated
+- Tests: 8 new (parse both shapes, L3 empty-with-reasoning, 8192 room, replay round-trip, tap records, ledger store, 0007→head upgrade, demo empty-reply reason + UI split) + updated rung-ledger expectation + ConnectorsTable fixture
+- Gates: autobridge 2509 / verifier 134 / simulators 396 (one random-order flake `test_replay_postings_resend_same_pno` in untouched sim code, passes in isolation and on package re-run) + ui 160 pass; lint + typecheck + ui-typecheck green; `make openapi-check` export up-to-date (git-diff leg passes once committed)
+- NOT live-verified here (no keyed stack in sbx1): owner runs keyed `make local-up && make e2e && make demo`, checks the L3 line, and runs the new UI spec
+
+**Key decisions:**
+- Bump budget rather than reasoning-effort param: the Muse OpenAI-compatible endpoint documents no effort knob; sending unknown params risks fail-open live behavior
+- New DB columns (not purpose-string encoding): the owner explicitly asked for the split "in the ledger"; ModelCall is the ledger, nullable-free with server default keeps old DBs upgrade-safe
+- No Harbor inference: guessing gross-canonical from format docs would violate "unknown → Blocked, never guessed"
+
+**Files changed:**
+- `src/autobridge/llm/provider.py`, `src/autobridge/repair/ladder.py`, `src/autobridge/control/{models,migrate}.py`, `src/autobridge/control/{routes/demo,routes/metrics,schemas}.py`, `alembic/versions/0008_*`, `bench/{demo,record_frontier}.py`, `ui/components/RungLedger.{tsx,test.tsx}`, `ui/components/ConnectorsTable.test.tsx`, `ui/lib/api/{schema.d.ts,openapi.json}`, `docs/{architecture,demo}.md`, 5 unit test files
+
+**Notes for next iteration:**
+- Same keyed-stack verification covers this plus the knowledge-page state; then REQ-027 sub-steps 5-6 (per-scenario live e2e + honest bench rerun with the new L3 budget)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)

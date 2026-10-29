@@ -50,7 +50,7 @@ POST /connectors/{id}/build            → BuildRun: DocsReader → classifiers 
                                          → probe plan (Budget-capped) → evidence → spec → verify
 GET  /runs/{build_run_id}              → ladder trace, probe observations, hypothesis decisions
 GET  /runs/{build_run_id}/events       → SSE stream (redacted) of the same trace
-GET  /metrics/model-usage?run_id=…     → per-call ledger; L3 calls show model id + input/output tokens
+GET  /metrics/model-usage?run_id=…     → per-call ledger; L3 calls show model id + input/output tokens (reasoning shown separately)
 ```
 
 Renders in `/connectors/new` (docs upload → build two-step) and `/repairs/[id]`

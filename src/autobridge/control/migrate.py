@@ -100,6 +100,13 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
         "0007_repair_knowledge_provenance",
         {"tables": [], "columns": ["repair_runs.vendor", "repair_runs.drift_signature"]},
     ),
+    (
+        "0008_model_call_reasoning_tokens",
+        {
+            "tables": [],
+            "columns": ["model_calls.reasoning_tokens", "model_call_archive.reasoning_tokens"],
+        },
+    ),
 )
 
 

@@ -154,6 +154,8 @@ def _empty_model_usage() -> dict[str, Any]:
         "frontier_output": 0,
         "small_input": 0,
         "small_output": 0,
+        "frontier_reasoning": 0,
+        "small_reasoning": 0,
     }
 
 
@@ -228,6 +230,8 @@ def _call_small_model_rank(
         "frontier_output": 0,
         "small_input": result.usage.input_tokens,
         "small_output": result.usage.output_tokens,
+        "frontier_reasoning": 0,
+        "small_reasoning": result.usage.reasoning_tokens,
     }
     return ranked, usage
 
@@ -309,15 +313,17 @@ def _call_frontier_generate(
         "small_calls": 0,
         "frontier_input": result.usage.input_tokens,
         "frontier_output": result.usage.output_tokens,
+        "frontier_reasoning": result.usage.reasoning_tokens,
         "small_input": 0,
         "small_output": 0,
+        "small_reasoning": 0,
     }
     return new_hyps, usage
 
 
 def _merge_model_usage(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
-    for k in ("frontier_tokens", "small_tokens", "calls", "frontier_calls", "small_calls", "frontier_input", "frontier_output", "small_input", "small_output"):
+    for k in ("frontier_tokens", "small_tokens", "calls", "frontier_calls", "small_calls", "frontier_input", "frontier_output", "small_input", "small_output", "frontier_reasoning", "small_reasoning"):
         merged[k] = int(merged.get(k, 0)) + int(delta.get(k, 0))
     return merged
 
@@ -370,6 +376,7 @@ def rung_ledger(
             "purpose": purpose,
             "input_tokens": int(_call_field(call, "input_tokens", 0) or 0),
             "output_tokens": int(_call_field(call, "output_tokens", 0) or 0),
+            "reasoning_tokens": int(_call_field(call, "reasoning_tokens", 0) or 0),
             "cost": str(_call_field(call, "cost_estimate", "0") or "0"),
         }
         rung = _CALL_TIER_TO_RUNG.get(tier)
@@ -1593,9 +1600,12 @@ def run_frontier_climb(
     if budget is not None:
         effective = BudgetedProvider(provider, budget, session=session, run_id=run_id)
     # Reasoning models spend most of a small max_tokens on thinking and then
-    # return an empty message (owner check): budget room for reasoning output.
+    # return an empty message (owner check: 4,319 tokens, empty text): give
+    # the frontier call room for thinking *and* an answer. The
+    # OpenAI-compatible wire shape takes no reasoning-effort knob, so budget
+    # is the only lever; reasoning tokens are recorded separately below.
     try:
-        l3_result = effective.complete(l3_messages, max_tokens=4096, tier="frontier", purpose="l3-generate-patch")
+        l3_result = effective.complete(l3_messages, max_tokens=8192, tier="frontier", purpose="l3-generate-patch")
     except ReplayMissing as exc:
         replay_missing.append(exc.prompt_hash)
         l3_entry["action"] = "l3_skipped"
@@ -1621,11 +1631,14 @@ def run_frontier_climb(
         "small_calls": 0,
         "frontier_input": l3_result.usage.input_tokens,
         "frontier_output": l3_result.usage.output_tokens,
+        "frontier_reasoning": l3_result.usage.reasoning_tokens,
         "small_input": 0,
         "small_output": 0,
+        "small_reasoning": 0,
     }
     usage = _merge_model_usage(usage, l3_delta)
     l3_entry["model_usage_delta"] = l3_delta
+    l3_entry["reasoning_tokens"] = l3_result.usage.reasoning_tokens
     l3_text = l3_result.text or ""
     proposal, parse_detail = _parse_patch_response(l3_text)
     if proposal is not None:
@@ -1634,9 +1647,17 @@ def run_frontier_climb(
         # No usable patch is a normal outcome, never an error: record what
         # the text contained plus a truncated preview so a live answer is
         # diagnosable (prompts carry no secrets; truncate defense-in-depth).
+        # Name the reasoning spend explicitly: an empty message after a full
+        # thinking budget is "thought hard, said nothing", not a skip.
         l3_entry["parse_detail"] = parse_detail
         if l3_text.strip():
             l3_entry["raw_preview"] = l3_text.strip()[:300]
+        elif l3_result.usage.reasoning_tokens:
+            l3_entry["reason"] = (
+                f"L3 returned an empty response after "
+                f"{l3_result.usage.reasoning_tokens:,} reasoning tokens "
+                f"({parse_detail}); no patch proposed"
+            )
         else:
             l3_entry["reason"] = f"L3 returned an empty response ({parse_detail}); no patch proposed"
     if proposal is not None and validate_against is not None:

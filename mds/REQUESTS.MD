@@ -7,7 +7,7 @@ Owner priority (2026-10-29 10:40, supersedes the list below): **REQ-027 first.**
 describe the REQ-027 demo, so finish REQ-023 after REQ-027 lands (or update it then).
 
 ### REQ-027 — Auto-detect + auto-heal end to end on the live stack, and a demo that proves it (2026-10-29)
-Status: IN_PROGRESS (sbx1 2026-10-29 — knowledge-page check + sim-keys defaults code DONE on branch; remaining: owner keyed-stack run (make demo 8/8, /knowledge state, UI spec), then L3 output-room + Harbor money-invariant inference) **Fix first: owner check "on 96ba3137" (demo 6/8: PABX v3 build rejected, step 7 read race).**
+Status: IN_PROGRESS (sbx1 2026-10-29 — knowledge-page check + sim-keys defaults MERGED; L3 output-room + reasoning-ledger CODE DONE on branch (8192 budget, per-call split in ledger/API/demo/UI, migration 0008; Harbor gap kept labelled); **Fix first: owner check on 96ba3137 (demo 6/8: PABX v3 build rejects relay base_url; step 7 profile read race)** — fixing both now; remaining: owner keyed-stack run (make demo 8/8 twice, L3 reasoning line, /knowledge state, UI spec), then sub-steps 5-6)
 Why: it is the product's headline claim and today only FIAS (demo step 8) shows it. Owner checks on the host
 (2026-10-29, main at f61274b8, keyed local stack):
 - After REQ-024's honest fix (a62013dc) every engine arm escalates with 0 fixes: the detector output does not carry

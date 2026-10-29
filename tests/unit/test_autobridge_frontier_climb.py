@@ -420,3 +420,118 @@ def test_l3_empty_response_records_reason() -> None:
     assert "empty response" in l3["reason"]
     assert "empty response" in l3.get("parse_detail", "")
     assert "raw_preview" not in l3
+
+
+# ---------------------------------------------------------------------------
+# Reasoning-token split on the L3 rung (REQ-027 owner check)
+# ---------------------------------------------------------------------------
+
+
+def test_l3_empty_response_names_reasoning_spend() -> None:
+    """Owner check 2026-10-29: an empty L3 reply after a thinking budget is
+    "thought hard, said nothing" — the rung reason names the reasoning
+    tokens instead of a bare "empty response"."""
+    fake = FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(4, 4)
+            ),
+            "frontier": Completion(text="   ", usage=Usage(319, 4319, reasoning_tokens=4000)),
+        }
+    )
+    climb = run_frontier_climb(
+        spec={"spec_version": 1, "connector": {"id": "t", "vendor": "harbor"}},
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=fake,
+        budget=Budget(),
+        knowledge_cache=KnowledgeCache(),
+        fingerprint_delta={"semantic": "gross_to_net"},
+        vendor="harbor",
+        scenario="gross_to_net",
+        validate_against=_harbor_ref(),
+    )
+    assert climb["proposal"] is None
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert "4,000 reasoning tokens" in l3["reason"]
+    assert l3["reasoning_tokens"] == 4000
+    assert l3["model_usage_delta"]["frontier_reasoning"] == 4000
+    assert climb["usage"]["frontier_reasoning"] == 4000
+    # Reasoning is a sub-count: frontier totals still balance.
+    assert climb["usage"]["frontier_tokens"] == 319 + 4319
+
+
+def test_l3_requests_output_room_for_reasoning() -> None:
+    """The frontier L3 call budgets room for thinking *and* an answer
+    (owner check: 4k max_tokens returned an empty message)."""
+    seen: dict[str, Any] = {}
+
+    def _capture(
+        messages: Any, *, max_tokens: int = 1024, tier: str = "small", purpose: str = "", tools: Any = None
+    ) -> Completion:
+        _ = (messages, tier, purpose, tools)
+        seen["max_tokens"] = max_tokens
+        return Completion(text="   ", usage=Usage(10, 10))
+
+    fake = FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(4, 4)
+            ),
+            "frontier": _capture,
+        }
+    )
+    run_frontier_climb(
+        spec={"spec_version": 1, "connector": {"id": "t", "vendor": "harbor"}},
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=fake,
+        budget=Budget(),
+        knowledge_cache=KnowledgeCache(),
+        fingerprint_delta={"semantic": "gross_to_net"},
+        vendor="harbor",
+        scenario="gross_to_net",
+        validate_against=_harbor_ref(),
+    )
+    assert seen["max_tokens"] >= 8192
+
+
+def test_replay_round_trips_reasoning_tokens(tmp_path: pathlib.Path) -> None:
+    """Recordings keep the reasoning split, so replayed climbs report the
+    same "thought hard, said nothing" diagnosis as the live run."""
+    import json as _json
+
+    recording = {
+        "text": "   ",
+        "tool_calls": [],
+        "input_tokens": 319,
+        "output_tokens": 4319,
+        "reasoning_tokens": 4000,
+        "model": "muse-spark-1.3",
+        "captured_at": "2026-10-29",
+    }
+    (tmp_path / "r.json").write_text(_json.dumps({"abc": recording}), encoding="utf-8")
+    from autobridge.llm.provider import prompt_hash as _prompt_hash
+
+    messages = [{"role": "user", "content": "x"}]
+    p = ReplayProvider(recordings_dir=str(tmp_path))
+    p._recordings = {_prompt_hash(messages): recording}
+    out = p.complete(messages, tier="frontier")
+    assert out.usage.reasoning_tokens == 4000
+    assert out.usage.total_tokens == 319 + 4319
+
+
+def test_tapping_provider_records_reasoning_tokens() -> None:
+    from bench.record_frontier import TappingProvider
+
+    fake = FakeProvider(
+        responses={
+            "default": Completion(text="   ", usage=Usage(10, 20, reasoning_tokens=15))
+        }
+    )
+    tap = TappingProvider(fake, model="muse-spark-1.3")
+    tap.complete([{"role": "user", "content": "hi"}], tier="frontier", purpose="p")
+    key = prompt_hash([{"role": "user", "content": "hi"}])
+    assert tap.recordings[key]["reasoning_tokens"] == 15

@@ -23,6 +23,7 @@ def get_model_usage(db: Session = Depends(get_db)) -> ModelUsageResponse:
     total_calls = len(rows)
     total_input = sum(r.input_tokens for r in rows)
     total_output = sum(r.output_tokens for r in rows)
+    total_reasoning = sum(r.reasoning_tokens or 0 for r in rows)
     total_cost = sum((r.cost_estimate or Decimal("0") for r in rows), Decimal("0"))
     frontier_tokens = sum(r.input_tokens + r.output_tokens for r in rows if r.tier == "frontier")
     small_tokens = sum(r.input_tokens + r.output_tokens for r in rows if r.tier == "small")
@@ -49,6 +50,7 @@ def get_model_usage(db: Session = Depends(get_db)) -> ModelUsageResponse:
                 total_calls=len(calls),
                 total_input_tokens=sum(c.input_tokens for c in calls),
                 total_output_tokens=sum(c.output_tokens for c in calls),
+                total_reasoning_tokens=sum(c.reasoning_tokens or 0 for c in calls),
                 total_cost=str(sum((c.cost_estimate or Decimal("0") for c in calls), Decimal("0"))),
                 by_run=[{"run_id": c.run_id, "purpose": c.purpose, "tokens": c.input_tokens + c.output_tokens} for c in calls],
             )
@@ -58,6 +60,7 @@ def get_model_usage(db: Session = Depends(get_db)) -> ModelUsageResponse:
         total_calls=total_calls,
         total_input_tokens=total_input,
         total_output_tokens=total_output,
+        total_reasoning_tokens=total_reasoning,
         total_cost=str(total_cost),
         frontier_tokens=frontier_tokens,
         small_tokens=small_tokens,

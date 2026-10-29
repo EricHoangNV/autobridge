@@ -9,6 +9,7 @@ export type RungCall = {
   purpose: string;
   input_tokens: number;
   output_tokens: number;
+  reasoning_tokens?: number;
   cost: string;
 };
 
@@ -111,6 +112,7 @@ export function RungLedger({ repairId }: { repairId: string }) {
                       <td className="py-1 pr-3">{call.purpose || "—"}</td>
                       <td className="py-1 pr-3 text-right">
                         {formatInt(call.input_tokens + call.output_tokens)}
+                        {call.reasoning_tokens ? ` (${formatInt(call.reasoning_tokens)} reasoning)` : ""}
                       </td>
                       <td className="py-1 text-right">${call.cost}</td>
                     </tr>

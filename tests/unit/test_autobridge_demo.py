@@ -799,3 +799,29 @@ def test_step4_live_unparsable_patch_says_what_happened(monkeypatch: Any) -> Non
     assert ev["l3_raw_preview"].startswith('[{"op": "replace"')
     assert ev["sync_outcome"] == "Degraded"
     assert ev["release_persisted"] is False
+
+
+def test_step4_live_empty_reply_names_reasoning_spend(monkeypatch: Any) -> None:
+    """Owner check 2026-10-29: a live empty L3 reply after a thinking budget
+    names the reasoning tokens in the rejection reason and the usage row."""
+    import autobridge.llm.provider as provider_mod
+    from autobridge.llm.provider import Completion, FakeProvider, Usage
+    from bench.demo import rung_table_row
+
+    fake = FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(96, 12)
+            ),
+            "frontier": Completion(text="   ", usage=Usage(319, 4319, reasoning_tokens=4000)),
+        },
+        frontier_model="muse-spark-1.3",
+        small_model="muse-spark-1.3",
+    )
+    monkeypatch.setattr(provider_mod, "resolve_frontier_provider", lambda: (fake, "live"))
+    step = step4_hard_semantic_failure(0, False, "http://127.0.0.1:9")
+    assert step["status"] == "ok", step
+    ev = step["evidence"]
+    assert ev["l3_skipped"] is False
+    assert "4,000 reasoning" in ev["rejection_reason"]
+    assert "reasoning" in rung_table_row(step)

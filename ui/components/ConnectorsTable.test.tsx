@@ -50,6 +50,7 @@ describe("ConnectorsTable", () => {
       total_calls: 6,
       total_input_tokens: 100,
       total_output_tokens: 50,
+      total_reasoning_tokens: 0,
       total_cost: "0.01",
       frontier_tokens: 0,
       small_tokens: 150,

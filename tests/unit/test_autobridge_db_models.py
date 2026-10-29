@@ -480,3 +480,58 @@ def test_alembic_upgrade_downgrade_cycle(
     assert set(tables) == set(Base.metadata.tables)
     # Silence unused-import guard for os-level env handling.
     assert os.environ[m.DATABASE_URL_ENV].startswith("sqlite:///")
+
+
+def test_model_call_ledger_stores_reasoning_split(session: Session) -> None:
+    call = ModelCall(
+        run_id="repair:reason",
+        provider="muse",
+        model="muse-spark-1.3",
+        tier="frontier",
+        input_tokens=319,
+        output_tokens=4319,
+        reasoning_tokens=4000,
+        purpose="l3-generate-patch",
+    )
+    session.add(call)
+    session.commit()
+    row = session.query(ModelCall).one()
+    assert row.reasoning_tokens == 4000
+    # Reasoning is a sub-count of output, never on top of it.
+    assert row.output_tokens == 4319
+
+
+def test_alembic_0008_adds_reasoning_tokens_to_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-0008 database (at 0007) upgrades to head with the reasoning
+    split present on both ledger tables and old rows reading back as 0."""
+    db = tmp_path / "pre0008.db"
+    monkeypatch.setenv(m.DATABASE_URL_ENV, f"sqlite:///{db}")
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "alembic"))
+    command.upgrade(cfg, "0007")
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.connect() as conn:
+        insp = sa.inspect(conn)
+        assert "reasoning_tokens" not in {c["name"] for c in insp.get_columns("model_calls")}
+    command.upgrade(cfg, "head")
+    with engine.connect() as conn:
+        insp = sa.inspect(conn)
+        for table in ("model_calls", "model_call_archive"):
+            assert "reasoning_tokens" in {c["name"] for c in insp.get_columns(table)}
+    with m.session_factory(engine)() as s:
+        s.add(
+            ModelCall(
+                run_id="repair:old",
+                provider="muse",
+                model="muse-spark-1.3",
+                tier="frontier",
+                input_tokens=10,
+                output_tokens=20,
+                reasoning_tokens=15,
+                purpose="l3-generate-patch",
+            )
+        )
+        s.commit()
+        assert s.query(ModelCall).one().reasoning_tokens == 15

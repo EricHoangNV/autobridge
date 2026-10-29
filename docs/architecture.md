@@ -185,6 +185,9 @@ no SQLite-only types; proven to compile on Postgres):
   is `kind:id`).
 - `ModelCall` — per-LLM-call ledger (provider, model, tier, tokens,
   latency, cost, purpose); every model call goes through `BudgetedProvider`.
+  `reasoning_tokens` is stored as a sub-count of output tokens, so a
+  reasoning model that spends its budget thinking and returns an empty
+  message is diagnosed, not mislabelled.
 - `DependencyRegistration` — consumer pause/notify on `release.activated`.
 - `DriftEvent / Approval` — drift classification + human approval/rollback.
 

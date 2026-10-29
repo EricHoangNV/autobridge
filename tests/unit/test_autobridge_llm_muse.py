@@ -254,3 +254,41 @@ def test_muse_provider_env_key_default_empty(monkeypatch: pytest.MonkeyPatch) ->
     p = MuseProvider()
     assert p.api_key == ""
     assert p.base_url == "https://api.meta.ai/v1"
+
+
+# ---------------------------------------------------------------------------
+# Reasoning-token split (REQ-027 owner check: L3 empty reply after thinking)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_openai_response_reads_reasoning_tokens_object_style() -> None:
+    details = SimpleNamespace(reasoning_tokens=4000)
+    usage = SimpleNamespace(
+        prompt_tokens=319, completion_tokens=4319, completion_tokens_details=details
+    )
+    resp = _stub_openai_response("ok", prompt_tokens=0, completion_tokens=0)
+    resp.usage = usage
+    out = _parse_openai_chat_response(resp)
+    assert (out.usage.input_tokens, out.usage.output_tokens) == (319, 4319)
+    assert out.usage.reasoning_tokens == 4000
+    # A sub-count of output: totals never double-count thinking.
+    assert out.usage.total_tokens == 319 + 4319
+
+
+def test_parse_openai_response_reads_reasoning_tokens_dict_style() -> None:
+    usage = SimpleNamespace(
+        prompt_tokens=100,
+        completion_tokens=200,
+        completion_tokens_details={"reasoning_tokens": 150},
+    )
+    resp = _stub_openai_response("ok")
+    resp.usage = usage
+    out = _parse_openai_chat_response(resp)
+    assert out.usage.reasoning_tokens == 150
+    assert out.usage.total_tokens == 300
+
+
+def test_parse_openai_response_without_reasoning_split_is_zero() -> None:
+    resp = _stub_openai_response("ok")
+    out = _parse_openai_chat_response(resp)
+    assert out.usage.reasoning_tokens == 0
