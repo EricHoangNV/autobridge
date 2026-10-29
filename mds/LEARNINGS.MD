@@ -440,3 +440,15 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed with `probe_admin_denied`: pass on no-route and on 401/403 with distinct messages naming the case, fail only on 2xx without a token. The same shape applies to the write probes (`probe_post … down` already failed only on accept).
 
 **Rule:** Every negative network/admin probe distinguishes "no route" from "reachable but rejected" in its output and fails only when the unauthorized access is ACCEPTED. Never assert refusal with a plain reachability probe.
+
+---
+
+## 48. A protocol test must wait on business-level events, never on wire frames
+
+**Context:** Code Review Cycle 4 AR-4-4 (REQ-038) — `test_replay_postings_resend_same_pno` flaked as `7 == (6 + 2)` only inside the full `make test` under parallel load.
+
+- The PABX link layer retransmits a frame after `ack_wait` with no ACK; the retransmit is byte-identical on the wire but does NOT bump `postings_sent`. A loaded test host stalls past the deadline, so the first two frames received can be one business send plus its link-level copy.
+- Asserting an exact business counter after collecting N frames couples two different levels: arrival proves nothing about how many business sends happened.
+- Fixed by waiting on the engine's own counter (`postings_sent >= sent_before + 2`) while collecting, then asserting exact equality plus a same-P# / nothing-invented check; same treatment for exact frame counts (`== 5` → `>= 5`) wherever a resend copy can land in the collection batch.
+
+**Rule:** When a protocol retransmits below the business layer, tests assert on business-level counters or idempotency sets, never on wire frame counts or arrival order.

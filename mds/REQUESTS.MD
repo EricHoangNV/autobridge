@@ -159,17 +159,6 @@ queued after this run) has nothing to re-open. The verdict line in FEEDBACKS is 
    still wanted as a label, store it on the build as provenance only. Tests for the 422 and for each caller.
 Gates: `make test`, keyed `make local-up && make e2e && make demo` 8/8, `make up` likewise. Do not weaken guards.
 
-### REQ-038 — Flaky FIAS replay test makes `make test` randomly red (Code Review Cycle 4, AR-4-4) (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 12:03)
-`tests/unit/test_simulators_fias_pabx.py::test_replay_postings_resend_same_pno` failed in the Cycle 4 review's full
-`make test` (`assert 7 == (6 + 2)` on `postings_sent`, line ~665) and passed on rerun; the earlier owner run also saw
-it as "one load-sensitive FIAS timing flake". It races wall-clock deadlines (8 s pumps). Make it deterministic: drive
-the PABX link with an injected clock or explicit events (wait for the specific frames/acks, not a time window), so the
-assertion holds under load; no retries or longer sleeps. Acceptance: the test passes 50 times in a row alone and inside
-the full `make test` under parallel load; same pattern applied to any other FIAS test that waits on wall-clock windows.
-Also note for REQ-036 item 5 (AR-4-3): `RepairController._handle_semantic_climb` must pass the real surviving-hypothesis
-count to `run_frontier_climb`, never a default `1`; the L3 gate assertion must test a counted number.
-
 ### REQ-034 — Directive: §2 fault injection — FIAS admin unreachable from control in Compose; /demo/reset and /demo/inject-fault fail for sim-fias-pabx (2026-10-29)
 Status: DONE (sbx1 2026-10-29)
 Resolution: admin-forwarder sidecar `sim-fias-pabx-admin` (dumb TCP :8001 pipe, stdlib `simulators/admin_fwd.py` with self-dial guard) on admin-net + edge-net, carrying the `sim-fias-pabx` DNS alias on admin-net only; FIAS target `sim-fias-pabx-edge` (edge-only alias). FIAS stays edge-only, host ports and local mode untouched. Verified: 4 acceptance e2e green on `make up` AND `make local-up`, `POST /demo/reset` FIAS targets 200, `make smoke` (new control→:8001 up / :8000 down checks) green, `make demo` 8/8, full gates (lint/typecheck/test 90.30/91.49/90.48 + ui 160) green. Owner note: a same-container dual-home bind was tried first and reverted — Docker publishes a dual-homed container's host ports through one endpoint, orphaning :8118 or exposing :8000; the sidecar keeps every existing host path byte-identical.
@@ -638,6 +627,18 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-038 — Flaky FIAS replay test makes `make test` randomly red (Code Review Cycle 4, AR-4-4) (2026-10-29)
+Status: DONE (sbx1 2026-10-29)
+`tests/unit/test_simulators_fias_pabx.py::test_replay_postings_resend_same_pno` failed in the Cycle 4 review's full
+`make test` (`assert 7 == (6 + 2)` on `postings_sent`, line ~665) and passed on rerun; the earlier owner run also saw
+it as "one load-sensitive FIAS timing flake". It races wall-clock deadlines (8 s pumps). Make it deterministic: drive
+the PABX link with an injected clock or explicit events (wait for the specific frames/acks, not a time window), so the
+assertion holds under load; no retries or longer sleeps. Acceptance: the test passes 50 times in a row alone and inside
+the full `make test` under parallel load; same pattern applied to any other FIAS test that waits on wall-clock windows.
+Also note for REQ-036 item 5 (AR-4-3): `RepairController._handle_semantic_climb` must pass the real surviving-hypothesis
+count to `run_frontier_climb`, never a default `1`; the L3 gate assertion must test a counted number.
+Resolution: replay test waits on the postings_sent counter event instead of the first two frames (ACK-timeout retransmits no longer miscount); flood test asserts >= 5 byte-identical records.
 
 ### REQ-035 — Directive: §2 no-route to simulator admin — vendor-net peers reach sim:8001; protection is token-only and the default token is empty (2026-10-29)
 Status: DONE (2026-10-29)

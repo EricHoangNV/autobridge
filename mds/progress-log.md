@@ -3389,3 +3389,26 @@ Gotchas: restarting the stack mid-task is required after engine/sim/catalog edit
 **Notes for next iteration:**
 - REQ-036 next: it amends the remaining stale bullets (§§1/2-networks/3/6/7) plus the AR-4-3 controller-count fix (enumerator_yield_count default).
 - `test_replay_postings_resend_same_pno` flaked once under full `make test` (passed alone + on rerun) — that is REQ-038's item, untouched here.
+
+## REQ-038 — deterministic FIAS replay/flood tests
+**Date:** 2026-10-29
+**Ref:** REQUESTS REQ-038 (Code Review Cycle 4, AR-4-4)
+
+**What was done:**
+- Root-caused the `7 == (6 + 2)` flake: link-level ACK-timeout retransmits (ack_wait 1.0 s, loaded host) duplicate a frame on the wire without bumping `postings_sent`; the test counted the first two frames as two business sends
+- Rewrote the replay leg to wait on the `postings_sent` counter event (bounded pump loop, exact `== sent_before + 2` after) while keeping the same-P# / nothing-invented assertion over all collected frames
+- Same-pattern fix in `test_flood_queues_identical_records` (`== 5` → `>= 5`, byte-identical bodies over all collected); audited all other FIAS timing tests, no change needed
+- Moved REQ-038 to Resolved in REQUESTS.MD
+
+**Key decisions:**
+- Wait on the business-level counter, not on frame arrival: a retransmit copy is indistinguishable on the wire, so only the engine's own counter can prove two sends happened
+- No sleeps lengthened, no retries added, no engine code touched — test-only change per the REQ
+
+**Files changed:**
+- `tests/unit/test_simulators_fias_pabx.py` — replay + flood legs deterministic
+- `mds/REQUESTS.MD` — REQ-038 → DONE (top of Resolved)
+- `mds/BUILD-NOTES.md` — build note appended
+
+**Notes for next iteration:**
+- The REQ-038 "Also note" about `RepairController._handle_semantic_climb` defaulting the L3 yield count (AR-4-3) belongs to REQ-036 — not done here
+- Next: REQ-036 (stale DIRECTIVES) and REQ-037 (stale .local/ACTIVE marker), then the owner-priority REQ-030 → REQ-031 → REQ-032 → REQ-033 chain
