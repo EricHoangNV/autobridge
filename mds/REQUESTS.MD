@@ -2,6 +2,38 @@
 
 ## Open Requests (read this section only)
 
+Owner priority (2026-10-29 17:55): **REQ-030 next** (after the Muse Wonder audit and the owner's external audit are
+filed; take it before any audit-fix REQ only if the owner says so).
+
+### REQ-030 — Demo step 4 shows its climb in the UI: hypothesis funnel and the model call (2026-10-29)
+Status: OPEN
+Why: the hard-semantic step is the one that proves "deterministic first, model last", and today none of it reaches
+the UI. Owner check on main (after REQ-029, keyed local stack): `make demo-reset && make demo STEP=4` passes, the
+terminal shows `enumerated_hypotheses: 24 → amount_hypotheses: 6 → wire_consistent_survivors: 2 → yield_count: 1`,
+`L2 skipped: fewer than two hypotheses (1)`, `L3 called live (muse-spark-1.3, 3,630 tokens (3,378 reasoning))`, the
+rejection and the operator question; but **`GET /repairs` is empty and the Repairs page says "No repairs yet"**
+(`repair_rows_after: 0`): the climb runs in the demo process and is never persisted.
+What to do:
+1. **Persist the climb.** Step 4 (and any demo step that climbs) records a real `RepairRun` through the control API /
+   worker path: drift event, ladder trace per rung (action, reason, calls), the hypothesis derivation, the L3
+   proposal and its verifier rejection, the escalation question, and every model call in the `ModelCall` ledger (model,
+   live vs replay, input/output/reasoning tokens, cost). It shows in `GET /repairs` and `GET /repairs/{id}` like any
+   other repair.
+2. **Hypothesis funnel on the repair page.** On `/repairs/{id}`, a small panel: "24 explanations generated → 6 about
+   amounts → 2 consistent with what the API returned → 1 distinct (sibling fields read the same way)", each stage
+   expandable to the hypothesis ids and the evidence that eliminated the others. Data from the persisted derivation,
+   never recomputed in the browser. Empty-state when a repair had no enumeration.
+3. **Model-call box on the repair page.** A box listing each model call for this repair: rung, model, live or replay
+   (with capture date), tokens in / out / reasoning, cost, outcome ("patch did not apply: …"). For step 4 live it reads
+   **1 model call**; for L0/L1 repairs it reads "0 model calls" explicitly (that is the point of steps 2–4 and 7).
+   Same numbers as the demo's model-usage line and the ledger.
+4. **The "L2 skipped" rung reads as a reason, not a gap:** "L2 skipped: only one explanation left, nothing to rank".
+5. Tests: unit for persistence and the API shape; UI component tests for the funnel and the model-call box (0, 1 and
+   several calls); a UI e2e that runs step 4 live (replay when no key) and asserts the repair appears with the funnel
+   and "1 model call".
+Gates: `make test`, keyed `make local-up && make e2e && make demo` 8/8; each step still runs alone after `make
+demo-reset`.
+
 Owner priority (2026-10-29 17:00): **REQ-029 next**, before any other open item, so the Muse Wonder audit that follows
 this run can close Code Review Cycle 2.
 
