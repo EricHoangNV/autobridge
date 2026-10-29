@@ -19,9 +19,12 @@
   .toolbar .pages { margin-left: auto; }
   .workspace { display: flex; align-items: flex-start; gap: 16px; padding: 16px; }
   .rail { width: 120px; flex: none; position: sticky; top: 12px; max-height: 88vh; overflow: auto; }
-  .rail a { display: block; background: #fff; color: #333; text-decoration: none; border: 1px solid #666; margin: 0 0 10px; padding: 6px 4px 4px; text-align: center; font: 10px Verdana, sans-serif; }
-  .rail a.active { outline: 3px solid #c9a227; }
-  .rail .thumb { height: 60px; background: linear-gradient(#fff 60%, #ddd); border-bottom: 1px solid #ccc; margin-bottom: 4px; }
+  .rail a { display: block; color: #ddd; text-decoration: none; margin: 0 0 12px; text-align: center; font: 11px Verdana, sans-serif; }
+  .rail a.active .thumb { outline: 3px solid #c9a227; }
+  .rail a.active { color: #fff; }
+  .rail .thumb { width: 104px; height: 134px; margin: 0 auto 4px; overflow: hidden; background: #fff; border: 1px solid #666; position: relative; pointer-events: none; }
+  /* A real miniature of the page: the paper at 820px wide, scaled to the thumbnail. */
+  .rail .thumb .paper { --zoom: 1; width: 820px; max-width: none; position: absolute; top: 0; left: 0; transform: scale(0.1268); transform-origin: 0 0; box-shadow: none; }
   .papers { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 20px; align-items: center; }
   .paper { background: #fff; width: calc(820px * var(--zoom)); max-width: 100%; box-shadow: 0 4px 18px rgba(0,0,0,.55); padding: calc(64px * var(--zoom)) calc(72px * var(--zoom)) calc(56px * var(--zoom)); box-sizing: border-box; }
   .paper .running { font: 11px Verdana, sans-serif; color: #666; border-bottom: 1px solid #999; padding-bottom: 6px; margin-bottom: 18px; }
@@ -340,7 +343,7 @@
     h2Idx.forEach(function (k, j) {
       var end = j + 1 < h2Idx.length ? h2Idx[j + 1] : blocks.length;
       var html = blocks.slice(k, end).map(renderBlock).join("\n");
-      pages.push({ id: "page-" + (j + 3), label: blocks[k].text.replace(/<[^>]+>/g, "").slice(0, 26), html: html });
+      pages.push({ id: "page-" + (j + 3), label: blocks[k].text.replace(/<[^>]+>/g, ""), html: html });
     });
     pages.push({ id: "command-list", label: "Command list", html:
       "<h2>Command list \u2014 records by direction</h2>" +
@@ -353,7 +356,10 @@
       pages.map(function (p, k) { return paper(p.id, p.html, k + 1, total); }).join("");
     var rail = document.getElementById("rail");
     rail.innerHTML = pages.map(function (p, k) {
-      return '<a href="#' + p.id + '" data-p="' + (k + 1) + '"><div class="thumb"></div>' + (k + 1) + ". " + esc(p.label) + "</a>";
+      // The miniature reuses the page markup without ids (no duplicates) or links (no nested anchors).
+      var mini = paper("", p.html, k + 1, total).replace(/ id="[^"]*"/g, "").replace(/<a\b[^>]*>/g, "<span>").replace(/<\/a>/g, "</span>");
+      return '<a href="#' + p.id + '" data-p="' + (k + 1) + '" title="Page ' + (k + 1) + ": " + esc(p.label) + '">' +
+        '<div class="thumb" aria-hidden="true">' + mini + "</div>" + (k + 1) + "</a>";
     }).join("");
     document.getElementById("pagecount").textContent = total + " pages";
     document.getElementById("fmeta").textContent =
