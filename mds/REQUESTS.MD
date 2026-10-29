@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-29 17:55): **REQ-030 next** (after the Muse Wonder audit and the owner's external audit are
+Owner priority (2026-10-29 17:55, updated 18:10): **REQ-030, then REQ-031, next** (after the Muse Wonder audit and the owner's external audit are
 filed; take it before any audit-fix REQ only if the owner says so).
 
 ### REQ-030 — Demo step 4 shows its climb in the UI: hypothesis funnel and the model call (2026-10-29)
@@ -36,6 +36,60 @@ demo-reset`.
 
 Owner priority (2026-10-29 17:00): **REQ-029 next**, before any other open item, so the Muse Wonder audit that follows
 this run can close Code Review Cycle 2.
+
+### REQ-031 — The demo happens in the UI: working connectors, a break, the fix appearing live (2026-10-29)
+Status: OPEN
+Priority: with REQ-030 (do REQ-030 first; this builds on it), after the audit-fix REQs. Owner decision.
+**The recording flow the owner wants:** open the UI → the Connectors page shows working connectors → run one script
+command that breaks a connector → switch to the Repairs page → the drift and its repair appear by themselves within a
+few seconds (the page already polls every 5 s) → approve in the UI → the connector is green again.
+**Today (owner check on main, keyed local stack, after `make demo-reset` + `make demo STEP=n`):** only STEP=3 leaves
+anything in the UI (5 syncs, 2 drifts, 2 repairs, 1 learned fix). STEP=1 leaves a connector with no active release and
+no sync (the `Complete` sync ran in-process); STEP=2, 7, 8 leave a connector and a release but no sync; STEP=4 leaves
+nothing (REQ-030). A full `make demo` also leaves junk rows (`Harbor demo` at `https://api.harborpms.example.com`, never
+synced) and stale "2 repairs waiting". There is **no periodic sync**: syncs only run when something calls `POST /sync`,
+so nothing is ever detected "on its own" while the UI is open.
+What to do:
+1. **`make demo-seed`**: from `make demo-reset`, create the recording's connectors through the control API only (the
+   same calls the UI makes), each with a baseline sync `Complete`: AtlasPMS (the reusable reference release, step 2),
+   HarborPMS (reference release, used by the semantic step), MeridianPMS (built from its docs with v2; the v1 refusal
+   recorded on its profile, step 6), the PABX edge connector (v3, postings flowing, step 7). Clean names, real
+   addresses, no example.com rows. After it, Connectors shows four green connectors, 0 model tokens, nothing waiting.
+2. **A sync scheduler** (worker; on in local and Compose demo mode, interval from env, default 10 s; off when unset in
+   production config): syncs every active connector on the interval, so drift is detected without anyone calling
+   sync. The Connectors page shows "last sync N s ago" ticking. Detection, repair and the verifier gate are the
+   existing REQ-027 chain; nothing new is decided in the browser.
+3. **`make demo-break SCENARIO=<id> [TARGET=<vendor>]`**: injects one catalogued fault (the same as the UI's "Demo:
+   inject fault" drawer, which must offer the same list) and prints only "broke <connector> with <scenario>; watch
+   Repairs". It does not sync, detect or repair: the scheduler and the engine do that, visibly.
+4. **Every deck step visible in the UI** (each from `make demo-seed`):
+   - deck 1 *What AutoBridge knows*: Knowledge page; versions show "used by" after the seed.
+   - deck 2 *Reusable artifact*: Atlas on Connectors, `Complete`, 0 model tokens.
+   - deck 3 *Unfamiliar API*: "Build a connector" in the UI from Harbor's docs: the build page must accept the
+     simulator docs (the docs_url allowlist rejects localhost; allow exactly the simulator hosts from
+     `config/demo_targets.yaml` in demo mode, or let the page load the docs text and send `docs_text`), shows the
+     draft, probes and result, 0 model calls.
+   - deck 4 *Zero-token fix + learning*: `make demo-break SCENARIO=page_to_cursor` → within one interval Repairs shows
+     the drift and the `page_to_cursor` repair (rung 1, "0 model calls") → approve in the UI → Atlas green → Knowledge
+     shows the learned fix → break again → the repair arrives at rung 0, "reused 1×".
+   - deck 5 *Hard semantic failure*: `make demo-break SCENARIO=gross_to_net TARGET=harbor` → Repairs shows the climb
+     with the REQ-030 funnel (24 → 6 → 2 → 1), the model-call box ("1 model call", live or labelled replay), the
+     rejected proposal and the operator question; the connector shows `Degraded`, not green.
+   - deck 6 *New kind of API*: Meridian's connector page shows the refused v1 build (named reason) and the v2 release
+     in use; `make demo-break SCENARIO=meridian_cursor_renamed` → repaired at rung 1 on Repairs.
+   - deck 7 *On-premise PABX*: the PABX connector page shows postings arriving (count rising); `make demo-break
+     SCENARIO=fias_record_layout_change` → Repairs shows the `rename_field` fix (TA → TM), 0 calls; an "agent
+     restarted, lost 0, duplicated 0" line is visible on the connector or edge status page after
+     `make demo-break SCENARIO=agent_restart_inflight`.
+5. **`make demo` stays** as the scripted, terminal version (CI, judges without a browser), but every step it runs
+   must also land in the database the UI reads (no in-process-only results).
+6. **Docs:** `docs/demo.md` gets a "Recording from the UI" section listing the exact sequence above, one command per
+   step, and what to point at on screen.
+Tests: e2e (Playwright, `make e2e-ui`) for the seed state, one break → repair appears without a manual sync → approve
+→ green, and the deck-5 repair page (funnel + "1 model call"); unit tests for the scheduler (interval, skip while a
+sync for that connector is running, off when disabled).
+Gates: `make test`, keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` green; `make up`
+likewise.
 
 ### REQ-029 — Close the last review gaps before the audit: worker release gate, docs_path builds (2026-10-29)
 Status: IN_PROGRESS (sbx1 2026-10-29 — CODE DONE: worker gate via control proxy + require-flag, docs_path 422, tests + demo 8/8 green; remaining: Muse Wonder audit validate run)
