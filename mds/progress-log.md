@@ -2962,3 +2962,38 @@ Merged to main.
 
 ## 2026-10-29 — REQ-022 final owner check DONE (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). Fixed both items from the owner check on 6a294fd8: (1) `test_s2_edge_target.py` polls `/edge/agents` until `grand-plaza-pabx` shows `link_up` (`_wait_cloud_link_up`, 25 s ≈ 2 heartbeats) at test start and at the final assert, instead of a single read that raced the 10 s agent heartbeat; (2) simulators index docs label no longer appends `/developers` to a URL that already ends in it, label asserted in `page.test.tsx`. Also fixed the suite-red W5.7 guard: `bench/ablation.py` (REQ-024) reads checked-in reference specs for arm starting specs — added a confining carve-out (mentioning lines must contain `reference/`; imports/hidden-fixtures still forbidden), same pattern as the existing `hidden_cases` bench exception; verified pre-existing on clean main via stash. Learning #31. Verified on keyed local stack: owner repro 14 passed, full e2e 158 passed/2 skipped, make test (2397+122+379+158) + lint + typecheck + ui-typecheck green. Stack taken down after. REQ-022 moved to Resolved.
+
+## REQ-025 sub-step B — beacon client, serving, run machinery, docs, rehearsals
+**Date:** 2026-10-29
+**Ref:** REQUESTS.MD REQ-025 items 3–8
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- `src/autobridge/bench/beacon_client.py` (+`py-ecc==8.0.0` pinned): drand LoE fetch, chain-hash/scheme pinning, BLS verify (`sha256(prev_sig||round_be64)`, standard G2 DST — confirmed against drand Go `NewPedersenBLSChained`), seed derivation mirroring faultgen (parity-tested), round math, CLI.
+- Simulators: `common/beacon_serve.py` (set/active/descriptor + shared `paginate_by_contract`), state beacon slot (dataset-seed pinning), `POST /admin/beacon` (+ FIAS `/admin/fias/beacon` with dynamic PS layout/link arming), dataset funnel hook, behavior predicates beacon-first, pagination param/response renames in atlas/harbor/legacystay/meridian, pabx dynamic layout + aliases.
+- Verifier: `POST /beacon/records` (core checks + top-level field coverage + contract coverage; aggregates only) and `POST /beacon/grade` (grade_arm_outcome over HTTP).
+- `src/autobridge/bench/beacon_run.py` + `config/beacon_vendors.yaml` (vendor names live in config — unseen-vendor guards): freeze/run/verify-repro/rehearse, per-arm orchestration (in-process engine arms, real-runtime sync, verifier grading), matched-budget self-test, mean+CI95 summaries.
+- Make targets: `eval-freeze`, `bench-beacon` (+`REHEARSE=`), `verify-beacon` (+`OUTDIR=`), `beacon-eval` (+`scripts/beacon-eval.sh`, `scripts/beacon_evidence_png.py`); `.gitignore` rehearsals dir; docs/benchmark.md "Beacon evaluation".
+- 133 new unit tests; full gates green (autobridge 2452/90.31%, verifier 134/91.49%, simulators 396/90.50%, ui 158).
+- Live proofs on local stack: rehearsals rounds 6593463 (dates/code_list/pagination/code_list/fias_link) + 6593540 (nesting/transport_auth/dates/rename/fias_link); hand-built code_list repair synced Complete, records pass, grade pass; verify-repro byte-match. Engine without models correctly escalates (token_revoked verified=1) and fails repairs (losses, 0 frontier tokens).
+- Bugs found live and fixed: beacon push must pin sim dataset seed (answer-key alignment); `_verifier_post` Decimal serialization; shared `/tmp/sim_state.json` across local sims (per-sim files now); escalate+records fail-closed; no-reroll guard tolerates protocol-only dirs; arm errors propagate to grades; malformed push JSON fail-closed.
+
+**Key decisions:**
+- Bench never imports faultgen: derivation duplicated + parity-tested; instance params visible to arms (like public catalog), answer mapping computed server-side post-run; anti-gaming is temporal (freeze before round).
+- Grading uniform rule: grade pass AND (records pass if synced) → verified=1; claimed Complete with failing records → wrong_patch=1.
+- FIAS: served + outcome-graded; deep link verification stays in FIAS e2e; engine no-case arms recorded executed=false (fail-closed loss).
+- Frontier arms without keys fail closed (replay-missing → loss, 0 tokens); rehearsals honest.
+
+**Files changed:**
+- `src/autobridge/bench/beacon_client.py`, `src/autobridge/bench/beacon_run.py`, `config/beacon_vendors.yaml`
+- `simulators/common/beacon_serve.py`, `simulators/common/{state,admin,helpers,faults,faultgen}.py`
+- `simulators/{atlaspms,harborpms,legacystay,meridianpms}/app.py`, `simulators/fias_pabx/{pabx,admin}.py`
+- `verifier/{app,beacon}.py`, `scripts/beacon-eval.sh`, `scripts/beacon_evidence_png.py`
+- `Makefile`, `.gitignore`, `uv.lock`, `pyproject.toml`, `docs/benchmark.md`
+- `tests/unit/test_autobridge_beacon_{client,run,run_extra,seed_parity}.py`, `tests/unit/test_simulators_beacon_serve.py`, `tests/unit/test_verifier_beacon_endpoints.py`, `tests/unit/test_autobridge_edge_target.py` (closed-store regression), `src/autobridge/edge/app.py` (closed-store degraded), `tests/fixtures/beacon/round_6593481.json`
+- `scripts/local-up.sh` (per-sim SIM_STATE_FILE)
+
+**Notes for next iteration:**
+- Owner/CI: 3+ more rehearsals (`make bench-beacon REHEARSE=<round>`), then the real frozen run (`make beacon-eval FAULTS=<N>`); live frontier numbers need `FRONTIER_API_KEY`.
+- `experiments/beacon/rehearsals/` is gitignored (labelled practice, never results).
+- The `test_edge_worker_app_health` full-suite flake is fixed at its root (edge readyz closed-store 500 → honest degraded); flake was pre-existing order dependence, not beacon code.

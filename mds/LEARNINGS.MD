@@ -301,3 +301,31 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The agent reports link state via heartbeat every 10 s, so the cloud's view lags the real link by up to one interval. A teardown that waits for the device-side link plus a test that reads the cloud view once still races the next heartbeat. Fix: poll the cloud view with a timeout bounded by ~2 heartbeat intervals, at the start (inherit-settled) and at the assert.
 - The W5.7 `generated/connectors` guard flagged the ablation harness reading checked-in reference specs. The reference specs are public build artifacts, not hidden fixtures — but the fix was not to exempt bench/; the carve-out asserts every mentioning line also mentions `reference/`, keeping the bootstrap-honesty property while allowing the harness path (same pattern as the existing `hidden_cases` bench carve-out).
 - **Rule:** Any assertion on heartbeat-fed state polls with a timeout of ~2 intervals; any new bench filesystem read gets a confining carve-out (path + structural assertions), never a blanket exemption.
+
+## 32. drand chained verification is sha256(prev_sig || round), standard DST — and old clients have it backwards
+
+**Context:** REQ-025 sub-step B beacon client (2026-10-29)
+
+- Three independent guesses at the signed message all failed against a live round (`prev`, `prev||round`, `sha256(prev)` with the IETF suite). The ground truth is in drand Go `crypto/schemes.go` `NewPedersenBLSChained`: digest = `sha256(previous_signature || round_be64)` (previous FIRST), standard RFC 9380 G2 DST, keys on G1 / sigs on G2. The old drandjs `message()` puts round first — wrong order, do not copy it.
+- **Rule:** For any third-party signature scheme, fetch the signer's current source (not ports, not old clients) and verify against a live vector before depending on it; commit the vector as an offline fixture.
+
+## 33. Beacon serving must pin the dataset seed, or live and judged baselines diverge
+
+**Context:** REQ-025 sub-step B live rehearsal (2026-10-29)
+
+- The simulator served `generate_dataset(state seed)` + beacon mutation while the verifier judged `generate_dataset(instance dataset_seed)` + mutation: reservation counts matched by luck, folio counts did not (72 vs 77). The push now pins the sim seed to the instance seed, so served == materialized byte-identically.
+- **Rule:** Whenever a harness pushes a seed-derived test to a stateful simulator, the push must also align the simulator's dataset seed — assert served-vs-expected identity in a live rehearsal, not just in unit tests.
+
+## 34. Local-mode simulators must not share one state file
+
+**Context:** REQ-025 sub-step B live rehearsal (2026-10-29)
+
+- All four local HTTP sims read/wrote the same `/tmp/sim_state.json`, so every sim served the last-pushed instance (harbor's admin returned a meridian instance). Compose is isolated per container; local mode was not. Fix: per-sim `SIM_STATE_FILE` in `scripts/local-up.sh` (the env knob already existed for FIAS).
+- **Rule:** Local mode must mirror Compose isolation boundaries (networks, volumes, state files); when adding a shared-state seam, give each service its own file and check cross-talk with two concurrent pushes.
+
+## 35. A closed store must degrade readyz, never 500 it
+
+**Context:** Full-suite flake during REQ-025 sub-step B validation (2026-10-29)
+
+- `test_edge_worker_app_health` failed intermittently: edge_target tests shut down the module-global store, and a later readyz hit the closed handle (`depths()` raised → 500). `ping()` already failed safe; only `depths()` was unguarded. Fix: try/except → mark the store check failed (honest degraded, 503 per AR-2-6) + regression test.
+- **Rule:** Every readyz dependency read gets a fail-to-degraded path (never an exception); global-state tests must leave the global usable (reset in finally) because random order will find the bad interleaving.
