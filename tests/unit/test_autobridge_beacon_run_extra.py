@@ -344,7 +344,23 @@ def test_full_trial_records_fail_marks_wrong_patch(monkeypatch: pytest.MonkeyPat
     assert grade.wrong_patch_released == 1
 
 
-def test_run_beacon_loop_offline(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture()
+def _clean_bench_env() -> Any:
+    """run_beacon installs non-secret placeholder credentials; restore afterwards."""
+    import os as _os
+
+    saved = {ref: _os.environ.get(ref) for ref in ("ATLAS_API_KEY", "HARBOR_API_KEY", "BENCH_API_KEY")}
+    try:
+        yield
+    finally:
+        for ref, value in saved.items():
+            if value is None:
+                _os.environ.pop(ref, None)
+            else:
+                _os.environ[ref] = value
+
+
+def test_run_beacon_loop_offline(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, _clean_bench_env: Any) -> None:
     monkeypatch.setattr(beacon_run.beacon_client, "fetch_chain_info", lambda _base_url: dict(FAKE_INFO))
     monkeypatch.setattr(
         beacon_run.beacon_client, "fetch_latest",
@@ -396,7 +412,9 @@ def test_verify_repro_round_trip(tmp_path: pathlib.Path, monkeypatch: pytest.Mon
         beacon_run.verify_repro(424242, base_url="https://example.invalid", output_dir=out)
 
 
-def test_main_rehearse_offline(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_rehearse_offline(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, _clean_bench_env: Any
+) -> None:
     beacon_dir = tmp_path / "beacon"
     monkeypatch.setattr(beacon_run, "BEACON_DIR", beacon_dir)
     monkeypatch.setattr(beacon_run, "_git_dirty", lambda: False)
@@ -547,7 +565,9 @@ def test_verifier_post_serializes_decimal(monkeypatch: pytest.MonkeyPatch) -> No
     assert '"125.00"' in seen["content"]
 
 
-def test_run_guard_allows_protocol_only_dir(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_guard_allows_protocol_only_dir(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, _clean_bench_env: Any
+) -> None:
     """A result dir holding only protocol.md (rehearsal freeze) does not trip the no-re-roll guard."""
     out = tmp_path / "r"
     out.mkdir()

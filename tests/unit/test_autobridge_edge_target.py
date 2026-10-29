@@ -294,6 +294,27 @@ def test_edge_app_readyz_degraded_on_bad_bundle_signature(tmp_path: Path, monkey
         monkeypatch.delenv("EDGE_BUNDLE_SIGNATURE", raising=False)
 
 
+def test_edge_app_readyz_degraded_on_closed_store(tmp_path: Path, monkeypatch: Any) -> None:
+    """A closed store (stale global after another test's shutdown) degrades, never 500s."""
+    from autobridge.edge import app as edge_mod
+
+    monkeypatch.setenv("EDGE_AGENT_DISABLE_LINK", "1")
+    monkeypatch.setenv("EDGE_AGENT_DISABLE_CLOUD", "1")
+    monkeypatch.setenv("EDGE_STORE_PATH", str(tmp_path / "agent.db"))
+    monkeypatch.delenv("EDGE_BUNDLE_SIGNATURE", raising=False)
+    edge_mod.reset()
+    edge_mod.startup()
+    edge_mod.shutdown()  # closes the store; the global keeps the closed handle
+    try:
+        resp = TestClient(edge_app).get("/readyz")
+        assert resp.status_code == 503, resp.text  # degraded, never forced ok (AR-2-6)
+        body = resp.json()
+        assert body["status"] == "degraded"
+        assert body["checks"]["store"] == "fail"
+    finally:
+        edge_mod.reset()
+
+
 # ---------------------------------------------------------------------------
 # AR-2-4 — HMAC-keyed release signatures
 # ---------------------------------------------------------------------------

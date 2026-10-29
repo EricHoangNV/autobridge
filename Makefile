@@ -161,7 +161,7 @@ bench-beacon:
 verify-beacon:
 	@echo ">> verify-beacon: reproduce + check published instances (REQ-025 item 7)"
 	@if [ -z "$${ROUND:-}" ]; then echo "verify-beacon: ROUND is required (make verify-beacon ROUND=<round>)" >&2; exit 2; fi
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.beacon_run verify-repro --round "$${ROUND}"
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.beacon_run verify-repro --round "$${ROUND}" $${OUTDIR:+--output-dir "$${OUTDIR}"}
 
 beacon-eval:
 	@echo ">> beacon-eval: one unattended freeze + run (REQ-025 item 6b)"

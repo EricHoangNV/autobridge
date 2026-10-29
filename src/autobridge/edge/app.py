@@ -192,7 +192,12 @@ def _checks() -> tuple[dict[str, bool], dict[str, Any]]:
         info["link"] = state
         info["relay_contact_ok"] = _STATE.agent.relay.last_contact_ok if _STATE.agent else False
         if _STATE.store is not None:
-            info["queue"] = _STATE.store.depths()
+            try:
+                info["queue"] = _STATE.store.depths()
+            except Exception:
+                # A closed/erroring store degrades honestly (never a 500):
+                # ping() already reports it failed above.
+                checks["store"] = False
     if _STATE.agent is not None:
         info["relay_contact_ok"] = _STATE.agent.relay.last_contact_ok
     return checks, info
