@@ -201,6 +201,12 @@ def list_reservations(
     if prop_filter:
         data = [r for r in data if str(r.get("property_id")) == prop_filter]
 
+    from simulators.common import beacon_serve as _beacon
+
+    contracted = _beacon.maybe_serve_contract(request, data)
+    if contracted is not None:
+        return contracted
+
     limit, offset, cursor = get_pagination_params(request)
     # LegacyStay default is offset (even without fault, it uses offset)
     mode = pagination_mode_for_scenario(scenario_id, default="offset")
@@ -235,6 +241,12 @@ def list_folios(
     res_filter = request.query_params.get("reservation_id")
     if res_filter:
         data = [r for r in data if str(r.get("reservation_id")) == res_filter]
+
+    from simulators.common import beacon_serve as _beacon
+
+    contracted = _beacon.maybe_serve_contract(request, data)
+    if contracted is not None:
+        return contracted
 
     limit, offset, cursor = get_pagination_params(request)
     mode = pagination_mode_for_scenario(scenario_id, default="offset")

@@ -36,6 +36,11 @@ _state: dict[str, Any] = {
     "scenario_id": DEFAULT_SCENARIO,
     "seed": DEFAULT_SEED,
     "request_count": 0,
+    # REQ-025 beacon slot: {"eval_seed_hex": str, "index": int} or None.
+    # When set, record-shape/behaviour serving follows the beacon instance
+    # (simulators/common/beacon_serve.py); scenario predicates still apply
+    # for anything the beacon family does not cover.
+    "beacon": None,
 }
 
 
@@ -73,6 +78,8 @@ def set_scenario(scenario_id: str, seed: int) -> dict[str, Any]:
         _state["scenario_id"] = scenario_id
         _state["seed"] = seed
         _state["request_count"] = 0
+        # Scenario and beacon are exclusive serving modes.
+        _state["beacon"] = None
         _save_file(dict(_state))
         return dict(_state)
 
@@ -80,6 +87,18 @@ def set_scenario(scenario_id: str, seed: int) -> dict[str, Any]:
 def reset_state() -> dict[str, Any]:
     """Reset to baseline / seed 0."""
     return set_scenario(DEFAULT_SCENARIO, DEFAULT_SEED)
+
+
+def set_beacon_state(eval_seed_hex: str | None, index: int | None) -> dict[str, Any]:
+    """Set (or clear, with Nones) the active REQ-025 beacon slot."""
+    with _lock:
+        if eval_seed_hex is None or index is None:
+            _state["beacon"] = None
+        else:
+            _state["beacon"] = {"eval_seed_hex": eval_seed_hex, "index": index}
+        _state["request_count"] = 0
+        _save_file(dict(_state))
+        return dict(_state)
 
 
 def increment_request_count() -> int:

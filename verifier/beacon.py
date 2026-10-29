@@ -261,3 +261,174 @@ def grade_arm_outcome(instance: dict[str, Any], arm: dict[str, Any]) -> tuple[bo
 def baseline_for(instance: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Regenerate the baseline dataset an instance was built from."""
     return generate_dataset(seed=int(instance["dataset_seed"]))
+
+
+# ---------------------------------------------------------------------------
+# Produced-records judgment (POST /beacon/records)
+# ---------------------------------------------------------------------------
+
+
+def judge_produced_records(
+    instance: dict[str, Any],
+    produced: dict[str, Any],
+    spec: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Judge arm-produced canonical records against the instance answer key.
+
+    Returns ``{"verdict", "score", "failed_checks"}`` with bounded check
+    names and counts only (aggregates, never fixture rows). The records do
+    the real judging (canonical set, no loss/duplicates, exact money,
+    property-local business dates, canonical status vocabulary); when a
+    candidate spec is supplied and the instance expects a repair, the spec
+    must additionally cover the mutated contract (a correct spec always
+    names what it reads, so coverage never false-fails a genuine repair).
+    Fail closed: malformed records, records for an ``escalate`` instance,
+    or an uncovered contract all fail.
+    """
+    from verifier.checks import (
+        check_business_date,
+        check_money_exact,
+        check_no_duplicates,
+        check_no_loss,
+        check_record_set_by_key,
+        check_status_mapping,
+    )
+
+    for key in ("reservations", "folios"):
+        recs = produced.get(key, [])
+        if not isinstance(recs, list) or any(not isinstance(r, dict) for r in recs):
+            raise ValueError(f"produced {key} must be a list of records")
+    expected = str(instance["expected"])
+    non_empty = bool(produced.get("reservations")) or bool(produced.get("folios"))
+    if expected == "escalate" and non_empty:
+        return {
+            "verdict": "fail",
+            "score": 0.0,
+            "failed_checks": [{"name": "records_for_escalate", "count": 1}],
+        }
+    baseline = baseline_for(instance)
+    props = baseline.get("properties") or []
+    fails: list[dict[str, Any]] = []
+    fails.extend(check_record_set_by_key(baseline, produced))  # type: ignore[arg-type]
+    fails.extend(check_no_duplicates(produced))  # type: ignore[arg-type]
+    fails.extend(check_no_loss(baseline, produced))  # type: ignore[arg-type]
+    fails.extend(check_money_exact(baseline, produced))  # type: ignore[arg-type]
+    fails.extend(check_business_date(baseline, produced, props))  # type: ignore[arg-type]
+    fails.extend(check_status_mapping(produced))  # type: ignore[arg-type]
+    fails.extend(_check_canonical_field_coverage(baseline, produced))
+    if spec is not None and expected == "repair":
+        fails.extend(check_contract_coverage(instance, spec))
+
+    by_name: dict[str, dict[str, Any]] = {}
+    for entry in fails:
+        name = str(entry.get("name", ""))
+        if name not in by_name or int(entry.get("count", 0)) > int(by_name[name].get("count", 0)):
+            by_name[name] = entry
+    failed = sorted(by_name.values(), key=lambda e: str(e.get("name")))
+    score = 1.0 if not failed else round(max(0.0, (8 - len(failed)) / 8), 3)
+    return {"verdict": "pass" if not failed else "fail", "score": score, "failed_checks": failed}
+
+
+def _check_canonical_field_coverage(
+    expected: dict[str, list[dict[str, Any]]], produced: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Every canonical top-level field must be present in the produced record.
+
+    An unfixed rename serves the new name (canonical missing), an unfixed
+    nesting serves a single parent wrapper (canonicals missing) — both fail
+    here with the bounded ``field_missing`` name. Top-level only: nesting
+    is a canonical-shape breach, not a nested find. Extras are allowed.
+    """
+    fails: list[dict[str, Any]] = []
+    for label, key in (("reservations", "reservation_id"), ("folios", "charge_id")):
+        produced_by_id = {
+            str(r.get(key)) for r in produced.get(label, []) if isinstance(r, dict)
+        }
+        missing = 0
+        for rec in expected.get(label, []):
+            if str(rec.get(key)) not in produced_by_id:
+                continue  # counted by record_set_mismatch, not here
+            prod = next(
+                (r for r in produced.get(label, []) if isinstance(r, dict) and str(r.get(key)) == str(rec.get(key))),
+                {},
+            )
+            absent = [k for k in rec if k not in prod]
+            missing += len(absent)
+        if missing:
+            fails.append({"name": "field_missing", "count": missing})
+    return fails
+
+
+def check_contract_coverage(instance: dict[str, Any], spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """The candidate spec must name what the mutated contract serves.
+
+    A correct repair reads the mutated shape, so its field paths, enum
+    mappings and pagination declarations necessarily mention the new
+    tokens; a spec that never names them cannot have repaired the drift.
+    Records remain the decisive judge — coverage only adds failures.
+    """
+    family = str(instance["family"])
+    params = dict(instance["params"])
+    text = json.dumps(spec, sort_keys=True, default=str)
+    missing: list[str] = []
+    if family == "rename":
+        missing = [t for t in [str(params.get("new_name", ""))] if t and t not in text]
+    elif family == "nesting":
+        parents = [str(p) for p in params.get("parents", [])]
+        missing = [t for t in parents if t and t not in text]
+    elif family == "code_list":
+        codes = [str(c) for c in params.get("new_codes", [])]
+        missing = [t for t in codes if t and t not in text]
+    elif family == "pagination":
+        missing = _pagination_tokens_missing(params, spec, text)
+    elif family in ("semantic", "dates", "transport_auth", "fias_layout", "fias_link"):
+        return []
+    else:
+        return [{"name": "beacon_contract_uncovered", "count": 1}]
+    if missing:
+        return [{"name": "beacon_contract_uncovered", "count": len(missing)}]
+    return []
+
+
+def _pagination_tokens_missing(
+    params: dict[str, Any], spec: dict[str, Any], text: str
+) -> list[str]:
+    """Contract tokens absent from the candidate spec (strategy-aware)."""
+    strategy = str(params.get("strategy", ""))
+    if _spec_strategy(spec) != strategy:
+        return [f"strategy:{strategy}"]
+    if strategy == "offset":
+        tokens = [str(params.get("offset_param", "")), str(params.get("limit_param", ""))]
+    elif strategy == "page":
+        tokens = [str(params.get("page_param", "")), str(params.get("per_page_param", ""))]
+    elif strategy in ("cursor", "body_cursor"):
+        tokens = [str(params.get("cursor_param", "cursor")), str(params.get("limit_param", "limit"))]
+        for path in list(params.get("next_path", []) or []) + list(params.get("items_path", []) or []):
+            leaf = str(path[-1]) if isinstance(path, list) and path else str(path).split(".")[-1].strip("[]")
+            if leaf:
+                tokens.append(leaf)
+        if strategy == "body_cursor":
+            tokens.append(str(params.get("cursor_leaf", "")))
+            tokens.append(str(params.get("page_size_param", "")))
+    else:
+        return [f"strategy:{strategy}"]
+    return [t for t in tokens if t and t not in text]
+
+
+def _spec_strategy(spec: dict[str, Any] | None) -> str | None:
+    """Pagination strategy declared by the candidate spec's first operation."""
+    if not isinstance(spec, dict):
+        return None
+    try:
+        ops = spec.get("operations", {})
+        if not isinstance(ops, dict):
+            return None
+        for op in ops.values():
+            if not isinstance(op, dict):
+                continue
+            pag = op.get("pagination")
+            if isinstance(pag, dict) and isinstance(pag.get("strategy"), str):
+                return str(pag["strategy"])
+    except Exception:
+        return None
+    return None

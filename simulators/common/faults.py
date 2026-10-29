@@ -242,12 +242,33 @@ def apply_dataset_mutations(
 # ---------------------------------------------------------------------------
 
 
+def _active_beacon_behavior() -> dict[str, Any] | None:
+    """Active beacon behaviour contract, or None (REQ-025).
+
+    Function-level import: ``beacon_serve`` imports ``faultgen`` + ``state``
+    only, so direct import here is cycle-free, but the lazy form keeps the
+    hot path import-light for unit tests that never set a beacon.
+    """
+    from simulators.common import beacon_serve as _beacon
+
+    instance = _beacon.active_instance()
+    if instance is None:
+        return None
+    import simulators.common.faultgen as _fg
+
+    return _fg.behavior_for_instance(instance)
+
+
 def is_pagination_mutated(scenario_id: str) -> bool:
     """True if scenario changes pagination shape (offset/page ↔ cursor).
 
     Includes Meridian's Limitation cursor contract change (body_cursor leaf
     rename): the request strategy is unchanged but the fetch shape breaks.
+    A REQ-025 beacon pagination instance also counts as mutated.
     """
+    behavior = _active_beacon_behavior()
+    if behavior is not None and behavior.get("family") == "pagination":
+        return True
     return scenario_id in (
         "offset_to_cursor",
         "page_to_cursor",
@@ -258,6 +279,11 @@ def is_pagination_mutated(scenario_id: str) -> bool:
 
 def pagination_mode_for_scenario(scenario_id: str, default: str = "offset") -> str:
     """Return pagination mode for scenario: 'offset', 'page', 'cursor' or 'body_cursor'."""
+    behavior = _active_beacon_behavior()
+    if behavior is not None and behavior.get("family") == "pagination":
+        strategy = str(behavior.get("strategy", ""))
+        if strategy in ("offset", "page", "cursor", "body_cursor"):
+            return strategy
     if scenario_id in ("offset_to_cursor", "page_to_cursor"):
         return "cursor"
     if scenario_id == "cursor_repeat_token":
@@ -274,6 +300,15 @@ def should_repeat_cursor(scenario_id: str) -> bool:
 
 def is_rate_limited(scenario_id: str, request_count: int) -> bool:
     """True if request should be rate-limited (429) for this scenario."""
+    behavior = _active_beacon_behavior()
+    if behavior is not None and behavior.get("family") == "transport_auth":
+        import simulators.common.faultgen as _fg
+
+        try:
+            status, _, _ = _fg.transport_response(behavior, request_count)
+        except (ValueError, KeyError, TypeError):
+            return False
+        return status == 429
     if scenario_id == "rate_limit_429":
         # Every 3rd request is rate limited
         return request_count % 3 == 0 and request_count > 0
@@ -282,6 +317,15 @@ def is_rate_limited(scenario_id: str, request_count: int) -> bool:
 
 def is_transient_error(scenario_id: str, request_count: int) -> bool:
     """True if request should return 503 transient error."""
+    behavior = _active_beacon_behavior()
+    if behavior is not None and behavior.get("family") == "transport_auth":
+        import simulators.common.faultgen as _fg
+
+        try:
+            status, _, _ = _fg.transport_response(behavior, request_count)
+        except (ValueError, KeyError, TypeError):
+            return False
+        return status == 503
     if scenario_id == "transient_503":
         # Every 4th request fails transiently
         return request_count % 4 == 0 and request_count > 0
@@ -289,14 +333,23 @@ def is_transient_error(scenario_id: str, request_count: int) -> bool:
 
 
 def is_auth_expired(scenario_id: str) -> bool:
+    behavior = _active_beacon_behavior()
+    if behavior is not None and behavior.get("family") == "transport_auth":
+        return str(behavior.get("kind")) == "token_expired"
     return scenario_id == "token_expired"
 
 
 def is_auth_revoked(scenario_id: str) -> bool:
+    behavior = _active_beacon_behavior()
+    if behavior is not None and behavior.get("family") == "transport_auth":
+        return str(behavior.get("kind")) == "token_revoked"
     return scenario_id == "token_revoked"
 
 
 def is_endpoint_removed(scenario_id: str) -> bool:
+    behavior = _active_beacon_behavior()
+    if behavior is not None and behavior.get("family") == "transport_auth":
+        return str(behavior.get("kind")) == "endpoint_removed"
     return scenario_id == "endpoint_removed"
 
 

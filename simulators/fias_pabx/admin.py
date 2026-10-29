@@ -144,6 +144,68 @@ def post_fias_reset(request: Request) -> dict[str, Any]:
     return get_link().snapshot()  # type: ignore[no-any-return]
 
 
+@router.post("/admin/fias/beacon")
+def post_fias_beacon(body: FiasBeaconRequest, request: Request) -> dict[str, Any]:
+    """Activate a REQ-025 beacon instance on the FIAS exchange.
+
+    The harness passes only the eval seed + index; the instance is
+    generated PABX-side. ``fias_layout`` arms a dynamic PS wire layout
+    (announced in LR, records shaped at send time); ``fias_link`` arms
+    the matching link behavior (resync or ACK-timeout silence, mirroring
+    the named-scenario precedents). Any other family/vendor is 400.
+    Returns the public descriptor (never the answer key).
+    """
+    _require_admin_network(request)
+    import simulators.common.faultgen as _faultgen  # noqa: PLC0415 - simulators-internal
+    from simulators.common import beacon_serve as _beacon  # noqa: PLC0415 - simulators-internal
+
+    try:
+        descriptor = _beacon.set_beacon(body.eval_seed_hex, body.index)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=f"invalid beacon instance: {exc}") from exc
+    if descriptor["vendor"] != "fias-pabx":
+        _beacon.clear_beacon()
+        raise HTTPException(status_code=400, detail=f"beacon index {body.index} targets {descriptor['vendor']}, not fias-pabx")
+    instance = _faultgen.generate_instance(bytes.fromhex(body.eval_seed_hex.strip()), body.index)
+    behavior = _faultgen.behavior_for_instance(instance)
+    if behavior is None:
+        _beacon.clear_beacon()
+        raise HTTPException(status_code=400, detail=f"family {descriptor['family']} has no FIAS behavior")
+    link = get_link()
+    with link.lock:
+        # Baseline the layout knobs first: a beacon instance fully
+        # describes the wire shape (stale aliases must not leak across runs).
+        link.faults.ps_layout = "baseline"
+        link.faults.ps_layout_fields = None
+        link.faults.ps_field_aliases = None
+        link.faults.resync_on_reconnect = False
+        link.faults.send_zeros_then_drop = False
+        link.faults.silent_types = ()
+        family = str(behavior.get("family"))
+        if family == "fias_layout":
+            link.faults.ps_layout_fields = [str(f) for f in behavior["announced_fields"]]
+            link.faults.ps_field_aliases = {str(new): str(old) for old, new in dict(behavior.get("renamed", {})).items()}
+            link.faults.drop_link = True  # fresh handshake announces the layout
+        elif family == "fias_link":
+            kind = str(behavior.get("kind"))
+            if kind == "resync":
+                link.faults.resync_on_reconnect = True
+                link.faults.send_zeros_then_drop = True
+                link.faults.drop_link = True
+            elif kind == "ack_timeout":
+                link.faults.silent_types = ("WR",)
+            else:  # pragma: no cover - faultgen constrains kinds
+                raise HTTPException(status_code=400, detail=f"unknown fias_link kind: {kind}")
+        else:  # pragma: no cover - vendor gate above constrains families
+            raise HTTPException(status_code=400, detail=f"family {family} is not a FIAS family")
+    return {"beacon": descriptor}
+
+
+class FiasBeaconRequest(BaseModel):
+    eval_seed_hex: str
+    index: int
+
+
 class ScenarioRequest(BaseModel):
     id: str
     seed: int = 0

@@ -111,6 +111,21 @@ def _wire_time(moment: datetime.datetime) -> str:
     return moment.strftime("%H%M%S")
 
 
+def _wire_value(values: dict[str, str], aliases: dict[str, str], fid: str) -> str:
+    """Resolve a wire field value under a beacon layout.
+
+    Direct values win; a renamed wire id falls back to its baseline id's
+    value (``aliases`` maps new wire id → baseline wire id); anything else
+    (added fields) serves as ``""``. Never raises.
+    """
+    if fid in values:
+        return values[fid]
+    baseline = aliases.get(fid)
+    if baseline is not None and baseline in values:
+        return values[baseline]
+    return ""
+
+
 def _last_first(name: str) -> str:
     if "," in name:  # already in Last,First wire form
         last, _, first = name.partition(",")
@@ -157,6 +172,13 @@ class LinkFaults:
     replay_postings: int = 0
     send_oversize: bool = False
     flood_records: int = 0
+    # REQ-025 beacon: a dynamic PS layout from a fias_layout instance.
+    # ``ps_layout_fields`` replaces the whole PS wire order (announced in LR
+    # and used for records); ``ps_field_aliases`` maps new wire ids to the
+    # baseline ids whose values they carry (renames); added ids with no
+    # alias serve as "". Takes precedence over ``ps_layout`` when set.
+    ps_layout_fields: list[str] | None = None
+    ps_field_aliases: dict[str, str] | None = None
 
 
 @dataclass
@@ -459,12 +481,29 @@ class PabxLink(threading.Thread):
     def _current_layouts(self) -> dict[str, list[str]]:
         with self.lock:
             variant = self.faults.ps_layout
+            custom = self.faults.ps_layout_fields
         layouts = dict(BASELINE_LAYOUTS)
-        if variant == "layout_v2":
+        if custom is not None:
+            layouts["PS"] = list(custom)
+        elif variant == "layout_v2":
             layouts["PS"] = list(LAYOUT_V2_PS)
         elif variant == "layout_v3":
             layouts["PS"] = list(LAYOUT_V3_PS)
         return layouts
+
+    def _current_shape(self) -> tuple[list[str], dict[str, str]]:
+        """Active PS wire shape: (field order, new→baseline value aliases)."""
+        with self.lock:
+            variant = self.faults.ps_layout
+            custom = self.faults.ps_layout_fields
+            aliases = dict(self.faults.ps_field_aliases or {})
+        if custom is not None:
+            return list(custom), aliases
+        if variant == "layout_v2":
+            return list(LAYOUT_V2_PS), aliases
+        if variant == "layout_v3":
+            return list(LAYOUT_V3_PS), aliases
+        return list(BASELINE_LAYOUTS["PS"]), aliases
 
     def _handshake(self, sock: socket.socket) -> None:
         # 1. host LS -> ACK.
@@ -579,7 +618,8 @@ class PabxLink(threading.Thread):
             "CX": "VOICE" if outlet == CALL_OUTLET else "SNACK",
         }
         layout = self._current_layouts_unlocked()["PS"]
-        return Record("PS", tuple((fid, values[fid]) for fid in layout))
+        aliases = self.faults.ps_field_aliases or {}
+        return Record("PS", tuple((fid, _wire_value(values, aliases, fid)) for fid in layout))
 
     def _queue_stay_postings(self) -> None:
         """Queue one posting per occupied room at link start (deterministic).
@@ -618,8 +658,8 @@ class PabxLink(threading.Thread):
             # postings keep their relative order behind them.
             self._pending[:] = replay + self._pending
 
-    def _ps_in_layout(self, rec: Record, layout: list[str]) -> Record:
-        if list(rec.field_ids()) == layout:
+    def _ps_in_layout(self, rec: Record, layout: list[str], aliases: dict[str, str] | None = None) -> Record:
+        if list(rec.field_ids()) == layout and not aliases:
             return rec
         vals = {fid: value for fid, value in rec.fields}
         if "CX" not in vals:
@@ -632,7 +672,8 @@ class PabxLink(threading.Thread):
             vals["TM"] = vals["TA"]
         if "TA" not in vals and "TM" in vals:
             vals["TA"] = vals["TM"]
-        return Record("PS", tuple((fid, vals.get(fid, "")) for fid in layout))
+        table = aliases or {}
+        return Record("PS", tuple((fid, _wire_value(vals, table, fid)) for fid in layout))
 
     def _pump_burst_postings(self) -> None:
         """Queue admin-requested burst postings (acquires the lock itself)."""
@@ -756,7 +797,8 @@ class PabxLink(threading.Thread):
                     # Shape to the announced layout at send time: a layout
                     # change between links reshapes replays and never-sent
                     # stay postings alike (same P#, amounts, timestamps).
-                    rec = self._ps_in_layout(rec, self._current_layouts()["PS"])
+                    layout, aliases = self._current_shape()
+                    rec = self._ps_in_layout(rec, layout, aliases)
                 # Register the P# BEFORE the frame goes out: the host's PA
                 # can arrive while we are still inside the ACK wait (its
                 # link-ACK and the deferred PA race each other), and a PA
@@ -853,7 +895,8 @@ class PabxLink(threading.Thread):
                 info["last"] = now_mono
             assert isinstance(record, Record)
             try:
-                shaped = self._ps_in_layout(record, self._current_layouts()["PS"])
+                layout, aliases = self._current_shape()
+                shaped = self._ps_in_layout(record, layout, aliases)
                 self._send_record_and_wait_ack(sock, shaped)
                 with self.lock:
                     self.counters["postings_resent"] += 1
@@ -1079,7 +1122,9 @@ class PabxLink(threading.Thread):
 
     def _current_layouts_unlocked(self) -> dict[str, list[str]]:
         layouts = dict(BASELINE_LAYOUTS)
-        if self.faults.ps_layout == "layout_v2":
+        if self.faults.ps_layout_fields is not None:
+            layouts["PS"] = list(self.faults.ps_layout_fields)
+        elif self.faults.ps_layout == "layout_v2":
             layouts["PS"] = list(LAYOUT_V2_PS)
         elif self.faults.ps_layout == "layout_v3":
             layouts["PS"] = list(LAYOUT_V3_PS)

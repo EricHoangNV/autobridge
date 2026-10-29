@@ -166,6 +166,12 @@ def list_reservations(
     if prop_filter:
         data = [r for r in data if str(r.get("property_id")) == prop_filter]
 
+    from simulators.common import beacon_serve as _beacon
+
+    contracted = _beacon.maybe_serve_contract(request, data)
+    if contracted is not None:
+        return contracted
+
     limit, offset, cursor = get_pagination_params(request)
     # Harbor default is cursor (even without fault, it uses cursor)
     mode = pagination_mode_for_scenario(scenario_id, default="cursor")
@@ -212,6 +218,12 @@ def list_folios(
     res_filter = request.query_params.get("reservation_id")
     if res_filter:
         data = [r for r in data if str(r.get("reservation_id")) == res_filter]
+
+    from simulators.common import beacon_serve as _beacon
+
+    contracted = _beacon.maybe_serve_contract(request, data)
+    if contracted is not None:
+        return contracted
 
     limit, offset, cursor = get_pagination_params(request)
     mode = pagination_mode_for_scenario(scenario_id, default="cursor")
@@ -283,6 +295,12 @@ def list_nested_folios(
 
     data = [f for f in dataset["folios"] if str(f.get("reservation_id")) == reservation_id]
     data = [_to_harbor_folio(f) for f in data]
+
+    from simulators.common import beacon_serve as _beacon
+
+    contracted = _beacon.maybe_serve_contract(request, data)
+    if contracted is not None:
+        return contracted
 
     limit, offset, cursor = get_pagination_params(request)
     mode = pagination_mode_for_scenario(scenario_id, default="cursor")

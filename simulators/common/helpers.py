@@ -32,6 +32,13 @@ def get_dataset_for_current_state() -> dict[str, list[dict[str, Any]]]:
     scenario_id = str(state["scenario_id"])
     # Generate baseline dataset
     dataset = generate_dataset(seed=seed)
+    # REQ-025 beacon: an active beacon instance applies its record-shape
+    # mutation on top of the scenario mutations (beacon and scenario modes
+    # are exclusive in state, so at most one applies in practice).
+    if state.get("beacon") is not None:
+        from simulators.common import beacon_serve as _beacon
+
+        dataset = _beacon.apply_active_to_dataset(dataset)
     # Apply mutations
     return apply_dataset_mutations(dataset, scenario_id)
 
@@ -169,8 +176,32 @@ def get_pagination_params(
     request: Request,
     default_limit: int = 10,
 ) -> tuple[int, int, str | None]:
-    """Extract pagination params from query string, with defaults."""
+    """Extract pagination params from query string, with defaults.
+
+    REQ-025 beacon: when a pagination contract is active, only the
+    contract's parameter names are read (baseline names fall back to
+    defaults, so an unfixed client replays the default first page).
+    Returns the canonical ``(limit, offset, cursor)`` triple the apps
+    already consume.
+    """
+    from simulators.common import beacon_serve as _beacon
+
     qp = request.query_params
+    contract = _beacon.pagination_contract()
+    if contract is not None:
+        strategy = str(contract.get("strategy", ""))
+        if strategy == "offset":
+            limit = _parse_int(qp.get(str(contract.get("limit_param", ""))), default_limit, 1, 100)
+            offset = _parse_int(qp.get(str(contract.get("offset_param", ""))), 0, 0, 10**9)
+            return limit, offset, None
+        if strategy == "page":
+            page = _parse_int(qp.get(str(contract.get("page_param", ""))), 1, 1, 10**9)
+            per_page = _parse_int(qp.get(str(contract.get("per_page_param", ""))), default_limit, 1, 100)
+            return per_page, (page - 1) * per_page, None
+        if strategy in ("cursor", "body_cursor"):
+            limit = _parse_int(qp.get(str(contract.get("limit_param", "limit"))), default_limit, 1, 100)
+            cursor = qp.get(str(contract.get("cursor_param", "cursor")))
+            return limit, 0, cursor if isinstance(cursor, str) else None
     limit_str = qp.get("limit")
     offset_str = qp.get("offset")
     cursor = qp.get("cursor")
@@ -185,3 +216,14 @@ def get_pagination_params(
         offset = 0
     offset = max(0, offset)
     return limit, offset, cursor
+
+
+def _parse_int(raw: Any, default: int, minimum: int, maximum: int) -> int:
+    """Clamp an int-ish query value (helper for the non-beacon path)."""
+    try:
+        value = int(raw) if raw is not None else default
+    except (ValueError, TypeError):
+        return default
+    if isinstance(value, bool):
+        return default
+    return max(minimum, min(maximum, value))

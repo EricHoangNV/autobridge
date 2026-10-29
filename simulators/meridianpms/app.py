@@ -165,19 +165,29 @@ def _check_meridian_auth(scenario_id: str, body: dict[str, Any]) -> None:
 
 def _limitation(body: dict[str, Any]) -> tuple[int, str | None]:
     """Parse ``Limitation`` into (count, cursor); 400 on contract breach."""
-    raw = body.get("Limitation", {"Count": 100})
+    from simulators.common import beacon_serve as _beacon
+
+    contract = _beacon.pagination_contract()
+    size_param, cursor_param = "Count", "Cursor"
+    if contract is not None and str(contract.get("strategy")) == "body_cursor":
+        # REQ-025 beacon: the vendor renames the page-size leaf and the
+        # cursor leaf. Only the contract names are read; an unfixed client
+        # still sending Count/Cursor gets defaults.
+        size_param = str(contract.get("page_size_param", "Count"))
+        cursor_param = str(contract.get("cursor_leaf", "Cursor"))
+    raw = body.get("Limitation", {size_param: 100})
     if not isinstance(raw, dict):
         raise HTTPException(status_code=400, detail={"code": "invalid_limitation", "message": "Limitation must be an object"})
-    count = raw.get("Count", 100)
-    cursor = raw.get("Cursor")
+    count = raw.get(size_param, 100)
+    cursor = raw.get(cursor_param)
     if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 1000:
         raise HTTPException(
             status_code=400,
-            detail={"code": "invalid_limitation", "message": "Limitation.Count must be an integer between 1 and 1000"},
+            detail={"code": "invalid_limitation", "message": f"Limitation.{size_param} must be an integer between 1 and 1000"},
         )
     if cursor is not None and not isinstance(cursor, str):
         raise HTTPException(
-            status_code=400, detail={"code": "invalid_limitation", "message": "Limitation.Cursor must be a string or null"}
+            status_code=400, detail={"code": "invalid_limitation", "message": f"Limitation.{cursor_param} must be a string or null"}
         )
     return count, cursor
 
@@ -228,6 +238,11 @@ def _cursor_leaf(scenario_id: str) -> str:
     ``Cursor`` leaf to ``NextCursor``; specs reading ``$.Cursor`` then stop
     after the first page.
     """
+    from simulators.common import beacon_serve as _beacon
+
+    contract = _beacon.pagination_contract()
+    if contract is not None and str(contract.get("strategy")) == "body_cursor":
+        return str(contract.get("cursor_leaf", "Cursor"))
     return "NextCursor" if scenario_id == "meridian_cursor_renamed" else "Cursor"
 
 

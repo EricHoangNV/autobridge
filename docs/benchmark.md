@@ -338,3 +338,64 @@ definitions are public and the builder saw them. Unseen-vendor
 generalization is measured separately on LegacyStay (REQ-019 item 5):
 the `test_s1_legacystay.py` generalization guard keeps that vendor out of
 engine code, so the deck never relies on having seen it.
+
+## Beacon evaluation (REQ-025)
+
+Why: the held-out split seals *instance data for four public fault
+types*, and the builder has tests for those types. The beacon run is the
+headline evaluation: the test's data *and* fault details derive from a
+public random value (a League of Entropy drand round) that did not exist
+when the code froze. Commit-then-reveal with public randomness — we could
+not have prepared for the test even if we wanted to.
+
+What a judge can check (everything is public except nothing needs to be):
+
+1. `experiments/beacon/protocol.md` — the freeze: round rule (first
+   round at/after a UTC time), N instances, arms, metrics, trials,
+   budgets, the engine + generator commits, "one run, no retries,
+   results published whatever they are".
+2. The `eval-freeze` git tag and its push time — before the round's
+   publication time (the round's own timestamp is inside the signed
+   beacon; compare the two).
+3. Re-fetch the round (`make verify-beacon ROUND=<n>`): the client
+   verifies the threshold BLS signature against the LoE mainnet key with
+   pinned `py_ecc` (fail closed), re-derives
+   `seed = sha256(randomness || "autobridge-eval-v1")`, regenerates the
+   instance descriptors through the simulator admin plane, and checks
+   they match the published `experiments/beacon/<round>/instances.json`.
+4. The per-arm grades (`grades.jsonl`) + summary (mean + 95% interval
+   over trials): verified completion rate (judged only by the verifier),
+   wrong patches that reached a release (must be 0 for AutoBridge),
+   correct escalations, frontier tokens, estimated cost, wall time.
+
+Protocol commands: `make eval-freeze ROUND_AFTER=<UTC> FAULTS=<N>`
+(item 4), `make bench-beacon` (item 5: refuses an unpublished round or
+an existing result dir — no re-rolls), `make verify-beacon ROUND=<n>`
+(item 7), `make beacon-eval FAULTS=<N>` (item 6b: one unattended command
+— checks the tree is clean and no ralph loop runs, freezes with
+ROUND_AFTER = now + DELAY_MIN, commits, tags `eval-freeze`, pushes after
+one "yes", waits, runs, writes `EVIDENCE.md` + `evidence.png`,
+commits + pushes; resumable). Rehearsals on past rounds:
+`make bench-beacon REHEARSE=<round>` (item 6: labelled rehearsal under
+`experiments/beacon/rehearsals/`, at least five before the freeze).
+
+Grading: every arm attempts the same instances under matched budget.
+Arms that produce a candidate spec sync it with the real runtime against
+the live beacon shape; produced records are judged by the verifier
+(`/beacon/records`: canonical set, no loss/duplicates, exact money,
+property-local business dates, canonical status vocabulary, plus
+contract coverage by the spec). The reported outcome class is judged by
+`/beacon/grade` against the accepted set. Beacon randomness, seeds and
+descriptors are public by design; what is computed server-side, after
+arms report, is the answer key. FIAS instances are served (dynamic PS
+layout, link behaviors) and outcome-graded; deep link verification stays
+in the FIAS e2e. Engine arms that cannot attempt a vendor in-process
+(FIAS has no HTTP connector spec) are recorded `executed: false` with
+the reason named — a fail-closed loss, the same for every arm.
+
+Honest scope: fault *families* are known by design (that is the engine's
+everyday knowledge: renames, nesting, pagination switches, code lists,
+semantic scaling, date shifts, transport/auth, FIAS layout/link); what
+could not be known are the *instances* (family + parameters per seed).
+The REQ-007 held-out split is kept as the frozen secondary benchmark:
+new data for known fault types.

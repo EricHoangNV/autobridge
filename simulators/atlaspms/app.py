@@ -418,6 +418,14 @@ def _paginate(
     request_count: int,
     default_size: int = 100,
 ) -> dict[str, Any]:
+    # REQ-025 beacon: a pagination contract replaces the vendor wire shape
+    # entirely (renamed params + renamed envelope). Only the contract's
+    # names are read; baseline names fall back to defaults.
+    from simulators.common import beacon_serve as _beacon
+
+    contract = _beacon.pagination_contract()
+    if contract is not None:
+        return _beacon.paginate_by_contract(data, request.query_params, contract, default_size)
     mode = pagination_mode_for_scenario(scenario_id, default="page")
     if mode == "cursor":
         qp = request.query_params

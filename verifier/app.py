@@ -161,6 +161,9 @@ BOUNDED_FAILED_CHECK_NAMES: frozenset[str] = frozenset(
         "stale_command",
         "layout_drift",
         "command_outcome_mismatch",
+        # REQ-025 beacon evaluation: contract coverage + escalate hygiene.
+        "beacon_contract_uncovered",
+        "records_for_escalate",
     }
 )
 
@@ -381,3 +384,113 @@ def post_verify(body: VerifyRequest) -> VerifyResponse:
 @app.get("/verify")
 def get_verify_not_allowed() -> None:
     raise HTTPException(status_code=405, detail="method not allowed, use POST /verify")
+
+
+# ---------------------------------------------------------------------------
+# POST /beacon/records + POST /beacon/grade (REQ-025 items 5/7)
+# ---------------------------------------------------------------------------
+
+
+class BeaconRecordsRequest(BaseModel):
+    """POST /beacon/records body (bench side passes only seeds + outputs)."""
+
+    eval_seed_hex: str = Field(description="32-byte eval seed as hex (public beacon randomness)")
+    index: int = Field(description="Instance index (vendor is index % 5)")
+    records: dict[str, list[dict[str, Any]]] = Field(description="Arm-produced canonical records")
+    spec: dict[str, Any] | None = Field(default=None, description="Candidate ConnectorSpec the records were synced with")
+
+
+class BeaconRecordsResponse(BaseModel):
+    verdict: Literal["pass", "fail"]
+    score: float = Field(ge=0.0, le=1.0)
+    failed_checks: list[FailedCheck]
+    index: int
+
+    model_config = {"extra": "ignore"}
+
+
+class BeaconGradeRequest(BaseModel):
+    """POST /beacon/grade body: the arm's reported outcome for an instance."""
+
+    eval_seed_hex: str = Field(description="32-byte eval seed as hex")
+    index: int = Field(description="Instance index")
+    outcome: str = Field(description="Complete | Degraded | Blocked (unknown fails closed)")
+    patch_reached_release: bool = False
+    operator_question: bool = False
+
+
+class BeaconGradeResponse(BaseModel):
+    passed: bool
+    reason: str
+    accepted: list[str]
+    index: int
+
+    model_config = {"extra": "ignore"}
+
+
+def _load_beacon_instance(eval_seed_hex: str, index: int) -> dict[str, Any]:
+    """Regenerate a beacon instance from seed + index (fail closed, 400)."""
+    import simulators.common.faultgen as faultgen
+
+    try:
+        eval_seed = bytes.fromhex(eval_seed_hex.strip())
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=f"eval_seed_hex must be hex: {exc}") from exc
+    if len(eval_seed) != 32:
+        raise HTTPException(status_code=400, detail="eval_seed must be 32 bytes")
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0 or index > 10_000:
+        raise HTTPException(status_code=400, detail="index must be an int in [0, 10000]")
+    try:
+        return faultgen.generate_instance(eval_seed, index)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=f"invalid beacon instance: {exc}") from exc
+
+
+@app.post("/beacon/records", response_model=BeaconRecordsResponse, response_model_exclude_none=True)
+def post_beacon_records(body: BeaconRecordsRequest) -> BeaconRecordsResponse:
+    """Judge arm-produced records against a beacon instance's answer key.
+
+    The instance is regenerated server-side from the seed + index; only
+    aggregates (bounded check names + counts) are returned, never fixture
+    rows. A candidate spec, when supplied, must additionally cover the
+    mutated contract. Called by ``make bench-beacon`` after the arm's
+    live sync — the harness never computes the answer key itself.
+    """
+    from verifier import beacon as beacon_mod
+
+    instance = _load_beacon_instance(body.eval_seed_hex, body.index)
+    try:
+        judged = beacon_mod.judge_produced_records(instance, body.records, body.spec)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    failed_checks = _sanitize_failed_checks(judged["failed_checks"])
+    resp = BeaconRecordsResponse(
+        verdict=judged["verdict"],
+        score=judged["score"],
+        failed_checks=failed_checks,
+        index=body.index,
+    )
+    _ensure_no_fixture_leak(resp.model_dump())
+    return resp
+
+
+@app.post("/beacon/grade", response_model=BeaconGradeResponse, response_model_exclude_none=True)
+def post_beacon_grade(body: BeaconGradeRequest) -> BeaconGradeResponse:
+    """Grade an arm's reported outcome class against the accepted set.
+
+    Pure predicate over ``(outcome, patch flag, question flag)``; unknown
+    outcome names fail closed. The accepted set is computable from the
+    public descriptor (``expected_for`` is public code), so echoing it
+    leaks nothing — grading still happens server-side, after arms report.
+    """
+    from verifier import beacon as beacon_mod
+
+    instance = _load_beacon_instance(body.eval_seed_hex, body.index)
+    arm = {
+        "outcome": body.outcome,
+        "patch_reached_release": body.patch_reached_release,
+        "operator_question": body.operator_question,
+    }
+    passed, reason = beacon_mod.grade_arm_outcome(instance, arm)
+    accepted = sorted(beacon_mod.accepted_outcomes_for(instance))
+    return BeaconGradeResponse(passed=passed, reason=reason, accepted=accepted, index=body.index)

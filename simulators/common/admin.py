@@ -39,6 +39,19 @@ class ScenarioResponse(BaseModel):
     request_count: int
 
 
+class BeaconRequest(BaseModel):
+    eval_seed_hex: str
+    index: int
+
+
+class BeaconResponse(BaseModel):
+    index: int
+    vendor: str
+    family: str
+    params: dict[str, Any]
+    request_count: int
+
+
 def _require_admin_network(request: Request) -> None:
     """Enforce simulator-admin authorization (AR-1-1).
 
@@ -119,6 +132,42 @@ def create_admin_app(extra_router: APIRouter | None = None) -> FastAPI:
             "seed": state["seed"],
             "request_count": state["request_count"],
         }
+
+    @app.post("/admin/beacon", response_model=BeaconResponse)
+    def post_beacon(body: BeaconRequest, request: Request) -> dict[str, Any]:
+        """Activate a REQ-025 beacon instance (eval seed + index).
+
+        The simulator generates the instance internally (faultgen); the
+        harness passes only the seed. Returns the public descriptor
+        (index, vendor, family, params) — never the answer key. Fail
+        closed (400) on bad hex, bad index, or generator rejection.
+        """
+        _require_admin_network(request)
+        from simulators.common import beacon_serve as _beacon
+
+        try:
+            descriptor = _beacon.set_beacon(body.eval_seed_hex, body.index)
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail=f"invalid beacon instance: {exc}") from exc
+        state = get_state()
+        return {
+            "index": descriptor["index"],
+            "vendor": descriptor["vendor"],
+            "family": descriptor["family"],
+            "params": descriptor["params"],
+            "request_count": state["request_count"],
+        }
+
+    @app.get("/admin/beacon")
+    def get_beacon(request: Request) -> dict[str, Any]:
+        """Return the active beacon public descriptor, or ``{"beacon": None}``."""
+        _require_admin_network(request)
+        from simulators.common import beacon_serve as _beacon
+
+        instance = _beacon.active_instance()
+        if instance is None:
+            return {"beacon": None}
+        return {"beacon": _beacon.public_descriptor(instance)}
 
     @app.get("/admin/healthz")
     def admin_healthz(request: Request) -> dict[str, str]:

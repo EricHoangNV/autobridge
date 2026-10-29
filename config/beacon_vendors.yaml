@@ -1,0 +1,40 @@
+# REQ-025 beacon run: per-vendor routing + in-process engine spec sources.
+#
+# Vendor names MUST live here, not in `src/autobridge` (the unseen-vendor
+# guards `test_engine_never_references_legacystay` /
+# `test_engine_never_references_meridian` fail on any code mention — the
+# same filesystem-data precedent as `config/ablation_cases.yaml`).
+#
+# `order` is the generator's round-robin vendor order
+# (simulators/common/faultgen.py VENDORS): instance index % len(order)
+# selects the vendor. `http: false` vendors ride non-HTTP transports
+# (FIAS framed TCP): no live sync, outcome-graded only.
+# `admin_url` / `public_url` are local-mode defaults; env
+# BEACON_ADMIN_URLS / BEACON_PUBLIC_URLS (`vendor=url,...`) override them.
+# `spec` selects the in-process engine spec: a generated reference spec or
+# a vendor-docs draft build (absent = outcome-graded only, e.g. FIAS).
+order:
+  - vendor: atlas
+    http: true
+    admin_url: http://localhost:8109
+    public_url: http://localhost:8105
+    spec: {kind: generated, connector: atlaspms}
+  - vendor: harbor
+    http: true
+    admin_url: http://localhost:8110
+    public_url: http://localhost:8106
+    spec: {kind: generated, connector: harborpms}
+  - vendor: legacystay
+    http: true
+    admin_url: http://localhost:8112
+    public_url: http://localhost:8111
+    spec: {kind: docs, path: simulators/docs/legacystay.md, connector: legacystay}
+  - vendor: meridian
+    http: true
+    admin_url: http://localhost:8117
+    public_url: http://localhost:8116
+    spec: {kind: docs, path: simulators/docs/meridian-openapi.yaml, connector: meridianpms}
+  - vendor: fias-pabx
+    http: false
+    admin_url: http://localhost:8119
+    public_url: http://localhost:8118

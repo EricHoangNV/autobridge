@@ -431,6 +431,36 @@ def expected_for(family: str, params: dict[str, Any]) -> str:
     raise ValueError(f"unknown family: {family}")
 
 
+def generate_instance(eval_seed: bytes, index: int) -> dict[str, Any]:
+    """Build one beacon fault instance (``index`` selects vendor round-robin).
+
+    Same construction as :func:`generate_instances`; split out so the
+    simulator admin plane can serve a single instance without generating
+    the whole run. Deterministic: same ``(eval_seed, index)`` → identical
+    instance.
+    """
+    if not isinstance(eval_seed, bytes) or len(eval_seed) != 32:
+        raise ValueError("eval_seed must be 32 bytes")
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+        raise ValueError("index must be a non-negative int")
+    iseed = derive_instance_seed(eval_seed, index)
+    vendor = VENDORS[index % len(VENDORS)]
+    families = _families_for(vendor)
+    rng = _rng_for(iseed, "family")
+    family = rng.choice(list(families))
+    prng = _rng_for(iseed, f"params:{family}")
+    params = _params_for(family, vendor, prng)
+    return {
+        "vendor": vendor,
+        "family": family,
+        "index": index,
+        "params": params,
+        "seed_hex": iseed.hex(),
+        "dataset_seed": dataset_seed_for(iseed),
+        "expected": expected_for(family, params),
+    }
+
+
 def generate_instances(eval_seed: bytes, n: int) -> list[dict[str, Any]]:
     """Build ``n`` beacon fault instances from one eval seed.
 
@@ -446,25 +476,82 @@ def generate_instances(eval_seed: bytes, n: int) -> list[dict[str, Any]]:
         raise ValueError("n too large (max 10000)")
     instances: list[dict[str, Any]] = []
     for index in range(n):
-        iseed = derive_instance_seed(eval_seed, index)
-        vendor = VENDORS[index % len(VENDORS)]
-        families = _families_for(vendor)
-        rng = _rng_for(iseed, "family")
-        family = rng.choice(list(families))
-        prng = _rng_for(iseed, f"params:{family}")
-        params = _params_for(family, vendor, prng)
-        instances.append(
-            {
-                "vendor": vendor,
-                "family": family,
-                "index": index,
-                "params": params,
-                "seed_hex": iseed.hex(),
-                "dataset_seed": dataset_seed_for(iseed),
-                "expected": expected_for(family, params),
-            }
-        )
+        instances.append(generate_instance(eval_seed, index))
     return instances
+
+
+def apply_instance_records(
+    dataset: dict[str, list[dict[str, Any]]], instance: dict[str, Any]
+) -> dict[str, list[dict[str, Any]]]:
+    """Apply an instance's record-shape mutation to a caller-supplied dataset.
+
+    Serving-layer entry point: the vendor apps generate their baseline from
+    the *run* seed (simulator state), not from the instance's ``dataset_seed``
+    — the mutation itself is a pure record transform, so it applies to any
+    baseline. Record-shape families (rename, nesting, code_list, semantic,
+    dates) return a mutated copy; behaviour families (pagination,
+    transport_auth, fias_*) return the dataset unchanged — the app honors
+    the behaviour contract through :func:`behavior_for_instance`.
+    """
+    _check_instance(instance)
+    family = str(instance["family"])
+    params = dict(instance["params"])
+    if family == "rename":
+        entity = str(params["entity"])
+        return {
+            "properties": [copy.deepcopy(p) for p in dataset.get("properties", [])],
+            "reservations": _mutate_rename(dataset.get("reservations", []), params)
+            if entity == "reservation"
+            else [copy.deepcopy(r) for r in dataset.get("reservations", [])],
+            "folios": _mutate_rename(dataset.get("folios", []), params)
+            if entity == "folio"
+            else [copy.deepcopy(r) for r in dataset.get("folios", [])],
+        }
+    if family == "nesting":
+        entity = str(params["entity"])
+        return {
+            "properties": [copy.deepcopy(p) for p in dataset.get("properties", [])],
+            "reservations": _mutate_nesting(dataset.get("reservations", []), params)
+            if entity == "reservation"
+            else [copy.deepcopy(r) for r in dataset.get("reservations", [])],
+            "folios": _mutate_nesting(dataset.get("folios", []), params)
+            if entity == "folio"
+            else [copy.deepcopy(r) for r in dataset.get("folios", [])],
+        }
+    if family == "code_list":
+        return {
+            "properties": [copy.deepcopy(p) for p in dataset.get("properties", [])],
+            "reservations": _mutate_code_list(dataset.get("reservations", []), params),
+            "folios": [copy.deepcopy(r) for r in dataset.get("folios", [])],
+        }
+    if family == "semantic":
+        return {
+            "properties": [copy.deepcopy(p) for p in dataset.get("properties", [])],
+            "reservations": _mutate_semantic(dataset.get("reservations", []), params),
+            "folios": _mutate_semantic(dataset.get("folios", []), params),
+        }
+    if family == "dates":
+        tz_map = property_timezone_map(dataset.get("properties", []))
+        return {
+            "properties": [copy.deepcopy(p) for p in dataset.get("properties", [])],
+            "reservations": _mutate_dates(dataset.get("reservations", []), params, tz_map),
+            "folios": _mutate_dates(dataset.get("folios", []), params, tz_map),
+        }
+    if family in ("pagination", "transport_auth", "fias_layout", "fias_link"):
+        return {
+            "properties": [copy.deepcopy(p) for p in dataset.get("properties", [])],
+            "reservations": [copy.deepcopy(r) for r in dataset.get("reservations", [])],
+            "folios": [copy.deepcopy(r) for r in dataset.get("folios", [])],
+        }
+    raise ValueError(f"unknown family: {family}")
+
+
+def behavior_for_instance(instance: dict[str, Any]) -> dict[str, Any] | None:
+    """Behaviour contract for an instance (None for record-shape families)."""
+    _check_instance(instance)
+    if str(instance["family"]) in ("pagination", "transport_auth", "fias_layout", "fias_link"):
+        return _behavior_for(instance)
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,8 @@ experiments/benchmark_runs/*.jsonl
 experiments/benchmark_runs/_summary.json
 experiments/benchmark_runs/_scorecard.json
 experiments/scorecard.md
+# REQ-025 beacon rehearsals are labelled practice runs, never results
+experiments/beacon/rehearsals/
 
 # UI build cache
 ui/tsconfig.tsbuildinfo

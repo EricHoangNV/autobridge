@@ -1,7 +1,7 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout verify-heldout-reveal demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles edge-sign edge-check
+.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout verify-heldout-reveal demo lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles edge-sign edge-check eval-freeze bench-beacon verify-beacon beacon-eval
 
 # ---- Docker ----
 up: edge-check
@@ -135,6 +135,37 @@ record-frontier:
 	@echo ">> record-frontier: capture a live frontier climb (REQ-021 item 5; needs FRONTIER_API_KEY)"
 	@if [ -z "$${SCENARIO:-}" ]; then echo "record-frontier: SCENARIO is required (make record-frontier SCENARIO=gross_to_net)" >&2; exit 2; fi
 	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.record_frontier "$${SCENARIO}"
+
+# REQ-025 beacon evaluation (items 4-7). Freeze commits experiments/beacon/
+# protocol.md before the target round exists (commit-once; dirty tree
+# refuses); the run fetches + verifies the round (fail closed), pushes each
+# instance to its vendor sim, runs all REQ-024 arms under matched budget and
+# grades with the verifier. REHEARSE=<published round> rehearses the whole
+# pipeline (labelled, under experiments/beacon/rehearsals/, never committed
+# as a result). The one-shot A-Z command is `make beacon-eval`.
+eval-freeze:
+	@echo ">> eval-freeze: freeze the beacon protocol (REQ-025 item 4)"
+	@if [ -z "$${ROUND_AFTER:-}" ]; then echo "eval-freeze: ROUND_AFTER is required (ISO UTC, e.g. make eval-freeze ROUND_AFTER=2026-11-05T12:00:00+00:00 FAULTS=25)" >&2; exit 2; fi
+	@if [ -z "$${FAULTS:-}" ]; then echo "eval-freeze: FAULTS is required" >&2; exit 2; fi
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.beacon_run freeze --round-after "$${ROUND_AFTER}" --faults "$${FAULTS}" --trials "$${TRIALS:-5}"
+
+bench-beacon:
+	@echo ">> bench-beacon: run the frozen protocol (REQ-025 item 5)"
+	. ./scripts/load_dotenv.sh && \
+	if [ -n "$${REHEARSE:-}" ]; then \
+		uv run python -m autobridge.bench.beacon_run rehearse --round "$${REHEARSE}" --faults "$${FAULTS:-10}" --trials "$${TRIALS:-1}" --verifier-url http://localhost:8104; \
+	else \
+		uv run python -m autobridge.bench.beacon_run run --verifier-url http://localhost:8104; \
+	fi
+
+verify-beacon:
+	@echo ">> verify-beacon: reproduce + check published instances (REQ-025 item 7)"
+	@if [ -z "$${ROUND:-}" ]; then echo "verify-beacon: ROUND is required (make verify-beacon ROUND=<round>)" >&2; exit 2; fi
+	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.beacon_run verify-repro --round "$${ROUND}"
+
+beacon-eval:
+	@echo ">> beacon-eval: one unattended freeze + run (REQ-025 item 6b)"
+	./scripts/beacon-eval.sh
 
 # ---- Quality ----
 lint:
