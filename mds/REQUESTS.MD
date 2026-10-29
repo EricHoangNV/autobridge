@@ -140,7 +140,7 @@ assertion that `make demo` step 4 passes live (owner's host) and in replay. Afte
      entry's "times reused" goes up. Assert this sequence in an e2e test.
 
 ### REQ-023 — Demo plan v2: main script plus a fault-scenario catalogue (2026-10-28)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-29 03:11)
 Owner: the demo plan must include the fault scenarios from REQ-019 … REQ-022. Rule: a step enters `docs/demo.md` and
 `make demo` only when the feature behind it has merged and its e2e test is green; until then it stays listed here.
 Every step runs after `make demo-reset` (REQ-021) and prints REQ-021's per-run table (rung that resolved it, model
