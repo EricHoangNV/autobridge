@@ -3030,3 +3030,6 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Fixed both items f
 **Notes for next iteration:**
 - REQ-024 remaining is owner/CI: leak-audit re-run, live frontier numbers (`FRONTIER_API_KEY`), Nov 3 held-out run. REQ-025 beacon rehearsals reuse the fixed engine path.
 - Detector-evidence follow-up (engine workstream, not bench): fingerprint observed envelope strategy / rename pairs so L1 rules can fire on derived deltas.
+
+### 2026-10-29 03:40 UTC — REQ-023 codeable DONE (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Main script + fault-scenario catalogue now runnable per-entry (`make demo SCENARIO=<id>`, `make demo STEP=<n|name>`), catalogue table in docs/demo.md sourced from bench/demo.py CATALOGUE (33 rows), sync test keeps docs/code/scenario-files/matrix/e2e aligned, token_expired added to the model-usage matrix. Full make test green (2468+134+396+158). REQUESTS flipped to DONE; remaining REQ-023 work is the owner's video cut, not code.

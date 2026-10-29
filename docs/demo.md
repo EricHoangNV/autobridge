@@ -176,3 +176,57 @@ Renders wherever builds surface, with the vocabulary each half used (`v1` /
 POST with body auth" costs nothing — so the demo never pretends the v2
 vocabulary does not exist: the before half stays repeatable forever after v2
 ships (REQ-021 item 2).
+
+## Fault-scenario catalogue (REQ-023)
+
+Backup and Q&A: every entry runs on its own after `make demo-reset` with
+`make demo SCENARIO=<name>`, and every main-script step runs on its own
+with `make demo STEP=<n|name>` (e.g. `make demo STEP=4`,
+`make demo STEP=hard_semantic_failure`). `make demo` runs the full main
+script for rehearsal. Each run prints REQ-021's per-run table
+(scenario | rung that resolved it | model calls | small / frontier tokens |
+why it escalated). Never show heldout seeds; demo the dev variants only.
+A step enters this page and `make demo` only when the feature behind it
+has merged and its e2e test is green.
+
+| scenario | vendor | expected outcome | rung | model calls | REQ |
+|---|---|---|---|---|---|
+| `rate_limit_429` | both | Backoff only, no patch | L1 | 0 | REQ-023 |
+| `transient_503` | both | Backoff only, no patch | L1 | 0 | REQ-023 |
+| `cloud_slow` | fias | Link keeps ACKing, outbox drains later | n/a (agent) | 0 | REQ-022/023 |
+| `token_expired` | both | Refresh if permitted, else escalate (Blocked) | L0 refresh / L4 escalate | 0 | REQ-023 |
+| `token_revoked` | both | Escalate, no patch, Blocked | L4 | 0 | REQ-023 |
+| `endpoint_removed` | both | Escalate, never patched around | L4 | 0 | REQ-023 |
+| `rename_guest_id` | both | L1 rename_field patch, verified | L1 | 0 | REQ-023 |
+| `nested_path_shift` | both | L1 nested_path_shift patch, verified | L1 | 0 | REQ-023 |
+| `offset_to_cursor` | both | L1 rule patch, verified | L1 | 0 | REQ-023 |
+| `page_to_cursor` | both | L1 rule patch, verified; reusable via L0 (step 3) | L1 | 0 | REQ-019/021 |
+| `cursor_repeat_token` | both | L1 rule + repeated_cursor loop guard | L1 | 0 | REQ-023 |
+| `fias_record_layout_change` | fias | Handshake detect + L1 mapping patch (step 8) | L1 | 0 | REQ-022 |
+| `gross_to_net` | both | Degraded → full climb L0→L4; L3 rejected (step 4) | L4 (via L0,L1,L2,L3) | 2 (replay: 1 small + 1 frontier) | REQ-021/023 |
+| `status_vocab_change` | both | Escalate, never guess a mapping | L4 | 0 | REQ-023 |
+| `tz_boundary_shift` | both | Degraded + operator question | L4 | 0 | REQ-023 |
+| `duplicate_late_records` | both | Escalate (no dedup rule invented) | L4 | 0 | REQ-023 |
+| `invalid_patch_trap` | both | L3 decoy proposal rejected → L4 (step 4) | L4 (via L0,L1,L2,L3) | 2 (replay: 1 small + 1 frontier) | REQ-021/023 |
+| `meridian_cursor_renamed` | meridian | L1 cursor path patch, verified | L1 | 0 | REQ-020 |
+| `meridian_state_renamed` | meridian | L1 rename_field patch, verified | L1 | 0 | REQ-020 |
+| `fias_link_resync` | fias | Re-handshake, 0 lost | n/a (agent) | 0 | REQ-022 |
+| `fias_ack_timeout` | fias | Timeout reported, link survives | n/a (agent) | 0 | REQ-022 |
+| `agent_restart_inflight` | fias | 0 lost, 0 duplicated (step 8) | n/a (agent) | 0 | REQ-022 |
+| `fias_duplicate_records` | fias | Duplicates land once (idempotency) | n/a (agent) | 0 | REQ-022 |
+| `fias_oversize_frame` | fias | Session closes and redials | n/a (agent) | 0 | REQ-022 |
+| `fias_record_flood` | fias | Session closes and redials | n/a (agent) | 0 | REQ-022 |
+| `session_lost_with_command` | fias | Command retried or reported, never dropped | n/a (agent) | 0 | REQ-022 |
+| `stale_command` | fias | Stale command never sent | n/a (agent) | 0 | REQ-022 |
+| *(safety)* Meridian v1 refusal | meridian | v1 Blocked, named reason (step 7) | — (deterministic) | 0 | REQ-020/021 |
+| *(safety)* FIAS v1/v2 refusal | fias | v1/v2 Blocked, named reason | — (deterministic) | 0 | REQ-022 |
+| *(safety)* Atlas money as JSON numbers | both | Decimal throughout, no float drift (step 1) | — (invariant) | 0 | DIRECTIVES §4 |
+| *(safety)* inject-fault without admin token | — | Rejected | — | 0 | REQ-015 |
+| *(safety)* UI writes without control token | — | 401 | — | 0 | REQ-012 |
+| *(safety)* engine isolated from verifier/sim-admin | — | No route (smoke) | — | 0 | DIRECTIVES §2 |
+
+Source of truth for this table is `CATALOGUE` in `bench/demo.py`
+(scenario | vendor | expected outcome | rung | model calls | REQ);
+`tests/unit/test_autobridge_demo_catalogue.py` keeps them in sync and
+checks every entry against its scenario file, its e2e test and
+(REQ-021's matrix for ladder entries) its model-usage matrix row.

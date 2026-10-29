@@ -1387,6 +1387,292 @@ def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
     )
 
 
+SCENARIOS_DIR = REPO_ROOT / "simulators" / "scenarios"
+
+# ---------------------------------------------------------------------------
+# Fault-scenario catalogue (REQ-023): main script plus backup/Q&A entries.
+#
+# Every main-script step runs on its own (``make demo STEP=<n|name>``) after
+# a reset, and every catalogue entry runs on its own
+# (``make demo SCENARIO=<name>``). ``make demo`` runs the full main script.
+# Kinds:
+# - "ladder-matrix": the repair ladder handles it; proven by a row in
+#   tests/e2e/test_model_usage_matrix.py (rung, decision, trace levels, 0
+#   model calls except the two replay semantic climbs) plus the e2e file.
+# - "ladder-demo": a ladder repair proven by a main-script step and its
+#   unit tests instead of the matrix harness (FIAS handshake detection
+#   feeds the rule a delta the generic harness cannot build).
+# - "agent": on-premise reliability the edge agent guarantees (no ladder
+#   rung; rung "n/a"). Proven by tests/e2e/test_fias_faults.py.
+# - "behavior": no scenario file (safety/boundary/decimal guarantees).
+#   Proven by the listed unit/e2e test; runnable only through its step.
+# Row fields: scenario (None for behavior rows), vendor, expected_outcome,
+# rung, model_calls, req, e2e (covering test file), main_step (1-8 or None
+# when the entry runs only via the generic SCENARIO runner).
+# ---------------------------------------------------------------------------
+
+CATALOGUE: tuple[dict[str, Any], ...] = (
+    # Transport, no patch, 0 model calls.
+    {"scenario": "rate_limit_429", "vendor": "both",
+     "expected_outcome": "Backoff only, no patch", "rung": "L1", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_model_usage_matrix.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "transient_503", "vendor": "both",
+     "expected_outcome": "Backoff only, no patch", "rung": "L1", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_model_usage_matrix.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "cloud_slow", "vendor": "fias",
+     "expected_outcome": "Link keeps ACKing, outbox drains later", "rung": "n/a (agent)",
+     "model_calls": "0", "req": "REQ-022/023", "e2e": "tests/e2e/test_fias_faults.py",
+     "main_step": None, "kind": "agent"},
+    # Auth.
+    {"scenario": "token_expired", "vendor": "both",
+     "expected_outcome": "Refresh if permitted, else escalate (Blocked)",
+     "rung": "L0 refresh / L4 escalate", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_01_simulators_and_oracle.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "token_revoked", "vendor": "both",
+     "expected_outcome": "Escalate, no patch, Blocked", "rung": "L4", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_05_safety_and_semantic.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    # Capability.
+    {"scenario": "endpoint_removed", "vendor": "both",
+     "expected_outcome": "Escalate, never patched around", "rung": "L4", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_05_safety_and_semantic.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    # Known structural drifts at L0/L1, 0 model calls.
+    {"scenario": "rename_guest_id", "vendor": "both",
+     "expected_outcome": "L1 rename_field patch, verified", "rung": "L1", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_03_known_repairs_zero_frontier.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "nested_path_shift", "vendor": "both",
+     "expected_outcome": "L1 nested_path_shift patch, verified", "rung": "L1", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_03_known_repairs_zero_frontier.py",
+     "main_step": None, "kind": "ladder-matrix", "synthetic": True},
+    {"scenario": "offset_to_cursor", "vendor": "both",
+     "expected_outcome": "L1 rule patch, verified", "rung": "L1", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_03_known_repairs_zero_frontier.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "page_to_cursor", "vendor": "both",
+     "expected_outcome": "L1 rule patch, verified; reusable via L0", "rung": "L1",
+     "model_calls": "0", "req": "REQ-019/021",
+     "e2e": "tests/e2e/test_03_known_repairs_zero_frontier.py",
+     "main_step": 3, "kind": "ladder-matrix"},
+    {"scenario": "cursor_repeat_token", "vendor": "both",
+     "expected_outcome": "L1 rule + repeated_cursor loop guard", "rung": "L1",
+     "model_calls": "0", "req": "REQ-023",
+     "e2e": "tests/e2e/test_03_known_repairs_zero_frontier.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "fias_record_layout_change", "vendor": "fias",
+     "expected_outcome": "Handshake detect + L1 mapping patch, postings flow",
+     "rung": "L1", "model_calls": "0", "req": "REQ-022",
+     "e2e": "tests/e2e/test_fias_faults.py", "main_step": 8, "kind": "ladder-demo"},
+    # Semantic and data quality.
+    {"scenario": "gross_to_net", "vendor": "both",
+     "expected_outcome": "Degraded (money invariant) → full climb L0→L4; L3 rejected",
+     "rung": "L4 (via L0,L1,L2,L3)", "model_calls": "2 (replay: 1 small + 1 frontier)",
+     "req": "REQ-021/023", "e2e": "tests/e2e/test_05_safety_and_semantic.py",
+     "main_step": 4, "kind": "ladder-matrix"},
+    {"scenario": "status_vocab_change", "vendor": "both",
+     "expected_outcome": "Escalate, never guess a mapping", "rung": "L4", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_05_safety_and_semantic.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "tz_boundary_shift", "vendor": "both",
+     "expected_outcome": "Degraded (business-date invariant) + bundle", "rung": "L4",
+     "model_calls": "0", "req": "REQ-023",
+     "e2e": "tests/e2e/test_05_safety_and_semantic.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "duplicate_late_records", "vendor": "both",
+     "expected_outcome": "Escalate (no dedup rule invented)", "rung": "L4", "model_calls": "0",
+     "req": "REQ-023", "e2e": "tests/e2e/test_01_simulators_and_oracle.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "invalid_patch_trap", "vendor": "both",
+     "expected_outcome": "L3 decoy proposal rejected by verifier → L4", "rung": "L4 (via L0,L1,L2,L3)",
+     "model_calls": "2 (replay: 1 small + 1 frontier)", "req": "REQ-021/023",
+     "e2e": "tests/e2e/test_05_safety_and_semantic.py",
+     "main_step": 4, "kind": "ladder-matrix"},
+    {"scenario": "meridian_cursor_renamed", "vendor": "meridian",
+     "expected_outcome": "L1 cursor path patch, verified", "rung": "L1", "model_calls": "0",
+     "req": "REQ-020", "e2e": "tests/e2e/test_meridian_faults.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    {"scenario": "meridian_state_renamed", "vendor": "meridian",
+     "expected_outcome": "L1 rename_field patch, verified", "rung": "L1", "model_calls": "0",
+     "req": "REQ-020", "e2e": "tests/e2e/test_meridian_faults.py",
+     "main_step": None, "kind": "ladder-matrix"},
+    # On-premise reliability (edge agent guarantees; no ladder rung).
+    {"scenario": "fias_link_resync", "vendor": "fias",
+     "expected_outcome": "Re-handshake, 0 lost", "rung": "n/a (agent)", "model_calls": "0",
+     "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
+     "main_step": None, "kind": "agent"},
+    {"scenario": "fias_ack_timeout", "vendor": "fias",
+     "expected_outcome": "Timeout reported, link survives", "rung": "n/a (agent)",
+     "model_calls": "0", "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
+     "main_step": None, "kind": "agent"},
+    {"scenario": "agent_restart_inflight", "vendor": "fias",
+     "expected_outcome": "0 lost, 0 duplicated after restart", "rung": "n/a (agent)",
+     "model_calls": "0", "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
+     "main_step": 8, "kind": "agent"},
+    {"scenario": "fias_duplicate_records", "vendor": "fias",
+     "expected_outcome": "Duplicates land once (idempotency)", "rung": "n/a (agent)",
+     "model_calls": "0", "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
+     "main_step": None, "kind": "agent"},
+    {"scenario": "fias_oversize_frame", "vendor": "fias",
+     "expected_outcome": "Session closes and redials", "rung": "n/a (agent)",
+     "model_calls": "0", "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
+     "main_step": None, "kind": "agent"},
+    {"scenario": "fias_record_flood", "vendor": "fias",
+     "expected_outcome": "Session closes and redials", "rung": "n/a (agent)",
+     "model_calls": "0", "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
+     "main_step": None, "kind": "agent"},
+    {"scenario": "session_lost_with_command", "vendor": "fias",
+     "expected_outcome": "Command retried or reported, never silently dropped",
+     "rung": "n/a (agent)", "model_calls": "0", "req": "REQ-022",
+     "e2e": "tests/e2e/test_fias_faults.py", "main_step": None, "kind": "agent"},
+    {"scenario": "stale_command", "vendor": "fias",
+     "expected_outcome": "Stale command never sent", "rung": "n/a (agent)",
+     "model_calls": "0", "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
+     "main_step": None, "kind": "agent"},
+    # Safety and boundaries (no scenario file; proven by the listed test).
+    {"scenario": None, "vendor": "meridian", "name": "meridian_v1_refusal",
+     "expected_outcome": "v1 Blocked, named reason (POST+body auth)", "rung": "— (deterministic)",
+     "model_calls": "0", "req": "REQ-020/021",
+     "e2e": "tests/e2e/test_meridian_before.py", "main_step": 7, "kind": "behavior"},
+    {"scenario": None, "vendor": "fias", "name": "fias_v1_v2_refusal",
+     "expected_outcome": "v1/v2 Blocked, named reason", "rung": "— (deterministic)",
+     "model_calls": "0", "req": "REQ-022",
+     "e2e": "tests/unit/test_autobridge_fias_vocab.py", "main_step": None, "kind": "behavior"},
+    {"scenario": None, "vendor": "both", "name": "money_decimal",
+     "expected_outcome": "JSON money stays Decimal, no float drift", "rung": "— (invariant)",
+     "model_calls": "0", "req": "DIRECTIVES §4",
+     "e2e": "tests/e2e/test_05_safety_and_semantic.py", "main_step": 1, "kind": "behavior"},
+    {"scenario": None, "vendor": "—", "name": "inject_fault_requires_admin_token",
+     "expected_outcome": "Inject-fault without the admin token rejected", "rung": "—",
+     "model_calls": "0", "req": "REQ-015",
+     "e2e": "tests/e2e/test_01_simulators_and_oracle.py", "main_step": None, "kind": "behavior"},
+    {"scenario": None, "vendor": "—", "name": "ui_writes_require_control_token",
+     "expected_outcome": "Control-plane writes without the token → 401", "rung": "—",
+     "model_calls": "0", "req": "REQ-012",
+     "e2e": "tests/unit/test_autobridge_control_token.py", "main_step": None, "kind": "behavior"},
+    {"scenario": None, "vendor": "—", "name": "engine_isolated_from_verifier_and_sim_admin",
+     "expected_outcome": "Engine has no route to verifier/sim-admin (smoke)",
+     "rung": "—", "model_calls": "0", "req": "DIRECTIVES §2",
+     "e2e": "tests/unit/test_autobridge_trust_boundaries.py", "main_step": None,
+     "kind": "behavior"},
+)
+
+#: Runnable catalogue scenarios (have a scenario file; ``make demo SCENARIO=<id>``).
+CATALOGUE_SCENARIOS = tuple(r["scenario"] for r in CATALOGUE if r.get("scenario"))
+
+#: Main-script steps selectable via ``make demo STEP=<n|name>``.
+STEP_NAMES = {
+    1: "reusable_artifact", 2: "unfamiliar_api", 3: "zero_token_recovery",
+    4: "hard_semantic_failure", 5: "head_to_head", 6: "reproducibility",
+    7: "new_api_style", 8: "onprem_pabx",
+}
+
+#: Simulator admin target per vendor for the generic SCENARIO runner (live).
+_CATALOGUE_TARGETS = {"atlas": "sim-atlas", "harbor": "sim-harbor", "fias": "sim-fias-pabx",
+                      "meridian": "sim-meridian", "both": "sim-atlas"}
+
+
+def catalogue_row(scenario: str) -> dict[str, Any] | None:
+    """Catalogue row for a scenario id, or None when it is not catalogued."""
+    for row in CATALOGUE:
+        if row.get("scenario") == scenario:
+            return dict(row)
+    return None
+
+
+def run_catalogue_scenario(scenario: str, seed: int, base_url: str) -> dict[str, Any]:
+    """Run one catalogue entry on its own (``make demo SCENARIO=<name>``).
+
+    Entries covered by a main-script step delegate to that step's real
+    evidence path. Other entries: live mode injects the fault through the
+    labelled bridge and reports the control-plane outcome; offline mode
+    reports the scenario file's catalog-expected outcome (labelled as
+    catalog-expected, never as a fresh ladder run).
+    """
+    import yaml  # noqa: PLC0415
+
+    row = catalogue_row(scenario)
+    if row is None:
+        return {
+            "name": f"catalogue:{scenario}",
+            "status": "failed",
+            "error": f"unknown SCENARIO {scenario!r}; runnable: {', '.join(CATALOGUE_SCENARIOS)}",
+            "evidence": {},
+            "control_calls": [],
+            "mode": "in-process",
+        }
+    if row.get("main_step"):
+        step = run_demo_step(int(row["main_step"]), seed, base_url)
+        step["catalogue"] = scenario
+        return step
+    if row.get("synthetic"):
+        # Matrix-only drift (no served fault): the matrix row is the proof.
+        return _finish_step(
+            f"catalogue:{scenario}",
+            {"vendor": row.get("vendor"), "synthetic": True,
+             "expected_outcome": row.get("expected_outcome"),
+             "resolved_rung": row.get("rung"),
+             "model_usage_ledger": {"calls": 0, "small_tokens": 0, "frontier_tokens": 0},
+             "why_escalated": f"catalogue entry ({row.get('kind')}): synthetic delta, proven by the model-usage matrix",
+             "req": row.get("req"), "e2e": row.get("e2e")},
+            [],
+        )
+    live = _control_probe(base_url)
+    path = SCENARIOS_DIR / f"{scenario}.yaml"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"name": f"catalogue:{scenario}", "status": "failed",
+                "error": f"cannot read {path}: {exc}"[:300],
+                "evidence": {}, "control_calls": [], "mode": "in-process"}
+    expected = doc.get("expected", {}) if isinstance(doc, dict) else {}
+    calls: list[dict[str, Any]] = []
+    if live:
+        target = _CATALOGUE_TARGETS.get(str(row.get("vendor", "both")), "sim-atlas")
+        calls.append(_control_call(base_url, "POST", "/demo/inject-fault",
+                                   {"target": target, "scenario_id": scenario, "seed": seed}))
+        calls.append(_control_call(base_url, "GET", "/drift"))
+    return _finish_step(
+        f"catalogue:{scenario}",
+        {
+            "vendor": row.get("vendor"),
+            "drift_class": doc.get("drift_class") if isinstance(doc, dict) else None,
+            "catalog_expected": expected,
+            "expected_outcome": row.get("expected_outcome"),
+            "resolved_rung": row.get("rung"),
+            "model_usage_ledger": {"calls": 0, "small_tokens": 0, "frontier_tokens": 0}
+            if row.get("model_calls") == "0" else {"note": row.get("model_calls")},
+            "why_escalated": f"catalogue entry ({row.get('kind')}): {row.get('expected_outcome')}",
+            "offline_note": None if live else "offline: catalog-expected outcome, not a fresh ladder run",
+            "req": row.get("req"),
+            "e2e": row.get("e2e"),
+        },
+        calls,
+    )
+
+
+def run_demo_step(number: int, seed: int, base_url: str) -> dict[str, Any]:
+    """Run one main-script step (``make demo STEP=<n|name>``)."""
+    live = _control_probe(base_url)
+    if not 1 <= number <= len(STEPS):
+        return {"number": f"1/{len(STEPS)}", "name": f"step:{number}", "status": "failed",
+                "error": f"unknown STEP {number!r}; use 1-{len(STEPS)} or {', '.join(sorted(set(STEP_NAMES.values())))}",
+                "evidence": {}, "control_calls": [], "mode": "in-process"}
+    try:
+        step = STEPS[number - 1](seed, live, base_url)
+        step["number"] = f"{number}/{len(STEPS)}"
+    except Exception as exc:
+        step = {"number": f"{number}/{len(STEPS)}", "name": STEPS[number - 1].__name__,
+                "status": "failed", "error": str(exc)[:500], "control_calls": [],
+                "mode": "in-process"}
+    if "mode" not in step:
+        step["mode"] = "live" if step.get("control_calls") else "in-process"
+    return step
+
+
 STEPS = (
     step1_reusable_artifact,
     step2_unfamiliar_api,
@@ -1399,12 +1685,22 @@ STEPS = (
 )
 
 
-def run_demo(seed: int = DEFAULT_SEED, control_url: str = DEFAULT_CONTROL_URL) -> dict[str, Any]:
-    """Run all eight steps; returns the demo report (JSON-serializable)."""
+def run_demo(seed: int = DEFAULT_SEED, control_url: str = DEFAULT_CONTROL_URL,
+             only_step: int | None = None, only_scenario: str | None = None) -> dict[str, Any]:
+    """Run all eight steps (or one step / one catalogue entry); returns the report."""
     live = _control_probe(control_url)
+    if only_scenario:
+        step = run_catalogue_scenario(only_scenario, seed, control_url)
+        step.setdefault("number", "1/1")
+        failed_count = 0 if step.get("status") == "ok" else 1
+        return {"mode": "live-control-api" if live else "local-evidence",
+                "control_url": control_url, "seed": seed,
+                "steps": [step], "failed": failed_count, "scenario": only_scenario}
     steps: list[dict[str, Any]] = []
     total = len(STEPS)
-    for i, fn in enumerate(STEPS, start=1):
+    wanted = range(1, total + 1) if only_step is None else (only_step,)
+    for i in wanted:
+        fn = STEPS[i - 1]
         try:
             step = fn(seed, live, control_url)
             step["number"] = f"{i}/{total}"
@@ -1466,14 +1762,39 @@ def render_text(report: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+def _resolve_step(value: str) -> int | None:
+    """Resolve ``STEP=<n|name>`` to a step number, or None when unknown."""
+    value = (value or "").strip()
+    if value.isdigit() and 1 <= int(value) <= len(STEPS):
+        return int(value)
+    lowered = value.lower()
+    for number, name in STEP_NAMES.items():
+        if lowered == name or lowered == f"step{name}" or lowered == f"step_{name}":
+            return number
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for ``make demo``."""
     parser = argparse.ArgumentParser(description="AutoBridge eight-step demo (plan §6)")
     parser.add_argument("--control-url", default=env_default("CONTROL_URL", DEFAULT_CONTROL_URL))
     parser.add_argument("--seed", type=int, default=int(env_default("DEMO_SEED", str(DEFAULT_SEED))))
     parser.add_argument("--json", action="store_true", help="Emit the report as JSON")
+    parser.add_argument("--scenario", default=env_default("DEMO_SCENARIO", ""),
+                        help="Run one catalogue entry (REQ-023), e.g. --scenario gross_to_net")
+    parser.add_argument("--step", default=env_default("DEMO_STEP", ""),
+                        help="Run one main-script step (REQ-023), e.g. --step 4 or --step hard_semantic_failure")
     args = parser.parse_args(argv)
-    report = run_demo(seed=args.seed, control_url=args.control_url)
+    if args.scenario and args.step:
+        parser.error("--scenario and --step are mutually exclusive")
+    only_step: int | None = None
+    if args.step:
+        only_step = _resolve_step(args.step)
+        if only_step is None:
+            parser.error(f"unknown --step {args.step!r}; use 1-{len(STEPS)} or {', '.join(sorted(set(STEP_NAMES.values())))}")
+    report = run_demo(seed=args.seed, control_url=args.control_url,
+                      only_step=only_step,
+                      only_scenario=args.scenario or None)
     if args.json:
         print(json.dumps(report, default=str, indent=2))
     else:

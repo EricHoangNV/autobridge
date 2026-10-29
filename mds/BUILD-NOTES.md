@@ -1811,3 +1811,32 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Ref: REQUESTS.MD R
 
 ### REQ-024 owner check on f32b4b4b (sbx1 2026-10-29)
 Fix the rigged-comparison check two ways. (1) Engine arms run the real end-to-end path: `bench/ablation.py::derive_diagnostics` syncs the pre-drift spec against the served fault (`bench/faults.py`, real simulator wire code) and baseline, diffs fingerprints, classifies real signals; `enumerate_hypotheses` uses the engine's own HypothesisEnumerator over vendor docs; phase 1 deterministic ladder, phase 2 model climb only for derived SEMANTIC_VALUE_DRIFT. `config/ablation_cases.yaml` holds equal inputs + grading-only `expected` (loader refuses diagnostics). (2) Harness moved to top-level `bench/`; W5.7 carve-outs reverted; `test_bench_never_imports_verifier` + `test_engine_never_imports_bench` added; mypy gate extended to `bench`. Gotchas: REPO_ROOT depth `parents[3]`→`parents[1]` (record_frontier had a latent `parents[2]` bug); TestClient serving needs spec auth + spec base path + `fake_env()` save/restore (setdefault leaked into the pytest process and broke `test_sync_with_release` via the no-DNS guard); mypy unused-ignore verdicts differ between `mypy bench` and `mypy src/autobridge bench` (gate the union). Rehearsal offline 12x2: all arms matched, engine arms escalate with 0 frontier tokens (losses published); per-scenario derived classes (page/cursor/offset PAGINATION_CHANGE, rename SCHEMA_REMOVED, token_expired AUTH_EXPIRED, gross_to_net SEMANTIC_VALUE_DRIFT, status_vocab ENUM_NEW_VALUE, self-healed transports UNKNOWN). Beacon derives per-instance classes in-process (pagination/code_list SEMANTIC-free, revoked AUTH_REVOKED observed). Agent: opencode meta/muse-spark-1.3-contributor (escalation). Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>
+
+### REQ-023 — Demo plan v2: main script + fault-scenario catalogue (codeable part DONE 2026-10-29)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+- `bench/demo.py`: new `CATALOGUE` (33 rows: 17 ladder-matrix, 1 ladder-demo,
+  9 agent, 6 behavior), `STEP_NAMES`, `run_catalogue_scenario()`,
+  `run_demo_step()`, `--scenario`/`--step` flags plus `DEMO_SCENARIO`/
+  `DEMO_STEP` env (Makefile-safe under `set -u`). Main-step-covered entries
+  delegate to the real step evidence; others run live inject-fault or report
+  catalog-expected offline (labelled, never a fake ladder run). `nested_path_shift`
+  marked `synthetic` (matrix-only drift, no served fault — not in
+  SCENARIO_CATALOG, by design).
+- `Makefile`: `make demo SCENARIO=<id>` / `make demo STEP=<n|name>` via
+  env passthrough; bare `make demo` unchanged (all 8 steps).
+- `tests/e2e/test_model_usage_matrix.py`: new `token_expired` row
+  (AUTH_EXPIRED on the bearer atlas spec → escalate, levels [4], 0 calls;
+  verified in-process; the L0-refresh path needs an oauth2 spec).
+- `tests/unit/test_autobridge_demo_catalogue.py` (8 tests): catalogue ↔
+  docs table ↔ scenario files ↔ matrix rows ↔ e2e files; `--scenario`/
+  `--step` CLI incl. mutual-exclusion and unknown-id failures. Docs table
+  is the code's `CATALOGUE`, not a copy.
+- `docs/demo.md`: new "Fault-scenario catalogue (REQ-023)" section.
+- Interpretation note: strict "every entry has a matrix row" applies to
+  ladder entries through the RepairController harness; FIAS link-layer
+  entries (no ladder rung) cite test_fias_faults, and behavior rows cite
+  their unit/e2e proof. The sync test enforces per-kind rules.
+- Checks: targeted 45 pass; matrix in-process 20 pass (live test errors at
+  setup without stack — pre-existing, fails on clean tree too);
+  `make lint`, `make typecheck` clean; full `make test` green
+  (autobridge 2468 / verifier 134 / simulators 396, gates hold; ui 158).

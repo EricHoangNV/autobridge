@@ -124,8 +124,8 @@ verify-heldout-reveal:
 	HELDOUT_DIR=verifier/hidden_cases/heldout/revealed BENCH_VISIBILITY=heldout uv run python -m bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
 
 demo:
-	@echo ">> demo: eight steps via control API (W10)"
-	. ./scripts/load_dotenv.sh && uv run python -m bench.demo
+	@echo ">> demo: eight steps via control API (W10); SCENARIO=<id> or STEP=<n|name> runs one entry (REQ-023)"
+	. ./scripts/load_dotenv.sh && DEMO_SCENARIO="$${SCENARIO:-}" DEMO_STEP="$${STEP:-}" uv run python -m bench.demo
 
 demo-reset:
 	@echo ">> demo-reset: full reset to a known first-run state (REQ-021 item 1)"
