@@ -252,6 +252,28 @@ content as it does now, not by path; (3) report hits per kind (`raw`, `nonce`) i
 a FAIL says what leaked; (4) unit tests: a transcript quoting the public manifest is a pass, a transcript containing
 a nonce or raw bytes is a fail. Expected on the owner's host after the fix: `OK`, 0 hits. Keep "never prints secrets".
 
+**Owner check (2026-10-29, on f32b4b4b): the engine arms are handed the answer; the comparison is not matched. Fix
+before REQ-025 builds on it (the beacon run reuses these arms).** In `src/autobridge/bench/ablation.py` the engine
+arms call `RepairController.handle(...)` with case-supplied `drift_class` (e.g. `gross_to_net`, which is the answer
+label), `fingerprint_delta`, `hypotheses` (hand-written in `_gross_net_hypotheses`, priors 0.41/0.39 chosen so L2
+cannot decide) and `enumerator_yield_count`, all built from `config/ablation_cases.yaml`. The frontier arms get docs
+and a sandbox and must find the problem themselves. So the engine is benchmarked from a pre-diagnosed state while the
+model starts cold: a judge reading the code will say the headline number is rigged, and they would be right.
+`assert_all_inputs_equal` passes only because these fields live outside `HarnessInputs`.
+Fix: every arm gets exactly the same inputs (the pre-drift spec, the docs, the sandbox URL with the fault served by
+the simulator, budgets). The engine arms run the real path end to end: sync against the faulted sandbox → detector
+→ classifier → hypothesis engine → ladder → verifier gate, with no case-supplied drift class, delta, hypotheses or
+yield count. The case file may hold only what every arm gets (scenario id, connector, pre-drift spec source,
+budgets) plus grading data the arms never see. Add a test that fails if any arm receives a field the others do not,
+including through `RepairController.handle` kwargs. Report the rehearsal numbers again after the change, whatever
+they are (pre-registration: losses are published).
+Second, smaller: the same commit widened the W5.7 trust-boundary test (`test_04_bootstrap_unfamiliar_api.py`) so
+`src/autobridge/bench` may read `generated/connectors/*/reference/spec.yaml`, without an owner note. Reading the
+pre-drift reference spec as an equal input is fine; doing it from inside the engine package is what the test exists
+to forbid. Move the benchmark harness out of `src/autobridge` (e.g. a top-level `bench/` package that imports the
+engine, like the tests do) and revert the carve-out. From now on, never widen a guard test without an owner note in
+REQUESTS saying why.
+
 ### REQ-025 — Beacon evaluation: faults generated from public randomness nobody could know in advance (2026-10-28)
 Status: IN_PROGRESS (sbx1 since 2026-10-29 00:55; sub-step A merged 2026-10-29; sub-step B in progress: beacon client, serving, make targets, docs, rehearsals)
 Owner: prove we could not have prepared for the test even if we wanted to. The private-seed held-out split (REQ-007)
