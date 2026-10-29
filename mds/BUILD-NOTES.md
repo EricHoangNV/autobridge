@@ -2174,3 +2174,43 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 - UI: InjectFaultDrawer offers the 27 catalogue scenarios + 5 canonical targets (python test keeps them in sync); new-connector page has a simulator-docs picker (fills docs_text + base URL, sends docs_text) and a 5-stage build progress (docs → draft → probes → result → release) from job + run-detail rows; v3 vocabulary radio; MERIDIAN_/LEGACYSTAY_API_KEY refs.
 - Engine fixes found live: (a) bootstrap `_with_docs_path` — connector-record override kept the host but dropped the docs `servers` path prefix (Meridian sync Blocked endpoint_not_found); (b) lone `zero_records` on a Complete sync no longer opens UNKNOWN drift (PABX idle RoomStatus escalated every tick); (c) EDGE_TOKEN demo default tracks AUTOBRIDGE_CONTROL_TOKEN when set (relay operator auth) in local-up.sh + compose + .env.example.
 - Gates: make test (autobridge 90.50%, verifier 91.49%, simulators 90.48%, ui 166), lint + typecheck + openapi-check + ui-typecheck green; local-up + e2e test_09/027/04/meridian/knowledge/03/fias + `make demo` 8/8 green unkeyed.
+
+### REQ-032 — UI-first demo, part C: live states and a repair page that explains itself (sbx1 2026-10-29)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+- **Server.** `RepairRunOut.approval` (latest approval row; populated on
+  /repairs, /repairs/{id} and /runs repair payloads) + new
+  `GET /repairs/{id}/approve-preview`: every line derived from the rows
+  POST .../approve acts on (candidate/active release, pause-on-change
+  dependents, AUTOBRIDGE_SYNC_INTERVAL_S, learn-on-approve condition),
+  never hard-coded. `RepairActions` now sends `connector_id` so the
+  approval records from_release (preview == reality, pinned by test).
+- **States everywhere.** New `--ok` token + circle/triangle/square badge
+  (`ConnectorStateBadge`, colour+shape+word+activity, ticking
+  "last sync N s ago" via `useNow`); wired into ConnectorsTable rows,
+  connector detail masthead, simulators used-by; lists poll every 2s.
+- **Repairs list** rebuilt on generated types: connector, drift class,
+  rung, rule, model calls ("0 model calls" explicit), status
+  fix-ready/needs-decision/approved/applied/rejected, newest first.
+- **Repair page** is now four sections from persisted rows: happened
+  (sync outcome+unmet, wire before/after via WireChangeSummary, affects,
+  evidence), did (rung timeline from ledger, HypothesisFunnel from the
+  derivation record, probes, ModelCallBox with 0-call state, verifier
+  run), decided (decision line, readable patch + touches + raw patch
+  `<details>`, confidence, escalation question + rejected proposals),
+  approve (ApprovePreviewSection + AfterApproveTracker
+  approval→activation→sync→working). PABX panel on edge connectors
+  (link/postings/layout/last restart, honest empty states). Knowledge
+  polls live (used-by/learned/reused already present).
+- **Engine gaps closed along the way.** Deterministic path now persists
+  the hypothesis derivation (honest "resolved without enumeration"
+  zero-stage for L1; parent ids filtered to existing rows — the fast
+  path's signals are never stored, and the store rejects unknown
+  parents). Startup reaps orphaned `running` jobs (`reclaim_orphaned`
+  existed but was never called; a restart wedged meridian in
+  "sync running" forever — reproduced live, verified reaped on restart).
+- **Gates.** make test green (autobridge 90%, verifier 91%, simulators
+  90%, ui 192 pass), lint/typecheck/openapi-check/ui-typecheck green,
+  local-up + demo-seed/break/heal + test_06_ui_journey 8/8 green unkeyed
+  (incl. live approve through the new path + rollback/re-break cycle).
+  Stack left up, clean seed (4 working, 0 tokens). Keyed re-run
+  (FRONTIER_API_KEY) is the owner step.

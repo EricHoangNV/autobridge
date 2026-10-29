@@ -509,3 +509,17 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Root cause: no matcher owns lone `zero_records` on a Complete sync, so the fallthrough escalated a quiet feed. The Blocked+empty pattern (capability_removed) was never at risk — Blocked/Degraded always add their own signals.
 - Fixed in `detect_and_repair_after_sync`: all-signals-are-`zero_records` returns drift_found False with reason `empty_entities_on_healthy_sync` (verifying-sync retirement still applies).
 - **Rule:** a Complete sync that reached the vendor and contradicts nothing is the absence of evidence, not evidence of drift; fallthrough escalations must not fire on it.
+
+## 55. A designed recovery that never runs on startup is a wedge, not a safety net
+**Context:** REQ-032 live verification (local stack restart orphaned a meridian sync job in `running`; connector stuck "sync running" forever because the scheduler skips busy connectors)
+
+- `JobRunner.reclaim_orphaned()` existed, was unit-tested, and the `Job` docstring promised "a restarted worker reclaims via `reclaim_orphaned` and re-runs" — but no lifespan or startup path called it. The orphaned row survived every restart; the busy check kept skipping the connector, so all four seed connectors could never be Working again without a reset.
+- Fixed by calling it in the control lifespan (`reclaim_orphaned_jobs()` in `app.py`, best-effort so a broken jobs table never stops serving), verified live: planted a `running` row, restarted, watched it return to `queued` with the retry budget intact.
+- **Rule:** every crash-recovery path needs a caller on the startup path and a live restart test that plants the orphan — an untested, unwired reaper is indistinguishable from no reaper.
+
+## 56. The evidence store rejects unknown parents — filter, don't fail, when linking derived records
+**Context:** REQ-032 (persisting the hypothesis derivation on the deterministic ladder path; fast-path signals are never stored as evidence rows)
+
+- `EvidenceStore.append` raises `UnknownParentError` for parent ids with no row, and the first version of the derivation persist passed raw signal evidence ids — which don't exist in the fast path — so the whole append died inside a best-effort `try/except` and repairs silently carried no derivation.
+- Fixed with `_existing_evidence_ids()`: link only parents that resolve to stored rows (usually none on the fast path), and say so in the stage source instead of inventing a funnel.
+- **Rule:** when a store enforces referential integrity, resolve-then-link at the call site; a silent best-effort write that fails closed on integrity is a silent data gap — assert the row exists in tests with realistic (unpersisted-id) inputs.

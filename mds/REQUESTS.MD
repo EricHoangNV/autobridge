@@ -63,7 +63,7 @@ Depends on REQ-030.
 Tests: seed end state; demo-break only injects; heal clears; UI build from Harbor docs; SSRF tests still green.
 
 ### REQ-032 — UI-first demo, part C: live states and a repair page that explains itself (2026-10-29)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 15:40)
+Status: DONE (sbx1 2026-10-29) — code + docs + full gates green unkeyed (see BUILD-NOTES); keyed re-run (make local-up && make e2e && make demo) is the owner step. Next: REQ-033.
 Depends on REQ-030.
 1. **Three connector states, everywhere a connector appears** (Connectors list, connector page, simulators index):
    `● Working` green (new token `--ok`, `oklch(80% 0.17 150)`, 10.5:1 on the navy ground), `▲ Degrading` yellow

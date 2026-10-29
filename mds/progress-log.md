@@ -3473,3 +3473,13 @@ Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>
 
 ## 2026-10-29 15:40 UTC — REQ-031 DONE (sbx1, opencode meta/muse-spark-1.3-contributor (escalation))
 UI-first demo part B: `make demo-seed` (AtlasPMS/HarborPMS/MeridianPMS/PABX-edge baseline Complete, 4 working, 0 tokens), `make demo-break` (inject-only, one line; drawer offers the same 27 scenarios + 5 targets), `make demo-heal` (sims-only reset, DB intact), build-from-sim-docs in the UI (picker via GET /demo/docs + docs→draft→probes→result→release progress). Engine fixes: docs path-prefix join on record override, lone zero_records quieted, EDGE_TOKEN derivation. Gates: make test 2631+134+408/0 fail (90.50/91.49/90.48%, ui 166), lint/typecheck/openapi/ui-typecheck green, live e2e (09, 027, 04, meridian, knowledge, 03, fias) + demo 8/8 green unkeyed on local stack. Next: REQ-032 (owner priority chain REQ-031→REQ-032→REQ-033).
+
+## 2026-10-29 16:35 UTC — REQ-032 DONE (sbx1, opencode meta/muse-spark-1.3-contributor (escalation))
+Live connector states everywhere (new `--ok` token, circle/triangle/square +
+word + activity + ticking last-sync, 2s polling); repairs list with
+connector/class/rung/rule/calls/status newest-first; repair page in four
+plain-language sections from persisted rows (happened / did / decided /
+approve) with server-generated approve preview and after-approve tracker;
+PABX panel; engine persists hypothesis derivation on the deterministic path;
+startup reaps orphaned jobs. Full gates green; test_06 8/8 live unkeyed.
+Stack left up on a clean seed. Keyed re-run is the owner step. Next: REQ-033.

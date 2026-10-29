@@ -2,7 +2,7 @@
 
 ## Current State
 
-REQ-031 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): demo-seed (4 connectors working, 0 tokens), demo-break (inject-only + one line; drawer same list), demo-heal (sims-only reset), UI build-from-sim-docs (picker + 5-stage progress), docs-path-prefix fix, empty-entity drift quiet, EDGE_TOKEN derivation. Full gates green.
+REQ-032 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): live states everywhere (--ok token, badge, ticking age, 2s poll), repairs list (connector/class/rung/rule/calls/status), repair page four sections from persisted rows + approve-preview endpoint + after-approve tracker, PABX panel, derivation persisted on deterministic path, startup orphan-job reaper. Full gates green.
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
@@ -21,18 +21,20 @@ REQ-031 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): de
   - REQ-037 DONE (validated stack-mode marker; stale → Compose + warning; full suite green)
   - REQ-030 DONE (scheduler/state/learn-on-approve/persistence; keyed re-run is owner step)
   - REQ-031 DONE (seed/break/heal + UI docs build; keyed re-run is owner step)
+  - REQ-032 DONE (live states + self-explaining repair page; keyed re-run is owner step)
   - Edge readyz closed-store 500 fixed (honest degraded + regression test)
-- Tests: 2631 + 134 + 408 pass / 0 fail (autobridge 90.50%, verifier 91.49%, simulators 90.48%; ui 166 pass); lint + typecheck + openapi-check + ui-typecheck green
-- Stack: local-up verified this run (e2e test_09, 027, 04, meridian, knowledge, 03, fias + demo 8/8 green unkeyed); left up unkeyed
+- Tests: 2631 + 134 + 408 pass / 0 fail (autobridge 90%, verifier 91%, simulators 90%; ui 192 pass); lint + typecheck + openapi-check + ui-typecheck green
+- Stack: local-up verified this run (demo-seed/break/heal + test_06_ui_journey 8/8 green unkeyed); left up unkeyed on a clean seed
 
 ## Next tasks
-1. **REQ-032 → REQ-033** — owner UI-first demo parts C/D (depend on REQ-031)
-2. **REQ-031 (VERIFY)** — owner: keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` (covers REQ-030/031)
-3. **REQ-030 (VERIFY)** — owner: keyed `make local-up && make e2e && make demo` (L3 live numbers in step 4)
-4. **REQ-028 (VERIFY)** — owner: keyed `BENCH_TRIALS=1 make bench-ablation`, record frontier numbers; then merge/close
-5. **REQ-027 iteration (VERIFY)** — owner keyed-stack run, then sub-step 6 bench rerun
-6. **REQ-021 remaining (owner step)** — record-frontier capture + live step-4 check
-7. **REQ-024 remaining (owner/CI steps)** — leak-audit re-run; live frontier numbers; Nov 3 held-out run
-8. **REQ-025 remaining (owner/CI steps)** — live frontier numbers; the real frozen run
-9. **P1.W10.3** — [~] OWNER: confirm CI demo + record labelled demo (docs/demo.md)
-10. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching SHA256SUMS
+1. **REQ-033** — owner UI-first demo part D (depends on REQ-031/REQ-032)
+2. **REQ-032 (VERIFY)** — owner: keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` (covers REQ-032)
+3. **REQ-031 (VERIFY)** — owner: keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` (covers REQ-030/031)
+4. **REQ-030 (VERIFY)** — owner: keyed `make local-up && make e2e && make demo` (L3 live numbers in step 4)
+5. **REQ-028 (VERIFY)** — owner: keyed `BENCH_TRIALS=1 make bench-ablation`, record frontier numbers; then merge/close
+6. **REQ-027 iteration (VERIFY)** — owner keyed-stack run, then sub-step 6 bench rerun
+7. **REQ-021 remaining (owner step)** — record-frontier capture + live step-4 check
+8. **REQ-024 remaining (owner/CI steps)** — leak-audit re-run; live frontier numbers; Nov 3 held-out run
+9. **REQ-025 remaining (owner/CI steps)** — live frontier numbers; the real frozen run
+10. **P1.W10.3** — [~] OWNER: confirm CI demo + record labelled demo (docs/demo.md)
+11. **P1.W2.8** — [~] OWNER: place private seeds in ~/autobridge-heldout/ matching SHA256SUMS
