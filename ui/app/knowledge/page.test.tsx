@@ -14,7 +14,7 @@ const CAPABILITIES = {
   versions: {
     v1: { methods: ["GET"], auth_types: ["bearer"], pagination_strategies: ["page"], protocols: ["http"], joins: false, body_templates: false, event_feeds: false, command_templates: false },
     v2: { methods: ["POST"], auth_types: ["body_fields"], pagination_strategies: ["body_cursor"], protocols: [], joins: true, body_templates: true, event_feeds: false, command_templates: false },
-    v3: { methods: ["EVENT"], auth_types: ["edge_relay"], pagination_strategies: [], protocols: ["fias_tcp"], joins: true, body_templates: true, event_feeds: true, command_templates: true },
+    v3: { methods: ["EVENT"], auth_types: ["edge_relay"], pagination_strategies: [], protocols: ["fias_tcp"], joins: false, body_templates: false, event_feeds: true, command_templates: true },
   },
   transforms: ["money"],
   checks: ["money_invariant"],

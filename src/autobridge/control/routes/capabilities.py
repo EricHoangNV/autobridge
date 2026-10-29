@@ -111,16 +111,17 @@ def capabilities_payload() -> dict[str, Any]:
                 for a in auth_types
                 if (a in V3_ONLY_AUTH_TYPES) == only_v3 and (a in V2_ONLY_AUTH_TYPES) == (only_v2 and not only_v3)
             ),
+            # v2 and v3 list only what they add; v3 adds no pagination strategy.
             "pagination_strategies": sorted(
-                p for p in pagination if (p in V2_ONLY_PAGINATION) == (only_v2 and not only_v3)
+                p for p in pagination if not only_v3 and (p in V2_ONLY_PAGINATION) == only_v2
             ),
             "protocols": sorted(
                 p
                 for p in protocols
                 if (p in V3_ONLY_PROTOCOLS) == only_v3 and not (only_v2 and not only_v3)
             ),
-            "joins": only_v2 or only_v3,
-            "body_templates": only_v2 or only_v3,
+            "joins": only_v2,
+            "body_templates": only_v2,
             "event_feeds": only_v3,
             "command_templates": only_v3,
             "multi_path_mapping": only_v3,

@@ -123,7 +123,12 @@ if command -v npm >/dev/null; then
   # plus a hash of uncommitted ui/ changes, stored next to the build.
   UI_TREE=""
   if UI_HEAD_TREE=$(git -C "$REPO_ROOT" rev-parse "HEAD:ui" 2>/dev/null); then
-    UI_DIRTY=$(git -C "$REPO_ROOT" status --porcelain -- ui 2>/dev/null | git -C "$REPO_ROOT" hash-object --stdin 2>/dev/null || echo "nodirty")
+    # Hash the content of uncommitted changes (tracked diff + untracked files), not just
+    # the list of changed paths: a second edit to an already-modified file must rebuild.
+    UI_DIRTY=$( { git -C "$REPO_ROOT" diff HEAD -- ui 2>/dev/null
+                  git -C "$REPO_ROOT" ls-files -z --others --exclude-standard -- ui 2>/dev/null \
+                    | (cd "$REPO_ROOT" && xargs -0 cat 2>/dev/null); } \
+                | git -C "$REPO_ROOT" hash-object --stdin 2>/dev/null || echo "nodirty")
     UI_TREE="$UI_HEAD_TREE/$UI_DIRTY"
   fi
   UI_TREE_FILE="$LOCAL_DIR/ui-tree"
