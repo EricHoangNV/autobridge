@@ -7,7 +7,7 @@ Owner priority (2026-10-29 10:40, supersedes the list below): **REQ-027 first.**
 describe the REQ-027 demo, so finish REQ-023 after REQ-027 lands (or update it then).
 
 ### REQ-027 — Auto-detect + auto-heal end to end on the live stack, and a demo that proves it (2026-10-29)
-Status: IN_PROGRESS (sbx1 2026-10-29 — knowledge-page check + sim-keys defaults MERGED; L3 output-room + reasoning-ledger MERGED; fix-first pair + gate-flake fix MERGED; sub-step 5 CODE DONE (rename heals live via wire-shape probe annotation + wire-resolving rename rule; 9 per-scenario live e2e green; demo redaction-raw-seam + base-release fixes; `make demo` 8/8 twice unkeyed; UI knowledge spec 2/2); remaining: owner keyed-stack run (make demo 8/8 twice, L3 reasoning line, /knowledge state, UI spec), then sub-step 6 bench rerun)
+Status: IN_PROGRESS (sbx1 2026-10-29 — knowledge-page check + sim-keys defaults MERGED; L3 output-room + reasoning-ledger MERGED; fix-first pair + gate-flake fix MERGED; sub-step 5 CODE DONE (rename heals live via wire-shape probe annotation + wire-resolving rename rule; 9 per-scenario live e2e green; demo redaction-raw-seam + base-release fixes; `make demo` 8/8 twice unkeyed; UI knowledge spec 2/2); remaining: owner keyed-stack run (make demo 8/8 twice, L3 reasoning line, /knowledge state, UI spec), then sub-step 6 bench rerun — DONE 2026-10-29 (cold V=0.333 E=0.833, warm V=0.500 E=0.583, gaps published; REQ-028 owns fixes))
 Why: it is the product's headline claim and today only FIAS (demo step 8) shows it. Owner checks on the host
 (2026-10-29, main at f61274b8, keyed local stack):
 - After REQ-024's honest fix (a62013dc) every engine arm escalates with 0 fixes: the detector output does not carry

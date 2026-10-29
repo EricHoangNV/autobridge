@@ -8,11 +8,13 @@ learning on the dev split (`autobridge_warm`).
 Provenance: frontier_agent via FakeOpenCodeDriver (model `fake-opencode`); engine arms via ReplayProvider (frontier `muse-spark-1.3`). Fake-labelled rows are rehearsal, not publication numbers: rerun with
 `FRONTIER_API_KEY` set for live tokens.
 
-Expected: the agent pays model tokens on every repair (it has no
-memory across repairs); the engine pays 0 throughout (deterministic
-repairs cost no model tokens by design) and learning shows in the
-rung row: cold repairs via the ladder once, then L0 hits; warm is
-L0 from the start.
+Expected (honest end-to-end, REQ-024 owner check on f32b4b4b): the
+agent pays model tokens on every repair (it has no memory across
+repairs). The engine arms derive everything from observation; they
+currently escalate every repeat for drifts the L1 rules cannot
+match on derived detector output — learning shows as rung 0 only
+once the detector gap closes (first repair proposes via the
+ladder, later repeats hit L0; warm hits L0 from the start).
 
 | repeat | frontier_agent | autobridge_cold | autobridge_warm |
 | --- | --- | --- | --- |
@@ -22,8 +24,8 @@ L0 from the start.
 | 4 | 2000 | 0 | 0 |
 | 5 | 2000 | 0 | 0 |
 
-Rung reached per repeat (learning is the route: first repair via the
-ladder, then L0 hits):
+Rung reached per repeat (learning is the route once the detector
+gap closes: first repair via the ladder, then L0 hits):
 
 | repeat | cold rung | cold decision | warm rung | warm decision |
 | --- | --- | --- | --- | --- |

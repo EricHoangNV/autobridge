@@ -142,14 +142,24 @@ hypotheses equal freshly engine-derived values). Deterministic first,
 models last: structural/auth/transport classes run zero model calls by
 construction.
 
-Honest scope (rehearsal finding, published as a loss): with no
-pre-diagnosed inputs the derived detector output does not yet carry the
-evidence the L1 rules need (observed envelope strategy, rename pairs),
-so rehearsal repairs escalate and only the semantic climbs spend (small)
-model tokens. The ladder shape is real — the engine genuinely observes
-each fault — and the gap is engine work (detector evidence), not bench
-masking: the old hand-fed deltas made repairs look solved that the
-running system cannot yet see.
+Honest scope (rehearsal finding 2026-10-29, `BENCH_TRIALS=1 make
+bench-ablation` on the local stack, published as losses): with no
+pre-diagnosed inputs the engine repairs 4/12 scenarios verified
+(`page_to_cursor`, `offset_to_cursor`, `cursor_repeat_token`,
+`meridian_cursor_renamed` — all 0 frontier tokens) and escalates the
+rest. Still open: Atlas `rename_guest_id` and Meridian
+`meridian_state_renamed` never repair (V=0, E=0 — the wire-shape
+evidence the rename rule needs is not yet derived on the bench
+path), and `autobridge_warm` is worse than cold on three scenarios
+(`rate_limit_429`, `transient_503`, `duplicate_late_records` — a
+learned fix reused on an unrelated drift: the L0 key is too coarse).
+Frontier arms did not run for real: `frontier_oneshot` fails loudly
+with `ReplayMissing` (no `FRONTIER_API_KEY`, no recording) and
+`frontier_agent` runs on the fake driver (rehearsal tokens only).
+The ladder shape is real — the engine genuinely observes each
+fault — and the gaps are engine work (detector evidence, L0 key
+scope), not bench masking: the old hand-fed deltas made repairs
+look solved that the running system cannot yet see.
 
 Metrics (`summarize_ablation`, per arm / per arm+scenario / overall, mean +
 95 % normal-approx interval, ≥5 trials): verified completion rate (verifier
@@ -415,17 +425,17 @@ layout, link behaviors) and outcome-graded; deep link verification stays
 in the FIAS e2e. Engine arms that cannot attempt a vendor in-process
 (FIAS has no HTTP connector spec) are recorded `executed: false` with
 the reason named — a fail-closed loss, the same for every arm.
-Known asymmetry (REQ-024 owner check on `f32b4b4b`, open): the engine
-arms currently run in-process from descriptor-built repair inputs
-(drift class, fingerprint delta, hypotheses), i.e. from a pre-diagnosed
-state, while the frontier arms start from docs and the live sandbox.
-The matched-budget inputs are identical, but the diagnosis is not. The
-owner check requires the real end-to-end engine path (sync → detector →
-classifier → hypothesis engine → ladder → gate, no case-supplied
-diagnostics) before the headline comparison is quoted; when that fix
-lands in `ablation.py`, `beacon_run.py` adopts it (`beacon_case_for` /
-`_run_arm` rewiring). Until then, beacon engine-vs-frontier deltas carry
-this caveat and are published as-is.
+Known asymmetry (REQ-024 owner check on `f32b4b4b`, FIXED
+2026-10-29): engine arms used to run in-process from descriptor-built
+repair inputs (drift class, fingerprint delta, hypotheses), i.e. from
+a pre-diagnosed state, while the frontier arms start from docs and
+the live sandbox. The fix landed in `bench/ablation.py` (moved out
+of `src/autobridge`, no case-supplied diagnostics — the loader
+refuses cases that smuggle them, pinned by the `handle`-kwargs spy
+test) and `bench/beacon_run.py` adopts it (`derive_beacon_diagnostics`
+observes each beacon instance end to end through the public
+descriptor only). Beacon engine-vs-frontier deltas from runs before
+the fix carry this caveat and are published as-is.
 
 Honest scope: fault *families* are known by design (that is the engine's
 everyday knowledge: renames, nesting, pagination switches, code lists,
