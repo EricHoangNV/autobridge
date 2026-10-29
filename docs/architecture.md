@@ -43,7 +43,7 @@ Design principles (plan §1):
 | `sim-fias-pabx` | `simulators` | `simulators.fias_pabx.app:app` | simulator | 8118 | FIAS PABX simulator REQ-022 sub-step A (on-premise exchange over TCP: dials the host, admin API; edge-net only) |
 | `mcp-hotel` | `mcp_stretch` | `mcp_stretch.app:app` | engine | 8115 | MCP Guardian Phase 2 (mock HotelTools V1→V2 + compatibility gateway, pinned-consumer replay) |
 | `ui` | `ui` | Node stub → Next.js 15 (W7) | user | 8107 | Screens over the control plane (connectors, repairs, knowledge, simulators) |
-| `bench` | `autobridge.bench` | `autobridge.bench.app:app` | engine | 8108 | Matched-budget harness (AutoBridge vs baseline) |
+| `bench` | `bench` | `bench.app:app` | engine | 8108 | Matched-budget harness (AutoBridge vs baseline) |
 
 All images are built from `Dockerfile.engine` (engine zone, `APP_MODULE`
 switches the app), `verifier/Dockerfile` (context repo root, but only
@@ -135,9 +135,9 @@ autobridge/
 │   ├── evidence/    store.py  redact.py
 │   ├── control/     app.py  routes/  models.py  jobs.py  sse.py  schemas.py
 │   ├── engine/      build_run.py  sync_run.py  repair_run.py  monitor.py
-│   ├── bench/       harness.py  baseline_coding_agent.py  scoring.py  report.py
 │   ├── health.py    config.py
 │   └── __init__.py
+├── bench/           harness.py  ablation.py  faults.py  beacon_run.py  baseline_coding_agent.py  scoring.py  report.py  demo.py (REQ-024 owner check: moved out of src/autobridge; imports the engine like the tests do, never verifier)
 ├── verifier/        pyproject.toml  app.py  oracle.py  canonical_checks.py  hidden_cases/{dev,heldout}
 ├── simulators/      pyproject.toml  common/  atlaspms/  harborpms/  legacystay/ (Phase 2)  docs/  scenarios/
 ├── generated/       connectors/<id>/<release>/spec.yaml + build-report.json

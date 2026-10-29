@@ -6,11 +6,12 @@ arms is the engine. All arms run under the same matched budget
 (``HarnessInputs``: docs volume, sandbox URL, credentials, visible tests,
 token ceiling, wall clock) — the multi-arm self-test
 :func:`assert_all_inputs_equal` extends :func:`harness.assert_inputs_equal`
-to every arm.
+to every arm, and :func:`assert_arm_task_setup_equal` proves every arm
+resolved the same task setup (pre-drift spec) from its inputs.
 
 Arms (REQ-024 B2):
 
-* ``frontier_oneshot`` — the model alone, one prompt with the docs
+* ``frontier_oneshot`` — the model alone, one prompt with docs
   (:func:`one_shot.run_one_shot_arm` via the frontier provider).
 * ``frontier_agent`` — the model as a coding agent with tools (the
   untrained-frontier baseline): :func:`harness.run_baseline_arm` driven by
@@ -27,11 +28,19 @@ headline. Metrics per arm, scenario and overall carry mean + 95 % interval
 over trials (:func:`summarize_ablation`); the learning curve
 (:func:`run_learning_curve`) injects the same drift five times in a row.
 
-Trust boundary (plan §1.2): this module reads ``simulators/scenarios/*.yaml``
-and ``generated/connectors/*/reference/spec.yaml`` from the filesystem
-only — the sanctioned bench exception — and never imports ``verifier`` or
-``simulators``. Grading goes through the verifier's HTTP hidden mode via a
-caller-supplied ``verify_fn`` (cf. :func:`scoring.verify_via_http`).
+REQ-024 owner check on f32b4b4b: every arm gets exactly the same inputs
+(the pre-drift spec, the docs, the fault served for the scenario,
+budgets). The engine arms run the real path end to end — sync against
+the served fault → detector → classifier → hypothesis engine → ladder →
+verifier gate — with no case-supplied drift class, delta, hypotheses or
+yield count. ``config/ablation_cases.yaml`` holds only equal inputs plus
+grading-only data; :func:`ablation_case_for_scenario` refuses cases that
+smuggle diagnostics. Trust boundary: the harness (top-level ``bench/``,
+outside ``src/autobridge``) reads the filesystem and drives simulator
+serving code the way the tests do, but never imports ``verifier`` —
+answer keys stay in their package; grading goes through the verifier's
+HTTP hidden mode via a caller-supplied ``verify_fn``
+(cf. :func:`scoring.verify_via_http`).
 """
 
 from __future__ import annotations
@@ -51,9 +60,9 @@ import yaml
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from autobridge.bench.harness import ArmResult as _ArmResult
+    from bench.harness import ArmResult as _ArmResult
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCENARIOS_DIR = REPO_ROOT / "simulators" / "scenarios"
 GENERATED_DIR = REPO_ROOT / "generated" / "connectors"
 CASES_PATH = REPO_ROOT / "config" / "ablation_cases.yaml"
@@ -86,7 +95,7 @@ MIN_TRIALS_FOR_INTERVAL = 5
 
 
 # ---------------------------------------------------------------------------
-# Case library: scenario -> repair inputs (mirrors the model-usage matrix)
+# Case library: equal inputs per scenario (REQ-024 owner check on f32b4b4b)
 # ---------------------------------------------------------------------------
 
 
@@ -113,110 +122,68 @@ def _docs_spec(docs_path: str, connector_id: str, vocabulary: str = "v2") -> dic
     return dict(result.draft_spec)
 
 
-def _fd(**kwargs: Any) -> Any:
-    from autobridge.drift.fingerprint import FingerprintDelta  # noqa: PLC0415
-
-    return FingerprintDelta(**kwargs)
-
-
-def _delta_pagination_strategy(previous: str, current: str, operations: list[str] | None = None) -> Any:
-    ops = operations or ["list_reservations", "list_folios"]
-    return _fd(
-        fingerprint_changed=True,
-        pagination_changed=True,
-        keys_changed=False,
-        types_changed=False,
-        changed_entities=[],
-        pagination_details={
-            op: {"previous": {"strategy": previous}, "current": {"strategy": current}} for op in ops
-        },
-        keys_details={},
-        types_details={},
-    )
-
-
-def _delta_rename(entity: str, old: str, new: str) -> Any:
-    return _fd(
-        fingerprint_changed=True,
-        pagination_changed=False,
-        keys_changed=False,
-        types_changed=True,
-        changed_entities=[entity],
-        pagination_details={},
-        keys_details={},
-        types_details={entity: {"previous": {old: "str", "other": "str"}, "current": {new: "str", "other": "str"}}},
-    )
-
-
-def _delta_cursor_next_path(operation: str, previous: str, current: str) -> Any:
-    return _fd(
-        fingerprint_changed=True,
-        pagination_changed=True,
-        keys_changed=False,
-        types_changed=False,
-        changed_entities=["Reservation"],
-        pagination_details={operation: {"previous": {"next_path": previous}, "current": {"next_path": current}}},
-        keys_details={},
-        types_details={},
-    )
-
-
 def _offset_variant_spec(base: str) -> dict[str, Any]:
-    """Reference spec with page pagination rewritten to offset (generic)."""
+    """Reference spec with page pagination rewritten to offset (generic).
+
+    The variant is a valid pre-drift spec: offset strategy with explicit
+    offset/limit params, so it syncs for real (the arm path validates).
+    """
     spec = copy.deepcopy(_load_reference_spec(base))
     for op in spec.get("operations", {}).values():
         pag = op.get("pagination") if isinstance(op, dict) else None
         if isinstance(pag, dict) and pag.get("strategy") == "page":
             pag["strategy"] = "offset"
+            pag["offset_param"] = "offset"
+            pag["limit_param"] = "limit"
+            pag["page_param"] = None
     return spec
 
 
-def _delta_generic() -> Any:
-    return _fd(
-        fingerprint_changed=True,
-        pagination_changed=False,
-        keys_changed=False,
-        types_changed=False,
-        changed_entities=[],
-        pagination_details={},
-        keys_details={},
-        types_details={},
-    )
+#: Diagnostic keys the case file must NEVER carry (grading-only ``expected``
+#: is the sole exception). The loader refuses cases containing them, so a
+#: pre-diagnosed drift label, delta, hypothesis set, yield count, rule hint
+#: or post-drift reference cannot reach an arm.
+_FORBIDDEN_CASE_KEYS = frozenset(
+    {
+        "drift_class",
+        "delta",
+        "hypotheses",
+        "enumerator_yield_count",
+        "extra",
+        "validate_against",
+    }
+)
 
-
-def _gross_net_hypotheses() -> list[Any]:
-    from autobridge.discovery.docs_reader import Provenance  # noqa: PLC0415
-    from autobridge.discovery.hypotheses import Hypothesis  # noqa: PLC0415
-
-    prov = (Provenance(source="demo:gross_to_net", line=1, snippet="total_amount reads net"),)
-    return [
-        Hypothesis(
-            id="gross_is_canonical",
-            family="amount",
-            claim="total_amount must stay gross",
-            candidate_mapping_fragment={"family": "amount", "field": "total_amount"},
-            prior=0.41,
-            evidence_for=prov,
-        ),
-        Hypothesis(
-            id="net_is_canonical",
-            family="amount",
-            claim="total_amount tracks net",
-            candidate_mapping_fragment={"family": "amount", "field": "net_amount"},
-            prior=0.39,
-            evidence_for=prov,
-        ),
-    ]
-
+#: Derived drift classes that justify a model climb (phase 2). Deterministic
+#: first (plan §2.5): every other class — structural, auth, transport,
+#: capability, duplicate, unknown-with-nothing-observed — runs the
+#: deterministic ladder only, with zero model calls.
+_MODEL_AMBIGUITY_CLASSES = frozenset({"SEMANTIC_VALUE_DRIFT"})
 
 #: Case data lives in config/ablation_cases.yaml (vendor names stay out of
 #: engine source per the trust-boundary guard). The builders below are
-#: generic machinery dispatched by the ``kind`` fields of that file.
+#: generic machinery dispatched by the ``kind`` fields of that file; every
+#: vendor-specific string comes from this file at runtime.
 def _load_case_data() -> dict[str, dict[str, Any]]:
     doc = yaml.safe_load(CASES_PATH.read_text(encoding="utf-8")) or {}
     cases = doc.get("cases")
     if not isinstance(cases, dict) or not cases:
         raise RuntimeError(f"no ablation cases in {CASES_PATH}")
+    for scenario_id, entry in cases.items():
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"malformed ablation case for {scenario_id!r}")
+        smuggled = _FORBIDDEN_CASE_KEYS.intersection(entry)
+        if smuggled:
+            raise RuntimeError(
+                f"ablation case {scenario_id!r} smuggles diagnostics {sorted(smuggled)}: "
+                "the case file holds equal inputs + grading-only data (REQ-024 owner check)"
+            )
+        spec_cfg = entry.get("spec")
+        if not isinstance(spec_cfg, dict) or "kind" not in spec_cfg:
+            raise RuntimeError(f"ablation case {scenario_id!r} needs a spec source")
+        docs_ref = entry.get("docs")
+        if not isinstance(docs_ref, str) or not docs_ref:
+            raise RuntimeError(f"ablation case {scenario_id!r} needs a docs ref")
     return cases
 
 
@@ -235,31 +202,16 @@ def _build_spec(spec_cfg: dict[str, Any]) -> dict[str, Any]:
     raise KeyError(f"unknown ablation spec kind {kind!r}")
 
 
-def _build_delta(delta_cfg: dict[str, Any]) -> Any:
-    kind = str(delta_cfg.get("kind", ""))
-    if kind == "generic":
-        return _delta_generic()
-    if kind == "pagination_strategy":
-        return _delta_pagination_strategy(
-            str(delta_cfg["previous"]),
-            str(delta_cfg["current"]),
-            list(delta_cfg.get("operations") or ["list_reservations", "list_folios"]),
-        )
-    if kind == "rename":
-        return _delta_rename(str(delta_cfg["entity"]), str(delta_cfg["old"]), str(delta_cfg["new"]))
-    if kind == "cursor_next_path":
-        return _delta_cursor_next_path(
-            str(delta_cfg["operation"]), str(delta_cfg["previous"]), str(delta_cfg["current"])
-        )
-    raise KeyError(f"unknown ablation delta kind {kind!r}")
-
-
-def _hypotheses_for(name: str | None) -> tuple[Any, ...]:
-    if name is None:
-        return ()
-    if name == "gross_net":
-        return tuple(_gross_net_hypotheses())
-    raise KeyError(f"unknown ablation hypotheses {name!r}")
+def _spec_connector_id(spec_cfg: dict[str, Any]) -> str:
+    """Connector id the pre-drift spec belongs to (fault-serving vendor)."""
+    kind = str(spec_cfg.get("kind", ""))
+    if kind == "generated":
+        return str(spec_cfg["connector"])
+    if kind == "generated_offset":
+        return str(spec_cfg["base"])
+    if kind == "docs":
+        return str(spec_cfg["connector"])
+    raise KeyError(f"unknown ablation spec kind {kind!r}")
 
 
 def _case_entry(scenario_id: str) -> dict[str, Any]:
@@ -274,56 +226,58 @@ def _case_entry(scenario_id: str) -> dict[str, Any]:
 
 
 def expected_outcome_for(scenario_id: str) -> str:
-    """Correct outcome class for a scenario (answer key lives in the YAML catalog)."""
+    """Correct outcome class for a scenario (answer key lives in the YAML catalog).
+
+    GRADING ONLY — arms never call this. The expected class judges arm
+    results; it is never an arm input.
+    """
     return str(_case_entry(scenario_id).get("expected", "no_patch"))
 
 
 @dataclass(frozen=True, slots=True)
 class AblationCase:
-    """Repair inputs for one ablation scenario (filesystem sources only)."""
+    """Equal task setup for one ablation scenario (shared by every arm).
+
+    Holds ONLY what every arm gets: the scenario id, the pre-drift spec
+    under repair, the connector it belongs to (fault-serving vendor) and
+    the vendor docs the task is described in. No drift class, delta,
+    hypotheses, yield count, rule hint or post-drift reference — the
+    engine arms derive those from observation.
+    """
 
     scenario_id: str
     spec: dict[str, Any]
-    drift_class: str
-    fingerprint_delta: Any
-    extra: dict[str, Any]
-    hypotheses: tuple[Any, ...] = ()
-    enumerator_yield_count: int | None = None
-    validate_against: dict[str, Any] | None = None
+    connector_id: str
+    docs_ref: str
 
 
 def ablation_case_for_scenario(scenario_id: str) -> AblationCase:
-    """Build repair inputs for a dev HTTP scenario.
+    """Equal task setup for a dev HTTP scenario (spec + docs, no diagnostics).
 
     Reads ``simulators/scenarios/<id>.yaml`` to confirm the scenario is a
     dev HTTP fault (fias_tcp transport is skipped: the bench arms are HTTP
-    only), then assembles the spec + delta + extra the ladder needs.
-    Raises :class:`KeyError` for unknown scenarios and :class:`ValueError`
-    for skipped (non-HTTP) ones.
+    only), then loads the pre-drift spec from the case's spec source.
+    Raises :class:`KeyError` for unknown scenarios, :class:`ValueError`
+    for skipped (non-HTTP) ones and :class:`RuntimeError` for cases that
+    smuggle diagnostics.
     """
     try:
         entry = _case_entry(scenario_id)
     except KeyError:
-        raise KeyError(f"no ablation case for scenario {scenario_id!r}") from None
+        raise KeyError(f"no ablation case for {scenario_id!r}") from None
     yaml_path = SCENARIOS_DIR / f"{scenario_id}.yaml"
     if yaml_path.is_file():
         doc = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
         if doc.get("transport", "http") not in ("http", "https", None) or str(doc.get("transport", "http")) == "fias_tcp":
             raise ValueError(f"scenario {scenario_id!r} is not an HTTP bench fault (skipped)")
     spec_cfg = entry.get("spec")
-    delta_cfg = entry.get("delta")
-    if not isinstance(spec_cfg, dict) or not isinstance(delta_cfg, dict):
-        raise KeyError(f"malformed ablation case for scenario {scenario_id!r}")
-    va_cfg = entry.get("validate_against")
+    if not isinstance(spec_cfg, dict):
+        raise KeyError(f"malformed ablation case for {scenario_id!r}")
     return AblationCase(
         scenario_id=scenario_id,
         spec=_build_spec(spec_cfg),
-        drift_class=str(entry["drift_class"]),
-        fingerprint_delta=_build_delta(delta_cfg),
-        extra=dict(entry.get("extra") or {}),
-        hypotheses=_hypotheses_for(entry.get("hypotheses")),
-        enumerator_yield_count=entry.get("enumerator_yield_count"),
-        validate_against=_build_spec(va_cfg) if isinstance(va_cfg, dict) else None,
+        connector_id=_spec_connector_id(spec_cfg),
+        docs_ref=str(entry["docs"]),
     )
 
 
@@ -366,7 +320,7 @@ def ablation_provider(prefer: str = "auto") -> Any:
 
 def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None) -> Any:
     """Arm a (``frontier_oneshot``): the model alone, one prompt with docs."""
-    from autobridge.bench.one_shot import run_one_shot_arm  # noqa: PLC0415
+    from bench.one_shot import run_one_shot_arm  # noqa: PLC0415
 
     result = run_one_shot_arm(inputs, provider=provider or ablation_provider())
     # run_one_shot_arm labels arm="one_shot"; relabel to the ablation name.
@@ -383,7 +337,7 @@ def frontier_agent_driver() -> Any:
     """
     import os as _os
 
-    from autobridge.bench.baseline_coding_agent import (  # noqa: PLC0415
+    from bench.baseline_coding_agent import (  # noqa: PLC0415
         FakeOpenCodeDriver,
         OpenCodeCliDriver,
         get_baseline_driver,
@@ -404,9 +358,151 @@ def frontier_agent_driver() -> Any:
 
 def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None) -> Any:
     """Arm b (``frontier_agent``): the model as a coding agent with tools."""
-    from autobridge.bench.harness import run_baseline_arm  # noqa: PLC0415
+    from bench.harness import run_baseline_arm  # noqa: PLC0415
 
     return run_baseline_arm(inputs, driver=driver or frontier_agent_driver(), arm="frontier_agent")
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedDiagnostics:
+    """What the engine itself observed for one scenario × trial.
+
+    Produced by :func:`derive_diagnostics` from the served fault only —
+    never from case labels. ``drift_class`` comes from the classifier over
+    real sync signals, ``fingerprint_delta`` from the detector (faulted vs
+    baseline observation), ``hypotheses`` from the engine's own hypothesis
+    enumerator over the vendor docs.
+    """
+
+    drift_class: str
+    fingerprint_delta: Any
+    signals: tuple[Any, ...]
+    hypotheses: tuple[Any, ...] = ()
+    classification_reason: str = ""
+
+
+def derive_from_summaries(
+    spec: dict[str, Any],
+    *,
+    baseline_summary: dict[str, Any],
+    faulted_summary: dict[str, Any],
+) -> DerivedDiagnostics:
+    """Detect + classify from two sync observations (no case labels in).
+
+    Shared core for ablation (served sim scenarios) and beacon (served
+    public instances): the detector diffs the faulted observation against
+    the baseline observation, and the classifier names the drift class
+    from real sync signals.
+    """
+    from autobridge.drift.classifier import classify  # noqa: PLC0415
+    from autobridge.drift.fingerprint import compute_fingerprint, diff_fingerprints  # noqa: PLC0415
+    from autobridge.drift.signals import signals_from_sync  # noqa: PLC0415
+
+    prev_fp = compute_fingerprint(
+        spec, baseline_summary.get("operation_results", {}), baseline_summary.get("canonical_records", {})
+    )
+    curr_fp = compute_fingerprint(
+        spec, faulted_summary.get("operation_results", {}), faulted_summary.get("canonical_records", {})
+    )
+    delta = diff_fingerprints(prev_fp, curr_fp)
+    signals = signals_from_sync(
+        faulted_summary, spec=spec, previous_fingerprint=prev_fp, current_fingerprint=curr_fp
+    )
+    classification = classify(signals)
+    return DerivedDiagnostics(
+        drift_class=classification.drift_class,
+        fingerprint_delta=delta,
+        signals=tuple(signals),
+        classification_reason=classification.reason,
+    )
+
+
+def derive_diagnostics(
+    spec: dict[str, Any],
+    *,
+    scenario_id: str,
+    connector_id: str,
+    seed: int,
+) -> DerivedDiagnostics:
+    """Sync against the served fault; detect; classify (no case labels in).
+
+    The real end-to-end path: the fault for ``scenario_id`` is served
+    (:mod:`bench.faults`), the pre-drift ``spec`` syncs against it and
+    against the baseline shape, and :func:`derive_from_summaries`
+    detects + classifies. Nothing here reads the case catalog beyond the
+    spec/docs sources the trial resolved.
+    """
+    from autobridge.engine.sync_run import execute_sync  # noqa: PLC0415
+    from bench.faults import fake_env, fault_client_for  # noqa: PLC0415
+
+    with fake_env():
+        baseline_summary = execute_sync(spec, fault_client_for("baseline", seed=seed, connector_id=connector_id))
+        faulted_summary = execute_sync(
+            spec, fault_client_for(scenario_id, seed=seed, connector_id=connector_id)
+        )
+    return derive_from_summaries(spec, baseline_summary=baseline_summary, faulted_summary=faulted_summary)
+
+
+def enumerate_hypotheses(*, docs_ref: str, scenario_id: str) -> tuple[Any, ...]:  # noqa: ARG001 - scenario labels the docs read, not a diagnostic
+    """Enumerate repair hypotheses with the engine's own hypothesis engine.
+
+    Docs-driven (W5): read the vendor docs, classify them, enumerate
+    across all families. Deterministic, no model, no network. Returns ()
+    when docs cannot be read — the arm then escalates without a climb
+    instead of guessing.
+    """
+    from autobridge.discovery.classifiers import classify_all  # noqa: PLC0415
+    from autobridge.discovery.docs_reader import read_docs_text  # noqa: PLC0415
+    from autobridge.discovery.hypotheses import HypothesisEnumerator  # noqa: PLC0415
+
+    try:
+        text = (REPO_ROOT / docs_ref).read_text(encoding="utf-8")
+        iface = read_docs_text(text, docs_ref)
+        classification = classify_all(iface)
+        return tuple(HypothesisEnumerator().enumerate_all(iface, classification))
+    except Exception:
+        return ()
+
+
+def pre_drift_spec_for(scenario_id: str) -> dict[str, Any]:
+    """Pre-drift spec every arm receives for *scenario_id* (equal input).
+
+    The same resolver serves frontier and engine arms: the frontier arms
+    build from the docs, the engine arms repair this spec. The resolved
+    spec is task setup, not a diagnosis.
+    """
+    return dict(ablation_case_for_scenario(scenario_id).spec)
+
+
+def assert_arm_task_setup_equal(named: dict[str, dict[str, Any]]) -> None:
+    """Every arm resolved the same pre-drift spec (self-test).
+
+    Extends the matched-budget contract: any arm holding a different
+    starting spec fails loudly, naming the arm pair.
+    """
+    import json as _json
+
+    names = list(named)
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a = _json.dumps(named[names[i]], sort_keys=True, default=str)
+            b = _json.dumps(named[names[j]], sort_keys=True, default=str)
+            if a != b:
+                raise AssertionError(
+                    f"ablation arms {names[i]!r} vs {names[j]!r} resolved different pre-drift specs"
+                )
+
+
+def _default_derive(
+    spec: dict[str, Any], case: AblationCase, inputs: Any
+) -> DerivedDiagnostics:
+    """Default arm serving: ablation sim scenarios (equal inputs only)."""
+    return derive_diagnostics(
+        spec,
+        scenario_id=case.scenario_id,
+        connector_id=case.connector_id,
+        seed=int(getattr(inputs, "seed", 0) or 0),
+    )
 
 
 def run_engine_arm(
@@ -417,18 +513,30 @@ def run_engine_arm(
     provider: Any | None = None,
     knowledge: Any | None = None,
     session: Any | None = None,
+    derive: Callable[[dict[str, Any], AblationCase, Any], DerivedDiagnostics] | None = None,
 ) -> Any:
-    """Run an engine arm (c/d/e) in-process through RepairController.
+    """Run an engine arm (c/d/e) end to end through RepairController.
 
+    The real path, with no case-supplied diagnostics: sync the pre-drift
+    spec against the served fault → detector → classifier → the engine's
+    own hypothesis enumerator → ladder → verifier gate (grading). Phase 1
+    runs the deterministic ladder (never a model call); phase 2 climbs
+    with the shared frontier provider only when the derived drift class
+    is semantically ambiguous (``SEMANTIC_VALUE_DRIFT``) and the
+    enumerator yielded hypotheses.
+
+    ``derive`` overrides the serving step (ablation serves sim scenarios;
+    the beacon run serves public instances) — it must derive from equal
+    inputs only (spec + public serving context), never from diagnostics.
     The ladder, verifier gate and budgets are kept for every engine arm;
     only the knowledge differs: ``engine_no_knowledge`` disables L0+L1,
     ``autobridge_cold`` starts from an empty cache, ``autobridge_warm``
     reuses the caller-supplied (dev-split-learned) cache.
     """
-    from autobridge.bench.harness import ArmResult  # noqa: PLC0415
     from autobridge.llm.provider import Budget  # noqa: PLC0415
     from autobridge.repair.controller import RepairController  # noqa: PLC0415
     from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
+    from bench.harness import ArmResult  # noqa: PLC0415
 
     if ablation not in ENGINE_ARMS:
         raise ValueError(f"unknown engine ablation {ablation!r}")
@@ -437,31 +545,42 @@ def run_engine_arm(
     token_ceiling = int(getattr(inputs, "token_ceiling", 0) or 20000)
     wall_clock = float(getattr(inputs, "wall_clock_s", 0) or 300.0)
     budget = Budget(max_frontier_tokens=token_ceiling, max_small_tokens=token_ceiling, max_wall=wall_clock)
-    # Mirror the model-usage matrix: zero-call rows wire no provider, so any
-    # model call is a failure. Only semantic drifts (hypotheses) climb with a
-    # provider; everything else runs the deterministic ladder (L0/L1).
-    needs_model = bool(case.hypotheses)
-    active_provider = (provider or ablation_provider()) if needs_model else None
     start = time.monotonic()
     try:
-        result = ctrl.handle(
+        # Observe the fault: sync → detect → classify (engine-derived).
+        # The default serves ablation sim scenarios; beacon passes its own
+        # public-descriptor serving. Either way: observation, never labels.
+        derive_fn = derive or _default_derive
+        diag = derive_fn(case.spec, case, inputs)
+        run_id = f"ablation-{ablation}-{case.scenario_id}-{getattr(inputs, 'trial', 0)}"
+        common = dict(
             spec=case.spec,
-            drift_class=case.drift_class,
-            signals=[],
-            fingerprint_delta=case.fingerprint_delta,
-            extra=case.extra,
+            drift_class=diag.drift_class,
+            signals=list(diag.signals),
+            fingerprint_delta=diag.fingerprint_delta,
+            extra={},
             vendor=None,
             session=session,
-            hypotheses=list(case.hypotheses) or None,
-            enumerator_yield_count=case.enumerator_yield_count,
-            provider=active_provider,
             budget=budget,
             scenario=case.scenario_id,
-            validate_against=case.validate_against,
-            run_id=f"ablation-{ablation}-{case.scenario_id}-{getattr(inputs, 'trial', 0)}",
+            run_id=run_id,
             enable_knowledge=ablation != "engine_no_knowledge",
             enable_rules=ablation != "engine_no_knowledge",
         )
+        # Phase 1: deterministic ladder first (never a model call).
+        result = ctrl.handle(provider=None, hypotheses=None, enumerator_yield_count=None, **common)
+        # Phase 2: model climb only for derived semantic ambiguity with
+        # engine-enumerated hypotheses (deterministic first, models last).
+        if result.decision != "propose" and diag.drift_class in _MODEL_AMBIGUITY_CLASSES:
+            hyps = enumerate_hypotheses(docs_ref=case.docs_ref, scenario_id=case.scenario_id)
+            if hyps:
+                active_provider = provider or ablation_provider()
+                result = ctrl.handle(
+                    provider=active_provider,
+                    hypotheses=list(hyps),
+                    enumerator_yield_count=len(hyps),
+                    **common,
+                )
         elapsed_ms = (time.monotonic() - start) * 1000.0
         usage = dict(result.model_usage or {})
         frontier = int(usage.get("frontier_tokens", 0) or 0)
@@ -544,7 +663,7 @@ def assert_all_inputs_equal(named: dict[str, Any]) -> None:
     Extends the matched-budget self-test (REQ-024 B2) from two arms to all
     five: any differing field raises naming the arm pair and the field.
     """
-    from autobridge.bench.harness import assert_inputs_equal  # noqa: PLC0415
+    from bench.harness import assert_inputs_equal  # noqa: PLC0415
 
     names = list(named)
     for i in range(len(names)):
@@ -575,7 +694,7 @@ def run_ablation_trial(
     OpenCode/fake driver by env, and in-process engine arms (warm arm uses
     *knowledge_warm* when given).
     """
-    from autobridge.bench.harness import make_trial_inputs  # noqa: PLC0415
+    from bench.harness import make_trial_inputs  # noqa: PLC0415
 
     inputs = make_trial_inputs(config, scenario_id, trial)
     per_arm: dict[str, Any] = {arm: make_trial_inputs(config, scenario_id, trial) for arm in ABLATION_ARMS}
@@ -609,12 +728,12 @@ def run_ablation_trial(
         except Exception as exc:
             # An arm that raises is a failed arm, never a failed trial:
             # record it (the harness scores losses, never drops rows).
-            from autobridge.bench.harness import ArmResult  # noqa: PLC0415
+            from bench.harness import ArmResult  # noqa: PLC0415
 
             res = ArmResult(arm=arm, inputs=per_arm[arm], success=False, error=f"{type(exc).__name__}: {exc}"[:1000])  # type: ignore[arg-type]
         # Allow dict-like runners; coerce.
         if not hasattr(res, "arm"):
-            from autobridge.bench.harness import ArmResult  # noqa: PLC0415
+            from bench.harness import ArmResult  # noqa: PLC0415
 
             res = ArmResult(arm=arm, inputs=per_arm[arm], success=bool(res))  # type: ignore[arg-type]
         results[arm] = res
@@ -646,35 +765,31 @@ def warm_knowledge(scenario_ids: list[str], *, provider: Any | None = None) -> A
 
     Returns the :class:`KnowledgeCache` the ``autobridge_warm`` arm uses.
     Only dev-split scenarios are learned (never held-out); repairs that do
-    not propose cache nothing.
+    not propose cache nothing. Learning runs the same end-to-end arm path
+    (observe → derive → deterministic repair), never case diagnostics.
     """
-    from autobridge.repair.controller import RepairController  # noqa: PLC0415
     from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
+    from bench.harness import HarnessConfig, make_trial_inputs  # noqa: PLC0415
 
     cache = KnowledgeCache()
-    ctrl = RepairController(knowledge_cache=cache)
     prov = provider or ablation_provider()
+    cfg = HarnessConfig()
     for sid in scenario_ids:
         try:
             case = ablation_case_for_scenario(sid)
-        except (KeyError, ValueError):
+        except (KeyError, ValueError, RuntimeError):
             continue
-        # A session is required: handle() only caches verified propose
-        # patches (L0 future hits) when it can persist the RepairRun.
+        # A session is required: handle() only caches propose patches
+        # (L0 future hits) when it can persist the RepairRun.
         session = _mem_session()
         try:
-            ctrl.handle(
-                spec=case.spec,
-                drift_class=case.drift_class,
-                fingerprint_delta=case.fingerprint_delta,
-                extra=case.extra,
+            run_engine_arm(
+                make_trial_inputs(cfg, sid, 0),
+                case,
+                ablation="autobridge_cold",
+                provider=prov,
+                knowledge=cache,
                 session=session,
-                hypotheses=list(case.hypotheses) or None,
-                enumerator_yield_count=case.enumerator_yield_count,
-                provider=prov if case.hypotheses else None,
-                scenario=sid,
-                validate_against=case.validate_against,
-                run_id=f"warmup-{sid}",
             )
             session.commit()
         except Exception:
@@ -774,7 +889,7 @@ def grade_ablation_trial(trial: AblationTrialResult, *, verifier_url: str | None
     A ``verifier_unreachable`` transport failure degrades that arm to
     unverified rather than fail-guessed.
     """
-    from autobridge.bench.scoring import normalize_verify_response, verify_via_http  # noqa: PLC0415
+    from bench.scoring import normalize_verify_response, verify_via_http  # noqa: PLC0415
 
     case = None
     try:
@@ -960,17 +1075,21 @@ def run_learning_curve(
     """Inject the same drift ``repeats`` times; frontier tokens per repair.
 
     Arms: ``frontier_agent`` (fake driver pays every time), engine arms
-    ``autobridge_cold`` (first repair via the ladder, then L0 hits) and
-    ``autobridge_warm`` (pre-warmed on the dev split: L0 from the start).
+    ``autobridge_cold`` (empty knowledge) and ``autobridge_warm``
+    (pre-warmed on the dev split). Rows carry frontier tokens, the rung
+    reached and the decision. Honest end-to-end (REQ-024 owner check on
+    f32b4b4b): the arms derive everything from observation, so the curve
+    shows what the ladder genuinely does — currently every repeat
+    escalates for drifts the L1 rules cannot match on derived deltas.
+    When the detector gap closes, the first repair proposes via the
+    ladder and later repeats hit L0 (cold), warm hits L0 from the start.
     Returns the raw rows plus per-arm totals; :func:`write_learning_curve_md`
-    renders the file. Rows carry frontier tokens, the rung reached and the
-    decision, so learning is visible even when every token count is 0
-    (deterministic repairs cost no model tokens by design — the ladder
-    learns the *route*, L1 rule once, then L0 hits).
+    renders the file. Fake-labelled rows are rehearsal, not publication
+    numbers: rerun with ``FRONTIER_API_KEY`` set for live tokens.
     """
-    from autobridge.bench.baseline_coding_agent import FakeOpenCodeDriver  # noqa: PLC0415
-    from autobridge.bench.harness import HarnessConfig, make_trial_inputs  # noqa: PLC0415
     from autobridge.llm.provider import Usage  # noqa: PLC0415
+    from bench.baseline_coding_agent import FakeOpenCodeDriver  # noqa: PLC0415
+    from bench.harness import HarnessConfig, make_trial_inputs  # noqa: PLC0415
 
     prov = provider or ablation_provider()
     case = ablation_case_for_scenario(scenario_id)
@@ -1059,11 +1178,13 @@ def write_learning_curve_md(result: dict[str, Any], path: str | pathlib.Path) ->
         "Fake-labelled rows are rehearsal, not publication numbers: rerun with",
         "`FRONTIER_API_KEY` set for live tokens.",
         "",
-        "Expected: the agent pays model tokens on every repair (it has no",
-        "memory across repairs); the engine pays 0 throughout (deterministic",
-        "repairs cost no model tokens by design) and learning shows in the",
-        "rung row: cold repairs via the ladder once, then L0 hits; warm is",
-        "L0 from the start.",
+        "Expected (honest end-to-end, REQ-024 owner check on f32b4b4b): the",
+        "agent pays model tokens on every repair (it has no memory across",
+        "repairs). The engine arms derive everything from observation; they",
+        "currently escalate every repeat for drifts the L1 rules cannot",
+        "match on derived detector output — learning shows as rung 0 only",
+        "once the detector gap closes (first repair proposes via the",
+        "ladder, later repeats hit L0; warm hits L0 from the start).",
         "",
         "| repeat | frontier_agent | autobridge_cold | autobridge_warm |",
         "| --- | --- | --- | --- |",
@@ -1075,8 +1196,8 @@ def write_learning_curve_md(result: dict[str, Any], path: str | pathlib.Path) ->
         )
     lines += [
         "",
-        "Rung reached per repeat (learning is the route: first repair via the",
-        "ladder, then L0 hits):",
+        "Rung reached per repeat (learning is the route once the detector",
+        "gap closes: first repair via the ladder, then L0 hits):",
         "",
         "| repeat | cold rung | cold decision | warm rung | warm decision |",
         "| --- | --- | --- | --- | --- |",
@@ -1099,7 +1220,7 @@ def write_learning_curve_md(result: dict[str, Any], path: str | pathlib.Path) ->
 
 
 # ---------------------------------------------------------------------------
-# CLI: python -m autobridge.bench.ablation_curve (make bench-ablation)
+# CLI: python -m bench.ablation_curve (make bench-ablation)
 # ---------------------------------------------------------------------------
 
 

@@ -31,7 +31,7 @@ Design notes
 Baseline drivers (P1.W8.2, plan §2.10 + §9)
 --------------------------------------------
 The baseline arm is pluggable via the drivers in
-:mod:`autobridge.bench.baseline_coding_agent`:
+:mod:`bench.baseline_coding_agent`:
 
 * ``claude_code_headless`` — :class:`ClaudeCodeDriver` drives
   ``claude -p <prompt> --output-format json`` with usage/token capture
@@ -61,7 +61,7 @@ The baseline arm is pluggable via the drivers in
 
 Secondary diagnostic control — ``one_shot_generator`` (P1.W8.3, plan §2.10)
 ------------------------------------------------------------------------
-:mod:`autobridge.bench.one_shot` is the secondary control: a single
+:mod:`bench.one_shot` is the secondary control: a single
 :class:`LLMProvider` completion (``OneShotGenerator``) that must produce a
 ``ConnectorSpec`` YAML in one pass, with the *same* :class:`HarnessInputs`
 the other two arms receive.  It goes through :class:`Budget` /
@@ -246,7 +246,7 @@ def list_scenarios(visibility: str | None = "dev") -> list[str]:
     Returns an empty list when the scenario directory is unavailable
     (the engine package never imports simulators; DIRECTIVES §2).
     """
-    root = pathlib.Path(__file__).resolve().parents[3] / "simulators" / "scenarios"
+    root = pathlib.Path(__file__).resolve().parents[1] / "simulators" / "scenarios"
     ids: list[str] = []
     if root.is_dir():
         for p in sorted(root.glob("*.yaml")):
@@ -522,7 +522,7 @@ def verify_matched_trial(trial: TrialResult) -> None:
 
 def _repo_root() -> pathlib.Path:
     """Repo root resolved from this file (never from cwd — tests chdir)."""
-    return pathlib.Path(__file__).resolve().parents[3]
+    return pathlib.Path(__file__).resolve().parents[1]
 
 
 #: Env var pointing at the owner-held private heldout seed directory (REQ-007).
@@ -1164,8 +1164,8 @@ def score_and_report(
     (written by ``scripts/heldout_leak_audit.py --write``) is picked up
     automatically when present; the JSON carries counts only, never secrets.
     """
-    from autobridge.bench.report import write_scorecard, write_scorecard_json  # noqa: PLC0415
-    from autobridge.bench.scoring import (  # noqa: PLC0415
+    from bench.report import write_scorecard, write_scorecard_json  # noqa: PLC0415
+    from bench.scoring import (  # noqa: PLC0415
         score_bench,
         verify_via_http,
         wrap_verify_fn_with_seeds,
@@ -1220,7 +1220,7 @@ def _guard_zero_tool_calls(bench_result: BenchResult) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# CLI entrypoint — ``python -m autobridge.bench.harness``
+# CLI entrypoint — ``python -m bench.harness``
 # ---------------------------------------------------------------------------
 
 
@@ -1383,7 +1383,7 @@ def main(argv: list[str] | None = None) -> int:
 
     arms_mode = args.arms or (os.environ.get("BENCH_ARMS", "").strip() or None) or "matched"
     if arms_mode == "ablation":
-        from autobridge.bench.ablation import (  # noqa: PLC0415
+        from bench.ablation import (  # noqa: PLC0415
             render_ablation_table,
             run_ablation_harness,
             write_ablation_results,

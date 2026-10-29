@@ -7,8 +7,9 @@ import pathlib
 
 import pytest
 
-from autobridge.bench.baseline_coding_agent import get_baseline_driver
-from autobridge.bench.fake_cli import (
+from autobridge.llm.provider import Budget, BudgetExhausted, Completion, FakeProvider, Usage
+from bench.baseline_coding_agent import get_baseline_driver
+from bench.fake_cli import (
     OneShotGenerator,
     OneShotResult,
     build_one_shot_prompt,
@@ -18,9 +19,8 @@ from autobridge.bench.fake_cli import (
     run_trial_with_one_shot,
     try_parse_spec_yaml,
 )
-from autobridge.bench.harness import HarnessConfig, HarnessInputs, make_trial_inputs
-from autobridge.bench.one_shot import healthz
-from autobridge.llm.provider import Budget, BudgetExhausted, Completion, FakeProvider, Usage
+from bench.harness import HarnessConfig, HarnessInputs, make_trial_inputs
+from bench.one_shot import healthz
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -319,7 +319,7 @@ def test_one_shot_generator_run_with_budget() -> None:
 
 
 def test_one_shot_generator_budget_exhausted_raises_claude_error() -> None:
-    from autobridge.bench.baseline_coding_agent import ClaudeCliError
+    from bench.baseline_coding_agent import ClaudeCliError
 
     prov = _fake_provider("hello", usage=Usage(input_tokens=100, output_tokens=100))
     budget = Budget(max_frontier_tokens=10)
@@ -387,7 +387,7 @@ def test_one_shot_generator_load_docs_exception_handled() -> None:
     prov = _fake_provider("hi")
     gen = OneShotGenerator(provider=prov, docs_loader=None)
     # Patch load_docs_text to raise
-    import autobridge.bench.one_shot as mod
+    import bench.one_shot as mod
 
     orig = mod.load_docs_text
     try:
@@ -427,7 +427,7 @@ def test_one_shot_generator_run_cwd() -> None:
 
 
 def test_one_shot_generator_run_provider_exception() -> None:
-    from autobridge.bench.baseline_coding_agent import ClaudeCliError
+    from bench.baseline_coding_agent import ClaudeCliError
 
     class BadProvider:
         def complete(self, *a, **kw):  # noqa: ANN002, ANN003, ARG002
@@ -552,7 +552,7 @@ def test_run_trial_with_one_shot_basic() -> None:
 
 
 def test_run_trial_with_one_shot_custom_runners() -> None:
-    from autobridge.bench.harness import ArmResult
+    from bench.harness import ArmResult
 
     cfg = HarnessConfig(seed=1)
 
@@ -611,7 +611,7 @@ def test_run_trial_with_one_shot_different_trials_different_inputs() -> None:
 
 
 def test_one_shot_matched_budget_same_as_harness() -> None:
-    from autobridge.bench.harness import assert_inputs_equal
+    from bench.harness import assert_inputs_equal
 
     cfg = HarnessConfig(seed=123, token_ceiling=8000)
     inp = make_trial_inputs(cfg, "atlas_basic", 0)
@@ -621,21 +621,21 @@ def test_one_shot_matched_budget_same_as_harness() -> None:
     # Verify arm's inputs equal original
     assert_inputs_equal(arm.inputs, inp)
     # And budget fields
-    from autobridge.bench.harness import assert_budget_fields_equal
+    from bench.harness import assert_budget_fields_equal
 
     inp2 = make_trial_inputs(cfg, "atlas_basic", 0)
     assert_budget_fields_equal(arm.inputs, inp2)
 
 
 def test_one_shot_vs_baseline_same_inputs() -> None:
-    from autobridge.bench.harness import run_baseline_arm
+    from bench.harness import run_baseline_arm
 
     cfg = HarnessConfig(seed=7)
     inp = make_trial_inputs(cfg, "s1", 0)
     prov_one = _fake_provider("name: one\n")
     arm_one = run_one_shot_arm(inp, provider=prov_one)
     # Baseline with same inputs
-    from autobridge.bench.baseline_coding_agent import FakeClaudeDriver
+    from bench.baseline_coding_agent import FakeClaudeDriver
 
     driver = FakeClaudeDriver(default_text="name: baseline\n")
     arm_base = run_baseline_arm(inp, driver=driver)
@@ -678,7 +678,7 @@ def test_healthz() -> None:
 
 def test_harness_arm_literal_includes_one_shot() -> None:
     # Verify harness now accepts one_shot arm
-    from autobridge.bench.harness import ArmResult
+    from bench.harness import ArmResult
 
     inp = _inputs()
     arm = ArmResult(arm="one_shot", inputs=inp, success=True)
@@ -707,9 +707,9 @@ def test_one_shot_prompt_never_contains_secret_values() -> None:
 
 def test_reexport_via_fake_cli() -> None:
     # Ensure fake_cli re-exports work
-    from autobridge.bench.fake_cli import build_one_shot_prompt as bosp
-    from autobridge.bench.fake_cli import extract_spec_yaml as esy
-    from autobridge.bench.fake_cli import run_one_shot_arm as rosa
+    from bench.fake_cli import build_one_shot_prompt as bosp
+    from bench.fake_cli import extract_spec_yaml as esy
+    from bench.fake_cli import run_one_shot_arm as rosa
 
     assert bosp is build_one_shot_prompt
     assert esy is extract_spec_yaml

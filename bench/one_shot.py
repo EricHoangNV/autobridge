@@ -4,7 +4,7 @@ The baseline (``claude_code_headless`` / ``codex_cli``) is an *agentic* loop:
 it gets a prompt, tools and a wall-clock budget and may iterate.  The
 ``one_shot_generator`` is the diagnostic contrast: a single ``LLMProvider``
 completion that must produce a ``ConnectorSpec`` YAML in one pass, with the
-same :class:`autobridge.bench.harness.HarnessInputs` the other two arms
+same :class:`bench.harness.HarnessInputs` the other two arms
 receive.  If the agentic baseline beats the one-shot, the gain is from tool
 use / iteration, not just model size.
 
@@ -19,7 +19,7 @@ baseline:
 * ``token_ceiling`` / ``wall_clock_s`` — Budget ceilings
 * ``runtime_target`` — ``{"kind": "docker_sandbox", ...}``
 
-The harness self-test :func:`autobridge.bench.harness.assert_inputs_equal`
+The harness self-test :func:`bench.harness.assert_inputs_equal`
 still holds: construct inputs once via :func:`make_trial_inputs` and pass
 copies to each arm.
 
@@ -402,7 +402,7 @@ class OneShotGenerator:
             )
         except Exception as exc:
             # Preserve BudgetExhausted semantics: surface so harness marks failure
-            from autobridge.bench.baseline_coding_agent import ClaudeCliError  # noqa: PLC0415
+            from bench.baseline_coding_agent import ClaudeCliError  # noqa: PLC0415
 
             # Re-raise BudgetExhausted as ClaudeCliError with cause so callers
             # that catch ClaudeCliError handle both uniformly, while callers
@@ -452,7 +452,7 @@ def run_one_shot_arm(
 ) -> Any:  # ArmResult
     """Run the one-shot arm for *inputs* via ``LLMProvider``.
 
-    Returns an :class:`autobridge.bench.harness.ArmResult` with
+    Returns an :class:`bench.harness.ArmResult` with
     ``arm="one_shot"`` so the bench scorer can report it alongside
     ``autobridge`` and ``baseline``.  On any error an ``ArmResult`` with
     ``success=False`` and ``error`` is returned (never raises except for
@@ -463,7 +463,7 @@ def run_one_shot_arm(
     preserves the harness matched-budget contract (same ceilings for all
     arms).
     """
-    from autobridge.bench.harness import ArmResult  # noqa: PLC0415
+    from bench.harness import ArmResult  # noqa: PLC0415
 
     # Default budget from harness inputs when caller did not supply one
     if budget is None:
@@ -560,16 +560,16 @@ def run_trial_with_one_shot(
     4. Return a :class:`TrialResult` extended with ``one_shot``.
 
     For backward compatibility the returned object is a
-    :class:`autobridge.bench.harness.TrialResult` with ``one_shot`` set;
+    :class:`bench.harness.TrialResult` with ``one_shot`` set;
     two-arm callers unaffected (``one_shot`` defaults to ``None`` in
-    :func:`autobridge.bench.harness.run_trial`).
+    :func:`bench.harness.run_trial`).
 
     *one_shot_runner* is ``(HarnessInputs) -> ArmResult``.  When ``None``
     and *one_shot_provider* is given (or even when both are ``None``) the
     default :func:`run_one_shot_arm` is used so the one-shot arm is
     runnable in unit tests without extras.
     """
-    from autobridge.bench.harness import (  # noqa: PLC0415
+    from bench.harness import (  # noqa: PLC0415
         HarnessConfig,
         TrialResult,
         assert_budget_fields_equal,

@@ -48,7 +48,7 @@ import pathlib
 from decimal import Decimal
 from typing import Any
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 GENERATED = REPO_ROOT / "generated" / "connectors"
 SCORECARD_PATH = REPO_ROOT / "experiments" / "scorecard.md"
 

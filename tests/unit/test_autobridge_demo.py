@@ -16,8 +16,8 @@ from typing import Any
 
 import pytest
 
-from autobridge.bench import demo as demo_mod
-from autobridge.bench.demo import (
+from bench import demo as demo_mod
+from bench.demo import (
     _redact_body,
     main,
     render_text,
@@ -151,7 +151,7 @@ def test_step7_v1_refuses_v2_connects_offline(monkeypatch: Any) -> None:
 
 
 def test_step7_rung_row_reports_zero_frontier() -> None:
-    from autobridge.bench.demo import rung_table_row
+    from bench.demo import rung_table_row
 
     step = step7_new_api_style(0, False, "http://127.0.0.1:9")
     row = rung_table_row(step)
@@ -190,7 +190,7 @@ def test_step8_wire_layouts_pinned_to_fault_yaml() -> None:
     """The demo's v2/v3 wire lists must match the fault scenario file."""
     import yaml
 
-    from autobridge.bench.demo import FIAS_PS_LAYOUT_V2, FIAS_PS_LAYOUT_V3
+    from bench.demo import FIAS_PS_LAYOUT_V2, FIAS_PS_LAYOUT_V3
 
     fault = yaml.safe_load((REPO_ROOT / "simulators" / "scenarios" / "fias_record_layout_change.yaml").read_text(encoding="utf-8"))
     assert "".join(FIAS_PS_LAYOUT_V3) == fault["expected"]["announced_ps_layout"]
@@ -199,7 +199,7 @@ def test_step8_wire_layouts_pinned_to_fault_yaml() -> None:
 
 
 def test_step8_rung_row_reports_l1_zero_frontier() -> None:
-    from autobridge.bench.demo import rung_table_row
+    from bench.demo import rung_table_row
 
     step = step8_onprem_pabx(0, False, "http://127.0.0.1:9")
     row = rung_table_row(step)

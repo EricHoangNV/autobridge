@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from autobridge.bench.baseline_coding_agent import (
+from autobridge.llm.provider import Usage
+from bench.baseline_coding_agent import (
     ClaudeCliError,
     ClaudeCliResult,
     ClaudeCodeDriver,
@@ -27,7 +28,6 @@ from autobridge.bench.baseline_coding_agent import (
     parse_claude_output,
     parse_opencode_output,
 )
-from autobridge.llm.provider import Usage
 
 # ---------------------------------------------------------------------------
 # ClaudeCliResult
@@ -257,7 +257,7 @@ def test_driver_run_success_with_fake(monkeypatch: pytest.MonkeyPatch) -> None:
     # Use monkeypatch to stub subprocess.run
     fake_stdout = build_fake_claude_output("generated spec", input_tokens=100, output_tokens=200, model="claude-test")
     monkeypatch.setattr(
-        "autobridge.bench.baseline_coding_agent.subprocess.run",
+        "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=0, stdout=fake_stdout, stderr=""),  # noqa: ARG005
     )
     d = ClaudeCodeDriver(cli_path="claude")
@@ -271,7 +271,7 @@ def test_driver_run_success_with_fake(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_driver_run_nonzero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "autobridge.bench.baseline_coding_agent.subprocess.run",
+        "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout="out", stderr="bad prompt"),  # noqa: ARG005
     )
     d = ClaudeCodeDriver(cli_path="claude")
@@ -283,7 +283,7 @@ def test_driver_run_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise subprocess.TimeoutExpired(cmd="claude", timeout=1, output="o", stderr="e")
 
-    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     d = ClaudeCodeDriver(cli_path="claude", timeout_s=1)
     with pytest.raises(ClaudeCliError, match="timed out"):
         d.run("prompt")
@@ -293,7 +293,7 @@ def test_driver_run_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise FileNotFoundError("no such file")
 
-    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     d = ClaudeCodeDriver(cli_path="claude-not-exist")
     with pytest.raises(ClaudeCliError, match="not found"):
         d.run("prompt")
@@ -312,7 +312,7 @@ def test_driver_custom_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         fake_stdout = build_fake_claude_output("ok")
         return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=fake_stdout, stderr="")
 
-    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     d = ClaudeCodeDriver(cli_path="claude", timeout_s=10)
     d.run("hi", timeout_s=5)
     assert captured["timeout"] == 5
@@ -416,8 +416,8 @@ def test_codex_driver_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_fake_cli_reexport() -> None:
-    from autobridge.bench.fake_cli import FakeClaudeDriver as F
-    from autobridge.bench.fake_cli import build_fake_claude_output as B
+    from bench.fake_cli import FakeClaudeDriver as F
+    from bench.fake_cli import build_fake_claude_output as B
 
     assert F is FakeClaudeDriver
     assert B is build_fake_claude_output
@@ -576,7 +576,7 @@ def test_opencode_driver_build_command_no_model() -> None:
 def test_opencode_driver_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_stdout = build_fake_opencode_output("spec yaml", input_tokens=11, output_tokens=22, model="spark")
     monkeypatch.setattr(
-        "autobridge.bench.baseline_coding_agent.subprocess.run",
+        "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=0, stdout=fake_stdout, stderr=""),  # noqa: ARG005
     )
     d = OpenCodeCliDriver(cli_path="opencode", model="meta/muse-spark-1.3")
@@ -590,7 +590,7 @@ def test_opencode_driver_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_opencode_driver_run_nonzero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "autobridge.bench.baseline_coding_agent.subprocess.run",
+        "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout="out", stderr="bad"),  # noqa: ARG005
     )
     with pytest.raises(OpenCodeCliError, match="failed with exit 1"):
@@ -601,7 +601,7 @@ def test_opencode_driver_run_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise subprocess.TimeoutExpired(cmd="opencode", timeout=1, output="o", stderr="e")
 
-    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     with pytest.raises(OpenCodeCliError, match="timed out"):
         OpenCodeCliDriver(cli_path="opencode", timeout_s=1).run("prompt")
 
@@ -610,7 +610,7 @@ def test_opencode_driver_run_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise FileNotFoundError("no such file")
 
-    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     with pytest.raises(OpenCodeCliError, match="not found"):
         OpenCodeCliDriver(cli_path="opencode-not-exist").run("prompt")
 

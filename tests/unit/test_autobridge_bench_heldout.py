@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from autobridge.bench.harness import (
+from bench.harness import (
     HarnessConfig,
     heldout_manifest_sha,
     load_heldout_seeds,
@@ -24,7 +24,7 @@ from autobridge.bench.harness import (
     write_bench_summary,
     write_results,
 )
-from autobridge.bench.scoring import (
+from bench.scoring import (
     validate_scorecard_schema,
     verify_via_http,
     wrap_verify_fn_with_seeds,
@@ -199,7 +199,7 @@ def test_verify_via_http_seed_body(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_main_heldout_wires_private_seeds(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import autobridge.bench.harness as harness
+    import bench.harness as harness
 
     out = tmp_path / "runs"
     sc = tmp_path / "scorecard.md"
@@ -251,7 +251,7 @@ def test_main_heldout_wires_private_seeds(
 
 
 def test_main_heldout_push_failure_is_error(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import autobridge.bench.harness as harness
+    import bench.harness as harness
 
     monkeypatch.setattr(harness, "check_heldout_sha", lambda *a, **k: None)  # noqa: ARG005
     monkeypatch.setattr(harness, "load_heldout_seeds", lambda *a, **k: {"baseline": PRIVATE_SEED})  # noqa: ARG005

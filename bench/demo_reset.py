@@ -15,7 +15,7 @@ import json
 import os
 from typing import Any
 
-from autobridge.bench.demo import control_headers, env_default
+from bench.demo import control_headers, env_default
 
 DEFAULT_CONTROL_URL = "http://localhost:8101"
 

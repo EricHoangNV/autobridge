@@ -329,3 +329,19 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 
 - `test_edge_worker_app_health` failed intermittently: edge_target tests shut down the module-global store, and a later readyz hit the closed handle (`depths()` raised → 500). `ping()` already failed safe; only `depths()` was unguarded. Fix: try/except → mark the store check failed (honest degraded, 503 per AR-2-6) + regression test.
 - **Rule:** Every readyz dependency read gets a fail-to-degraded path (never an exception); global-state tests must leave the global usable (reset in finally) because random order will find the bad interleaving.
+
+## 36. Bench fixture env must save/restore, never setdefault-and-leak
+
+**Context:** REQ-024 owner check fix (2026-10-29) — full-suite failure after wiring fault serving
+
+- `bench/faults.py` used `os.environ.setdefault` for spec placeholder env (`ATLAS_BASE_URL`, …). Bench tests run before control-API tests in one pytest process, so the leaked values changed later tests' behavior: a sync that used to Block on an unresolvable placeholder (no DNS) suddenly resolved to the fake host and tripped the `_no_real_dns` guard (`test_sync_with_release` ERROR, green in isolation).
+- Fix: `bench.faults.fake_env()` context manager — snapshot every touched key, `setdefault`, restore exactly (unset stays unset) — wrapped around each served sync, plus a regression test asserting post-sync env absence.
+- **Rule:** Library code that needs fixture env for one operation wraps it in a save/restore context; `setdefault` at import or call time is a process-global leak, and random-order/full-suite runs will find the test that depended on the key being absent.
+
+## 37. mypy unused-ignore verdicts depend on the checked set — gate the union
+
+**Context:** REQ-024 owner check fix (2026-10-29) — moving `bench/` out of `src/autobridge`
+
+- `bench/app.py`'s `# type: ignore[return-value]` comments pass under `mypy src/autobridge bench` (ignores used) but fail as unused under standalone `mypy bench`. Same code, same config — only the checked file set differs (follower import resolution changes the precise types mypy sees).
+- Fix: restructured the returns to need no ignore in either mode (`{"status": healthz()["status"]}`, `dict(readyz())`), and extended the gate to `mypy src/autobridge bench` so the harness stays typechecked after the move.
+- **Rule:** Gate the exact union you ship (`make typecheck` must name every checked tree); never trust a subset run — an ignore that is "used" in one set can be "unused" in another, and vice versa.

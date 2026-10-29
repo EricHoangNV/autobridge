@@ -257,21 +257,11 @@ def test_workspace_has_no_path_to_verifier_or_simulators() -> None:
                 assert text.count("generated/connectors") <= 6, f"{pyfile} mentions generated/connectors too often"
                 assert 'open("generated' not in text and "open('generated" not in text, f"{pyfile} opens generated/connectors file"
                 assert 'Path("generated' not in text and "Path('generated" not in text, f"{pyfile} Path(generated) read"
-            elif pyfile.parent.name == "bench" and pyfile.parent.parent.name == "autobridge":
-                # Bench-harness exception (REQ-024 ablation arms start from the
-                # checked-in reference specs plus a case-file delta; mirrors the
-                # hidden_cases carve-out below and DIRECTIVES §2): reference
-                # specs are public build artifacts, never hidden fixtures.
-                # Reads stay confined to <connector>/reference/spec.yaml;
-                # verifier/simulators imports stay forbidden via the top-40
-                # check above, hidden fixtures via the heldout loop below.
-                for line in text.splitlines():
-                    if "generated/connectors" in line:
-                        assert "reference" in line, (
-                            f"{pyfile} reads generated/connectors outside reference/: {line.strip()}"
-                        )
             else:
-                # Other engine files must not mention it at all
+                # Other engine files must not mention it at all. No bench
+                # exception: the harness lives in top-level bench/ (REQ-024
+                # owner check on f32b4b4b moved it out of src/autobridge),
+                # so nothing under src/autobridge reads reference specs.
                 raise AssertionError(f"{pyfile} mentions generated/connectors — forbidden outside bootstrap guard")
 
     # Bootstrap guard: source containing generated/connectors is rejected
@@ -279,24 +269,15 @@ def test_workspace_has_no_path_to_verifier_or_simulators() -> None:
     assert not bad.success
     assert "must not read reference" in bad.degradation_reason.lower()  # type: ignore[union-attr]
 
-    # Also verify hidden_cases never leak: engine files never reference hidden_cases,
-    # except the bench package (harness concern per DIRECTIVES §2 — it reads
-    # scenario YAMLs and the heldout commitment from the filesystem, never via
-    # import).  The ``hidden_cases`` literal itself stays confined to the
-    # heldout gate functions in bench/harness.py (hash + private-seed load;
-    # seeds never printed, asserted structurally below).
+    # Also verify hidden_cases never leak: no engine file references
+    # hidden_cases/heldout. The heldout gate lives in top-level bench/
+    # (REQ-024 owner check on f32b4b4b moved the harness out of
+    # src/autobridge); engine code never touches it.
     for pyfile in src_root.rglob("*.py"):
         txt = pyfile.read_text(encoding="utf-8")
         if "hidden_cases" not in txt and "heldout" not in txt.lower():
             continue
-        assert pyfile.parent.name == "bench" and pyfile.parent.parent.name == "autobridge", (
-            f"{pyfile} references hidden_cases/heldout — trust boundary violation"
-        )
-        if "hidden_cases" in txt:
-            assert pyfile.name == "harness.py", (
-                f"{pyfile} references hidden_cases — only bench/harness.py may"
-            )
-            assert _hidden_cases_confined_to_sha_gate(txt), f"{pyfile}: hidden_cases use escaped the heldout gate"
+        raise AssertionError(f"{pyfile} references hidden_cases/heldout — trust boundary violation")
 
 
 def test_no_reference_spec_import_in_bootstrap() -> None:

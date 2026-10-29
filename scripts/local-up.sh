@@ -108,7 +108,7 @@ start_svc edge-relay 8120 uv run uvicorn autobridge.edge.relay:app --host 127.0.
 FIAS_LISTEN_HOST=127.0.0.1 FIAS_LISTEN_PORT=5010 \
   start_svc edge-worker 8114 uv run uvicorn autobridge.edge.app:app --host 127.0.0.1 --port 8114
 start_svc mcp-hotel 8115 uv run uvicorn mcp_stretch.app:app --host 127.0.0.1 --port 8115
-start_svc bench 8108 uv run uvicorn autobridge.bench.app:app --host 127.0.0.1 --port 8108
+start_svc bench 8108 uv run uvicorn bench.app:app --host 127.0.0.1 --port 8108
 
 # ---- UI (Next.js, same-origin /api rewrite; CONTROL_URL defaults to localhost:8101) ----
 if command -v npm >/dev/null; then

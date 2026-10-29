@@ -10,7 +10,7 @@ The fake reads the prompt positional, an optional
 and ``FAKE_CODEX_USAGE`` (``"input,output"``) to craft the response.
 
 Output is a single JSON object to stdout matching
-:func:`autobridge.bench.baseline_coding_agent.build_fake_codex_output`::
+:func:`bench.baseline_coding_agent.build_fake_codex_output`::
 
     {"output":"...","usage":{"input_tokens":..,"output_tokens":..},"model":"...","cost_usd":..}
 
@@ -18,7 +18,7 @@ Exit code 0 on success; non-zero on ``FAKE_CODEX_EXIT_CODE`` env.
 
 Usage::
 
-    CODEX_CLI_PATH=scripts/fake_codex.py uv run python -m autobridge.bench.harness
+    CODEX_CLI_PATH=scripts/fake_codex.py uv run python -m bench.harness
     # or directly:
     python scripts/fake_codex.py exec --json "hello" --model my-model
 

@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     import pathlib as _pl  # noqa: F401
 
 import simulators.common.faultgen as faultgen
-from autobridge.bench import beacon_run
-from autobridge.bench.beacon_run import BeaconError
+from bench import beacon_run
+from bench.beacon_run import BeaconError
 
 EVAL_SEED_HEX = "05ec57a0c1e763e985c9ac18df2313a98392a9c24ecbceefd0b21216a9beaefa"
 EVAL_SEED = bytes.fromhex(EVAL_SEED_HEX)
@@ -143,7 +143,9 @@ def test_beacon_case_for_shape_family() -> None:
     case = beacon_run.beacon_case_for(descriptor)
     assert case is not None
     assert case.scenario_id == f"beacon:{descriptor['index']}"
-    assert case.spec and case.drift_class != "UNKNOWN"
+    # Equal task setup only: no drift class or hypotheses on the case.
+    assert case.spec and case.connector_id and case.docs_ref
+    assert not hasattr(case, "drift_class")
 
 
 def test_beacon_case_for_fias_is_none() -> None:
@@ -178,7 +180,7 @@ def test_arm_outcome_mapping() -> None:
 
 
 def test_run_instance_trial_offline_no_verifier() -> None:
-    from autobridge.bench.harness import HarnessConfig as _Cfg
+    from bench.harness import HarnessConfig as _Cfg
 
     descriptor = _descriptor(0)
     protocol = beacon_run.BeaconProtocol(
@@ -188,7 +190,7 @@ def test_run_instance_trial_offline_no_verifier() -> None:
     )
 
     def fake_runner(inputs: Any) -> Any:
-        from autobridge.bench.harness import ArmResult as _ArmResult
+        from bench.harness import ArmResult as _ArmResult
 
         return _ArmResult(arm="autobridge_cold", inputs=inputs, success=True, model="fake")
 

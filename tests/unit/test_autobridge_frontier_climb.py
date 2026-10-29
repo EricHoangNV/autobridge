@@ -272,7 +272,7 @@ def test_l2_threshold_default() -> None:
 
 
 def test_record_frontier_requires_key(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
-    from autobridge.bench.record_frontier import record_scenario
+    from bench.record_frontier import record_scenario
 
     monkeypatch.delenv("FRONTIER_API_KEY", raising=False)
     with pytest.raises(SystemExit, match="FRONTIER_API_KEY"):
@@ -280,14 +280,14 @@ def test_record_frontier_requires_key(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 
 def test_record_frontier_rejects_unknown_scenario(tmp_path: pathlib.Path) -> None:
-    from autobridge.bench.record_frontier import record_scenario
+    from bench.record_frontier import record_scenario
 
     with pytest.raises(SystemExit, match="unknown SCENARIO"):
         record_scenario("nope", tmp_path)
 
 
 def test_tapping_provider_records_shape() -> None:
-    from autobridge.bench.record_frontier import TappingProvider
+    from bench.record_frontier import TappingProvider
 
     fake = FakeProvider(
         responses={"default": Completion(text='[{"op": "replace"}]', usage=Usage(10, 20))}

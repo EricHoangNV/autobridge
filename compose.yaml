@@ -314,7 +314,7 @@ services:
       context: .
       dockerfile: Dockerfile.engine
     environment:
-      APP_MODULE: autobridge.bench.app:app
+      APP_MODULE: bench.app:app
     networks:
       - engine-net
       - verifier-net

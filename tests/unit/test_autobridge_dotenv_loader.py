@@ -14,8 +14,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from autobridge.bench import demo as demo_mod
 from autobridge.control import models as models_mod
+from bench import demo as demo_mod
 
 ROOT = Path(__file__).resolve().parents[2]
 LOADER = ROOT / "scripts" / "load_dotenv.sh"

@@ -11,7 +11,7 @@ The fake reads ``-p`` / ``--print`` prompt, an optional
 and ``FAKE_CLAUDE_USAGE`` (``"input,output"``) to craft the response.
 
 Output is a single JSON object to stdout matching
-:func:`autobridge.bench.baseline_coding_agent.build_fake_claude_output`::
+:func:`bench.baseline_coding_agent.build_fake_claude_output`::
 
     {"type":"result","result":"...","usage":{"input_tokens":..,"output_tokens":..},"model":"...","cost_usd":..}
 
@@ -19,7 +19,7 @@ Exit code 0 on success; 1 on ``FAKE_CLAUDE_EXIT_CODE`` env.
 
 Usage::
 
-    CLAUDE_CLI_PATH=scripts/fake_claude.py uv run python -m autobridge.bench.harness
+    CLAUDE_CLI_PATH=scripts/fake_claude.py uv run python -m bench.harness
     # or directly:
     python scripts/fake_claude.py -p "hello" --output-format json
 

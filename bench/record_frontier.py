@@ -20,7 +20,6 @@ import os
 import pathlib
 from typing import Any
 
-from autobridge.bench.demo import _gross_net_hypotheses  # noqa: PLC0415 (shared climb fixture)
 from autobridge.discovery.docs_reader import Provenance  # noqa: PLC0415
 from autobridge.discovery.hypotheses import Hypothesis  # noqa: PLC0415
 from autobridge.llm.provider import (  # noqa: PLC0415
@@ -31,8 +30,9 @@ from autobridge.llm.provider import (  # noqa: PLC0415
 )
 from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
 from autobridge.repair.ladder import run_frontier_climb  # noqa: PLC0415
+from bench.demo import _gross_net_hypotheses  # noqa: PLC0415 (shared climb fixture)
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_OUT_DIR = REPO_ROOT / "demo" / "recordings"
 
 

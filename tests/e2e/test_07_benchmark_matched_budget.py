@@ -7,13 +7,13 @@ The test:
   1. Checks the heldout SHA gate (no-op until the owner freezes heldout
      per P1.W2.8; hard fail on mismatch).
   2. Runs one dev scenario (``baseline``) × 1 trial through both arms via
-     :func:`autobridge.bench.harness.run_harness` and asserts the harness
+     :func:`bench.harness.run_harness` and asserts the harness
      self-test: identical docs volume, sandbox URL, credentials (refs
      only), visible tests, token ceiling and wall-clock for both arms.
   3. Scores the trial via verifier hidden mode — the live verifier over
      HTTP when the stack is up, otherwise a deterministic hidden-mode
      shaped payload — and validates the scorecard with
-     :func:`autobridge.bench.scoring.validate_scorecard_schema`.
+     :func:`bench.scoring.validate_scorecard_schema`.
   4. Renders ``experiments/scorecard.md`` shape (wins AND losses sections)
      and asserts the seed is in the payload (reproducible from seeds).
 
@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pathlib
 
-from autobridge.bench.harness import (
+from bench.harness import (
     HarnessConfig,
     assert_budget_fields_equal,
     assert_inputs_equal,
@@ -40,8 +40,8 @@ from autobridge.bench.harness import (
     verify_matched_trial,
     write_results,
 )
-from autobridge.bench.report import render_scorecard_markdown
-from autobridge.bench.scoring import validate_scorecard_schema, verify_via_http
+from bench.report import render_scorecard_markdown
+from bench.scoring import validate_scorecard_schema, verify_via_http
 
 SCENARIO_ID = "baseline"
 SEED = 42

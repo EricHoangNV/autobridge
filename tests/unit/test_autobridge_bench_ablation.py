@@ -6,7 +6,8 @@ from typing import Any
 
 import pytest
 
-from autobridge.bench.ablation import (
+from autobridge.llm.provider import FakeProvider
+from bench.ablation import (
     ABLATION_ARMS,
     ENGINE_ARMS,
     FRONTIER_ARMS,
@@ -16,7 +17,11 @@ from autobridge.bench.ablation import (
     ablation_provider,
     ablation_scenarios,
     assert_all_inputs_equal,
+    assert_arm_task_setup_equal,
+    derive_diagnostics,
+    enumerate_hypotheses,
     grade_ablation_arm,
+    pre_drift_spec_for,
     run_ablation_trial,
     run_engine_arm,
     run_frontier_agent_arm,
@@ -26,9 +31,8 @@ from autobridge.bench.ablation import (
     warm_knowledge,
     write_learning_curve_md,
 )
-from autobridge.bench.baseline_coding_agent import FakeOpenCodeDriver
-from autobridge.bench.harness import HarnessConfig, make_trial_inputs
-from autobridge.llm.provider import FakeProvider
+from bench.baseline_coding_agent import FakeOpenCodeDriver
+from bench.harness import HarnessConfig, make_trial_inputs
 
 
 def test_arm_constants() -> None:
@@ -62,8 +66,34 @@ def test_case_library_covers_dev_http_scenarios() -> None:
         case = ablation_case_for_scenario(sid)
         assert case.scenario_id == sid
         assert case.spec, sid
-        assert case.drift_class, sid
-        assert case.extra is not None, sid
+        # Equal task setup only: no drift class, delta or hypotheses.
+        assert case.connector_id in ("atlaspms", "harborpms", "meridianpms"), sid
+        assert case.docs_ref, sid
+        assert not hasattr(case, "drift_class"), sid
+        assert not hasattr(case, "hypotheses"), sid
+
+
+def test_case_file_refuses_smuggled_diagnostics(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The loader fails a case that smuggles drift labels (REQ-024 check)."""
+    import yaml as _yaml
+
+    import bench.ablation as ab
+
+    payload = {
+        "cases": {
+            "sneaky": {
+                "spec": {"kind": "generated", "connector": "atlaspms"},
+                "docs": "simulators/docs/atlaspms-openapi.yaml",
+                "expected": "repair",
+                "drift_class": "PAGINATION_CHANGE",
+            }
+        }
+    }
+    path = tmp_path / "ablation_cases.yaml"
+    path.write_text(_yaml.safe_dump(payload), encoding="utf-8")
+    monkeypatch.setattr(ab, "CASES_PATH", path)
+    with pytest.raises(RuntimeError, match="smuggles diagnostics"):
+        ab.ablation_case_for_scenario("sneaky")
 
 
 def test_case_unknown_scenario() -> None:
@@ -74,7 +104,7 @@ def test_case_unknown_scenario() -> None:
 def test_case_skips_non_http(monkeypatch: pytest.MonkeyPatch) -> None:
     import yaml as _yaml
 
-    import autobridge.bench.ablation as ab
+    import bench.ablation as ab
 
     doc = _yaml.safe_load(ab.CASES_PATH.read_text(encoding="utf-8")) or {}
     doc["cases"]["fias_record_layout_change"] = {
@@ -96,7 +126,7 @@ def test_provider_factory_fake() -> None:
 
 
 def test_provider_factory_auto_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.ablation import ablation_provider as ap
+    from bench.ablation import ablation_provider as ap
 
     monkeypatch.delenv("FRONTIER_API_KEY", raising=False)
     prov = ap("auto")
@@ -109,16 +139,22 @@ def test_provider_factory_live_without_key_raises(monkeypatch: pytest.MonkeyPatc
         ablation_provider("live")
 
 
-def test_engine_cold_structural_repair_zero_tokens() -> None:
+def test_engine_cold_structural_derives_then_escalates_zero_tokens() -> None:
+    """End-to-end honesty: the engine observes PAGINATION_CHANGE but the L1
+    rules need strategy evidence the detector does not produce, so the arm
+    escalates with zero model tokens (REQ-024 owner check: losses published)."""
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
     case = ablation_case_for_scenario("page_to_cursor")
+    diag = derive_diagnostics(case.spec, scenario_id="page_to_cursor", connector_id="atlaspms", seed=inputs.seed)
+    assert diag.drift_class == "PAGINATION_CHANGE"
     res = run_engine_arm(inputs, case, ablation="autobridge_cold", provider=FakeProvider())
     assert res.arm == "autobridge_cold"
     assert res.success
     assert res.frontier_tokens == 0
-    assert res.spec is not None and res.spec["decision"] == "propose"
-    assert res.spec["ladder_level_reached"] == 1
+    assert res.input_tokens == 0
+    assert res.spec is not None and res.spec["decision"] == "escalate"
+    assert res.spec["candidate_patch"] == []
 
 
 def test_engine_no_knowledge_escalates_structural() -> None:
@@ -133,25 +169,80 @@ def test_engine_no_knowledge_escalates_structural() -> None:
 
 
 def test_engine_semantic_climb_uses_provider() -> None:
+    """gross_to_net derives SEMANTIC_VALUE_DRIFT; the arm climbs with the
+    engine-enumerated hypotheses: L2 ranks (small-model tokens), L3 is
+    skipped by the plan §2.6 gate (the enumerator yields ≥ 2), and the run
+    escalates with no patch released (REQ-024 owner check)."""
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "gross_to_net", 0)
     case = ablation_case_for_scenario("gross_to_net")
+    diag = derive_diagnostics(case.spec, scenario_id="gross_to_net", connector_id="harborpms", seed=inputs.seed)
+    assert diag.drift_class == "SEMANTIC_VALUE_DRIFT"
+    hyps = enumerate_hypotheses(docs_ref=case.docs_ref, scenario_id="gross_to_net")
+    assert len(hyps) >= 2
     res = run_engine_arm(inputs, case, ablation="autobridge_cold", provider=FakeProvider())
     assert res.spec is not None and res.spec["decision"] == "escalate"
-    assert res.frontier_tokens > 0
+    assert res.spec["candidate_patch"] == []
+    assert res.model_calls and res.model_calls > 0
+    # L2 ranked (small tokens); L3 never fires on honest enumeration.
+    assert res.input_tokens > 0
+    assert res.frontier_tokens == 0
+
+
+def test_engine_arm_handle_kwargs_carry_no_case_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fails if any arm receives a field the others do not (REQ-024 check).
+
+    Spies on ``RepairController.handle``: the drift class, delta,
+    hypotheses and yield count must equal freshly engine-derived values —
+    never case-catalog labels. ``extra`` stays empty and no post-drift
+    reference is passed.
+    """
+    import bench.ablation as ab
+    from autobridge.repair.controller import RepairController
+
+    seen: list[dict[str, Any]] = []
+    orig_handle = RepairController.handle
+
+    def _spy(self: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.append(dict(kwargs))
+        return orig_handle(self, *args, **kwargs)
+
+    monkeypatch.setattr(RepairController, "handle", _spy)
+    cfg = HarnessConfig()
+    for sid, conn in (("page_to_cursor", "atlaspms"), ("gross_to_net", "harborpms")):
+        seen.clear()
+        inputs = make_trial_inputs(cfg, sid, 0)
+        case = ab.ablation_case_for_scenario(sid)
+        ab.run_engine_arm(inputs, case, ablation="autobridge_cold", provider=FakeProvider())
+        assert seen, sid
+        fresh = ab.derive_diagnostics(case.spec, scenario_id=sid, connector_id=conn, seed=inputs.seed)
+        for call in seen:
+            assert call["drift_class"] == fresh.drift_class, sid
+            assert "validate_against" not in call, sid
+            assert call["extra"] == {}, sid
+            if call.get("hypotheses") is not None:
+                fresh_hyps = ab.enumerate_hypotheses(docs_ref=case.docs_ref, scenario_id=sid)
+                assert [h.id for h in call["hypotheses"]] == [h.id for h in fresh_hyps], sid
+                assert call["enumerator_yield_count"] == len(fresh_hyps), sid
 
 
 def test_warm_cache_learns_dev_split() -> None:
+    """Warm learning caches only what the deterministic ladder can fix.
+
+    Honest end-to-end (REQ-024 owner check): page_to_cursor currently
+    escalates without proposing, so nothing is cached and the warm arm
+    matches cold. When the detector gap closes, propose-path scenarios
+    will cache here and this test pins the L0 hit again.
+    """
     from autobridge.repair.knowledge import KnowledgeCache
 
     cache = warm_knowledge(["page_to_cursor"], provider=FakeProvider())
     assert isinstance(cache, KnowledgeCache)
-    # Warm arm hits L0 on the learned drift.
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
     case = ablation_case_for_scenario("page_to_cursor")
     res = run_engine_arm(inputs, case, ablation="autobridge_warm", provider=FakeProvider(), knowledge=cache)
-    assert res.spec is not None and res.spec["ladder_level_reached"] == 0
+    assert res.spec is not None and res.spec["decision"] == "escalate"
 
 
 def test_frontier_oneshot_arm_label() -> None:
@@ -184,7 +275,7 @@ def test_assert_all_inputs_equal_names_pair() -> None:
 
 
 def test_ablation_trial_with_fake_runners() -> None:
-    from autobridge.bench.harness import ArmResult
+    from bench.harness import ArmResult
 
     cfg = HarnessConfig()
 
@@ -212,8 +303,8 @@ def test_ablation_trial_default_runners_offline(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_grade_and_summarize() -> None:
-    from autobridge.bench.harness import ArmResult
-    from autobridge.bench.scoring import VerifyOutcome
+    from bench.harness import ArmResult
+    from bench.scoring import VerifyOutcome
 
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
@@ -240,7 +331,7 @@ def test_grade_and_summarize() -> None:
 
 
 def test_grade_unreachable_verifier_never_guessed() -> None:
-    from autobridge.bench.harness import ArmResult
+    from bench.harness import ArmResult
 
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
@@ -264,7 +355,7 @@ def test_grade_unreachable_verifier_never_guessed() -> None:
 
 
 def test_grade_no_patch_outcome_classes() -> None:
-    from autobridge.bench.harness import ArmResult
+    from bench.harness import ArmResult
 
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "rate_limit_429", 0)
@@ -306,7 +397,7 @@ def test_ablation_trial_runner_exception_becomes_failed_arm() -> None:
 
 
 def test_mean_ci95_shapes() -> None:
-    from autobridge.bench.ablation import _mean_ci95
+    from bench.ablation import _mean_ci95
 
     assert _mean_ci95([]) == {"mean": None, "ci95_lo": None, "ci95_hi": None, "n": 0}
     one = _mean_ci95([2.0])
@@ -317,7 +408,7 @@ def test_mean_ci95_shapes() -> None:
 
 
 def test_summary_clamps_bounds() -> None:
-    from autobridge.bench.harness import ArmResult, HarnessConfig, make_trial_inputs
+    from bench.harness import ArmResult, HarnessConfig, make_trial_inputs
 
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "gross_to_net", 0)
@@ -345,8 +436,8 @@ def test_summary_clamps_bounds() -> None:
 
 
 def test_frontier_agent_driver_default_opencode(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.ablation import frontier_agent_driver
-    from autobridge.bench.baseline_coding_agent import FakeOpenCodeDriver, OpenCodeCliDriver
+    from bench.ablation import frontier_agent_driver
+    from bench.baseline_coding_agent import FakeOpenCodeDriver, OpenCodeCliDriver
 
     monkeypatch.delenv("BASELINE_DRIVER", raising=False)
     monkeypatch.setenv("FRONTIER_API_KEY", "test-key")
@@ -356,16 +447,16 @@ def test_frontier_agent_driver_default_opencode(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_frontier_agent_driver_kinds(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.ablation import frontier_agent_driver
-    from autobridge.bench.baseline_coding_agent import BaselineLLMDriver
+    from bench.ablation import frontier_agent_driver
+    from bench.baseline_coding_agent import BaselineLLMDriver
 
     monkeypatch.setenv("BASELINE_DRIVER", "llm")
     assert isinstance(frontier_agent_driver(), BaselineLLMDriver)
 
 
 def test_run_ablation_harness_offline(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.ablation import run_ablation_harness, write_ablation_results
-    from autobridge.bench.harness import HarnessConfig
+    from bench.ablation import run_ablation_harness, write_ablation_results
+    from bench.harness import HarnessConfig
 
     monkeypatch.delenv("FRONTIER_API_KEY", raising=False)
     cfg = HarnessConfig(trials_per_scenario=1)
@@ -384,7 +475,7 @@ def test_run_ablation_harness_offline(tmp_path: Any, monkeypatch: pytest.MonkeyP
 
 
 def test_render_ablation_table() -> None:
-    from autobridge.bench.ablation import render_ablation_table, summarize_ablation
+    from bench.ablation import render_ablation_table, summarize_ablation
 
     grades = [
         AblationGrade(
@@ -410,11 +501,63 @@ def test_learning_curve_shape(tmp_path: Any) -> None:
     result = run_learning_curve("page_to_cursor", repeats=3, provider=FakeProvider())
     assert result["scenario_id"] == "page_to_cursor"
     assert len(result["rows"]) == 3
-    # Agent pays every time; engine arms learn the route.
+    # Agent pays every time; the honest engine escalates every repeat (the
+    # L1 rules cannot fire on derived deltas yet — REQ-024 owner check).
     assert all(r["frontier_agent_frontier_tokens"] == 2000 for r in result["rows"])
-    assert result["rows"][0]["autobridge_cold_rung"] == 1
-    assert all(r["autobridge_cold_rung"] == 0 for r in result["rows"][1:])
-    assert all(r["autobridge_warm_rung"] == 0 for r in result["rows"])
+    assert all(r["autobridge_cold_rung"] == 4 for r in result["rows"])
+    assert all(r["autobridge_warm_rung"] == 4 for r in result["rows"])
+    assert all(r["autobridge_cold_decision"] == "escalate" for r in result["rows"])
     md = write_learning_curve_md(result, tmp_path / "learning_curve.md")
     text = md.read_text(encoding="utf-8")
     assert "frontier_agent" in text and "autobridge_cold" in text
+
+
+def test_all_arms_resolve_same_task_setup() -> None:
+    """Task-setup parity: every arm starts from the same pre-drift spec."""
+    named = {arm: pre_drift_spec_for("page_to_cursor") for arm in ABLATION_ARMS}
+    assert_arm_task_setup_equal(named)  # must not raise
+    tampered = dict(named)
+    tampered["frontier_agent"] = dict(tampered["frontier_agent"])
+    tampered["frontier_agent"]["connector"] = {"id": "other", "vendor": "other"}
+    with pytest.raises(AssertionError, match="different pre-drift specs"):
+        assert_arm_task_setup_equal(tampered)
+
+
+def test_derive_diagnostics_needs_no_case_labels() -> None:
+    """Derived classes for the dev HTTP scenarios (no case input)."""
+    cfg = HarnessConfig()
+    expectations = {
+        "page_to_cursor": "PAGINATION_CHANGE",
+        "rename_guest_id": "SCHEMA_REMOVED",
+        "token_expired": "AUTH_EXPIRED",
+        "gross_to_net": "SEMANTIC_VALUE_DRIFT",
+        "status_vocab_change": "ENUM_NEW_VALUE",
+    }
+    for sid, want in expectations.items():
+        case = ablation_case_for_scenario(sid)
+        inputs = make_trial_inputs(cfg, sid, 0)
+        diag = derive_diagnostics(case.spec, scenario_id=sid, connector_id=case.connector_id, seed=inputs.seed)
+        assert diag.drift_class == want, sid
+        assert diag.signals, sid
+
+
+def test_fault_serving_leaks_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fault serving save/restores placeholder env (test-isolation guard).
+
+    Other unit tests assert on unset env; bench syncs must not leak
+    fixture values process-globally.
+    """
+    import os as _os
+
+    from bench import faults as _faults
+
+    for key in _faults._FAKE_ENV_DEFAULTS:
+        monkeypatch.delenv(key, raising=False)
+    cfg = HarnessConfig()
+    inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
+    case = ablation_case_for_scenario("page_to_cursor")
+    from bench.ablation import derive_diagnostics as _derive
+
+    _derive(case.spec, scenario_id="page_to_cursor", connector_id="atlaspms", seed=inputs.seed)
+    for key in _faults._FAKE_ENV_DEFAULTS:
+        assert _os.environ.get(key) is None, key

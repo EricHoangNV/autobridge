@@ -76,7 +76,7 @@ echo ">> beacon-eval: waiting for round $TARGET_ROUND"
 WAIT_DEADLINE_MIN=$((DELAY_MIN + 15))
 WAIT_END=$(( $(date +%s) + WAIT_DEADLINE_MIN * 60 ))
 while true; do
-  LATEST="$(uv run python -m autobridge.bench.beacon_client verify --round "$TARGET_ROUND" 2>/dev/null | head -1 || true)"
+  LATEST="$(uv run python -m bench.beacon_client verify --round "$TARGET_ROUND" 2>/dev/null | head -1 || true)"
   if [ -n "$LATEST" ]; then
     echo ">> beacon-eval: round published: $LATEST"
     break

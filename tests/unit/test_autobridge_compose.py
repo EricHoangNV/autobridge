@@ -290,7 +290,7 @@ def test_runtime_sandbox_app_health() -> None:
 
 
 def test_bench_app_health() -> None:
-    _check_health("autobridge.bench.app")
+    _check_health("bench.app")
 
 
 def test_edge_worker_app_health() -> None:

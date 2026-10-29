@@ -18,7 +18,7 @@ import pathlib
 import pytest
 
 import simulators.common.faultgen as faultgen
-from autobridge.bench import beacon_client
+from bench import beacon_client
 
 
 def test_eval_seed_parity_fixed_vectors() -> None:

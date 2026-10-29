@@ -189,3 +189,37 @@ def test_engine_never_references_meridian() -> None:
                     continue
                 hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
     assert not hits, "engine references Meridian outside comments (REQ-020.5):\n" + "\n".join(hits)
+
+
+BENCH_ROOT = REPO_ROOT / "bench"
+
+
+def test_bench_never_imports_verifier() -> None:
+    """REQ-024 owner check on f32b4b4b: the harness grades via HTTP only.
+
+    ``bench/`` imports the engine (like the tests do) and may read
+    simulator/simulator-scenario files, but it must never import
+    ``verifier`` — answer keys stay in their package; grading goes through
+    the verifier's HTTP hidden mode (``scoring.verify_via_http``).
+    """
+    assert BENCH_ROOT.is_dir(), f"missing {BENCH_ROOT}"
+    bad = {
+        rel: [n for n in names if _top(n) == "verifier"]
+        for rel, names in _tree_imports(BENCH_ROOT).items()
+    }
+    bad = {rel: names for rel, names in bad.items() if names}
+    assert not bad, f"bench imports verifier: {bad}"
+
+
+def test_engine_never_imports_bench() -> None:
+    """REQ-024 owner check on f32b4b4b: no reverse dependency.
+
+    The harness moved out of the engine package; engine code must not
+    import it back (the engine runs without the harness).
+    """
+    bad = {
+        rel: [n for n in names if _top(n) == "bench"]
+        for rel, names in _tree_imports(ENGINE_ROOT).items()
+    }
+    bad = {rel: names for rel, names in bad.items() if names}
+    assert not bad, f"engine imports bench: {bad}"

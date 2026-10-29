@@ -138,7 +138,7 @@ def test_import_all_autobridge_subpackages() -> None:
         "autobridge.repair.rules",
         "autobridge.discovery",
         "autobridge.engine",
-        "autobridge.bench",
+        "bench",
     ]
     for mod in modules:
         importlib.import_module(mod)

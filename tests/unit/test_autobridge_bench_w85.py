@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from autobridge.bench.harness import (
+from bench.harness import (
     ArmResult,
     HarnessConfig,
     HarnessInputs,
@@ -35,7 +35,7 @@ from autobridge.bench.harness import (
     score_and_report,
     write_results,
 )
-from autobridge.bench.scoring import validate_scorecard_schema
+from bench.scoring import validate_scorecard_schema
 
 
 def _fixed_runners(ab_ms: float = 10.0, bl_ms: float = 20.0):
@@ -184,7 +184,7 @@ def test_main_full_pipeline_writes_scorecard(tmp_path: pathlib.Path, monkeypatch
     # over real HTTP (socket.getaddrinfo on localhost), which on macOS
     # poisons later forked children (REQ-022 DNS-hermetic fix). The URL
     # plumbing is still exercised; only the transport is faked.
-    from autobridge.bench import scoring as scoring_mod
+    from bench import scoring as scoring_mod
 
     def _fake_verify(*_args: object, **_kwargs: object) -> dict[str, Any]:
         return {"verdict": "pass", "score": 1.0, "failed_checks": [], "regression": "pass"}

@@ -1,10 +1,10 @@
 """Fake CLI helpers (P1.W1.9 + P1.W8.2, plan §9).
 
 Re-exports the fake drivers and output builders from
-:mod:`autobridge.bench.baseline_coding_agent` under a stable import
-path ``autobridge.bench.fake_cli`` so bench tests can do::
+:mod:`bench.baseline_coding_agent` under a stable import
+path ``bench.fake_cli`` so bench tests can do::
 
-    from autobridge.bench.fake_cli import FakeClaudeDriver, build_fake_claude_output
+    from bench.fake_cli import FakeClaudeDriver, build_fake_claude_output
 
 Standalone executables ``scripts/fake_claude.py`` and
 ``scripts/fake_codex.py`` are the subprocess counterparts (used when the
@@ -13,7 +13,7 @@ harness spawns ``claude -p`` / ``codex exec`` as children).
 
 from __future__ import annotations
 
-from autobridge.bench.baseline_coding_agent import (
+from bench.baseline_coding_agent import (
     BaselineLLMDriver,
     ClaudeCliError,
     ClaudeCliResult,
@@ -29,7 +29,7 @@ from autobridge.bench.baseline_coding_agent import (
 )
 
 try:
-    from autobridge.bench.one_shot import (  # noqa: PLC0415
+    from bench.one_shot import (  # noqa: PLC0415
         OneShotGenerator,
         OneShotResult,
         build_one_shot_prompt,

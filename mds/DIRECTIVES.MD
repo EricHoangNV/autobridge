@@ -28,7 +28,7 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 - `tests/*` `Makefile` `pyproject.toml` `*/pyproject.toml` `*_test.py` `test_*.py` → 5
 - `src/autobridge/evidence/*` `src/autobridge/control/*` `.env.example` → 6
 - `src/autobridge/control/*` `ui/*` → 7
-- `src/autobridge/bench/*` `experiments/*` → 8
+- `bench/*` `experiments/*` → 8
 
 ---
 
@@ -45,7 +45,8 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 
 ## 2. Trust boundaries (plan §1.2, §2.1, §2.7)
 
-- `src/autobridge` never imports `verifier` or `simulators`; `verifier/` and `simulators/` never import `autobridge`. Sanctioned exception: `verifier/` may import the shared simulator data-generator code — `simulators/common/` (generator, faults) and `simulators/scenarios/` (catalog) — and nothing else under `simulators/` (checked by import-linter contracts in `pyproject.toml` and `tests/unit/test_autobridge_trust_boundaries.py`). `src/autobridge/bench/` reads `simulators/scenarios/*.yaml` and `verifier/hidden_cases/heldout/` from the filesystem only: a harness concern, never an import.
+- `src/autobridge` never imports `verifier` or `simulators`; `verifier/` and `simulators/` never import `autobridge`. Sanctioned exception: `verifier/` may import the shared simulator data-generator code — `simulators/common/` (generator, faults) and `simulators/scenarios/` (catalog) — and nothing else under `simulators/` (checked by import-linter contracts in `pyproject.toml` and `tests/unit/test_autobridge_trust_boundaries.py`).
+- `bench/` (top-level harness, outside `src/autobridge`) imports the engine like the tests do and may drive simulator serving code — but never imports `verifier` (grading is HTTP-only; checked by `test_bench_never_imports_verifier` and `test_engine_never_imports_bench`).
 - Docker networks: `engine-net`, `vendor-net`, `verifier-net`, `admin-net` as in plan §2.1. The worker and `runtime-sandbox` have no route to the verifier's fixture volume or the simulator admin API; the UI never calls simulators or the verifier directly. `make smoke` asserts the negative checks.
 - The verifier API returns aggregate verdicts only (`verdict, score, failed_checks` as bounded names + counts, `regression`): never fixture rows (response-schema test, `verifier/`).
 - `verifier/hidden_cases/heldout/` is frozen at the end of W2 with its sha256 manifest committed; it is opened only for the final benchmark run (`make bench` checks the sha first).

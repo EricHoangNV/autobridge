@@ -426,7 +426,7 @@ class CodexCliDriver:
     When the real ``codex`` binary is unavailable the documented fallback
     is :class:`BaselineLLMDriver` — routing the baseline through
     :class:`autobridge.llm.provider.LLMProvider` with an equivalent agent
-    loop (plan §9, see also :func:`autobridge.bench.harness.run_baseline_via_llm_provider`).
+    loop (plan §9, see also :func:`bench.harness.run_baseline_via_llm_provider`).
 
     ``cli_path`` defaults to ``CODEX_CLI_PATH`` env or ``"codex"``.
     """
@@ -1115,7 +1115,7 @@ def get_baseline_driver(
     without importing driver classes directly.  The fallback is
     :class:`BaselineLLMDriver` — routing through :class:`LLMProvider`
     with the same ``Budget`` ceilings the harness uses for AutoBridge,
-    documented in :mod:`autobridge.bench.harness` and ``docs/benchmark.md``.
+    documented in :mod:`bench.harness` and ``docs/benchmark.md``.
     """
     kind_norm = kind.lower().strip()
     if kind_norm in ("opencode", "opencode_cli"):
@@ -1128,7 +1128,7 @@ def get_baseline_driver(
         return BaselineLLMDriver(provider=provider, model=model)
     if kind_norm in ("one_shot", "oneshot", "one-shot"):
         # Lazy import to avoid cycle (one_shot imports from this module)
-        from autobridge.bench.one_shot import OneShotGenerator  # noqa: PLC0415
+        from bench.one_shot import OneShotGenerator  # noqa: PLC0415
 
         return OneShotGenerator(provider=provider, model=model)
     raise ValueError(f"unknown baseline driver kind {kind!r}; expected 'opencode', 'claude', 'codex', 'llm' or 'one_shot'")

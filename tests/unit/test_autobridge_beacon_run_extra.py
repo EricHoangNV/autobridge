@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 import simulators.common.faultgen as faultgen
-from autobridge.bench import beacon_run
-from autobridge.bench.beacon_run import BeaconError
+from bench import beacon_run
+from bench.beacon_run import BeaconError
 
 if TYPE_CHECKING:
     import pathlib
@@ -153,26 +153,93 @@ def test_beacon_case_all_families() -> None:
             continue
         assert case is not None, descriptor
         seen.add(descriptor["family"])
-        assert case.drift_class != "UNKNOWN"
+        # Equal task setup only: spec + connector + docs, never diagnostics.
+        assert case.spec and case.connector_id and case.docs_ref
+        assert not hasattr(case, "drift_class")
+        assert not hasattr(case, "hypotheses")
     for family in ("rename", "nesting", "pagination", "code_list", "semantic", "dates", "transport_auth"):
         assert family in seen, f"family {family} not covered in 60 instances"
 
 
-def test_semantic_hypotheses_decoy_empty() -> None:
-    assert beacon_run._semantic_hypotheses({"kind": "decoy", "decoy_field": "X"}) == ()
-    hyps = beacon_run._semantic_hypotheses({"kind": "gross_net"})
-    assert len(hyps) == 2
+def test_beacon_case_needs_no_instance_params() -> None:
+    """The case carries no instance parameters (REQ-024 owner check).
+
+    ``beacon_case_for`` resolves the same setup when the descriptor's
+    ``params`` are blanked: params are serving detail for the simulator,
+    never an arm input.
+    """
+    descriptor = _descriptor(0)
+    assert descriptor["vendor"] != "fias-pabx", "need an HTTP instance for this test"
+    full = beacon_run.beacon_case_for(descriptor)
+    assert full is not None
+    blanked = dict(descriptor, params={})
+    same = beacon_run.beacon_case_for(blanked)
+    assert same is not None
+    assert same.spec == full.spec
+    assert same.connector_id == full.connector_id
+    assert same.docs_ref == full.docs_ref
+
+
+def test_beacon_derive_observes_served_instance() -> None:
+    """Engine arms observe the beacon instance end to end (REQ-024 check).
+
+    Drives a real instance through the vendor app in-process (no stack),
+    derives the drift class from the served observations, and runs a full
+    engine arm on it. The derived class must come from the serving — the
+    descriptor's family label is never passed to the arm.
+    """
+    from bench import ablation as _ablation
+    from bench.harness import HarnessConfig as _Cfg
+    from bench.harness import make_trial_inputs as _inputs
+
+    descriptor = None
+    for index in range(60):
+        cand = _descriptor(index)
+        if cand["vendor"] in ("atlas", "harbor") and cand["family"] in ("rename", "pagination", "semantic"):
+            descriptor = cand
+            break
+    assert descriptor is not None
+    case = beacon_run.beacon_case_for(descriptor)
+    assert case is not None
+    diag = beacon_run.derive_beacon_diagnostics(
+        case.spec,
+        descriptor=descriptor,
+        eval_seed_hex=EVAL_SEED_HEX,
+        vendor=str(descriptor["vendor"]),
+        connector_id=case.connector_id,
+    )
+    assert diag.drift_class, descriptor
+    assert diag.signals, descriptor
+    inputs = _inputs(_Cfg(), f"beacon:{descriptor['index']}", 0)
+
+    def _derive(spec: Any, _case: Any, _inputs: Any) -> Any:
+        return beacon_run.derive_beacon_diagnostics(
+            spec,
+            descriptor=descriptor,
+            eval_seed_hex=EVAL_SEED_HEX,
+            vendor=str(descriptor["vendor"]),
+            connector_id=case.connector_id,
+        )
+
+    from autobridge.llm.provider import FakeProvider
+
+    res = _ablation.run_engine_arm(
+        inputs, case, ablation="autobridge_cold", provider=FakeProvider(), derive=_derive
+    )
+    assert res.spec is not None
+    assert res.spec["decision"] in ("propose", "escalate", "degraded")
+    assert res.spec["candidate_patch"] == [] or isinstance(res.spec["candidate_patch"], list)
 
 
 def test_engine_spec_failure_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench import ablation as _ablation
+    from bench import ablation as _ablation
 
     monkeypatch.setattr(_ablation, "_load_reference_spec", lambda _conn: (_ for _ in ()).throw(KeyError("nope")))
     assert beacon_run.engine_spec_for(_descriptor(0)) is None
 
 
 def test_run_arm_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench import ablation as _ablation
+    from bench import ablation as _ablation
 
     inputs = beacon_run_load_inputs()
     with pytest.raises(BeaconError):
@@ -184,8 +251,8 @@ def test_run_arm_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def beacon_run_load_inputs() -> Any:
-    from autobridge.bench.harness import HarnessConfig as _Cfg
-    from autobridge.bench.harness import make_trial_inputs as _inputs
+    from bench.harness import HarnessConfig as _Cfg
+    from bench.harness import make_trial_inputs as _inputs
 
     return _inputs(_Cfg(), "beacon:0", 0)
 
@@ -297,7 +364,7 @@ def _engine_result(patch: Any = None) -> Any:
 
 
 def test_full_trial_offline_graded(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.harness import HarnessConfig as _Cfg
+    from bench.harness import HarnessConfig as _Cfg
 
     descriptor = None
     for index in range(30):
@@ -326,7 +393,7 @@ def test_full_trial_offline_graded(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_full_trial_records_fail_marks_wrong_patch(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.harness import HarnessConfig as _Cfg
+    from bench.harness import HarnessConfig as _Cfg
 
     descriptor = _descriptor(0)
     _fake_verifier(monkeypatch, records_verdict="fail")

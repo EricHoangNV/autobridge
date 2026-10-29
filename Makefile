@@ -97,21 +97,21 @@ e2e-ui: ui-e2e-deps
 # only non-empty KEY=value lines; explicit environment always wins).
 bench:
 	@echo ">> bench: matched-budget run + scorecard (W8.5), then all ablation arms (REQ-024 B)"
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
-	. ./scripts/load_dotenv.sh && BENCH_TRIALS=$${BENCH_TRIALS:-5} uv run python -m autobridge.bench.harness --arms ablation --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.ablation_curve
+	. ./scripts/load_dotenv.sh && uv run python -m bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
+	. ./scripts/load_dotenv.sh && BENCH_TRIALS=$${BENCH_TRIALS:-5} uv run python -m bench.harness --arms ablation --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
+	. ./scripts/load_dotenv.sh && uv run python -m bench.ablation_curve
 
 # REQ-024 B6 rehearsal without a stack: engine arms run in-process and grading
 # degrades to unverified when the verifier is down (labels say so).
 bench-ablation:
 	@echo ">> bench-ablation: all arms on the dev split + learning curve (REQ-024 B)"
-	. ./scripts/load_dotenv.sh && BENCH_TRIALS=$${BENCH_TRIALS:-5} AUTOBRIDGE_BENCH_SKIP_PROBE=1 uv run python -m autobridge.bench.harness --arms ablation --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.ablation_curve
+	. ./scripts/load_dotenv.sh && BENCH_TRIALS=$${BENCH_TRIALS:-5} AUTOBRIDGE_BENCH_SKIP_PROBE=1 uv run python -m bench.harness --arms ablation --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
+	. ./scripts/load_dotenv.sh && uv run python -m bench.ablation_curve
 
 bench-heldout:
 	@echo ">> bench (heldout split — private seeds from HELDOUT_DIR, Nov 3 run)"
 	. ./scripts/load_dotenv.sh; if [ -z "$${HELDOUT_DIR:-}" ]; then echo "heldout SHA check failed: HELDOUT_DIR not set" >&2; exit 2; fi; \
-	BENCH_VISIBILITY=heldout uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
+	BENCH_VISIBILITY=heldout uv run python -m bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
 
 # REQ-024 A4: after the single Nov 3 run the owner publishes the seed files
 # under verifier/hidden_cases/heldout/revealed/ (an owner commit). Anyone can
@@ -120,21 +120,21 @@ bench-heldout:
 verify-heldout-reveal:
 	@echo ">> verify heldout reveal against frozen SHA256SUMS, then rerun bench-heldout from it"
 	. ./scripts/load_dotenv.sh; if [ ! -d verifier/hidden_cases/heldout/revealed ]; then echo "no reveal yet: verifier/hidden_cases/heldout/revealed/ missing (owner publishes after the Nov 3 run)" >&2; exit 2; fi; \
-	HELDOUT_DIR=verifier/hidden_cases/heldout/revealed uv run python -c "from autobridge.bench.harness import check_heldout_sha; check_heldout_sha()" && \
-	HELDOUT_DIR=verifier/hidden_cases/heldout/revealed BENCH_VISIBILITY=heldout uv run python -m autobridge.bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
+	HELDOUT_DIR=verifier/hidden_cases/heldout/revealed uv run python -c "from bench.harness import check_heldout_sha; check_heldout_sha()" && \
+	HELDOUT_DIR=verifier/hidden_cases/heldout/revealed BENCH_VISIBILITY=heldout uv run python -m bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104
 
 demo:
 	@echo ">> demo: eight steps via control API (W10)"
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.demo
+	. ./scripts/load_dotenv.sh && uv run python -m bench.demo
 
 demo-reset:
 	@echo ">> demo-reset: full reset to a known first-run state (REQ-021 item 1)"
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.demo_reset
+	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_reset
 
 record-frontier:
 	@echo ">> record-frontier: capture a live frontier climb (REQ-021 item 5; needs FRONTIER_API_KEY)"
 	@if [ -z "$${SCENARIO:-}" ]; then echo "record-frontier: SCENARIO is required (make record-frontier SCENARIO=gross_to_net)" >&2; exit 2; fi
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.record_frontier "$${SCENARIO}"
+	. ./scripts/load_dotenv.sh && uv run python -m bench.record_frontier "$${SCENARIO}"
 
 # REQ-025 beacon evaluation (items 4-7). Freeze commits experiments/beacon/
 # protocol.md before the target round exists (commit-once; dirty tree
@@ -147,21 +147,21 @@ eval-freeze:
 	@echo ">> eval-freeze: freeze the beacon protocol (REQ-025 item 4)"
 	@if [ -z "$${ROUND_AFTER:-}" ]; then echo "eval-freeze: ROUND_AFTER is required (ISO UTC, e.g. make eval-freeze ROUND_AFTER=2026-11-05T12:00:00+00:00 FAULTS=25)" >&2; exit 2; fi
 	@if [ -z "$${FAULTS:-}" ]; then echo "eval-freeze: FAULTS is required" >&2; exit 2; fi
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.beacon_run freeze --round-after "$${ROUND_AFTER}" --faults "$${FAULTS}" --trials "$${TRIALS:-5}"
+	. ./scripts/load_dotenv.sh && uv run python -m bench.beacon_run freeze --round-after "$${ROUND_AFTER}" --faults "$${FAULTS}" --trials "$${TRIALS:-5}"
 
 bench-beacon:
 	@echo ">> bench-beacon: run the frozen protocol (REQ-025 item 5)"
 	. ./scripts/load_dotenv.sh && \
 	if [ -n "$${REHEARSE:-}" ]; then \
-		uv run python -m autobridge.bench.beacon_run rehearse --round "$${REHEARSE}" --faults "$${FAULTS:-10}" --trials "$${TRIALS:-1}" --verifier-url http://localhost:8104; \
+		uv run python -m bench.beacon_run rehearse --round "$${REHEARSE}" --faults "$${FAULTS:-10}" --trials "$${TRIALS:-1}" --verifier-url http://localhost:8104; \
 	else \
-		uv run python -m autobridge.bench.beacon_run run --verifier-url http://localhost:8104; \
+		uv run python -m bench.beacon_run run --verifier-url http://localhost:8104; \
 	fi
 
 verify-beacon:
 	@echo ">> verify-beacon: reproduce + check published instances (REQ-025 item 7)"
 	@if [ -z "$${ROUND:-}" ]; then echo "verify-beacon: ROUND is required (make verify-beacon ROUND=<round>)" >&2; exit 2; fi
-	. ./scripts/load_dotenv.sh && uv run python -m autobridge.bench.beacon_run verify-repro --round "$${ROUND}" $${OUTDIR:+--output-dir "$${OUTDIR}"}
+	. ./scripts/load_dotenv.sh && uv run python -m bench.beacon_run verify-repro --round "$${ROUND}" $${OUTDIR:+--output-dir "$${OUTDIR}"}
 
 beacon-eval:
 	@echo ">> beacon-eval: one unattended freeze + run (REQ-025 item 6b)"
@@ -176,7 +176,7 @@ lint-fix:
 	uv run --extra dev ruff check --fix .
 
 typecheck:
-	uv run --extra dev mypy src/autobridge
+	uv run --extra dev mypy src/autobridge bench
 
 # ---- OpenAPI + UI ----
 openapi:

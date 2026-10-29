@@ -11,14 +11,14 @@ from typing import Any
 
 import pytest
 
-from autobridge.bench.harness import ArmResult, HarnessConfig, TrialResult, make_trial_inputs
-from autobridge.bench.report import (
+from bench.harness import ArmResult, HarnessConfig, TrialResult, make_trial_inputs
+from bench.report import (
     load_scorecard_json,
     render_scorecard_markdown,
     write_scorecard,
     write_scorecard_json,
 )
-from autobridge.bench.scoring import (
+from bench.scoring import (
     REQUIRED_ARM_METRICS,
     VerifyOutcome,
     aggregate_scores,
@@ -249,7 +249,7 @@ def _scored_trial(sid: str, trial: int, ab_pass: bool, bl_pass: bool) -> dict[st
     if not bl_pass:
         scored["arms"]["baseline"] = score_arm(arm="baseline", scenario_id=sid, trial=trial, success=False, outcome=VerifyOutcome(verdict="fail")).to_dict()
     # Recompute winner/loss notes consistently
-    from autobridge.bench.scoring import _pick_winner  # noqa: PLC0415
+    from bench.scoring import _pick_winner  # noqa: PLC0415
 
     scored["winner"] = _pick_winner(scored["arms"])
     return scored
@@ -267,7 +267,7 @@ def test_aggregate_all_required_metrics() -> None:
 
 
 def test_score_bench_end_to_end_with_objects() -> None:
-    from autobridge.bench.harness import BenchResult, HarnessConfig  # noqa: PLC0415
+    from bench.harness import BenchResult, HarnessConfig  # noqa: PLC0415
 
     cfg = HarnessConfig(seed=7)
     inp = make_trial_inputs(cfg, "baseline", 0)
@@ -398,14 +398,14 @@ def test_load_invalid_json_shape(tmp_path: Any) -> None:
 
 
 def test_report_main_missing_input(tmp_path: Any) -> None:
-    from autobridge.bench.report import main  # noqa: PLC0415
+    from bench.report import main  # noqa: PLC0415
 
     rc = main(["--input", str(tmp_path / "nope.json"), "--output", str(tmp_path / "out.md")])
     assert rc == 2
 
 
 def test_report_main_invalid_schema(tmp_path: Any) -> None:
-    from autobridge.bench.report import main  # noqa: PLC0415
+    from bench.report import main  # noqa: PLC0415
 
     bad = tmp_path / "bad.json"
     bad.write_text('{"arms": {}, "trials": []}', encoding="utf-8")
@@ -414,7 +414,7 @@ def test_report_main_invalid_schema(tmp_path: Any) -> None:
 
 
 def test_report_main_ok(tmp_path: Any) -> None:
-    from autobridge.bench.report import main  # noqa: PLC0415
+    from bench.report import main  # noqa: PLC0415
 
     card = _scorecard()
     inp = tmp_path / "card.json"
@@ -425,7 +425,7 @@ def test_report_main_ok(tmp_path: Any) -> None:
 
 
 def test_report_main_schema_invalid_but_loadable(tmp_path: Any) -> None:
-    from autobridge.bench.report import main  # noqa: PLC0415
+    from bench.report import main  # noqa: PLC0415
 
     # Valid JSON dict that fails validate on render path: craft file that
     # passes load (full schema) then corrupt? Instead: file with valid JSON
@@ -450,8 +450,8 @@ def test_arm_result_new_fields_defaults() -> None:
 
 
 def test_scoring_and_report_healthz() -> None:
-    from autobridge.bench import report as rp  # noqa: PLC0415
-    from autobridge.bench import scoring as sc  # noqa: PLC0415
+    from bench import report as rp  # noqa: PLC0415
+    from bench import scoring as sc  # noqa: PLC0415
 
     assert sc.healthz()["status"] == "ok"
     assert rp.healthz()["status"] == "ok"

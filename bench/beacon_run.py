@@ -18,11 +18,12 @@ Protocol (commit-then-reveal with public randomness):
   instance descriptors, and checks them against the published ones.
 
 Trust boundary (DIRECTIVES §2): bench-side only. This module never imports
-``verifier`` or ``simulators`` and never sees generator internals or
-answer keys: it passes only the eval seed (public beacon randomness) to
-the services over HTTP and reads ``simulators/scenarios``-style public
-files (reference specs, vendor docs) from the filesystem. Grading happens
-server-side; the harness only combines the two endpoint verdicts.
+``verifier`` and never sees generator internals or answer keys: it passes
+only the eval seed (public beacon randomness) to the services over HTTP.
+In-process instance serving drives simulator serving code the way the
+tests do (see ``bench.faults``) and reads reference specs / vendor docs
+from the filesystem. Grading happens server-side; the harness only
+combines the two endpoint verdicts.
 
 Instance descriptors (``{index, vendor, family, params}``) are public —
 the fault families are known by design; what could not be known in
@@ -43,10 +44,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from autobridge.bench import beacon_client
-from autobridge.bench.beacon_client import BeaconError
+from bench import beacon_client
+from bench.beacon_client import BeaconError
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 BEACON_DIR = REPO_ROOT / "experiments" / "beacon"
 PROTOCOL_PATH = BEACON_DIR / "protocol.md"
 VENDORS_PATH = REPO_ROOT / "config" / "beacon_vendors.yaml"
@@ -76,7 +77,9 @@ class BeaconVendor:
 
     Vendor names live in ``config/beacon_vendors.yaml``, never in engine
     code (unseen-vendor guards). ``http=False`` vendors ride non-HTTP
-    transports: no live sync, outcome-graded only.
+    transports: no live sync, outcome-graded only. ``docs`` is the vendor
+    docs path the engine's hypothesis engine reads (equal input, same as
+    the frontier arms' docs).
     """
 
     vendor: str
@@ -84,6 +87,7 @@ class BeaconVendor:
     admin_url: str
     public_url: str
     spec: dict[str, str] | None = None
+    docs: str = ""
 
 
 def load_vendors(path: str | pathlib.Path = VENDORS_PATH) -> list[BeaconVendor]:
@@ -111,6 +115,7 @@ def load_vendors(path: str | pathlib.Path = VENDORS_PATH) -> list[BeaconVendor]:
                 admin_url=str(entry.get("admin_url", "")).rstrip("/"),
                 public_url=str(entry.get("public_url", "")).rstrip("/"),
                 spec=dict(spec) if isinstance(spec, dict) else None,
+                docs=str(entry.get("docs", "")),
             )
         )
     if len({v.vendor for v in vendors}) != len(vendors):
@@ -309,11 +314,14 @@ reached a release (must be 0 for AutoBridge), correct escalations
 (escalated exactly when the instance says so), frontier tokens, estimated
 cost, wall time.
 
-Caveat (REQ-024 owner check on f32b4b4b, open at freeze time): the engine
-arms run in-process from descriptor-built repair inputs (drift class,
-fingerprint delta, hypotheses) — a pre-diagnosed state — while the
-frontier arms start from docs and the live sandbox. Deltas carry this
-caveat until the real end-to-end engine path lands in ablation.py.
+Engine-arm inputs (REQ-024 owner check on f32b4b4b, fixed): every arm gets
+the same inputs (the pre-drift spec, the docs, the served instance,
+budgets). The engine arms observe the instance end to end — sync the
+served shape (the same simulator serving code the live stack runs,
+deterministic from the public seed) → detector → classifier → the
+engine's own hypothesis enumerator → ladder → verifier gate — with no
+case-supplied drift class, delta, hypotheses or yield count. Instance
+parameters, generator internals and answer keys never reach the arms.
 """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
@@ -415,46 +423,27 @@ def push_beacon(
 # ---------------------------------------------------------------------------
 
 
-#: Beacon family → canonical drift class (plan §2.5 taxonomy).
-DRIFT_CLASS_FOR_FAMILY: dict[str, str] = {
-    "rename": "SCHEMA_RENAME",
-    "nesting": "SCHEMA_RENAME",
-    "pagination": "PAGINATION_CHANGE",
-    "code_list": "ENUM_NEW_VALUE",
-    "semantic": "SEMANTIC_VALUE_DRIFT",
-    "dates": "SEMANTIC_VALUE_DRIFT",
-    "transport_auth": "TRANSIENT",
-    "fias_layout": "SCHEMA_RENAME",
-    "fias_link": "TRANSIENT",
-}
+def _vendor_entry(
+    vendor: str, vendors: list[BeaconVendor] | None = None
+) -> BeaconVendor | None:
+    for entry in vendors if vendors is not None else load_vendors():
+        if entry.vendor == vendor:
+            return entry
+    return None
 
-#: transport_auth kind → canonical drift class override.
-DRIFT_CLASS_FOR_TRANSPORT_KIND: dict[str, str] = {
-    "throttle": "RATE_LIMIT",
-    "retry_after": "RATE_LIMIT",
-    "outage": "TRANSIENT",
-    "token_expired": "AUTH_EXPIRED",
-    "token_revoked": "AUTH_REVOKED",
-    "endpoint_removed": "CAPABILITY_REMOVED",
-}
 
 def engine_spec_for(descriptor: dict[str, Any], vendors: list[BeaconVendor] | None = None) -> dict[str, Any] | None:
     """Reference/docs spec for the descriptor's vendor (None when none exists).
 
-    Filesystem sources only (generated reference specs, vendor docs — the
-    same sanctioned bench exception as ``ablation_case_for_scenario``);
-    the spec source rides the vendor table, never engine code.
+    Filesystem sources only (generated reference specs, vendor docs —
+    the spec source rides the vendor table, never engine code).
     Non-HTTP vendors have no connector spec: engine arms cannot propose an
     in-process patch there (outcome-graded only, documented).
     """
-    from autobridge.bench import ablation as _ablation
+    from bench import ablation as _ablation
 
-    vendor = str(descriptor["vendor"])
-    source: dict[str, str] | None = None
-    for entry in vendors if vendors is not None else load_vendors():
-        if entry.vendor == vendor:
-            source = entry.spec
-            break
+    entry = _vendor_entry(str(descriptor["vendor"]), vendors)
+    source = entry.spec if entry is not None else None
     if source is None:
         return None
     try:
@@ -466,100 +455,73 @@ def engine_spec_for(descriptor: dict[str, Any], vendors: list[BeaconVendor] | No
 
 
 def beacon_case_for(descriptor: dict[str, Any], vendors: list[BeaconVendor] | None = None) -> Any | None:
-    """Build engine-arm repair inputs from a public beacon descriptor.
+    """Equal task setup for a beacon instance (spec + docs, no diagnostics).
 
-    Returns an :class:`ablation.AblationCase` (spec, drift class,
-    fingerprint delta, extra, hypotheses) built from filesystem sources +
-    descriptor fields only — never from generator internals or answer keys.
-    ``None`` when the vendor has no in-process spec (FIAS): the arms are
-    outcome-graded only for those instances.
+    REQ-024 owner check on f32b4b4b: returns an
+    :class:`ablation.AblationCase` (scenario id, pre-drift spec,
+    connector, vendor docs) built from the vendor table + filesystem
+    only — never from generator internals, instance parameters or answer
+    keys. The fault is observed at arm time by syncing the served
+    instance (see :func:`derive_beacon_diagnostics`). ``None`` when the
+    vendor has no in-process spec (FIAS): the arms are outcome-graded
+    only for those instances.
     """
-    from autobridge.bench import ablation as _ablation
-    from autobridge.drift.fingerprint import FingerprintDelta as _FD
-
-    family = str(descriptor["family"])
-    params = dict(descriptor.get("params", {}))
     index = int(descriptor["index"])
     spec = engine_spec_for(descriptor, vendors)
     if spec is None:
         return None
+    entry = _vendor_entry(str(descriptor["vendor"]), vendors)
+    source = entry.spec if entry is not None else None
+    if source is None:
+        return None
+    from bench import ablation as _ablation
 
-    def fd(**kwargs: Any) -> Any:
-        base: dict[str, Any] = dict(
-            fingerprint_changed=True,
-            pagination_changed=False,
-            keys_changed=False,
-            types_changed=False,
-            changed_entities=[],
-            pagination_details={},
-            keys_details={},
-            types_details={},
-        )
-        base.update(kwargs)
-        return _FD(**base)
-
-    drift_class = DRIFT_CLASS_FOR_FAMILY.get(family, "UNKNOWN")
-    extra: dict[str, Any] = {}
-    hypotheses: tuple[Any, ...] = ()
-    if family == "rename":
-        entity = "Reservation" if str(params.get("entity")) == "reservation" else "Folio"
-        new_name = str(params.get("new_name", ""))
-        field = str(params.get("field", ""))
-        delta = fd(types_changed=True, changed_entities=[entity],
-                   types_details={entity: {"previous": {field: "str"}, "current": {new_name: "str"}}})
-        extra = {"new_path": f"$.{new_name}"}
-    elif family == "nesting":
-        entity = "Reservation" if str(params.get("entity")) == "reservation" else "Folio"
-        delta = fd(types_changed=True, changed_entities=[entity])
-    elif family == "pagination":
-        strategy = str(params.get("strategy", ""))
-        delta = fd(pagination_changed=True, changed_entities=["Reservation"],
-                   pagination_details={"list_reservations": {"previous": {}, "current": {"strategy": strategy}}})
-        extra = {"target_strategy": strategy}
-    elif family == "code_list":
-        delta = fd(types_changed=True, changed_entities=["Reservation"])
-    elif family == "semantic":
-        delta = fd(changed_entities=["Reservation"])
-        hypotheses = _semantic_hypotheses(params)
-    elif family == "dates":
-        delta = fd(changed_entities=["Reservation", "Folio"])
-    elif family == "transport_auth":
-        drift_class = DRIFT_CLASS_FOR_TRANSPORT_KIND.get(str(params.get("kind", "")), "TRANSIENT")
-        delta = fd()
-    elif family in ("fias_layout", "fias_link"):
-        delta = fd()
+    kind = str(source.get("kind", ""))
+    if kind == "generated" or kind == "docs":
+        connector_id = str(source["connector"])
     else:
+        return None
+    docs_ref = entry.docs if entry is not None else ""
+    if not docs_ref:
         return None
     return _ablation.AblationCase(
         scenario_id=f"beacon:{index}",
         spec=spec,
-        drift_class=drift_class,
-        fingerprint_delta=delta,
-        extra=extra,
-        hypotheses=hypotheses,
+        connector_id=connector_id,
+        docs_ref=docs_ref,
     )
 
 
-def _semantic_hypotheses(params: dict[str, Any]) -> tuple[Any, ...]:
-    """Amount hypotheses for a semantic instance (L2 ranks, never guesses)."""
-    from autobridge.discovery.docs_reader import Provenance as _Provenance
-    from autobridge.discovery.hypotheses import Hypothesis as _Hypothesis
+def derive_beacon_diagnostics(
+    spec: dict[str, Any],
+    *,
+    descriptor: dict[str, Any],
+    eval_seed_hex: str,
+    vendor: str,
+    connector_id: str,
+) -> Any:
+    """Observe a beacon instance end to end (public descriptor only).
 
-    kind = str(params.get("kind", ""))
-    if kind == "decoy":
-        return ()
-    decoy = str(params.get("decoy_field", "net_amount")) if kind == "decoy" else "net_amount"
-    prov = (_Provenance(source="beacon:semantic", line=1, snippet="served amount scale ambiguous"),)
-    gross = str(params.get("gross_field", "total_amount"))
-    return (
-        _Hypothesis(id="gross_is_canonical", family="amount",
-                    claim=f"{gross} must stay gross",
-                    candidate_mapping_fragment={"family": "amount", "field": gross},
-                    prior=0.41, evidence_for=prov),
-        _Hypothesis(id="scaled_is_canonical", family="amount",
-                    claim=f"served {decoy} tracks canonical",
-                    candidate_mapping_fragment={"family": "amount", "field": decoy},
-                    prior=0.39, evidence_for=prov),
+    Serves the instance in-process through the vendor's real app
+    (:func:`faults.beacon_sync_pair` — the same serving code the live
+    simulator runs, deterministic from the public seed), then runs the
+    detector → classifier over the served observations. Never reads
+    instance parameters as diagnostics, generator internals or answer
+    keys: the only inputs are the pre-drift spec and the public
+    ``(eval_seed_hex, index, vendor)`` every arm receives.
+    """
+    from bench import ablation as _ablation
+    from bench import faults as _faults
+
+    faulted_summary, baseline_summary = _faults.beacon_sync_pair(
+        vendor=vendor,
+        eval_seed_hex=eval_seed_hex,
+        index=int(descriptor["index"]),
+        spec=spec,
+    )
+    _ = connector_id  # serving follows the vendor app, not the connector id
+    return _ablation.derive_from_summaries(
+        spec, baseline_summary=baseline_summary, faulted_summary=faulted_summary
     )
 
 
@@ -700,16 +662,20 @@ def run_instance_trial(
 ) -> tuple[list[BeaconArmGrade], dict[str, Any]]:
     """Run all protocol arms on one beacon instance × trial; grade each.
 
-    Engine arms run in-process (RepairController, ladder + budgets kept)
-    from cases built out of the public descriptor; the candidate patch is
-    applied to the case spec and synced with the real runtime against the
-    live beacon shape; produced records + the reported outcome are judged
-    by the verifier (``/beacon/records`` + ``/beacon/grade``). Frontier
-    arms run through the shared REQ-024 runners. No-spec arms are
-    outcome-graded only. Never raises for arm failures (records the loss).
+    Engine arms run in-process (RepairController, ladder + budgets kept):
+    they observe the instance by syncing the served shape (the same
+    simulator serving code the live stack runs, deterministic from the
+    public seed — see :func:`derive_beacon_diagnostics`), derive the
+    drift class/delta/hypotheses from that observation, and climb. The
+    candidate patch is applied to the case spec and synced with the real
+    runtime against the live beacon shape; produced records + the reported
+    outcome are judged by the verifier (``/beacon/records`` +
+    ``/beacon/grade``). Frontier arms run through the shared REQ-024
+    runners. No-spec arms are outcome-graded only. Never raises for arm
+    failures (records the loss).
     """
-    from autobridge.bench.ablation import assert_all_inputs_equal as _assert_all_inputs_equal
-    from autobridge.bench.harness import make_trial_inputs as _make_inputs
+    from bench.ablation import assert_all_inputs_equal as _assert_all_inputs_equal
+    from bench.harness import make_trial_inputs as _make_inputs
 
     index = int(descriptor["index"])
     vendor = str(descriptor["vendor"])
@@ -735,7 +701,8 @@ def run_instance_trial(
         start = time.monotonic()
         grade = BeaconArmGrade(arm=arm, instance_index=index, trial=trial, vendor=vendor, family=str(descriptor["family"]))
         try:
-            result = _run_arm(arm, inputs, case, runners, prov, knowledge_warm)
+            result = _run_arm(arm, inputs, case, runners, prov, knowledge_warm,
+                              descriptor=descriptor, eval_seed_hex=eval_seed_hex)
         except Exception as exc:
             grade.error = f"{type(exc).__name__}: {exc}"[:500]
             grade.executed = True
@@ -765,9 +732,25 @@ def run_instance_trial(
     return grades, arm_reports
 
 
-def _run_arm(arm: str, inputs: Any, case: Any, runners: dict[str, Any], provider: Any, knowledge_warm: Any) -> Any:
-    """Dispatch one arm (custom runners win, for unit tests/offline runs)."""
-    from autobridge.bench import ablation as _ablation
+def _run_arm(
+    arm: str,
+    inputs: Any,
+    case: Any,
+    runners: dict[str, Any],
+    provider: Any,
+    knowledge_warm: Any,
+    *,
+    descriptor: dict[str, Any] | None = None,
+    eval_seed_hex: str | None = None,
+) -> Any:
+    """Dispatch one arm (custom runners win, for unit tests/offline runs).
+
+    Engine arms observe the instance through :func:`derive_beacon_diagnostics`
+    (public descriptor + public seed only — never instance parameters as
+    diagnostics); ``derive=None`` (ablation default) is rejected loudly for
+    beacon cases, since ``beacon:<index>`` is not a served sim scenario.
+    """
+    from bench import ablation as _ablation
 
     if arm in runners and runners[arm] is not None:
         return runners[arm](inputs)
@@ -780,13 +763,27 @@ def _run_arm(arm: str, inputs: Any, case: Any, runners: dict[str, Any], provider
             # No in-process spec for this vendor (FIAS): the engine cannot
             # propose a patch in-process; report Blocked without a patch and
             # let /beacon/grade judge the outcome class.
-            from autobridge.bench.harness import ArmResult as _ArmResult
+            from bench.harness import ArmResult as _ArmResult
 
             return _ArmResult(arm=arm, inputs=inputs, success=False,  # type: ignore[arg-type]
                               error="no in-process engine spec for vendor (outcome-graded only)")
+        if descriptor is None or eval_seed_hex is None:
+            raise BeaconError(f"engine arm {arm!r} needs the public descriptor + eval seed to observe the instance")
+        vendor = str(descriptor["vendor"])
+        connector_id = str(getattr(case, "connector_id", ""))
         knowledge = knowledge_warm if arm == "autobridge_warm" else None
+
+        def _derive(spec: dict[str, Any], _case: Any, _inputs: Any) -> Any:
+            return derive_beacon_diagnostics(
+                spec,
+                descriptor=descriptor,
+                eval_seed_hex=eval_seed_hex,
+                vendor=vendor,
+                connector_id=connector_id,
+            )
+
         return _ablation.run_engine_arm(inputs, case, ablation=cast("Any", arm),
-                                        provider=provider, knowledge=knowledge)
+                                        provider=provider, knowledge=knowledge, derive=_derive)
     raise BeaconError(f"unknown arm: {arm}")
 
 
@@ -990,7 +987,7 @@ def run_beacon(
     already exists. Prints the public evidence (round, time, randomness,
     verification URL, freeze commit) to stdout.
     """
-    from autobridge.bench.harness import HarnessConfig as _HarnessConfig
+    from bench.harness import HarnessConfig as _HarnessConfig
 
     out_dir = pathlib.Path(output_dir) if output_dir else BEACON_DIR / str(protocol.target_round)
     # No re-rolls: refuse when result files already exist. A directory that

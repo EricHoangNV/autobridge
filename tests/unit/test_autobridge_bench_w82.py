@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from autobridge.bench.baseline_coding_agent import (
+from autobridge.llm.provider import Budget, Completion, FakeProvider, Usage
+from bench.baseline_coding_agent import (
     BaselineLLMDriver,
     ClaudeCliError,
     ClaudeCodeDriver,
@@ -22,8 +23,7 @@ from autobridge.bench.baseline_coding_agent import (
     get_baseline_driver,
     parse_codex_output,
 )
-from autobridge.bench.harness import HarnessConfig, make_trial_inputs, run_baseline_arm
-from autobridge.llm.provider import Budget, Completion, FakeProvider, Usage
+from bench.harness import HarnessConfig, make_trial_inputs, run_baseline_arm
 
 # ---------------------------------------------------------------------------
 # parse_codex_output — JSON shapes
@@ -170,7 +170,7 @@ def test_codex_driver_build_command_no_model() -> None:
 def test_codex_driver_run_success_with_fake(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_stdout = build_fake_codex_output("generated spec", input_tokens=100, output_tokens=200, model="codex-test")
     monkeypatch.setattr(
-        "autobridge.bench.baseline_coding_agent.subprocess.run",
+        "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=0, stdout=fake_stdout, stderr=""),
     )
     d = CodexCliDriver(cli_path="codex")
@@ -185,7 +185,7 @@ def test_codex_driver_run_success_with_fake(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_codex_driver_run_nonzero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "autobridge.bench.baseline_coding_agent.subprocess.run",
+        "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout="out", stderr="bad prompt"),
     )
     d = CodexCliDriver(cli_path="codex")
@@ -197,7 +197,7 @@ def test_codex_driver_run_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise subprocess.TimeoutExpired(cmd="codex", timeout=1, output="o", stderr="e")
 
-    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     d = CodexCliDriver(cli_path="codex", timeout_s=1)
     with pytest.raises(CodexCliError, match="timed out"):
         d.run("prompt")
@@ -207,7 +207,7 @@ def test_codex_driver_run_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise FileNotFoundError("no such file")
 
-    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     d = CodexCliDriver(cli_path="codex-not-exist")
     with pytest.raises(CodexCliError, match="not found"):
         d.run("prompt")
@@ -226,7 +226,7 @@ def test_codex_driver_custom_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         fake_stdout = build_fake_codex_output("ok")
         return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=fake_stdout, stderr="")
 
-    monkeypatch.setattr("autobridge.bench.baseline_coding_agent.subprocess.run", fake_run)
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     d = CodexCliDriver(cli_path="codex", timeout_s=10)
     d.run("hi", timeout_s=5)
     assert captured["timeout"] == 5
@@ -267,7 +267,7 @@ def test_fake_codex_driver_substring() -> None:
 
 def test_fake_codex_driver_result_object() -> None:
     canned = ClaudeCodeDriver  # noqa: F841 (import check)
-    from autobridge.bench.baseline_coding_agent import ClaudeCliResult
+    from bench.baseline_coding_agent import ClaudeCliResult
 
     canned_res = ClaudeCliResult(text="canned", usage=Usage(5, 5), model="m")
     f = FakeCodexDriver(responses={"hi": canned_res})
@@ -277,7 +277,7 @@ def test_fake_codex_driver_result_object() -> None:
 
 
 def test_fake_codex_driver_callable_returns_result() -> None:
-    from autobridge.bench.baseline_coding_agent import ClaudeCliResult
+    from bench.baseline_coding_agent import ClaudeCliResult
 
     def fn(prompt: str) -> ClaudeCliResult:
         return ClaudeCliResult(text=f"echo:{prompt}", usage=Usage(1, 1))
@@ -479,7 +479,7 @@ def test_get_baseline_driver_unknown() -> None:
 
 
 def test_harness_with_codex_driver_matched() -> None:
-    from autobridge.bench.harness import run_trial
+    from bench.harness import run_trial
 
     cfg = HarnessConfig(sandbox_image="my-image", token_ceiling=5000)
     seen_a: list[dict] = []
@@ -487,14 +487,14 @@ def test_harness_with_codex_driver_matched() -> None:
 
     def ab_runner(inp):  # type: ignore[no-untyped-def]
         seen_a.append(inp.budget_fields())
-        from autobridge.bench.harness import ArmResult
+        from bench.harness import ArmResult
 
         return ArmResult(arm="autobridge", inputs=inp, success=True)
 
     def bl_runner(inp):  # type: ignore[no-untyped-def]
         seen_b.append(inp.budget_fields())
         # Use FakeCodexDriver internally but same inputs
-        from autobridge.bench.harness import ArmResult
+        from bench.harness import ArmResult
 
         driver = FakeCodexDriver(default_text="codex spec")
         result = driver.run(f"Build spec for {inp.scenario_id} docs {inp.docs_ref}")
@@ -515,7 +515,7 @@ def test_harness_with_codex_driver_matched() -> None:
 
 
 def test_harness_with_llm_fallback_matched() -> None:
-    from autobridge.bench.harness import ArmResult, run_trial
+    from bench.harness import ArmResult, run_trial
 
     cfg = HarnessConfig(token_ceiling=4000, wall_clock_s=99.0)
     provider = FakeProvider()
@@ -625,12 +625,12 @@ def test_fake_codex_script_model() -> None:
 
 
 def test_fake_cli_reexport_new_symbols() -> None:
-    from autobridge.bench.fake_cli import BaselineLLMDriver as BLD
-    from autobridge.bench.fake_cli import CodexCliDriver as CCD
-    from autobridge.bench.fake_cli import FakeCodexDriver as FCD
-    from autobridge.bench.fake_cli import build_fake_codex_output as BFCO
-    from autobridge.bench.fake_cli import get_baseline_driver as GBD
-    from autobridge.bench.fake_cli import parse_codex_output as PCO
+    from bench.fake_cli import BaselineLLMDriver as BLD
+    from bench.fake_cli import CodexCliDriver as CCD
+    from bench.fake_cli import FakeCodexDriver as FCD
+    from bench.fake_cli import build_fake_codex_output as BFCO
+    from bench.fake_cli import get_baseline_driver as GBD
+    from bench.fake_cli import parse_codex_output as PCO
 
     assert BLD is BaselineLLMDriver
     assert CCD is CodexCliDriver

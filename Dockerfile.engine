@@ -11,7 +11,7 @@ FROM python:3.12-slim@sha256:6b25cbe6577518889d553cdd5a5da97d259348d8f6e45b527dd
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/srv/src
+    PYTHONPATH=/srv/src:/srv
 
 WORKDIR /srv
 
@@ -26,6 +26,12 @@ COPY pyproject.toml README.md ./
 RUN pip install --no-cache-dir --no-deps .
 
 COPY src/ ./src/
+
+# REQ-024 owner check (bench out of the engine package): the harness lives
+# in top-level bench/ and is served as APP_MODULE=bench.app:app by the
+# bench service. It imports the engine (like the tests do), never the
+# reverse — engine code must not import bench (trust-boundary test).
+COPY bench/ ./bench/
 
 # REQ-021 owner check: the control plane migrates on startup, so the image
 # must ship the Alembic scripts next to src/ (mirrors the repo layout).

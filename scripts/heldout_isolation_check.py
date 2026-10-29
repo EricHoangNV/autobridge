@@ -71,7 +71,7 @@ def main() -> int:
             return 2
 
     print("3. bench reads HELDOUT_DIR only for heldout runs (static evidence):")
-    harness = ROOT / "src" / "autobridge" / "bench" / "harness.py"
+    harness = ROOT / "bench" / "harness.py"
     try:
         text = harness.read_text(encoding="utf-8")
     except OSError:

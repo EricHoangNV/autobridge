@@ -19,21 +19,25 @@ order:
     admin_url: http://localhost:8109
     public_url: http://localhost:8105
     spec: {kind: generated, connector: atlaspms}
+    docs: simulators/docs/atlaspms-openapi.yaml
   - vendor: harbor
     http: true
     admin_url: http://localhost:8110
     public_url: http://localhost:8106
     spec: {kind: generated, connector: harborpms}
+    docs: simulators/docs/harborpms.md
   - vendor: legacystay
     http: true
     admin_url: http://localhost:8112
     public_url: http://localhost:8111
     spec: {kind: docs, path: simulators/docs/legacystay.md, connector: legacystay}
+    docs: simulators/docs/legacystay.md
   - vendor: meridian
     http: true
     admin_url: http://localhost:8117
     public_url: http://localhost:8116
     spec: {kind: docs, path: simulators/docs/meridian-openapi.yaml, connector: meridianpms}
+    docs: simulators/docs/meridian-openapi.yaml
   - vendor: fias-pabx
     http: false
     admin_url: http://localhost:8119

@@ -17,7 +17,7 @@ The harness is deterministic from `seed`: same seed → identical inputs and sce
 
 ### `opencode` — default headless coding-agent driver
 
-`src/autobridge/bench/baseline_coding_agent.py:OpenCodeCliDriver` drives
+`bench/baseline_coding_agent.py:OpenCodeCliDriver` drives
 (the default since REQ-024: the untrained-frontier baseline is a coding
 agent on the same `FRONTIER_MODEL` every arm uses):
 
@@ -36,7 +36,7 @@ use `FakeOpenCodeDriver` (in-memory, no subprocess).
 
 ### `claude_code_headless` — headless CLI with usage capture
 
-`src/autobridge/bench/baseline_coding_agent.py:ClaudeCodeDriver` drives:
+`bench/baseline_coding_agent.py:ClaudeCodeDriver` drives:
 
 ```bash
 claude -p "<prompt>" --output-format json [--model <id>] ...
@@ -55,7 +55,7 @@ The driver parses this (single object, line-delimited JSON, or plain-text fallba
 
 ### `codex_cli` — adapter stub
 
-`src/autobridge/bench/baseline_coding_agent.py:CodexCliDriver` is the `codex` adapter stub (plan §2.10):
+`bench/baseline_coding_agent.py:CodexCliDriver` is the `codex` adapter stub (plan §2.10):
 
 ```bash
 codex exec --json "<prompt>" [--model <id>] ...
@@ -75,13 +75,13 @@ The adapter mirrors `ClaudeCodeDriver` (same `__init__` / `_build_command` / `ru
 
 When neither CLI is available (no binary, no API key, offline CI) the baseline is routed through `LLMProvider` directly:
 
-* `src/autobridge/bench/baseline_coding_agent.py:BaselineLLMDriver` — wraps any `LLMProvider` (e.g. `AnthropicProvider` live, `FakeProvider` in tests) and implements the same `run(prompt, cwd=None) -> ClaudeCliResult` shape. Token usage comes from the provider's `Usage` and `estimate_cost`, so `frontier_tokens` / `cost_usd` remain comparable. When a `Budget` is supplied (from `HarnessInputs.token_ceiling` / `wall_clock_s`) the call is wrapped in `BudgetedProvider`, so the same ceiling is enforced for both arms.
-* `src/autobridge/bench/harness.py:run_baseline_via_llm_provider` — functional entry point with the same semantics, used by the harness when `driver=None` and by `make bench` when `BASELINE_DRIVER=llm`.
+* `bench/baseline_coding_agent.py:BaselineLLMDriver` — wraps any `LLMProvider` (e.g. `AnthropicProvider` live, `FakeProvider` in tests) and implements the same `run(prompt, cwd=None) -> ClaudeCliResult` shape. Token usage comes from the provider's `Usage` and `estimate_cost`, so `frontier_tokens` / `cost_usd` remain comparable. When a `Budget` is supplied (from `HarnessInputs.token_ceiling` / `wall_clock_s`) the call is wrapped in `BudgetedProvider`, so the same ceiling is enforced for both arms.
+* `bench/harness.py:run_baseline_via_llm_provider` — functional entry point with the same semantics, used by the harness when `driver=None` and by `make bench` when `BASELINE_DRIVER=llm`.
 
 Factory:
 
 ```python
-from autobridge.bench.baseline_coding_agent import get_baseline_driver
+from bench.baseline_coding_agent import get_baseline_driver
 
 driver = get_baseline_driver()             # OpenCodeCliDriver (default, REQ-024)
 driver = get_baseline_driver("opencode")   # OpenCodeCliDriver
@@ -95,7 +95,7 @@ driver = get_baseline_driver("one_shot")   # OneShotGenerator (secondary control
 
 ## Secondary diagnostic control — `one_shot_generator` (P1.W8.3)
 
-`src/autobridge/bench/one_shot.py:OneShotGenerator` is the secondary control: a single `LLMProvider.complete` that must produce a `ConnectorSpec` YAML in one pass, with the *same* `HarnessInputs` the other two arms receive (docs volume, sandbox URL, credentials as refs, visible tests, token ceiling, wall-clock — asserted by `assert_inputs_equal` / `assert_budget_fields_equal` three-way). It goes through `Budget` + `BudgetedProvider` so ceilings are identical and every call lands in `ModelCall`; cost is `Decimal` via `estimate_cost`.
+`bench/one_shot.py:OneShotGenerator` is the secondary control: a single `LLMProvider.complete` that must produce a `ConnectorSpec` YAML in one pass, with the *same* `HarnessInputs` the other two arms receive (docs volume, sandbox URL, credentials as refs, visible tests, token ceiling, wall-clock — asserted by `assert_inputs_equal` / `assert_budget_fields_equal` three-way). It goes through `Budget` + `BudgetedProvider` so ceilings are identical and every call lands in `ModelCall`; cost is `Decimal` via `estimate_cost`.
 
 Helpers:
 
@@ -110,7 +110,7 @@ If the agentic baseline beats the one-shot, the gain is from tool use/iteration,
 
 ## Ablation arms — engine vs. untrained frontier model (REQ-024 B)
 
-`src/autobridge/bench/ablation.py` runs five arms under one matched budget
+`bench/ablation.py` runs five arms under one matched budget
 (`assert_all_inputs_equal`, pairwise over all five — the B2 extension of the
 harness self-test). Every arm that calls a frontier model uses the same
 `FRONTIER_MODEL` through the same provider (`ablation_provider()`), so the
@@ -124,11 +124,32 @@ only difference between arms is the engine.
 | `autobridge_cold` | full AutoBridge, empty learned knowledge |
 | `autobridge_warm` | full AutoBridge after learning on the dev split only |
 
-Engine arms run in-process through `RepairController`; structural drifts
-wire no provider (zero-call rows stay zero-call — any model call would be a
-failure), semantic drifts climb with the shared provider exactly like the
-model-usage matrix. `warm_knowledge()` learns only dev-split cases (needs a
-session: verified propose patches are what populate L0).
+Engine arms run the real end-to-end path (REQ-024 owner check on
+`f32b4b4b`, fixed): sync the pre-drift spec against the served fault
+(`bench/faults.py`, through the real simulator wire functions) →
+detector → classifier → the engine's own hypothesis enumerator over the
+vendor docs → ladder → verifier gate — with no case-supplied drift
+class, delta, hypotheses or yield count. `config/ablation_cases.yaml`
+holds only equal inputs (scenario id, pre-drift spec source, docs) plus
+grading-only data (`expected`, never read by arms); the loader refuses
+cases that smuggle diagnostics. Phase 1 runs the deterministic ladder
+(never a model call); phase 2 climbs with the shared provider only for
+derived `SEMANTIC_VALUE_DRIFT` with enumerated hypotheses. Two
+self-tests (besides the pairwise `HarnessInputs` check) pin the
+contract: `assert_arm_task_setup_equal` (every arm resolved the same
+pre-drift spec) and the `handle`-kwargs spy test (drift class, delta and
+hypotheses equal freshly engine-derived values). Deterministic first,
+models last: structural/auth/transport classes run zero model calls by
+construction.
+
+Honest scope (rehearsal finding, published as a loss): with no
+pre-diagnosed inputs the derived detector output does not yet carry the
+evidence the L1 rules need (observed envelope strategy, rename pairs),
+so rehearsal repairs escalate and only the semantic climbs spend (small)
+model tokens. The ladder shape is real — the engine genuinely observes
+each fault — and the gap is engine work (detector evidence), not bench
+masking: the old hand-fed deltas made repairs look solved that the
+running system cannot yet see.
 
 Metrics (`summarize_ablation`, per arm / per arm+scenario / overall, mean +
 95 % normal-approx interval, ≥5 trials): verified completion rate (verifier
@@ -145,10 +166,12 @@ make bench            # scorecard first, then all ablation arms, then the learni
 ```
 
 The learning curve (`run_learning_curve`, `experiments/learning_curve.md`)
-injects the same drift five times: the agent pays every repair, cold
-repairs via the ladder once then hits L0, warm is L0 from the start — with
-the driver/provider provenance printed on the file so rehearsal rows
-(fake-labelled) cannot be mistaken for publication numbers.
+injects the same drift five times: the agent pays every repair; the
+engine arms show what the ladder genuinely does (currently every repeat
+escalates for drifts the L1 rules cannot yet match — learning appears as
+rung 0 only once the detector gap closes) — with the driver/provider
+provenance printed on the file so rehearsal rows (fake-labelled) cannot
+be mistaken for publication numbers.
 
 Pre-registration (frozen before the Nov 3 run): `experiments/preregistration.md`
 — arms, metrics, trials, budgets, the primary hypothesis
@@ -174,7 +197,7 @@ make bench-ablation                           # rehearsal without a stack (5 tri
 make bench-heldout                            # Nov 3 run: BENCH_VISIBILITY=heldout
 ```
 
-Steps inside `python -m autobridge.bench.harness`:
+Steps inside `python -m bench.harness`:
 
 1. **Heldout gate** (REQ-007) — dev runs skip it. `heldout`/`all` runs
    verify every file in `$HELDOUT_DIR` against the committed

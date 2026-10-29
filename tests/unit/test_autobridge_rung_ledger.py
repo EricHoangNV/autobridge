@@ -188,7 +188,7 @@ def test_ledger_endpoint_trace_visible_on_repair_out(tmp_path: pathlib.Path) -> 
 
 
 def test_demo_rung_table_row() -> None:
-    from autobridge.bench.demo import render_rung_summary, rung_table_row
+    from bench.demo import render_rung_summary, rung_table_row
 
     step = {
         "name": "Zero-token recovery",

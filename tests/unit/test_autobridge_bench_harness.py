@@ -9,8 +9,8 @@ from decimal import Decimal  # noqa: TC002
 
 import pytest
 
-from autobridge.bench.baseline_coding_agent import FakeClaudeDriver
-from autobridge.bench.harness import (
+from bench.baseline_coding_agent import FakeClaudeDriver
+from bench.harness import (
     DEFAULT_CREDENTIAL_REFS,
     DEFAULT_DOCS_VOLUME,
     DEFAULT_RUNTIME_TARGET,
@@ -665,8 +665,8 @@ def test_run_baseline_arm_driver_raises() -> None:
 def test_run_baseline_arm_cost_extraction() -> None:
     cfg = HarnessConfig()
     inp = make_trial_inputs(cfg, "baseline", 0)
-    from autobridge.bench.baseline_coding_agent import ClaudeCliResult
     from autobridge.llm.provider import Usage
+    from bench.baseline_coding_agent import ClaudeCliResult
 
     canned = ClaudeCliResult(text="spec", usage=Usage(input_tokens=100, output_tokens=200), model="claude-test", cost_usd=Decimal("0.05"))
     driver = FakeClaudeDriver(responses={"baseline": canned})
@@ -967,7 +967,7 @@ def test_write_bench_summary(tmp_path: pathlib.Path) -> None:
 
 
 def test_main_default_args(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.harness import main
+    from bench.harness import main
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AUTOBRIDGE_BENCH_SKIP_PROBE", "1")
@@ -979,7 +979,7 @@ def test_main_default_args(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_main_custom_seed(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.harness import main
+    from bench.harness import main
 
     monkeypatch.setenv("AUTOBRIDGE_BENCH_SKIP_PROBE", "1")
     ret = main(["--scenarios", "baseline", "--trials", "1", "--seed", "99", "--output-dir", str(tmp_path / "out"), "--no-score"])
@@ -989,7 +989,7 @@ def test_main_custom_seed(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_main_with_bench_scenarios_env(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.harness import main
+    from bench.harness import main
 
     monkeypatch.setenv("BENCH_SCENARIOS", "baseline")
     monkeypatch.setenv("AUTOBRIDGE_BENCH_SKIP_PROBE", "1")
@@ -999,7 +999,7 @@ def test_main_with_bench_scenarios_env(tmp_path: pathlib.Path, monkeypatch: pyte
 
 
 def test_main_heldout_sha_failure(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.harness import main
+    from bench.harness import main
 
     # Heldout run without HELDOUT_DIR is refused (exit 2).
     monkeypatch.delenv("HELDOUT_DIR", raising=False)
@@ -1022,7 +1022,7 @@ def test_main_heldout_sha_failure(tmp_path: pathlib.Path, monkeypatch: pytest.Mo
 
 
 def test_harness_picks_host_urls_outside_container(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench.harness import (
+    from bench.harness import (
         DEFAULT_CONTROL_API_URL,
         DEFAULT_CONTROL_API_URL_HOST,
         DEFAULT_VERIFIER_URL_HOST,
@@ -1030,17 +1030,17 @@ def test_harness_picks_host_urls_outside_container(monkeypatch: pytest.MonkeyPat
         _resolve_default_url,
     )
 
-    monkeypatch.setattr("autobridge.bench.harness._is_in_container", lambda: False)
+    monkeypatch.setattr("bench.harness._is_in_container", lambda: False)
     assert _resolve_default_url(DEFAULT_CONTROL_API_URL, DEFAULT_CONTROL_API_URL_HOST) == DEFAULT_CONTROL_API_URL_HOST
     assert HarnessConfig().control_api_url == DEFAULT_CONTROL_API_URL_HOST
     assert HarnessConfig().verifier_url == DEFAULT_VERIFIER_URL_HOST
-    monkeypatch.setattr("autobridge.bench.harness._is_in_container", lambda: True)
+    monkeypatch.setattr("bench.harness._is_in_container", lambda: True)
     assert _resolve_default_url(DEFAULT_CONTROL_API_URL, DEFAULT_CONTROL_API_URL_HOST) == DEFAULT_CONTROL_API_URL
     assert HarnessConfig().control_api_url == DEFAULT_CONTROL_API_URL
 
 
 def test_probe_unreachable_returns_nonzero() -> None:
-    from autobridge.bench.harness import (
+    from bench.harness import (
         ArmResult,
         BenchResult,
         HarnessConfig,
@@ -1072,7 +1072,7 @@ def test_probe_unreachable_returns_nonzero() -> None:
 def test_bench_app_health_import() -> None:
     from fastapi.testclient import TestClient
 
-    from autobridge.bench.app import app
+    from bench.app import app
 
     client = TestClient(app)
     assert client.get("/healthz").status_code == 200

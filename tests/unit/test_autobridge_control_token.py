@@ -213,8 +213,8 @@ def test_sse_redaction_covers_control_token(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_caller_helpers_emit_bearer_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autobridge.bench import demo as demo_mod
-    from autobridge.bench import harness as harness_mod
+    from bench import demo as demo_mod
+    from bench import harness as harness_mod
     from autobridge import cli as cli_mod
 
     monkeypatch.delenv("AUTOBRIDGE_CONTROL_TOKEN", raising=False)

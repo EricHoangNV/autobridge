@@ -16,8 +16,8 @@ from typing import Any
 
 import pytest
 
-from autobridge.bench import beacon_client
-from autobridge.bench.beacon_client import BeaconError
+from bench import beacon_client
+from bench.beacon_client import BeaconError
 
 FIXTURE = json.loads(
     (pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "beacon" / "round_6593481.json").read_text(

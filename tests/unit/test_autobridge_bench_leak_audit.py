@@ -19,9 +19,9 @@ from typing import Any
 
 import pytest
 
-from autobridge.bench.harness import _load_leak_audit
-from autobridge.bench.report import render_scorecard_markdown
-from autobridge.bench.scoring import score_bench, validate_scorecard_schema
+from bench.harness import _load_leak_audit
+from bench.report import render_scorecard_markdown
+from bench.scoring import score_bench, validate_scorecard_schema
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
 NONCE = "abcdef0123456789beef"
@@ -269,9 +269,9 @@ def test_isolation_check_no_env_ok(capsys: Any, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_isolation_check_refuses_inside_repo(monkeypatch: pytest.MonkeyPatch) -> None:
-    import autobridge.bench.harness as _h  # noqa: PLC0415
+    import bench.harness as _h  # noqa: PLC0415
 
-    repo_root = pathlib.Path(_h.__file__).resolve().parents[3]
+    repo_root = pathlib.Path(_h.__file__).resolve().parents[1]
     monkeypatch.setenv("HELDOUT_DIR", str(repo_root / "some-inner-dir"))
     assert ISOLATION.main() == 2
 
@@ -337,9 +337,9 @@ def test_load_leak_audit_missing_invalid(tmp_path: pathlib.Path) -> None:
 def test_revealed_folder_absent_or_valid() -> None:
     """Until the owner reveal commit, `revealed/` must not exist; after the
     reveal every file in it must match the frozen SHA256SUMS."""
-    import autobridge.bench.harness as _h  # noqa: PLC0415
+    import bench.harness as _h  # noqa: PLC0415
 
-    repo_root = pathlib.Path(_h.__file__).resolve().parents[3]
+    repo_root = pathlib.Path(_h.__file__).resolve().parents[1]
     revealed = repo_root / "verifier" / "hidden_cases" / "heldout" / "revealed"
     manifest = repo_root / "verifier" / "hidden_cases" / "heldout" / "SHA256SUMS"
     if not revealed.is_dir():
@@ -358,9 +358,9 @@ def test_revealed_folder_absent_or_valid() -> None:
 
 
 def test_verify_heldout_reveal_target_refuses_without_reveal() -> None:
-    import autobridge.bench.harness as _h  # noqa: PLC0415
+    import bench.harness as _h  # noqa: PLC0415
 
-    repo_root = pathlib.Path(_h.__file__).resolve().parents[3]
+    repo_root = pathlib.Path(_h.__file__).resolve().parents[1]
     makefile = (repo_root / "Makefile").read_text(encoding="utf-8")
     assert "verify-heldout-reveal" in makefile
     assert "revealed" in makefile and "SHA256SUMS" in makefile or "check_heldout_sha" in makefile

@@ -1,6 +1,6 @@
 """Benchmark report — scorecard markdown (P1.W8.4, plan §2.10).
 
-Renders a scored bench dict (see :mod:`autobridge.bench.scoring`) to
+Renders a scored bench dict (see :mod:`bench.scoring`) to
 ``experiments/scorecard.md``.  Wins **and** losses are both listed —
 a scorecard that hides losses fails the W8 passing criteria.
 """
@@ -11,7 +11,7 @@ import json
 import pathlib
 from typing import Any
 
-from autobridge.bench.scoring import validate_scorecard_schema
+from bench.scoring import validate_scorecard_schema
 
 DEFAULT_SCORECARD_PATH = "experiments/scorecard.md"
 
@@ -144,9 +144,9 @@ def load_scorecard_json(path: str | pathlib.Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     """CLI: render ``experiments/scorecard.md`` from a scored JSON file.
 
-    Usage: ``python -m autobridge.bench.report --input <scored.json>
+    Usage: ``python -m bench.report --input <scored.json>
     [--output experiments/scorecard.md]``.  Scoring itself (which needs the
-    verifier) lives in :mod:`autobridge.bench.scoring`; this CLI only
+    verifier) lives in :mod:`bench.scoring`; this CLI only
     renders so ``make bench`` stays idempotent.
     """
     import argparse

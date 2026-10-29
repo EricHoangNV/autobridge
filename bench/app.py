@@ -15,9 +15,9 @@ app = FastAPI(title="AutoBridge Bench")
 
 @app.get("/healthz")
 def get_healthz() -> dict[str, str]:
-    return healthz()  # type: ignore[return-value]
+    return {"status": healthz()["status"]}
 
 
 @app.get("/readyz")
 def get_readyz() -> dict[str, object]:
-    return readyz()  # type: ignore[return-value]
+    return dict(readyz())
