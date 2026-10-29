@@ -308,6 +308,12 @@ verified completion rate (judged only by the verifier), wrong patches that
 reached a release (must be 0 for AutoBridge), correct escalations
 (escalated exactly when the instance says so), frontier tokens, estimated
 cost, wall time.
+
+Caveat (REQ-024 owner check on f32b4b4b, open at freeze time): the engine
+arms run in-process from descriptor-built repair inputs (drift class,
+fingerprint delta, hypotheses) — a pre-diagnosed state — while the
+frontier arms start from docs and the live sandbox. Deltas carry this
+caveat until the real end-to-end engine path lands in ablation.py.
 """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")

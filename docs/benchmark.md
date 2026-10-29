@@ -392,6 +392,17 @@ layout, link behaviors) and outcome-graded; deep link verification stays
 in the FIAS e2e. Engine arms that cannot attempt a vendor in-process
 (FIAS has no HTTP connector spec) are recorded `executed: false` with
 the reason named — a fail-closed loss, the same for every arm.
+Known asymmetry (REQ-024 owner check on `f32b4b4b`, open): the engine
+arms currently run in-process from descriptor-built repair inputs
+(drift class, fingerprint delta, hypotheses), i.e. from a pre-diagnosed
+state, while the frontier arms start from docs and the live sandbox.
+The matched-budget inputs are identical, but the diagnosis is not. The
+owner check requires the real end-to-end engine path (sync → detector →
+classifier → hypothesis engine → ladder → gate, no case-supplied
+diagnostics) before the headline comparison is quoted; when that fix
+lands in `ablation.py`, `beacon_run.py` adopts it (`beacon_case_for` /
+`_run_arm` rewiring). Until then, beacon engine-vs-frontier deltas carry
+this caveat and are published as-is.
 
 Honest scope: fault *families* are known by design (that is the engine's
 everyday knowledge: renames, nesting, pagination switches, code lists,
