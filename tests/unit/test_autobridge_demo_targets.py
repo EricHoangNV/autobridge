@@ -20,8 +20,11 @@ from autobridge.control.demo_targets import (
     DemoTargetsError,
     default_targets_path,
     get_demo_targets,
+    in_compose_network,
     known_target_ids,
     load_demo_targets,
+    normalize_connector_base_url,
+    public_base_url_for_target,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -223,3 +226,103 @@ def test_no_vendor_literal_in_engine_source() -> None:
         or "legacy_stay" in p.read_text(encoding="utf-8").lower()
     ]
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------
+# REQ-027 sub-step 1: one mode decider, mode-correct simulator addresses
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_registry(tmp_path: pathlib.Path) -> object:  # type: ignore[no-untyped-def]
+    def entry(id: str, admin: int, public: int, aliases: list[str] | None = None) -> dict:
+        item = _entry(id, admin, aliases or [])
+        item["public_port"] = public
+        return item
+
+    path = _write_registry(
+        tmp_path,
+        [
+            entry("sim-probe-a", 8301, 8311, ["probe-a"]),
+            entry("sim-probe-b", 8302, 8312),
+        ],
+    )
+    return load_demo_targets(path)
+
+
+def test_in_compose_network_env_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    monkeypatch.setenv("ADMIN_NET_HOST", "x")
+    monkeypatch.setattr(os.path, "exists", lambda _p: False)
+    assert in_compose_network() is True
+    monkeypatch.setenv("ADMIN_NET_HOST", "  ")
+    monkeypatch.setattr(os.path, "exists", lambda p: p == "/.dockerenv")
+    assert in_compose_network() is True
+    monkeypatch.setattr(os.path, "exists", lambda _p: False)
+    assert in_compose_network() is False
+
+
+def test_public_base_url_for_target_modes(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    monkeypatch.setattr(os.path, "exists", lambda _p: False)
+    monkeypatch.delenv("ADMIN_NET_HOST", raising=False)
+    reg = _synthetic_registry(tmp_path)  # type: ignore[arg-type]
+    assert public_base_url_for_target("sim-probe-a", reg, compose=True) == "http://sim-probe-a:8000"
+    assert public_base_url_for_target("PROBE-A", reg, compose=True) == "http://sim-probe-a:8000"
+    assert public_base_url_for_target("sim-probe-a", reg, compose=False) == "http://localhost:8311"
+    assert public_base_url_for_target("sim-probe-b", reg, compose=False) == "http://localhost:8312"
+    # Auto-detect honors the single decider (host here: no marker).
+    assert public_base_url_for_target("sim-probe-a", reg) == "http://localhost:8311"
+    with pytest.raises(DemoTargetsError, match="unknown demo target"):
+        public_base_url_for_target("sim-nope", reg)
+
+
+def test_public_base_url_host_mode_needs_public_port(tmp_path: pathlib.Path) -> None:
+    reg = load_demo_targets(_write_registry(tmp_path, [_entry("sim-naked", 8401)]))
+    with pytest.raises(DemoTargetsError, match="no public_port"):
+        public_base_url_for_target("sim-naked", reg, compose=False)
+
+
+def test_public_base_url_matches_infra_ports() -> None:
+    """Compose form uses the sims' internal :8000; host form the registry ports.
+
+    The cross-check tests above already pin registry ports to compose.yaml
+    and local-up.sh publishes; here the resolver output itself must agree
+    with that infra (no second port table in code).
+    """
+    import re
+
+    compose = yaml.safe_load((REPO_ROOT / "compose.yaml").read_text(encoding="utf-8"))
+    local_up = (REPO_ROOT / "scripts" / "local-up.sh").read_text(encoding="utf-8")
+    for target in get_demo_targets().targets:
+        assert public_base_url_for_target(target.id, compose=True) == f"http://{target.id}:8000"
+        assert public_base_url_for_target(target.id, compose=False) == f"http://localhost:{target.public_port}"
+        svc = compose["services"][target.id]
+        published = " ".join(str(p) for p in (svc.get("ports") or []))
+        assert f":{target.public_port}:8000" in published.replace('"', "")
+        assert re.search(rf"SIM_PUBLIC_PORT={target.public_port}\b", local_up)
+
+
+def test_normalize_connector_base_url(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    monkeypatch.setattr(os.path, "exists", lambda _p: False)
+    monkeypatch.delenv("ADMIN_NET_HOST", raising=False)
+    reg = _synthetic_registry(tmp_path)  # type: ignore[arg-type]
+    # Simulator hostnames (canonical, alias, any port) normalize per mode.
+    assert normalize_connector_base_url("http://sim-probe-a:8000", reg) == "http://localhost:8311"
+    assert normalize_connector_base_url("http://probe-a:9999", reg) == "http://localhost:8311"
+    assert normalize_connector_base_url("http://sim-probe-a:8000", reg, compose=True) == "http://sim-probe-a:8000"
+    # Loopback with a registry public port normalizes per mode.
+    assert normalize_connector_base_url("http://localhost:8312", reg) == "http://localhost:8312"
+    assert normalize_connector_base_url("http://127.0.0.1:8312", reg, compose=True) == "http://sim-probe-b:8000"
+    # Everything else passes through untouched.
+    assert normalize_connector_base_url("https://api.vendor.example.com/v1", reg) == "https://api.vendor.example.com/v1"
+    assert normalize_connector_base_url("https://probe-a.example.com/x", reg) == "https://probe-a.example.com/x"
+    assert normalize_connector_base_url("${PROBE_A_BASE_URL}", reg) == "${PROBE_A_BASE_URL}"
+    assert normalize_connector_base_url("http://localhost:9999", reg) == "http://localhost:9999"
+    assert normalize_connector_base_url("http://sim-probe-a:notaport", reg) == "http://sim-probe-a:notaport"
+    assert normalize_connector_base_url("fias://listen:5010", reg) == "fias://listen:5010"
+    assert normalize_connector_base_url("", reg) == ""
+    assert normalize_connector_base_url(None, reg) is None

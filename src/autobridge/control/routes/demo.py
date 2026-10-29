@@ -14,7 +14,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from autobridge.control.deps import get_db, require_control_token
-from autobridge.control.demo_targets import get_demo_targets
+from autobridge.control.demo_targets import get_demo_targets, in_compose_network
 from autobridge.control.models import (
 	Approval,
 	BuildRun,
@@ -94,8 +94,10 @@ def _admin_url_for_target(resolved: str) -> str:
     # Inside Docker Compose, each simulator's admin API answers on its
     # container port 8001 at its canonical id as hostname.
     # From host (when not in Docker), we use localhost ports 8109/8110
-    # Detect via env: if ADMIN_NET_HOST is set, use Docker hostnames; else try host ports
-    if os.environ.get("ADMIN_NET_HOST") or os.path.exists("/.dockerenv"):
+    # Mode decider is shared with public base URLs (demo_targets:
+    # in_compose_network) — one place, so admin and data-plane routing
+    # can never disagree about which stack mode this process runs in.
+    if in_compose_network():
         # In container: use service DNS
         return f"http://{resolved}:8001"
     # Host mode: map to host ports (registry-derived, single source).

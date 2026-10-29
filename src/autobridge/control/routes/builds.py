@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Security
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from autobridge.control.demo_targets import normalize_connector_base_url
 from autobridge.control.deps import get_db, get_session_factory, require_control_token
 from autobridge.control.jobs import JobRunner
 from autobridge.control.models import Approval, BuildRun, Connector, ConnectorRelease
@@ -207,8 +208,12 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
         if docs_text.strip().startswith("generated/"):
             raise HTTPException(status_code=422, detail="build must not read reference specs")
 
-    # Use connector's base_url as fallback for bootstrap placeholder
-    base_url_fb = body.base_url_override or conn.base_url or (body.model_extra.get("base_url") if body.model_extra else None)  # type: ignore[union-attr]
+    # Use connector's base_url as fallback for bootstrap placeholder.
+    # REQ-027 sub-step 1: simulator-shaped values resolve to the address
+    # that works in this stack's mode (service DNS vs host loopback);
+    # real vendor hosts and ${VAR} placeholders pass through untouched.
+    _raw_fb = body.base_url_override or conn.base_url or (body.model_extra.get("base_url") if body.model_extra else None)  # type: ignore[union-attr]
+    base_url_fb = normalize_connector_base_url(_raw_fb) or _raw_fb
     # REQ-021 item 2: pinned vocabulary — request field, else SPEC_VOCABULARY
     # env, else v1 (safe refusal of POST/body-auth docs at 0 model calls).
     from autobridge.config import spec_vocabulary_default  # noqa: PLC0415

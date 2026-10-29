@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -87,6 +88,18 @@ def _derive_env_placeholder(base_url: str, connector_id: str) -> str:
     if "localhost" in low or "127.0.0.1" in low:
         ref = connector_id.upper().replace("-", "_")
         return f"${{{ref}_BASE_URL}}"
+    # REQ-027 sub-step 1: any other sim-<name> service address maps to its
+    # ${NAME}_BASE_URL placeholder (portable across stack modes; resolved
+    # per-mode from the environment at sync time). Generic over the
+    # registry id shape — no vendor literal here (generalization proof).
+    try:
+        host = (urllib.parse.urlsplit(base_url).hostname or "").lower()
+    except Exception:
+        host = ""
+    if host.startswith("sim-") and len(host) > 4:
+        slug = re.sub(r"[^a-z0-9]+", "_", host[4:]).strip("_").upper()
+        if slug:
+            return f"${{{slug}_BASE_URL}}"
     # Already env placeholder
     if base_url.startswith("${"):
         return base_url

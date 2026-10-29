@@ -56,6 +56,21 @@ def test_derive_env_placeholder() -> None:
     assert _derive_env_placeholder("", "myconn") == "${MYCONN_BASE_URL}"
 
 
+def test_derive_env_placeholder_sim_service_names() -> None:
+    """REQ-027 sub-step 1: sim-<name> service addresses map to placeholders.
+
+    Generic over the registry id shape (no vendor literal in engine code):
+    any simulator's Compose address becomes a portable ${NAME}_BASE_URL
+    placeholder resolved per-mode from the environment at sync time.
+    """
+    assert _derive_env_placeholder("http://sim-harbor:8000", "harborpms") == "${HARBOR_BASE_URL}"
+    assert _derive_env_placeholder("http://sim-atlas:8000", "atlaspms") == "${ATLAS_BASE_URL}"
+    assert _derive_env_placeholder("http://sim-probe-x:8000", "pro bex") == "${PROBE_X_BASE_URL}"
+    assert _derive_env_placeholder("http://sim-probe-x:8000/v1", "x") == "${PROBE_X_BASE_URL}"
+    # Non-sim hosts still pass through.
+    assert _derive_env_placeholder("https://api.example.com/v1", "myconn") == "https://api.example.com/v1"
+
+
 def test_derive_credential_ref() -> None:
     assert _derive_credential_ref("harborpms") == "HARBOR_API_KEY"
     assert _derive_credential_ref("atlaspms") == "ATLAS_API_KEY"

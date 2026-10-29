@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import functools
 import os
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +24,15 @@ import yaml
 
 ENV_OVERRIDE = "DEMO_TARGETS_FILE"
 CONFIG_RELATIVE = Path("config") / "demo_targets.yaml"
+
+#: Env var selecting service-DNS routing when set (compose homology with
+#: ``config/demo_targets.yaml`` admin routing; see ``routes/demo.py``).
+ADMIN_NET_HOST_ENV = "ADMIN_NET_HOST"
+
+#: Internal public-API port every simulator serves inside Compose
+#: (``compose.yaml`` publishes ``<loopback>:<public_port>:8000``; the
+#: registry cross-check test fails if a sim service stops using it).
+COMPOSE_PUBLIC_PORT = 8000
 
 
 class DemoTargetsError(ValueError):
@@ -174,3 +184,79 @@ def known_target_ids(registry: DemoTargets | None = None) -> list[str]:
     ids = [t.id for t in reg.targets]
     aliases = sorted(k for k in reg.alias_map if k not in {t.id.lower() for t in reg.targets})
     return [*ids, *aliases]
+
+
+def in_compose_network() -> bool:
+    """True when this process runs inside the Compose network (REQ-027).
+
+    The single mode decider for simulator addresses: ``ADMIN_NET_HOST`` set
+    (compose homology) or ``/.dockerenv`` present (inside any container).
+    Host processes (local mode, e2e, demo script) see neither and get
+    loopback addresses. Admin URLs (``routes/demo.py``) and data-plane
+    base URLs below both go through here, so no Compose hostname leaks
+    into local mode and no loopback leaks into Compose.
+    """
+    if os.environ.get(ADMIN_NET_HOST_ENV, "").strip():
+        return True
+    try:
+        return os.path.exists("/.dockerenv")
+    except Exception:
+        return False
+
+
+def public_base_url_for_target(name: str, registry: DemoTargets | None = None, *, compose: bool | None = None) -> str:
+    """Mode-correct public base URL for a simulator (REQ-027 sub-step 1).
+
+    *name* is a canonical id or alias (case-insensitive). Compose mode
+    returns service DNS (``http://<canonical-id>:8000``); host mode returns
+    loopback (``http://localhost:<public_port>``) per ``demo_targets.yaml``.
+    Unknown names fail closed; ``compose=None`` auto-detects via
+    :func:`in_compose_network` (explicit only in tests).
+    """
+    reg = registry or get_demo_targets()
+    key = (name or "").strip().lower()
+    canonical = reg.alias_map.get(key)
+    if canonical is None:
+        raise DemoTargetsError(f"unknown demo target {name!r}; known: {', '.join(t.id for t in reg.targets)}")
+    target = next(t for t in reg.targets if t.id == canonical)
+    use_compose = in_compose_network() if compose is None else compose
+    if use_compose:
+        return f"http://{canonical}:{COMPOSE_PUBLIC_PORT}"
+    if not target.public_port:
+        raise DemoTargetsError(f"demo target {canonical!r} has no public_port for host mode")
+    return f"http://localhost:{target.public_port}"
+
+
+def normalize_connector_base_url(url: str | None, registry: DemoTargets | None = None, *, compose: bool | None = None) -> str | None:
+    """Rewrite a simulator address to the form that works in this stack mode.
+
+    Recognized inputs — a registry id/alias as hostname (``sim-atlas``,
+    bare ``atlas``, any port) or loopback with a registry public port —
+    become :func:`public_base_url_for_target`. Everything else passes
+    through untouched: ``${VAR}`` placeholders (resolved per-mode from the
+    environment at sync time), real vendor hosts, and unparseable values.
+    """
+    if not url or not isinstance(url, str):
+        return url
+    text = url.strip()
+    if not text or text.startswith("${"):
+        return url
+    try:
+        parts = urllib.parse.urlsplit(text)
+    except Exception:
+        return url
+    if parts.scheme not in ("http", "https"):
+        return url
+    try:
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        return url
+    reg = registry or get_demo_targets()
+    if host in reg.alias_map:
+        return public_base_url_for_target(reg.alias_map[host], reg, compose=compose)
+    if host in ("localhost", "127.0.0.1") and port is not None:
+        by_port = {t.public_port: t.id for t in reg.targets if t.public_port}
+        if port in by_port:
+            return public_base_url_for_target(by_port[port], reg, compose=compose)
+    return url

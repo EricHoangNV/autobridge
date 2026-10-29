@@ -119,6 +119,27 @@ def test_create_and_list_connectors(client: Any) -> None:  # type: ignore[no-unt
     assert c1["id"] in ids and c2["id"] in ids
 
 
+def test_create_connector_normalizes_sim_address(client: Any, monkeypatch: Any) -> None:  # type: ignore[no-untyped-def]
+    """REQ-027 sub-step 1: stored base_url works in the stack's mode.
+
+    A Compose service-DNS address sent in local mode is stored loopback;
+    a loopback address sent in Compose mode is stored service-DNS. Real
+    vendor hosts and ${VAR} placeholders pass through untouched.
+    """
+    import autobridge.control.demo_targets as dt
+
+    monkeypatch.setattr(dt, "in_compose_network", lambda: False)
+    c1 = _create_connector(client, name="NormLocal", base_url="http://sim-harbor:8000")
+    assert c1["base_url"] == "http://localhost:8106"
+    c2 = _create_connector(client, name="NormVendor", base_url="https://api.vendor.example.com/v1")
+    assert c2["base_url"] == "https://api.vendor.example.com/v1"
+    c3 = _create_connector(client, name="NormPlaceholder", base_url="${HARBOR_BASE_URL}")
+    assert c3["base_url"] == "${HARBOR_BASE_URL}"
+    monkeypatch.setattr(dt, "in_compose_network", lambda: True)
+    c4 = _create_connector(client, name="NormCompose", base_url="http://localhost:8106")
+    assert c4["base_url"] == "http://sim-harbor:8000"
+
+
 def test_create_connector_invalid_runtime(client: Any) -> None:  # type: ignore[no-untyped-def]
     r = client.post(
         "/connectors",

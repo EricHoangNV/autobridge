@@ -490,6 +490,47 @@ def _control_probe(base_url: str) -> bool:
         return False
 
 
+def _stack_is_local() -> bool:
+    """Host-side view of the stack mode (mirrors tests/e2e/conftest.is_local_mode).
+
+    The demo script runs on the host in both modes: local when this
+    checkout's local-stack marker exists (``make local-up``) or
+    ``AUTOBRIDGE_RUNTIME=local``, else Compose. Used only to state which
+    connector address form to expect back from the server — the server
+    itself normalizes (``normalize_connector_base_url``); the demo asserts
+    it did, so a leaked Compose hostname fails the step instead of a
+    later sync.
+    """
+    if os.environ.get("AUTOBRIDGE_RUNTIME", "").strip().lower() == "local":
+        return True
+    try:
+        return (REPO_ROOT / ".local" / "ACTIVE").is_file()
+    except Exception:
+        return False
+
+
+def _check_connector_address(sent: str, stored: Any) -> str | None:
+    """Assert the stored connector address fits this stack's mode (REQ-027).
+
+    Returns an error line when the server did not normalize, else None.
+    """
+    if not isinstance(stored, str) or not stored:
+        return f"connector base_url missing in GET /connectors/{{id}} (sent {sent!r})"
+    if _stack_is_local():
+        if "sim-" in stored:
+            return (
+                f"Compose hostname leaked into local mode: stored {stored!r} "
+                f"(sent {sent!r}); expected http://localhost:<port>"
+            )
+        return None
+    if "sim-atlas" not in stored:
+        return (
+            f"expected service-DNS base_url in Compose mode, stored {stored!r} "
+            f"(sent {sent!r}); expected http://sim-atlas:8000"
+        )
+    return None
+
+
 def _control_call(base_url: str, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Single control-plane call; never raises — returns a redacted record."""
     import httpx  # noqa: PLC0415
@@ -671,6 +712,12 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
     sample = (summary.get("canonical_records", {}).get("Reservation", []) or [{}])[0]
     assert isinstance(sample.get("total_amount", Decimal("0")), Decimal), "money must be Decimal"
     calls: list[dict[str, Any]] = []
+    # Canonical service-DNS form is valid input in both modes: the server
+    # normalizes it to the address that works where the engine runs
+    # (REQ-027 sub-step 1, normalize_connector_base_url). The demo reads
+    # the stored connector back and asserts the normalized form.
+    sent_base_url = "http://sim-atlas:8000"
+    stored_base_url: Any = None
     if live:
         calls.append(_control_call(base_url, "GET", "/healthz"))
         # The reusable artifact must exist on the control plane too: ensure
@@ -680,7 +727,7 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
             {
                 "name": "atlaspms",
                 "vendor_docs_ref": "simulators/docs/atlas-openapi.yaml",
-                "base_url": "http://sim-atlas:8000",
+                "base_url": sent_base_url,
                 "credential_ref": "ATLAS_API_KEY",
                 "target_entities": ["Reservation", "FolioCharge"],
             },
@@ -688,12 +735,34 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
         calls.extend(ensure_calls)
         connector_id = _connector_id_from_calls(ensure_calls, "atlaspms")
         if connector_id is not None:
-            calls.append(_control_call(base_url, "GET", f"/connectors/{connector_id}"))
+            detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
+            calls.append(detail)
+            body = detail.get("body")
+            if isinstance(body, dict):
+                stored_base_url = body.get("base_url")
         calls.append(_control_call(base_url, "GET", "/metrics/model-usage"))
+        addr_error = _check_connector_address(sent_base_url, stored_base_url)
+        if addr_error is not None:
+            calls.append(
+                {
+                    "method": "ASSERT",
+                    "path": "/connectors/{id} base_url",
+                    "status": "assertion-failed",
+                    "error": addr_error,
+                }
+            )
     return _finish_step(
         "Reusable artifact — Atlas release, zero inference",
         {
             "connector": "atlaspms",
+            "connector_base_url_sent": sent_base_url,
+            "connector_base_url_stored": stored_base_url,
+            "address_source": (
+                "server-normalized for this stack mode "
+                f"({'local' if _stack_is_local() else 'compose'} view from the demo host)"
+                if live
+                else "in-process evidence only (no live connector)"
+            ),
             "release": "reference",
             "seed": seed,
             "signature": _load_reference_signature("atlaspms"),

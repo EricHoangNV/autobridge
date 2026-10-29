@@ -67,6 +67,64 @@ def test_step1_complete_zero_model_usage_decimal() -> None:
     assert len(ev["signature"]) == 64
 
 
+def _step1_live_fake(stored_base_url: str) -> Any:
+    """Stub control calls for step 1 live mode with a given stored base_url."""
+
+    def fake_call(base_url: str, method: str, path: str, _payload: Any = None) -> dict[str, Any]:
+        assert "localhost:9" not in base_url  # uses the passed base
+        if path == "/healthz":
+            return {"method": method, "path": path, "status": 200, "body": {"status": "ok"}}
+        if path == "/connectors" and method == "GET":
+            return {"method": method, "path": path, "status": 200, "body": {"connectors": []}}
+        if path == "/connectors" and method == "POST":
+            assert _payload is not None and _payload["base_url"] == "http://sim-atlas:8000"
+            return {"method": method, "path": path, "status": 201, "body": {"id": "c-1", "name": "atlaspms"}}
+        if path == "/connectors/c-1":
+            return {
+                "method": method,
+                "path": path,
+                "status": 200,
+                "body": {"id": "c-1", "name": "atlaspms", "base_url": stored_base_url},
+            }
+        if path == "/metrics/model-usage":
+            return {"method": method, "path": path, "status": 200, "body": {"calls": 0}}
+        raise AssertionError(f"unexpected {method} {path}")
+
+    return fake_call
+
+
+def test_step1_live_asserts_normalized_address_local(monkeypatch: Any) -> None:
+    """REQ-027 sub-step 1: local stack must store a loopback address."""
+    monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
+    monkeypatch.setattr(demo_mod, "_control_call", _step1_live_fake("http://localhost:8105"))
+    monkeypatch.setattr(demo_mod, "_stack_is_local", lambda: True)
+    step = step1_reusable_artifact(0, True, "http://control:8101")
+    assert step["status"] == "ok", step
+    ev = step["evidence"]
+    assert ev["connector_base_url_sent"] == "http://sim-atlas:8000"
+    assert ev["connector_base_url_stored"] == "http://localhost:8105"
+    assert "server-normalized" in ev["address_source"] and "local" in ev["address_source"]
+
+
+def test_step1_live_fails_on_leaked_compose_hostname(monkeypatch: Any) -> None:
+    """REQ-027 sub-step 1: an unnormalized sim hostname fails the step loudly."""
+    monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
+    monkeypatch.setattr(demo_mod, "_control_call", _step1_live_fake("http://sim-atlas:8000"))
+    monkeypatch.setattr(demo_mod, "_stack_is_local", lambda: True)
+    step = step1_reusable_artifact(0, True, "http://control:8101")
+    assert step["status"] == "failed", step
+    assert "leaked" in (step.get("error") or "")
+
+
+def test_step1_live_asserts_service_dns_in_compose(monkeypatch: Any) -> None:
+    monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
+    monkeypatch.setattr(demo_mod, "_control_call", _step1_live_fake("http://sim-atlas:8000"))
+    monkeypatch.setattr(demo_mod, "_stack_is_local", lambda: False)
+    step = step1_reusable_artifact(0, True, "http://control:8101")
+    assert step["status"] == "ok", step
+    assert step["evidence"]["connector_base_url_stored"] == "http://sim-atlas:8000"
+
+
 def test_step2_docs_to_draft_spec_no_model_calls() -> None:
     step = step2_unfamiliar_api(0, False, "http://127.0.0.1:9")
     ev = step["evidence"]
@@ -221,10 +279,23 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
     def fake_call(base_url: str, method: str, path: str, _payload: dict[str, Any] | None = None) -> dict[str, Any]:
         seen.append((method, path))
         assert "localhost:9" not in base_url  # uses the passed base
+        if path == "/connectors" and method == "GET":
+            return {"method": method, "path": path, "status": 200, "body": {"connectors": []}}
+        if path == "/connectors" and method == "POST":
+            return {"method": method, "path": path, "status": 201, "body": {"id": "c-1", "name": "atlaspms"}}
+        if path.startswith("/connectors/"):
+            return {
+                "method": method,
+                "path": path,
+                "status": 200,
+                "body": {"id": "c-1", "name": "atlaspms", "base_url": "http://sim-atlas:8000"},
+            }
         return {"method": method, "path": path, "status": 200, "body": {"ok": True}}
 
     monkeypatch.setattr(demo_mod, "_control_probe", lambda _url: True)
     monkeypatch.setattr(demo_mod, "_control_call", fake_call)
+    # Hermetic: this stub stack speaks service DNS regardless of host markers.
+    monkeypatch.setattr(demo_mod, "_stack_is_local", lambda: False)
     report = run_demo(seed=0, control_url="http://control:8101")
     assert report["mode"] == "live-control-api"
     assert report["failed"] == 0

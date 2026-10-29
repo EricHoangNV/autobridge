@@ -3033,3 +3033,34 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). Fixed both items f
 
 ### 2026-10-29 03:40 UTC — REQ-023 codeable DONE (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). Main script + fault-scenario catalogue now runnable per-entry (`make demo SCENARIO=<id>`, `make demo STEP=<n|name>`), catalogue table in docs/demo.md sourced from bench/demo.py CATALOGUE (33 rows), sync test keeps docs/code/scenario-files/matrix/e2e aligned, token_expired added to the model-usage matrix. Full make test green (2468+134+396+158). REQUESTS flipped to DONE; remaining REQ-023 work is the owner's video cut, not code.
+
+## REQ-027 sub-step 1 — mode-correct simulator addresses
+**Date:** 2026-10-29
+**Ref:** REQUESTS.MD REQ-027 item 1 ("Local addresses")
+
+**What was done:**
+- One mode decider + resolver in `src/autobridge/control/demo_targets.py`: `in_compose_network()` (ADMIN_NET_HOST or /.dockerenv), `public_base_url_for_target()` (compose `http://<id>:8000`, host `http://localhost:<public_port>`), `normalize_connector_base_url()` (sim id/alias host or loopback-with-registry-port rewrites; `${VAR}`/vendor/unknown pass through).
+- `routes/demo.py` admin URLs now use the shared decider (admin and data-plane routing cannot disagree).
+- `POST /connectors` stores the normalized base_url; build `base_url_override` fallback normalized the same way (covers demo, builds, UI in one place).
+- `discovery/bootstrap.py`: generic `sim-<slug>` hostname maps to `${SLUG}_BASE_URL` placeholder (no vendor literal; atlas/harbor/localhost precedence unchanged).
+- `bench/demo.py` step 1: sends canonical `http://sim-atlas:8000`, reads the stored connector back, fails the step loudly on a leaked Compose hostname in local mode (or missing service DNS in compose); evidence records sent/stored/source.
+- Tests: resolver unit tests (synthetic registries + real-registry-vs-infra cross-check), connector-create normalization test, bootstrap sim mapping test, step-1 live assertion tests (ok / leak-fails / compose-ok), old live-stub test made realistic + hermetic.
+
+**Key decisions:**
+- Server-side normalization on create (not client-side guessing): the server is the only side that knows its mode (read byte/.dockerenv); Compose control reports runtime_mode local (no docker CLI in image), so readyz/mode cannot be used by clients.
+- Local form is `http://localhost:<port>` per the REQ text (local-up.sh and e2e already use localhost URLs).
+- Step-1 assertion appends a synthetic failing call record instead of raising, so the existing REQ-016 fail-loud path reports it.
+
+**Files changed:**
+- `src/autobridge/control/demo_targets.py` — decider + resolver + normalizer
+- `src/autobridge/control/routes/demo.py` — shared decider for admin URLs
+- `src/autobridge/control/routes/connectors.py` — normalize on create
+- `src/autobridge/control/routes/builds.py` — normalize build base_url fallback
+- `src/autobridge/discovery/bootstrap.py` — generic sim- placeholder mapping
+- `bench/demo.py` — step-1 read-back assertion + evidence
+- `tests/unit/test_autobridge_demo_targets.py`, `test_autobridge_control_api.py`, `test_autobridge_discovery_bootstrap.py`, `test_autobridge_demo.py` — new/updated tests
+
+**Notes for next iteration:**
+- Sub-step 2 (detector evidence) is next; sub-step 1 changes no detector/ladder behavior.
+- E2E not run in sbx1 (no Compose here); unit + in-process cover the change. Owner/CI must confirm `make local-up && make e2e && make demo` and `make up` equivalents.
+- One flaky failure seen: `test_simulators_fias_pabx.py::test_replay_postings_resend_same_pno` failed once under full `make test`, passes alone and in file rerun; untouched by this change.

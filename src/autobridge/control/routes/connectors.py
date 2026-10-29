@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Security
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from autobridge.control.demo_targets import normalize_connector_base_url
 from autobridge.control.deps import approved_by_for_releases, get_db, get_operator_name, require_control_token
 from autobridge.control.models import (
     Connector,
@@ -116,10 +117,14 @@ def create_connector(body: ConnectorCreate, db: Session = Depends(get_db), _: No
     if kind not in ("local_process", "docker_sandbox", "edge"):
         raise HTTPException(status_code=422, detail=f"invalid runtime_target.kind {kind!r}")
 
+    # REQ-027 sub-step 1: a simulator address is stored in the form that
+    # works in the mode this stack runs in (Compose service DNS vs host
+    # loopback); real vendor hosts and ${VAR} placeholders pass through.
+    stored_base_url = normalize_connector_base_url(body.base_url) or body.base_url
     conn = Connector(
         name=body.name,
         vendor_docs_ref=body.vendor_docs_ref,
-        base_url=body.base_url,
+        base_url=stored_base_url,
         credential_ref=body.credential_ref,
         target_entities=list(body.target_entities),
         runtime_target=dict(rt),
