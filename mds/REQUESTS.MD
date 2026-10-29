@@ -2,6 +2,129 @@
 
 ## Open Requests (read this section only)
 
+Owner priority (2026-10-29 18:40): **REQ-030 → REQ-031 → REQ-032 → REQ-033** (the UI-first demo), after the findings of
+the Muse Wonder audit and the owner's external audit are fixed, and **before** the benchmark rounds (the scheduler
+touches the sync/repair path the benchmark measures).
+
+### REQ-030 — UI-first demo, part A: sync scheduler, every step persisted, connector state (2026-10-29)
+Status: OPEN
+Plan: the owner's reviewed plan (summarised here; this text is the spec). **Recording flow:** browser on the left
+(UI `localhost:8107`), terminal on the right. Every connector shows Working; the presenter runs one command per
+scenario; the UI reacts by itself (state changes, drift and repair appear with all details); **the presenter clicks
+every approval** (no auto-apply: every state change must stay visible) and watches the connector return to Working.
+Today (owner check, keyed local stack): only `make demo STEP=3` leaves anything in the UI; STEP=1 leaves a connector
+with no active release and no sync, STEP=2/7/8 leave connectors that never synced, STEP=4 leaves nothing (its climb
+runs in-process). Syncs run only when something calls `POST /sync`; there is no schedule.
+1. **Sync scheduler** (worker): syncs every active connector every `AUTOBRIDGE_SYNC_INTERVAL_S` (default 10 in
+   local and Compose demo mode; off when unset). Skips a connector while a sync, build, repair or approval for it is
+   running. Each sync runs the existing REQ-027 chain (detect → classify → ladder → verifier gate). Never approves.
+2. **No auto-apply.** Repairs keep waiting for an operator decision, as today.
+3. **Every step persists** as rows the UI reads: builds (including refused builds with their reason), syncs, drift
+   events, repair runs with the full ladder trace per rung, the hypothesis derivation (counts and ids per stage:
+   generated → family → wire-consistent → distinct), probes, every model call in the `ModelCall` ledger (model, live
+   vs replay + capture date, tokens in/out/reasoning, cost, outcome), verifier verdicts, the escalation question, the
+   PABX link/postings counters and restart result. No in-process-only results anywhere (demo step 4 included).
+4. **Connector state, server-side,** on `GET /connectors` and `GET /connectors/{id}`: `working` (last sync
+   `Complete`, no open drift) · `degrading` (drift detected; repair running; verified fix waiting; verifying sync
+   after approval) · `error` (repair waiting that used a model or escalated, sync `Degraded` or `Blocked`), plus a
+   one-line `activity` ("drift detected 4 s ago · repairing at L1", "fix ready · verified · 0 model calls",
+   "needs your decision", "Blocked: auth revoked") and `last_sync_at`.
+Tests: scheduler (interval, skip while busy, off when unset, never approves); persistence of each item above; state
+and activity for each transition. Gates: `make test`, keyed `make local-up && make e2e && make demo` 8/8.
+
+### REQ-031 — UI-first demo, part B: demo-seed, demo-break, demo-heal, build from docs in the UI (2026-10-29)
+Status: OPEN
+Depends on REQ-030.
+1. **`make demo-seed`**: from `make demo-reset`, creates the recording's connectors **through the control API only**
+   (the calls the UI makes), each baseline-synced `Complete`: AtlasPMS (the reusable reference release), HarborPMS
+   (reference release with its money check, used by the semantic scenario), MeridianPMS (built from its docs with
+   v2; the refused v1 build recorded with its reason), the Grand Plaza PABX edge connector (v3, link up, postings
+   flowing). Clean names, real addresses, no leftover or example.com rows. End state: four connectors `working`,
+   0 model tokens, nothing waiting.
+2. **`make demo-break SCENARIO=<id> [TARGET=<vendor>]`**: injects one catalogued fault and prints one line ("broke
+   AtlasPMS with page_to_cursor — watch Repairs"). It never syncs, detects, repairs or approves; the scheduler and the
+   engine do that, visibly. The UI's "Demo: inject fault" drawer offers exactly the same list.
+3. **`make demo-heal [TARGET=<vendor>]`**: clears injected faults without a reset (retakes of one scenario).
+4. **Build a connector from docs in the UI** (deck 3): the "Build a connector" page works with the simulator docs and
+   shows docs read → draft → probes → result → release. Either the page loads the docs text in the browser and sends
+   `docs_text`, or the server allows exactly the simulator hosts from `config/demo_targets.yaml` in demo mode. Never
+   reopen the AR-2-2 SSRF guard or `docs_path` file reads.
+5. `make demo` (terminal version) stays; it may approve through the API as today, but everything it does lands in the
+   database (REQ-030 item 3).
+Tests: seed end state; demo-break only injects; heal clears; UI build from Harbor docs; SSRF tests still green.
+
+### REQ-032 — UI-first demo, part C: live states and a repair page that explains itself (2026-10-29)
+Status: OPEN
+Depends on REQ-030.
+1. **Three connector states, everywhere a connector appears** (Connectors list, connector page, simulators index):
+   `● Working` green (new token `--ok`, `oklch(80% 0.17 150)`, 10.5:1 on the navy ground), `▲ Degrading` yellow
+   (`--live`), `■ Error` red (`--stop`), always colour + shape + word + the `activity` line, never colour alone.
+   "last sync N s ago" ticks. A change in the database shows within ~2 s (polling or server events).
+2. **Repairs list live:** new repairs appear at the top without reload; each row: connector, drift class, rung, rule,
+   model calls, status (`fix ready` / `needs your decision` / `approved` / `applied` / `rejected`).
+3. **The repair page answers four questions, in this order, each as its own section with a plain-language heading.
+   All content comes from persisted data (REQ-030), never recomputed or invented in the browser:**
+   - **What happened.** Connector and vendor; when and by which sync it was detected; the sync outcome and unmet
+     criterion; what changed on the wire, shown as before/after (e.g. "pagination: page numbers → cursor
+     `next_cursor`", "field `TA` renamed `TM`", "amounts read net instead of gross"), with redacted sample values and
+     the evidence records; what it affects (entities, fields, operations, records in the failing sync).
+   - **What the engine did.** The rung timeline L0 → L4, each rung with its action and reason in words ("L0: no known
+     fix for this vendor and change", "L1: rule page_to_cursor matched", "L2 skipped: only one explanation left,
+     nothing to rank"); the **hypothesis funnel** ("24 explanations → 6 about amounts → 2 consistent with what the
+     API returned → 1 distinct"), each stage expandable to the hypotheses and the evidence that eliminated the rest;
+     probes run; the **model-call box** listing every call (rung, model, live or replay with capture date, tokens
+     in/out/reasoning, cost, outcome) and saying **"0 model calls"** explicitly when there were none; the verifier run
+     (which checks ran, passed or failed, on which data); time taken.
+   - **What the engine decided and recommends.** The decision in one line ("Fix ready: verified, 0 model calls" or
+     "Needs your decision: the engine is not confident"); the proposed change as a readable diff against the current
+     spec (rendered from the JSON Patch, with the raw patch one click away); confidence and why; the verifier verdict;
+     what the change does and does not touch; for escalations, the operator question with the options the engine
+     sees (e.g. "map `total_amount` to `$.gross_amount`" / "add a canonical field") and the rejected proposal with the
+     reason it was rejected.
+   - **What happens when you click Approve** (and Reject), **before** you click, generated from the server's real
+     approve/reject path, not hard-coded text: e.g. "creates release r4 from r3 with this change · activates r4 ·
+     pauses N dependent consumers until the next sync · the next scheduled sync (in ~N s) runs on r4 · this fix is kept
+     as known for AtlasPMS + this change, so the same drift next time resolves at L0 · rollback to r3 stays available";
+     Reject: "release discarded · the fix is not kept · the drift stays open". If the server's behaviour differs from
+     this example (e.g. when the fix is cached), the text follows the server.
+4. **After Approve**, the page follows the outcome live: approval recorded → release activated → verifying sync →
+   `Complete` → connector `working` (or what failed). Approve / Reject sit at the top of the page with the decision
+   line, one click from the Repairs list.
+5. **PABX panel** on the PABX connector page: link state, postings arriving (count rising, last posting time), current
+   record layout (v2/v3, announced in the handshake), and the last restart result ("redelivered 1 · lost 0 ·
+   duplicated 0").
+6. **Knowledge page:** "used by" per vocabulary version after the seed; learned fixes appear as approved repairs land,
+   with "reused N×".
+Tests: component tests for the states, the four repair sections (an L1 repair with 0 calls; the deck-5 repair with
+the funnel, 1 model call, the rejected proposal and the question), the approve preview text against the API, the
+after-approve progress, the PABX panel.
+
+### REQ-033 — UI-first demo, part D: README "How to run the demo", docs, UI e2e journeys (2026-10-29)
+Status: OPEN
+Depends on REQ-031 and REQ-032.
+1. **README.md "How to run the demo"**, short enough to follow while recording: start (`make local-up` or `make up`);
+   `make demo-reset && make demo-seed`, open `http://localhost:8107`, wait until every connector shows ● Working; then
+   one block per scenario with the command, where to look, what should happen and the expected model calls:
+   - What AutoBridge knows (Knowledge page); Reusable artifact (Connectors, Atlas Working, 0 tokens)
+   - Unfamiliar API: build Harbor from its docs in the UI
+   - Zero-token fix: `make demo-break SCENARIO=page_to_cursor` → Atlas Degrading → repair "fix ready · 0 model calls" →
+     Approve → Working; learning: break it again → fixed at L0, "reused 1×"
+   - Hard semantic failure: `make demo-break SCENARIO=gross_to_net TARGET=harbor` → Harbor Error → funnel, "1 model
+     call", rejected proposal, the operator question
+   - New kind of API: Meridian page (v1 refused, v2 in use); `make demo-break SCENARIO=meridian_cursor_renamed` →
+     fix at L1 → Approve → Working
+   - On-premise PABX: `make demo-break SCENARIO=fias_record_layout_change` → `rename_field` TA → TM → Approve →
+     postings flow; `make demo-break SCENARIO=agent_restart_inflight` → "lost 0 · duplicated 0"
+   - retakes (`make demo-heal`, `make demo-reset && make demo-seed`), the terminal-only `make demo`, settings
+     (`AUTOBRIDGE_SYNC_INTERVAL_S`, `FRONTIER_API_KEY`: live vs replay for the semantic scenario).
+2. `docs/demo.md`: a "Recording from the UI" section with the same sequence and what to point at on screen.
+3. **UI e2e (Playwright, `make e2e-ui`)**: seed → all Working; break `page_to_cursor` → Degrading → "fix ready"
+   appears without a manual sync → click Approve → Working, and the four repair sections are present; break
+   `gross_to_net` → Error, funnel and "1 model call" (replay when no key) and the question visible; PABX layout break
+   → fixed after Approve, postings resume.
+Gates: `make test`, keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` green; `make up`
+likewise.
+
 Owner priority (2026-10-29 17:00): **REQ-029 next**, before any other open item, so the Muse Wonder audit that follows
 this run can close Code Review Cycle 2.
 
