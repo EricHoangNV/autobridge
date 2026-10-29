@@ -3565,3 +3565,29 @@ is the owner's call once REQ-034 is decided") REQ-029 moves DONE. Re-verified bo
 (2) docs_path-422 in `control/routes/builds.py:148-161` + engine mirror. Targeted suites: 104 + 110 passed, 0 fail.
 Status flipped in REQUESTS.MD, build note appended. Remaining (not mine): auditor verdict line in FEEDBACKS.MD,
 owner keyed local-up+e2e+demo re-run. No stack started this run; no code diff.
+
+## [Directives audit Cycle 5 — 2cea2072..d2d9c9d2]
+**Date:** 2026-10-29
+**Ref:** mds/AUDIT.md (daily directives audit); FEEDBACKS Code Review Cycle 4 AR-4-1…AR-4-4
+
+**What was done:**
+- Audited all 34 commits since `2cea2072` against DIRECTIVES §§1–8 and plan §1; re-verified REQ-034/035/036/037/038/030/031/032/033/039 and REQ-029 close-out in code and live on Compose.
+- Fixed: compose.yaml now defaults ATLAS_BASE_URL/HARBOR_BASE_URL on control/worker/runtime-sandbox (reference-spec placeholders unresolved in Compose killed Harbor syncs; test_09 was red on `make up` only).
+- Fixed: bench/demo.py `_check_connector_address` Compose branch hardcoded sim-atlas; now per-connector host (relay verbatim).
+- Fixed: scripts/smoke.sh positive admin probe uses the stack's SIM_ADMIN_TOKEN demo default.
+- Fixed: test_06 repair journey approve-preview locator (nested testids broke strict mode on escalations); DIRECTIVES §2 bench-network bullet corrected.
+- Filed REQ-040 (unscoped newest-RepairRun re-fetch in detect_repair.py) and REQ-041 (ModelUsageChart orphaned by REQ-032; test_s6 red both modes).
+- FEEDBACKS: Code Review Cycle 5 verdict PASS with full report inserted.
+
+**Key decisions:**
+- Verdict PASS: Cycle 4 findings verified live (REQ-034 acceptance 4/4, smoke, demo 8/8); REQ-040/041 break no trust/verifier/secret rule, so they are follow-ups, not blockers.
+- PABX seed Blocked in this sandbox traced to .env setting AUTOBRIDGE_CONTROL_TOKEN without EDGE_TOKEN (documented compose requirement; local-up derives it) — environment alignment, not a code fix.
+
+**Files changed:**
+- `compose.yaml`, `scripts/smoke.sh`, `bench/demo.py`, `mds/DIRECTIVES.MD` — mode-parity fixes above
+- `tests/unit/test_autobridge_compose.py`, `tests/unit/test_simulators_admin_defaults.py`, `tests/unit/test_autobridge_demo.py`, `tests/e2e/test_06_ui_journey.spec.ts` — pinning tests
+- `mds/AUDIT.md`, `mds/FEEDBACKS.MD`, `mds/REQUESTS.MD`, `mds/progress-state.md`, `mds/progress-log.md` — audit record (Agent: opencode meta/muse-wonder-1.0 (escalation))
+
+**Notes for next iteration:**
+- REQ-041 owns the remaining 3 e2e-ui failures (test_s6); REQ-040 owns the RepairRun provenance race.
+- Owner keyed steps unchanged: REQ-027/028/021/024/025/039 verifications and P1.W10.3 recording.

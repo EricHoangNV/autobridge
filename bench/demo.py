@@ -571,10 +571,20 @@ def _check_connector_address(sent: str, stored: Any) -> str | None:
                 f"(sent {sent!r}); expected http://localhost:<port>"
             )
         return None
-    if "sim-atlas" not in stored:
+    # Compose mode (AUDIT-2026-10-29): every connector keeps its own
+    # service-DNS address — this check used to hardcode sim-atlas, so the
+    # REQ-031 seed failed Harbor/Meridian/PABX in Compose while passing
+    # locally. Non-HTTP relay addresses (edge-relay://…) pass verbatim.
+    if sent.startswith("edge-relay://"):
+        return None if stored == sent else f"expected relay address {sent!r} in Compose mode, stored {stored!r}"
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    sent_host = urlparse(sent).hostname
+    stored_host = urlparse(stored).hostname
+    if stored_host in ("localhost", "127.0.0.1") or (sent_host and stored_host != sent_host):
         return (
             f"expected service-DNS base_url in Compose mode, stored {stored!r} "
-            f"(sent {sent!r}); expected http://sim-atlas:8000"
+            f"(sent {sent!r}); expected {sent!r}"
         )
     return None
 

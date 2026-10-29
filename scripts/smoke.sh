@@ -172,10 +172,12 @@ echo ">> smoke: FIAS admin reachable from control on admin-net only (REQ-034)"
 # cannot touch FIAS.
 # The admin API 403s bare probes, so send the admin headers (with the token:
 # non-empty by default since REQ-035, via the shell or .env).
-ADMIN_HDR="{'X-Admin-Network': 'admin-net'}"
-if [ -n "${SIM_ADMIN_TOKEN:-}" ]; then
-  ADMIN_HDR="{'X-Admin-Network': 'admin-net', 'X-Admin-Token': '${SIM_ADMIN_TOKEN}'}"
-fi
+# AUDIT-2026-10-29: compose/local-up default the token to the labelled
+# demo value when unset/empty (${SIM_ADMIN_TOKEN:-sim-admin-dev-token}),
+# so the positive probe must use the same default or it 403s on a stack
+# started without a .env and reports a reachable admin port as down.
+ADMIN_TOKEN="${SIM_ADMIN_TOKEN:-sim-admin-dev-token}"
+ADMIN_HDR="{'X-Admin-Network': 'admin-net', 'X-Admin-Token': '${ADMIN_TOKEN}'}"
 probe_headers control http://sim-fias-pabx:8001/healthz "$ADMIN_HDR" up
 
 echo ">> smoke: simulator admin writes need authorization, not just the published header (AR-1-1)"
@@ -184,12 +186,9 @@ echo ">> smoke: simulator admin writes need authorization, not just the publishe
 # never when it is merely reachable — reachability without the token is
 # covered by the probe_admin_denied checks above.
 probe_post runtime-sandbox http://sim-atlas:8001/admin/reset "{}" down
-if [ -n "${SIM_ADMIN_TOKEN:-}" ]; then
-  # With the token configured (the default since REQ-035), the published
-  # X-Admin-Network header alone must NOT authorize a write — only the token does.
-  probe_post runtime-sandbox http://sim-atlas:8001/admin/reset "{'X-Admin-Network': 'admin-net'}" down
-else
-  echo "  WARN SIM_ADMIN_TOKEN explicitly empty — admin runs header-only dev mode (fresh clones default to sim-admin-dev-token)"
-fi
+# A token is always in force on a compose/local-up stack (demo default
+# since REQ-035), so the published X-Admin-Network header alone must NOT
+# authorize a write — only the token does.
+probe_post runtime-sandbox http://sim-atlas:8001/admin/reset "{'X-Admin-Network': 'admin-net'}" down
 
 echo "smoke OK"

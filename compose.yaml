@@ -78,6 +78,14 @@ services:
       LEGACYSTAY_API_KEY: ${LEGACYSTAY_API_KEY:-sim-demo-key}
       MERIDIAN_CLIENT_TOKEN: ${MERIDIAN_CLIENT_TOKEN:-meridian-client-token}
       MERIDIAN_ACCESS_TOKEN: ${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}
+      # AUDIT-2026-10-29: reference specs carry ${ATLAS_BASE_URL} /
+      # ${HARBOR_BASE_URL} placeholders (generated/connectors/*/reference);
+      # the executing services must resolve them in Compose mode too —
+      # without these, a Harbor reference-release sync dies with
+      # "Missing env var for placeholder ${HARBOR_BASE_URL}" while local
+      # mode (scripts/local-up.sh exports localhost values) works.
+      ATLAS_BASE_URL: ${ATLAS_BASE_URL:-http://sim-atlas:8000}
+      HARBOR_BASE_URL: ${HARBOR_BASE_URL:-http://sim-harbor:8000}
       # REQ-021 item 5: frontier/small model access for the engine. Only the
       # key names travel in config; values stay in .env / the host env and
       # are never logged, stored or returned by the API.
@@ -139,6 +147,9 @@ services:
       LEGACYSTAY_API_KEY: ${LEGACYSTAY_API_KEY:-sim-demo-key}
       MERIDIAN_CLIENT_TOKEN: ${MERIDIAN_CLIENT_TOKEN:-meridian-client-token}
       MERIDIAN_ACCESS_TOKEN: ${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}
+      # AUDIT-2026-10-29: same ${*_BASE_URL} placeholder resolution as control.
+      ATLAS_BASE_URL: ${ATLAS_BASE_URL:-http://sim-atlas:8000}
+      HARBOR_BASE_URL: ${HARBOR_BASE_URL:-http://sim-harbor:8000}
       # REQ-031: same EDGE_TOKEN default as control (see its comment):
       # must equal AUTOBRIDGE_CONTROL_TOKEN whenever that is set.
       EDGE_TOKEN: ${EDGE_TOKEN:-sim-demo-key}
@@ -155,6 +166,10 @@ services:
     environment:
       APP_MODULE: autobridge.runtime.app:app
       AUTOBRIDGE_RUNTIME: "docker"
+      # AUDIT-2026-10-29: specs executed here resolve the same
+      # ${ATLAS_BASE_URL} / ${HARBOR_BASE_URL} placeholders as control/worker.
+      ATLAS_BASE_URL: ${ATLAS_BASE_URL:-http://sim-atlas:8000}
+      HARBOR_BASE_URL: ${HARBOR_BASE_URL:-http://sim-harbor:8000}
     networks:
       - engine-net
       - vendor-net

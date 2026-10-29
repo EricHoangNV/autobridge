@@ -795,10 +795,11 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     }
 
     // §4 What happens when you click Approve — from the server preview.
+    // (approve-preview is the section container; approve-preview-blocked
+    // renders inside it for non-propose decisions, so an .or() locator
+    // resolves to two elements and fails strict mode on escalations.)
     await expect(page.getByTestId("repair-section-approve")).toBeVisible();
-    await expect(
-      page.getByTestId("approve-preview").or(page.getByTestId("approve-preview-blocked")),
-    ).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId("approve-preview")).toBeVisible({ timeout: 8000 });
     if (!uiReachable) {
       await expect(page.getByTestId("approve-preview-line-0")).toContainText("Creates release r2 from r1");
       await expect(page.getByTestId("reject-preview-line-0")).toContainText("drift stays open");

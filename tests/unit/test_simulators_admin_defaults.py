@@ -72,6 +72,15 @@ def test_smoke_distinguishes_rejected_from_no_route() -> None:
         assert f"probe_admin_denied {svc_url}" in text, f"missing: {svc_url}"
 
 
+def test_smoke_positive_probe_uses_the_demo_token_default() -> None:
+    """AUDIT 2026-10-29: the FIAS-admin positive probe must send the same
+    token the stack defaults to, or a stack started without a .env 403s
+    and smoke reports a reachable admin port as unreachable."""
+    text = (REPO_ROOT / "scripts" / "smoke.sh").read_text(encoding="utf-8")
+    assert 'ADMIN_TOKEN="${SIM_ADMIN_TOKEN:-sim-admin-dev-token}"' in text
+    assert "'X-Admin-Token': '${ADMIN_TOKEN}'" in text
+
+
 def test_smoke_write_checks_fail_only_on_accept() -> None:
     """Unauthorized admin writes fail smoke only when ACCEPTED (2xx)."""
     text = (REPO_ROOT / "scripts" / "smoke.sh").read_text(encoding="utf-8")

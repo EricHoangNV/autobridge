@@ -125,6 +125,21 @@ def test_step1_live_asserts_service_dns_in_compose(monkeypatch: Any) -> None:
     assert step["evidence"]["connector_base_url_stored"] == "http://sim-atlas:8000"
 
 
+def test_check_connector_address_compose_per_connector(monkeypatch: Any) -> None:
+    """AUDIT-2026-10-29: Compose check keeps each connector's own DNS host.
+
+    The check hardcoded sim-atlas, so the REQ-031 seed failed Harbor,
+    Meridian and the PABX relay in Compose while passing locally.
+    """
+    monkeypatch.setattr(demo_mod, "_stack_is_local", lambda: False)
+    check = demo_mod._check_connector_address
+    assert check("http://sim-harbor:8000", "http://sim-harbor:8000") is None
+    assert check("http://sim-meridian:8000", "http://sim-meridian:8000") is None
+    assert check("edge-relay://queue/fias-commands", "edge-relay://queue/fias-commands") is None
+    assert check("http://sim-harbor:8000", "http://localhost:8106") is not None
+    assert check("http://sim-harbor:8000", "http://sim-atlas:8000") is not None
+
+
 def test_step2_docs_to_draft_spec_no_model_calls() -> None:
     step = step2_unfamiliar_api(0, False, "http://127.0.0.1:9")
     ev = step["evidence"]

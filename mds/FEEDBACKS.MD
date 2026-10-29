@@ -5,13 +5,21 @@
 ### Security: Cycle 0 — (no review yet)
 - (awaiting first security review)
 
-### Code Review: Cycle 4 — FAIL (2026-10-29)
-- Daily Architecture Review (diff `2cea2072..005d69ed` + fixed trust-boundary checks): the audit's 4 residuals are verified in code (fail-closed activation `_require_verified_release`, `AUTOBRIDGE_RUNTIME=docker` pin, config model ids in demo pricing, CI openapi/ui-typecheck gates); AR-1-1…AR-2-6 stay resolved. FAIL on AR-4-1 (=REQ-034, recurring): `sim-fias-pabx` is edge-net only and control has no edge-net route, so `/demo/reset` + `/demo/inject-fault` cannot reach the FIAS admin API in Compose; AR-4-2 (=REQ-035, recurring): sim admin falls back to the published header-only check when `SIM_ADMIN_TOKEN` is empty (the default) and smoke counts a 403 as "unreachable".
-- test coverage: `make test` FAILED on first run (flaky `test_replay_postings_resend_same_pno`, passed on rerun; simulators 90.50% — margins thin); per-package totals not re-captured after the flake
-- type safety / lint: PASS (`make lint` incl. import-linter contracts, `make typecheck`, `make ui-typecheck`, `make openapi-check` all green)
+### Code Review: Cycle 5 — PASS (2026-10-29)
+- Daily Directives Audit (diff `2cea2072..d2d9c9d2`): Cycle 4's AR-4-1…AR-4-4 are resolved in code and verified live on Compose (FIAS admin sidecar + 4 acceptance e2e green, admin-token demo default + boundary smoke, derived L3 gate count, deterministic FIAS tests 5× green); REQ-030…REQ-033 and REQ-039 claims re-verified. The audit fixed 4 Compose/local mode-split residuals itself (compose `${*_BASE_URL}` placeholders unresolved, seed address check hardcoded to Atlas, smoke token default, state-dependent approve-preview locator) and filed REQ-040 (unscoped newest-RepairRun re-fetch) and REQ-041 (test_s6 chart orphaned by REQ-032) — neither blocks the PASS: no trust-boundary, verifier-gate or secret rule is broken by them.
+- test coverage: PASS (`make test`: 2673 autobridge 90.55% + 134 verifier 91.49% + 409 simulators 90.48% + 192 UI, all ≥90%; margins on autobridge/simulators stay thin)
+- type safety / lint: PASS (`make lint` incl. import-linter contracts, `make typecheck`, `make ui-typecheck`, `make openapi-check` all green; `make up` + `make smoke` + `make demo` 8/8 live on Compose)
 
 ### Product Review: Cycle 0 — (no review yet)
 - (awaiting first product review)
+
+---
+
+## Daily Directives Audit — Re-verification of Cycle 4 (Code Review Cycle 5, 2026-10-29)
+
+**Verdict: PASS** — Cycle 4's four findings (AR-4-1…AR-4-4 = REQ-034/035/036/038) are resolved in code and verified live on the Compose stack in this audit, and the REQ-030…REQ-033 / REQ-039 work merged since `2cea2072` holds up against DIRECTIVES §§1–8. The audit fixed four Compose-vs-local mode-split residuals itself (engine services never received `${ATLAS_BASE_URL}`/`${HARBOR_BASE_URL}`, so reference-spec syncs died only in Compose; the demo seed's address check hardcoded Atlas; smoke's positive admin probe lacked the stack's default token; a state-dependent Playwright locator on the repair page) and filed two non-blocking follow-ups: REQ-040 (the sync→repair path re-fetches the newest RepairRun unscoped — a provenance cross-link risk under concurrent syncs) and REQ-041 (REQ-032 orphaned the P2.S6.1 model-usage chart; test_s6 red in both modes). Full findings, evidence and loops run are in `mds/AUDIT.md`.
+
+**Checks performed** (sandbox sbx1 worktree at `d2d9c9d2` + audit fixes): `make lint` PASS (import-linter KEPT), `make typecheck` PASS, `make openapi-check` + `make ui-typecheck` PASS, `make test` PASS (2673/134/409, 90.55%/91.49%/90.48%, UI 192), `make up` + `make smoke` PASS live, `make demo` 8/8, REQ-034 acceptance e2e 4/4 and test_09 5/5 on Compose. `make e2e-ui`: 10 passed / 5 skipped / 3 failed (all REQ-041). Full `make e2e` remains the owner's run; keyed frontier runs (REQ-021/027/028/039 owner steps) were not executed — no `FRONTIER_API_KEY` in the sandbox.
 
 ---
 

@@ -387,6 +387,18 @@ def test_worker_has_no_verifier_url(compose: dict) -> None:
 
 
 @pytest.mark.parametrize("service", ["control", "worker", "runtime-sandbox"])
+def test_engine_services_resolve_reference_spec_base_urls(compose: dict, service: str) -> None:
+    """AUDIT 2026-10-29: reference specs carry ${ATLAS_BASE_URL} /
+    ${HARBOR_BASE_URL} placeholders; every service that can execute a spec
+    must resolve them in Compose mode (local-up exports localhost values).
+    Without this a Harbor reference-release sync dies in Compose with
+    'Missing env var for placeholder ${HARBOR_BASE_URL}' (test_09 red)."""
+    env = compose["services"][service].get("environment") or {}
+    assert env.get("ATLAS_BASE_URL") == "${ATLAS_BASE_URL:-http://sim-atlas:8000}"
+    assert env.get("HARBOR_BASE_URL") == "${HARBOR_BASE_URL:-http://sim-harbor:8000}"
+
+
+@pytest.mark.parametrize("service", ["control", "worker", "runtime-sandbox"])
 def test_engine_services_pin_docker_runtime_mode(compose: dict, service: str) -> None:
     """AUDIT 2026-10-29: a container has no docker binary/socket, so
     AUTOBRIDGE_RUNTIME auto-detection reports "local" and readyz/UI claim
