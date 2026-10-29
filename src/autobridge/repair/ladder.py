@@ -1748,6 +1748,12 @@ def run_frontier_climb(
             "content": l3_user,
         },
     ]
+    # REQ-039: the exact prompt rides on the rung (prompts carry no
+    # credentials by construction — hypothesis ids and redacted evidence
+    # only). `make record-frontier` replays these messages live to capture
+    # the recording the replay mode needs; the repair page can show what
+    # the engine asked.
+    l3_entry["messages"] = [dict(m) for m in l3_messages]
     effective: Any = provider
     if budget is not None:
         effective = BudgetedProvider(provider, budget, session=session, run_id=run_id)
@@ -1841,6 +1847,7 @@ def run_frontier_climb(
         "usage": usage,
         "resolved_rung": 3,
         "l3_text": l3_text,
+        "l3_messages": [dict(m) for m in l3_messages],
         "proposal": proposal,
         "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
         "l2_confidence": l2_confidence,

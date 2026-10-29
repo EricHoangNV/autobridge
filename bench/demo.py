@@ -1499,13 +1499,16 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
     the reusable reference release through the control API; a bare
     ``make demo`` registers it here via the same route), so the faulted
     sync degrades on ``money_invariant``, the detector and classifier name
-    ``SEMANTIC_VALUE_DRIFT`` from the wire signals, and the engine
-    escalates with one operator question — Harbor goes to ``error``, all
-    from the break, never from ``record-climb`` rows. The instrumented
-    in-process climb above still demonstrates the hypothesis funnel (and
-    the 1 live model call when a frontier is available); that climb is
-    recorded via ``POST /demo/record-climb`` as the documented no-key
-    fallback for the model-call box.
+    ``SEMANTIC_VALUE_DRIFT`` from the wire signals, and the engine's own
+    climb runs: funnel (generated → amount → wire-consistent → distinct),
+    L2 skipped (one explanation), exactly one L3 attempt — live with
+    ``FRONTIER_API_KEY``, replayed from a capture otherwise, explicitly
+    skipped with the capture hint when neither exists — the proposal
+    judged, never released, one operator question. Harbor goes to
+    ``error``, all from the break. The instrumented in-process climb runs
+    the same inputs for the printed derivation; it is recorded via
+    ``POST /demo/record-climb`` only when the break's L3 was skipped, as
+    the documented no-key fallback.
     """
     ensure_calls = _live_ensure_connector(
         base_url,
@@ -1588,18 +1591,60 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         f"repair row: {repair_row}",
     )
     trace_levels = [a.get("level") for a in (repair_row.get("ladder_trace") or []) if isinstance(a, dict)]
+    int_levels = sorted(lv for lv in trace_levels if isinstance(lv, int))
     _assert_live(
-        calls, "live repair shows the deterministic climb (L0 miss, L1 no rule, L4 escalate)",
-        0 in trace_levels and 1 in trace_levels and 4 in trace_levels,
+        calls, "live repair climbs L0 -> L1 -> L2 -> L3 -> L4 (each rung recorded)",
+        int_levels == [0, 1, 2, 3, 4],
         f"ladder trace levels: {trace_levels}",
+    )
+    # REQ-039: the repair the break produced carries the funnel and exactly
+    # one L3 attempt (live with a key, replayed from a capture otherwise).
+    # With neither, L3 is skipped explicitly — named hash + capture hint —
+    # and the instrumented climb below stays the documented fallback.
+    ev_rows: list[Any] = _control_get_raw(base_url, f"/runs/{repair_row.get('id')}/evidence") or []
+    hyp_rows = [
+        e for e in ev_rows if isinstance(e, dict) and e.get("kind") == "hypothesis"
+    ]
+    stages: list[Any] = []
+    if hyp_rows and isinstance(hyp_rows[0].get("payload"), dict):
+        stages = hyp_rows[0]["payload"].get("stages") or []
+    stage_names = [s.get("name") for s in stages if isinstance(s, dict)]
+    _assert_live(
+        calls, "live repair carries the derivation funnel (generated -> amount -> wire-consistent -> distinct)",
+        stage_names == ["generated", "amount", "wire_consistent", "distinct"]
+        and any(isinstance(s, dict) and (s.get("count") or 0) > 0 for s in stages),
+        f"hypothesis stages: {stages}",
+    )
+    l3_entries = [
+        a for a in (repair_row.get("ladder_trace") or [])
+        if isinstance(a, dict) and a.get("level") == 3
+    ]
+    ledger: dict[str, Any] = _control_get_raw(base_url, f"/repairs/{repair_row.get('id')}/ledger") or {}
+    ledger_calls = [c for a in (ledger.get("attempts") or []) for c in (a.get("calls") or [])]
+    l3_attempted = (
+        len(l3_entries) == 1
+        and l3_entries[0].get("action") in ("frontier_generate", "proposal_rejected")
+        and len(ledger_calls) >= 1
+    )
+    l3_skipped = (
+        len(l3_entries) == 1
+        and l3_entries[0].get("action") == "l3_skipped"
+        and ("no replay recording" in str(l3_entries[0].get("reason") or "")
+             or "no provider" in str(l3_entries[0].get("reason") or ""))
+    )
+    _assert_live(
+        calls, "live repair holds exactly one L3 attempt (live or replay) or one explicit L3 skip",
+        l3_attempted or l3_skipped,
+        f"rung 3: {l3_entries}, ledger calls: {len(ledger_calls)}",
     )
     raw_usage: Any = repair_row.get("model_usage")
     usage: dict[str, Any] = dict(raw_usage) if isinstance(raw_usage, dict) else {}
-    _assert_live(
-        calls, "live engine repair costs 0 model calls (frontier lives in the instrumented climb)",
-        int(usage.get("frontier_tokens", 0) or 0) == 0 and int(usage.get("small_tokens", 0) or 0) == 0,
-        f"live repair model usage: {usage}",
-    )
+    if l3_attempted:
+        _assert_live(
+            calls, "attempted L3 is billed in the repair usage (live or replayed)",
+            int(usage.get("frontier_tokens", 0) or 0) > 0,
+            f"live repair model usage: {usage}",
+        )
     return {
         "connector_id": connector_id,
         "reference_release_id": reference_id,
@@ -1610,15 +1655,9 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         "repair_run_id": repair_row.get("id"),
         "repair_decision": repair_row.get("decision"),
         "deduped_note": deduped_note,
+        "l3_attempted": l3_attempted,
+        "l3_skipped": l3_skipped,
     }
-
-
-# Strategies whose reading predicts the money invariant HOLDS (the observed
-# sum matches the gross baseline). When a sync fails money_invariant, these
-# readings are contradicted by the wire; "net" (below-baseline) survives.
-# A fixed domain mapping, not per-run input: the filter itself is computed
-# from the observed sync outcome.
-_HOLD_PREDICTING_STRATEGIES = frozenset({"gross", "tax_inclusive"})
 
 
 def _money_fields_of_spec(spec: dict[str, Any]) -> dict[str, str]:
@@ -1635,17 +1674,6 @@ def _money_fields_of_spec(spec: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def _harbor_money_docs_excerpt() -> str:
-    """The Money section of the Harbor docs (evidence the engine may read)."""
-    text = (REPO_ROOT / "simulators" / "docs" / "harborpms.md").read_text(encoding="utf-8")
-    lines = text.splitlines()
-    start = next((i for i, line in enumerate(lines) if line.strip().lower() == "## money"), None)
-    if start is None:
-        return "\n".join(lines[:20])
-    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
-    return "\n".join(lines[start:end]).strip()
-
-
 def _semantic_climb_inputs() -> dict[str, Any]:
     """Engine-derived inputs for the gross_to_net climb (REQ-027 item 4).
 
@@ -1655,23 +1683,16 @@ def _semantic_climb_inputs() -> dict[str, Any]:
       (records 10% below baseline, gross_sum meta on the wire) — Degraded
       with money_invariant, like the faulted simulator;
     * drift class: the classifier on that sync's wire signals;
-    * hypotheses: the engine's HypothesisEnumerator on the Harbor docs,
-      amount family for the spec's money fields;
-    * survivors: readings consistent with the observed invariant failure
-      (gross/tax_inclusive predict the invariant holds — contradicted);
-    * climbed: the most specific surviving field (longest field name;
-      the L3 patch targets one field, so the generic/shorter alias would
-      under-specify it); siblings are recorded, not hidden;
-    * evidence for L3: spec excerpt + failing-records sample + docs
-      excerpt, all extracted (redacted to money fields).
+    * hypotheses, funnel and L3 evidence: the shared engine builder
+      (:mod:`autobridge.repair.semantic`) — the same code the live repair
+      path runs, so the instrumented climb and the break's climb ask the
+      frontier the same prompt.
     """
-    from autobridge.discovery.classifiers import classify_all  # noqa: PLC0415
-    from autobridge.discovery.docs_reader import read_docs_text  # noqa: PLC0415
-    from autobridge.discovery.hypotheses import HypothesisEnumerator  # noqa: PLC0415
     from autobridge.drift.classifier import classify  # noqa: PLC0415
     from autobridge.drift.signals import signals_from_sync  # noqa: PLC0415
     from autobridge.engine.detect_repair import build_detector_delta  # noqa: PLC0415
     from autobridge.engine.sync_run import execute_sync  # noqa: PLC0415
+    from autobridge.repair import semantic as _semantic  # noqa: PLC0415
 
     spec = _load_reference_spec("harborpms")
     faulted = execute_sync(spec, _harbor_fake_client(mode="net"))
@@ -1683,70 +1704,20 @@ def _semantic_climb_inputs() -> dict[str, Any]:
     assert classification.drift_class == "SEMANTIC_VALUE_DRIFT", classification
     delta = build_detector_delta(spec, signals)
 
-    docs_ref = "simulators/docs/harborpms.md"
-    iface = read_docs_text((REPO_ROOT / docs_ref).read_text(encoding="utf-8"), docs_ref)
-    doc_classification = classify_all(iface)
-    enumerated = HypothesisEnumerator().enumerate_all(iface, doc_classification)
-    money_fields = _money_fields_of_spec(spec)
+    # The shared engine builder: enumeration from the wire signals and the
+    # spec, wire filter, distinct selection, redacted L3 evidence. The live
+    # scheduler/worker path runs exactly this (REQ-039).
+    source = "demo-step4-faulted"
+    enumerated, money_fields = _semantic.enumerate_money_hypotheses(spec, source=source)
     assert money_fields, "reference spec must name money fields"
-    drifted = sorted({field for field in money_fields.values()})
-    amount_hyps = [h for h in enumerated if h.family == "amount" and (h.field or "") in drifted]
-    assert amount_hyps, "enumerator must yield amount readings for the money fields"
-    survivors = [h for h in amount_hyps if (h.strategy or "") not in _HOLD_PREDICTING_STRATEGIES]
+    failed = _semantic.money_invariant_failed(faulted, list(signals))
+    assert failed, "faulted sync must fail the money invariant"
+    survivors = _semantic.filter_wire_consistent(enumerated, invariant_failed=failed)
     assert survivors, "at least the net reading must survive the observed invariant failure"
-    # The climb proposes one field-targeted patch: climb the most specific
-    # surviving field (longest field name; a shorter alias would
-    # under-specify the patch target). Siblings are recorded, not hidden.
-    # The live-hypothesis count going into L2/L3 is therefore one.
-    ordered = sorted(survivors, key=lambda h: (-len(h.field or ""), h.id))
-    live_hyps = ordered[:1]
-    climbed = live_hyps[0]
-    siblings = [h.id for h in ordered[1:]]
-
-    entities = spec.get("entities") or {}
-    ent_name = next(
-        name for name, ent in entities.items()
-        if isinstance(ent, dict) and money_fields.get(name) == climbed.field
-    )
-    ent_spec = entities.get(ent_name) if isinstance(entities, dict) else {}
-    field_path = ""
-    if isinstance(ent_spec, dict):
-        fields = ent_spec.get("fields") or {}
-        field_spec = fields.get(climbed.field or "")
-        if isinstance(field_spec, dict):
-            field_path = str(field_spec.get("path") or "")
-    key_path = ""
-    if isinstance(ent_spec, dict):
-        key_path = str(ent_spec.get("key") or "")
-    key_field = key_path.removeprefix("$.")
-    canonical = (faulted.get("canonical_records") or {}).get(ent_name) or []
-    sample_rows = []
-    for rec in list(canonical)[:2]:
-        if isinstance(rec, dict):
-            sample_rows.append({k: str(rec.get(k)) for k in (key_field, climbed.field) if k and k in rec})
-    observed_sum = sum((Decimal(str(r.get(climbed.field))) for r in canonical if isinstance(r, dict) and r.get(climbed.field) is not None), Decimal("0"))
-    baseline_sum = ""
-    for pages in ((faulted.get("operation_results") or {}).values()):
-        raw_pages = getattr(pages, "raw_pages", None)
-        if raw_pages:
-            first = raw_pages[0] if isinstance(raw_pages[0], dict) else {}
-            if isinstance(first, dict) and first.get("gross_sum") is not None:
-                baseline_sum = str(first["gross_sum"])
-                break
-    evidence = {
-        "spec_excerpt": {
-            "entity": ent_name,
-            "field": climbed.field,
-            "path": field_path,
-            "money_check": {"kind": "money_invariant", "compare_to": "$.gross_sum"},
-        },
-        "records_sample": {
-            "rows": sample_rows,
-            "observed_sum": str(observed_sum),
-            "baseline_gross_sum": baseline_sum,
-        },
-        "docs_excerpt": _harbor_money_docs_excerpt()[:600],
-    }
+    climbed, siblings = _semantic.select_climbed(survivors)
+    assert climbed is not None
+    live_hyps = [climbed]
+    evidence = _semantic.build_l3_evidence(spec, faulted, climbed)
     return {
         "spec": spec,
         "faulted_summary": faulted,
@@ -1755,14 +1726,13 @@ def _semantic_climb_inputs() -> dict[str, Any]:
         "signals_count": len(signals),
         "fingerprint_delta": delta,
         "enumerated_count": len(enumerated),
-        "amount_count": len(amount_hyps),
+        "amount_count": len(enumerated),
         "money_fields": money_fields,
-        "survivor_ids": [h.id for h in ordered],
+        "survivor_ids": [h.id for h in survivors],
         "sibling_ids": siblings,
         "hypotheses": live_hyps,
         "yield_count": len(live_hyps),
         "evidence": evidence,
-        "docs_ref": docs_ref,
     }
 
 
@@ -1848,19 +1818,21 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     The faulted sync (reference Harbor spec vs net-mode wire: records 10%
     below the gross_sum meta) degrades on money_invariant; the classifier
     names SEMANTIC_VALUE_DRIFT from the wire signals. Hypotheses come from
-    the engine's enumerator on the Harbor docs; wire-consistency keeps the
-    net readings, and the climb demonstrates the most specific one with the
-    frontier given real evidence (spec excerpt, failing-records sample,
-    docs excerpt — redacted). The proposal is checked (live verifier
-    verdict, else the documented trap predicate): the known decoy
-    (net_amount -> total_amount) is rejected as invalid_patch_trap;
+    the shared engine builder (amount readings from the spec's money
+    fields); the wire filter keeps the net readings, and the climb
+    demonstrates the most specific one with the frontier given real
+    evidence (spec excerpt + failing-records sample, redacted). The
+    proposal is checked (live verifier verdict, else the documented trap
+    predicate): the known decoy (net_amount -> total_amount) is rejected;
     anything else still ends Degraded with one operator question, because
     a semantic drift is never patched without the operator. Nothing is
     released either way. Live, Harbor is seeded (or registered here) from
     the reference release, so the same chain happens through the stack:
-    inject → sync → Degraded → engine drift + escalated repair → error.
-    When no provider and no recording exist, L3 is labelled skipped
-    instead of invented.
+    inject → sync → Degraded → engine climb + escalated repair → error —
+    the break's repair carries the funnel and the L3 attempt, and the
+    instrumented climb below is recorded only when the break's L3 was
+    skipped. When no provider and no recording exist, L3 is labelled
+    skipped instead of invented.
     """
     from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
     from autobridge.repair.escalation import escalation_for_no_fix  # noqa: PLC0415
@@ -1888,11 +1860,11 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         "faulted_sync": "execute_sync(reference spec, net-mode fake: records below gross_sum meta)",
         "drift_class": f"classifier on {inp['signals_count']} wire signals ({inp['drift_reason']})",
         "fingerprint_delta": "build_detector_delta from spec + wire signals (None: wire shape intact)",
-        "hypotheses": f"HypothesisEnumerator on {inp['docs_ref']} (amount family, {inp['enumerated_count']} enumerated -> {inp['amount_count']} for money fields {sorted(inp['money_fields'].values())})",
+        "hypotheses": f"engine amount enumeration from the spec's money fields ({inp['enumerated_count']} generated -> {inp['amount_count']} amount -> {len(inp['survivor_ids'])} wire-consistent -> 1 distinct: most specific field)",
         "wire_consistent_survivors": f"{inp['survivor_ids']} (gross/tax_inclusive predict the invariant holds — contradicted by the observed failure)",
         "climbed": f"{inp['hypotheses'][0].id} (most specific surviving field; siblings: {inp['sibling_ids'] or 'none'})",
         "yield_count": f"{inp['yield_count']} live hypothesis into L2/L3",
-        "l3_evidence": "spec excerpt + failing-records sample + docs Money section (extracted, redacted)",
+        "l3_evidence": "spec excerpt + failing-records sample (extracted, redacted)",
     }
     climb = run_frontier_climb(
         spec=spec,
@@ -2067,19 +2039,29 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         live_evidence = {"mode": "in-process evidence only (no live connector)"}
     recorded: dict[str, Any] = {"mode": "not recorded (no live control plane)"}
     if live and isinstance(live_evidence, dict) and live_evidence.get("connector_id"):
-        recorded = _step4_record_climb(
-            base_url,
-            str(live_evidence["connector_id"]),
-            inp,
-            attempts,
-            usage,
-            _climb_calls,
-            proposal,
-            checked_by,
-            trapped,
-            bundle.question,
-            calls,
-        )
+        if live_evidence.get("l3_skipped"):
+            # Fallback only: the break's repair carries no L3 attempt (no
+            # key and no recording), so the instrumented climb is recorded
+            # for the model-call box. When the break attempted L3 (live or
+            # replay), its repair is the story — never a second row.
+            recorded = _step4_record_climb(
+                base_url,
+                str(live_evidence["connector_id"]),
+                inp,
+                attempts,
+                usage,
+                _climb_calls,
+                proposal,
+                checked_by,
+                trapped,
+                bundle.question,
+                calls,
+            )
+        else:
+            recorded = {
+                "mode": "break carries the climb (record-climb fallback skipped)",
+                "repair_run_id": live_evidence.get("repair_run_id"),
+            }
     from autobridge.config import small_model as _small_model  # noqa: PLC0415
     from autobridge.llm.provider import Usage, estimate_cost  # noqa: PLC0415
 

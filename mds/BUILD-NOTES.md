@@ -2292,3 +2292,45 @@ test_08 both passes, e2e subset test_09/test_027/test_03/test_04/test_05/matrix/
   teardown (DNS guard) — `make local-down` cleared it; unrelated to this change. (d) Meridian
   cursor/state_renamed L0-reuse e2e fails identically on base (REQ-030 2b leftover) — left for its owner.
 - Remaining (owner): keyed re-run of the full loop + 20x reset/seed on camera.
+
+### REQ-039 — live semantic break runs the real climb (sbx1 2026-10-29, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Live `SEMANTIC_VALUE_DRIFT` repairs (scheduler/worker sync path + repair-job path) now run the same semantic
+climb as the instrumented path instead of the deterministic 0-call escalation.
+- New `src/autobridge/repair/semantic.py`: amount-reading enumeration from the spec's money_invariant checks
+  (`amount:<field>:<gross|net|tax_inclusive>`, engine taxonomy pinned to the docs enumerator by unit test),
+  wire filter (failed money invariant contradicts HOLD-predicting gross/tax_inclusive), distinct selection
+  (most specific field climbs, siblings recorded), funnel stages, redacted L3 evidence (spec excerpt +
+  failing-records sample). No docs, no answer keys, no simulator reads (trust boundary kept; import-linter
+  contracts pass).
+- `controller.handle()`: new optional `evidence` + `hypothesis_stages` (defaults preserve old behavior);
+  `_handle_semantic_climb` threads both into `run_frontier_climb` and the hypothesis evidence payload.
+  New `run_semantic_repair()` helper: enumerate → `resolve_frontier_provider()` (live/replay/off; resolve
+  failure degrades to off, never loses the drift) → climb with `Budget()` → judge proposal via baseline
+  regression gate (`check_regression_gate`, apply mechanics first) → kind=verification evidence +
+  `visible_test_results` on the repair row (page renders them, no UI change needed). Never releases.
+- `ladder.run_frontier_climb`: exact L3 `messages` ride the rung (capture + auditability); result also
+  returns `l3_messages` for the recorder.
+- `detect_repair.detect_and_repair_after_sync`: semantic branch (dedupe + DriftEvent creation unchanged);
+  returns `provider_mode`/`l3_status`/`verdict` headlines. `repair_job_handler`: same branch.
+- Demo (`bench/demo.py`): `_semantic_climb_inputs` uses the shared builder (in-process and live prompts share
+  the shape; live records differ only in the sample rows); `_step4_live` asserts funnel stages
+  [generated,amount,wire_consistent,distinct] + exactly one L3 attempt (live/replay) or the explicit skip
+  (hash + `make record-frontier` hint); record-climb runs only when the break's L3 was skipped.
+- `bench/record_frontier.py`: captures the LIVE prompt (newest semantic escalation's rung-3 messages via
+  control API) plus the in-process prompt, both into `demo/recordings/gross_to_net.json`.
+- Tests: new `test_autobridge_semantic_climb.py` (6) + `test_autobridge_live_semantic_climb.py` (3: live
+  FakeProvider attempt with funnel/ledger/verifier-unreachable evidence; replay-missing explicit skip;
+  job-handler branch); updated stub-stack demo test, frontier-climb tests (prompt-capture selection),
+  regenerated synthetic fixture hash for the unified prompt (old hashes kept); test_08 live leg asserts
+  funnel + attempt-or-skip, recorded leg unchanged in shape; README + docs/demo.md + architecture note updated.
+- Gates: `make test` 2669+134+sim pass/0 fail (autobridge 90.55%, verifier 91.49%), lint, typecheck,
+  openapi-check, ui-typecheck green. Live unkeyed: fresh `local-up` → seed → break → Degraded →
+  SEMANTIC_VALUE_DRIFT → escalate (funnel 6→6→2→1, L3 skip naming live hash `35115558…`, connector `error`
+  + "needs your decision"); `make demo` 8/8 twice; test_08 pass 1 (5 live legs) + pass 2 (recorded leg).
+- Incidental fixes: removed stale `.local/` (dead pids from the previous sbx1 run tripped the unit DNS guard
+  — 4 pre-existing teardown errors, gone after removal); `scripts/local-up.sh` pre-migrates the DB once
+  (fresh-boot concurrent table creation corrupted scheduler_state on virtiofs — reproducible "database disk
+  image is malformed" on first pause; verified fixed).
+- Owner steps: keyed full run, then `make record-frontier SCENARIO=gross_to_net` → commit the capture (live
+  prompt hash is seed-stable: `35115558…` across resets). Note: in-process and live prompts differ only in
+  the records sample (seeded sim vs fake), so one capture run records both hashes.

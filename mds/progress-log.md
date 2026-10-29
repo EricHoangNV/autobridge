@@ -3548,3 +3548,12 @@ step. Left: stack up, seeded frame + step-4 recorded row present (harbor shows t
   20x on camera (5/5 green in sandbox). Keyed step 4 should show the live L3 call in the instrumented climb.
 - Known pre-existing (main, verified via stash): `test_meridian_cursor/state_renamed_zero_frontier` L0-reuse
   expectation contradicts REQ-030 2b (propose caches nothing) — needs an approve leg or re-derived expectation.
+
+## 2026-10-29 21:55 UTC — REQ-039 DONE (sbx1, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+The live semantic break runs the real climb. Scheduler/worker repair path for SEMANTIC_VALUE_DRIFT: engine
+enumeration (wire signals + spec) → wire filter → L2 skip (one explanation) → exactly one L3 attempt
+(live/replay/explicit-skip) → verifier judge (recorded, never released) → escalate with question. Break's
+repair row carries funnel + L3 messages + verdict; record-climb is fallback-only; record-frontier captures the
+live prompt for replay. Gates green unkeyed (make test 2669+134+sim/0 fail, 90.55%/91.49%, ui 192; lint,
+typecheck, openapi-check, ui-typecheck); live verified (seed, break→error, demo 8/8 x2, test_08 both passes).
+Owner: keyed re-run + `make record-frontier SCENARIO=gross_to_net` + commit capture.

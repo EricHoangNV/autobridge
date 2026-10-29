@@ -78,20 +78,19 @@ approval — nothing auto-applies, so every transition stays on screen.
   class `SEMANTIC_VALUE_DRIFT`, rung L4, decision "escalate",
   "0 model calls". Open it: the four sections read from the break's own
   rows — the decision line "Needs your decision: the engine is not
-  confident", the deterministic climb (L0 miss → L1 no rule → L4
-  escalate), the model-call box saying "0 model calls" (the frontier
-  call lives in the instrumented climb below, never in a live repair),
-  the operator question, and the Reject path (a semantic drift is never
-  patched without the operator). After `make demo` has run once,
-  open the recorded step-4 repair (`SEMANTIC_VALUE_DRIFT`, decision escalate): the funnel with
-  its surviving "net" reading, the model-call box with the single
-  its surviving "net" reading, the model-call box with the single
-  frontier call — live ("muse-spark-1.3, N tokens") with
-  `FRONTIER_API_KEY` set, otherwise the labelled replay ("replayed from
-  a live Muse capture on …") — the rejected `net_amount → total_amount`
-  decoy with the trap verdict, and the operator question
-  ("map `total_amount` to …" / "add a canonical field"). Point at the
-  decision line: "Needs your decision: the engine is not confident".
+  confident", the climb (L0 miss → L1 no rule → L2 skipped with its one
+  explanation → exactly one L3 attempt → L4 escalate), the hypothesis
+  funnel (generated → amount → wire-consistent → distinct, ending on the
+  single "net" reading), the model-call box with the single frontier
+  call — live ("muse-spark-1.3, N tokens") with `FRONTIER_API_KEY` set,
+  otherwise the labelled replay ("replayed from a live Muse capture on
+  …"), or the explicit L3 skip naming the capture to run when neither
+  exists — the rejected `net_amount → total_amount` decoy with the
+  verifier judgment, the operator question, and the Reject path (a
+  semantic drift is never patched without the operator). When the
+  break's L3 was skipped, `make demo` step 4 additionally records its
+  instrumented climb (same inputs) as the documented fallback row; when
+  the break attempted L3, no second row is written.
 - **New kind of API.** Meridian's connector page shows the refused v1
   build with its reason and v2 in use (step 7). Break
   `meridian_cursor_renamed`, watch the L1 fix land, **Approve**, Working.
@@ -180,22 +179,28 @@ side by side, visible tests, verifier verdict, Approve action. The ledger line �
 
 ## 4. Hard semantic failure — `gross_to_net`
 
-Inject the money drift; the sync degrades on a named invariant, the plausible-but-wrong
-patch is rejected, and the run escalates or lands the correct fix.
+Inject the money drift; the sync degrades on a named invariant, the engine's
+own climb runs (funnel → L2 skipped → exactly one L3 attempt), the proposal
+is judged and rejected, and the run escalates with one operator question.
 
 ```
 POST /demo/inject-fault                { target: sim-harbor, scenario_id: gross_to_net, seed }
 POST /connectors/{harbor_id}/sync      → SyncRun Degraded, unmet: [money_invariant],
                                          class SEMANTIC_VALUE_DRIFT, signal invariant_failure
-POST /verify { spec: net→total_amount } → verdict fail, failed_checks [{invalid_patch_trap}]
-                                         (the trap: mapping decoy `net_amount` to `total_amount`)
-→ ladder reaches L3 or escalates with EscalationBundle (one question + evidence ids);
-  approve the correct patch, or show the bundle in /repairs/[id]
+                                       → engine climb L0 miss → L1 no rule → L2 skipped
+                                         (one explanation) → L3 frontier attempt
+                                         (live, replay, or explicit skip) → proposal
+                                         judged (verifier baseline gate), never released
+→ L4 escalate with EscalationBundle (one question + evidence ids)
 ```
 
 Renders in `/repairs/[id]`: `Degraded` with the failing money invariant named,
-`invalid_patch_trap` rejection wording, escalation bundle side-by-side with Approve /
-Reject. Money stays `Decimal` throughout; the UI never shows a guessed mapping.
+the derivation funnel, the L3 model-call box (or the explicit skip with the
+capture hint), the rejected `net_amount → total_amount` decoy with the
+verdict, the escalation bundle side-by-side with Approve / Reject. Money
+stays `Decimal` throughout; the UI never shows a guessed mapping. Capture
+the live prompt for replay with
+`make record-frontier SCENARIO=gross_to_net` (keyed stack, after the break).
 
 ## 5. Head-to-head — `/bench/scorecards`
 

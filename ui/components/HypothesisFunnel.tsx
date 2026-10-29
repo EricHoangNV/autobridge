@@ -11,7 +11,8 @@ export type FunnelStage = {
 };
 
 /**
- * Hypothesis funnel (REQ-032 §3): "24 → 6 → 2 → 1", each stage expandable
+ * Hypothesis funnel (REQ-032 §3, REQ-039): one line per derivation stage
+ * ("generated → amount → wire-consistent → distinct"), each expandable
  * to the hypotheses it holds. Stages come from the persisted derivation
  * evidence record (`GET /runs/{id}/evidence`, kind=hypothesis) — never
  * recomputed in the browser. An empty stage list renders an honest empty

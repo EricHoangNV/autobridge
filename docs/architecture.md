@@ -510,7 +510,8 @@ proposal / proposal_rejected / no_patch / unparsable / hypothesis), and
 reports (`restart`). Labelled demo endpoints persist what the demo proves:
 `POST /demo/record-climb` (the instrumented semantic climb with rung trace,
 hypotheses, model-call box and verifier verdict, read back by the demo's
-assertions), `POST /demo/pabx-restart` and `GET /demo/pabx-events` (restart
+assertions; since REQ-039 the break's own repair carries the climb and
+record-climb runs only as the no-key/no-recording fallback), `POST /demo/pabx-restart` and `GET /demo/pabx-events` (restart
 report and snapshots for the PABX panel; postings counters are the edge
 connector's `SyncRun` series). Acceptance:
 `tests/unit/test_autobridge_req030_scheduler_state.py` (interval, skips,

@@ -147,7 +147,7 @@ demo-heal:
 	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_heal
 
 record-frontier:
-	@echo ">> record-frontier: capture a live frontier climb (REQ-021 item 5; needs FRONTIER_API_KEY)"
+	@echo ">> record-frontier: capture the live semantic L3 prompt (REQ-039; needs FRONTIER_API_KEY + keyed stack after the break)"
 	@if [ -z "$${SCENARIO:-}" ]; then echo "record-frontier: SCENARIO is required (make record-frontier SCENARIO=gross_to_net)" >&2; exit 2; fi
 	. ./scripts/load_dotenv.sh && uv run python -m bench.record_frontier "$${SCENARIO}"
 

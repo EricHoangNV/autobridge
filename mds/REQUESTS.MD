@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 03:40): **REQ-039 next**, before anything else.
 
 ### REQ-039 — The live semantic break must run the real climb: funnel and the model call on the repair page (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 20:41)
+Status: DONE (sbx1 2026-10-29) — code + full gates green unkeyed + live verified (seed, break→error, demo 8/8, test_08 both passes); remaining OWNER STEP: keyed re-run then make record-frontier SCENARIO=gross_to_net + commit capture
 Owner check on 0d294693: Harbor now seeds from its reference release and `make demo-break SCENARIO=gross_to_net
 TARGET=harbor` goes `Degraded → SEMANTIC_VALUE_DRIFT → escalate → error` live: good. But the live repair escalates
 deterministically (L0 miss → L1 no rule → **L4**, **0 model calls**, no hypothesis funnel), and `bench/demo.py`

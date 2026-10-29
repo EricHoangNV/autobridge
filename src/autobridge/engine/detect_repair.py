@@ -4,15 +4,21 @@ The live chain: a worker's (or ``POST /sync``) sync produces a summary via
 :func:`autobridge.engine.sync_run.execute_sync`. This module derives drift
 signals from that summary — observed responses only, never scenario ids,
 fault YAML or answer keys — classifies them, persists a ``DriftEvent``,
-runs :meth:`RepairController.handle_from_signals` (detector-derived inputs
-only) and, when the ladder proposes a patch, persists a candidate release
-via :func:`create_release_from_patch` (verifier-gated when ``VERIFIER_URL``
-is configured, fail-closed).
+and repairs: structural drifts run the deterministic ladder through
+:meth:`RepairController.handle_from_signals` (detector-derived inputs
+only) and, when the ladder proposes a patch, a candidate release is
+persisted via :func:`create_release_from_patch` (verifier-gated when
+``VERIFIER_URL`` is configured, fail-closed). A ``SEMANTIC_VALUE_DRIFT``
+runs the same semantic climb as the instrumented path
+(:func:`autobridge.repair.controller.run_semantic_repair` — engine
+enumeration from the wire signals and the spec, wire filter, L2 when
+>= 2, L3 through the frontier provider and budget when < 2, verifier
+judge on the proposal, escalation question), so the live repair row
+carries the funnel, the model call(s) and the rejected proposal.
 
 Repairs here are data (a JSON Patch from the closed rule set, plan §1.1);
-the deterministic ladder runs first and only it runs here — no model calls
-(``frontier_tokens == 0``). Semantic drifts escalate with one operator
-question; the frontier climb lives in the demo/bench, not in this path.
+a semantic drift is never auto-patched: the climb always ends escalated
+with one operator question.
 """
 
 from __future__ import annotations
@@ -413,13 +419,37 @@ def detect_and_repair_after_sync(
     session.flush()
 
     controller = RepairController(knowledge_cache=knowledge_cache) if knowledge_cache is not None else RepairController()
-    result = controller.handle_from_signals(
-        spec=spec_dict,
-        signals=list(signals),
-        fingerprint_delta=delta,
-        drift_event_ids=[drift.id],
-        session=session,
-    )
+    semantic_info: dict[str, Any] = {}
+    if classification.drift_class == "SEMANTIC_VALUE_DRIFT":
+        # REQ-039: the live repair path runs the same semantic climb as
+        # the instrumented one — engine enumeration from the wire signals
+        # and the spec, wire filter, L2 when >= 2, L3 through the frontier
+        # provider and budget when < 2, verifier judge on the proposal,
+        # escalation question. Never the deterministic 0-call escalation.
+        from autobridge.repair.controller import run_semantic_repair  # noqa: PLC0415
+
+        active_verifier = verifier_url if verifier_url is not None else os.environ.get("VERIFIER_URL")
+        result, semantic_info = run_semantic_repair(
+            spec=spec_dict,
+            drift_class=classification.drift_class,
+            signals=list(signals),
+            fingerprint_delta=delta,
+            summary=summary if isinstance(summary, dict) else None,
+            sync_run_id=sync_run_id,
+            vendor=None,
+            drift_event_ids=[drift.id],
+            session=session,
+            knowledge_cache=knowledge_cache,
+            verifier_url=active_verifier or None,
+        )
+    else:
+        result = controller.handle_from_signals(
+            spec=spec_dict,
+            signals=list(signals),
+            fingerprint_delta=delta,
+            drift_event_ids=[drift.id],
+            session=session,
+        )
 
     # The run handle() just persisted (same session, flushed): newest row.
     repair_run = session.execute(
@@ -452,7 +482,7 @@ def detect_and_repair_after_sync(
         except Exception as exc:  # noqa: BLE001 — gate/patch failures are row data
             gate_error = f"{type(exc).__name__}: {exc}"[:500]
 
-    return {
+    out: dict[str, Any] = {
         "drift_found": True,
         "outcome": outcome,
         "drift_id": drift.id,
@@ -466,3 +496,11 @@ def detect_and_repair_after_sync(
         "candidate_release_id": candidate_release_id,
         "gate_error": gate_error,
     }
+    if semantic_info:
+        # What the semantic climb did (provider mode, L3 attempt-or-skip,
+        # verifier verdict summary) — the demo and the UI read the rows,
+        # but the sync result carries the headline too.
+        out["provider_mode"] = semantic_info.get("provider_mode")
+        out["l3_status"] = semantic_info.get("l3_status")
+        out["verdict"] = semantic_info.get("verdict")
+    return out

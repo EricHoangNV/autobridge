@@ -116,12 +116,14 @@ command, then watch:
   HarborPMS turns ▲ Degrading, then ■ Error with "needs your decision".
   Open the new `/repairs` row (`SEMANTIC_VALUE_DRIFT`, escalate): the
   four sections read from the break's own rows — decision line, the
-  deterministic climb, the "0 model calls" box, the operator question.
-  After `make demo`, open the recorded step-4 repair (the same class)
-  and point at the funnel, the model-call box (live call with
-  `FRONTIER_API_KEY`, labelled replay otherwise), the rejected
-  `net_amount → total_amount` decoy, the operator question, the
-  "Needs your decision" line.
+  funnel (generated → amount → wire-consistent → distinct, ending on the
+  single "net" reading), rung L3 with the one frontier attempt (live with
+  `FRONTIER_API_KEY`, labelled replay from a committed capture otherwise,
+  or the explicit skip naming the capture to run when neither exists),
+  the rejected `net_amount → total_amount` decoy with the verifier
+  judgment, the operator question. The instrumented step-4 climb in
+  `make demo` runs the same inputs for the printed derivation; it is
+  recorded as a second row only when the break's L3 was skipped.
 - **New kind of API.** Meridian's page shows the refused v1 build with
   its reason and v2 in use. `make demo-break
   SCENARIO=meridian_cursor_renamed` → fix at L1 → **Approve** → Working.

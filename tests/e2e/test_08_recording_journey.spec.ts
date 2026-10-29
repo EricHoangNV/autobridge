@@ -12,11 +12,13 @@
  *   break `fias_record_layout_change` → the agent re-handshakes, the
  *   connector stays Working, postings resume (no approval needed); break
  *   `gross_to_net` last → the scheduled sync Degrades on the money
- *   invariant and the engine escalates to `error` with the operator
- *   question (asserted from the break's own rows: decision, climb,
- *   0 model calls, question, reject path), then the recorded step-4
- *   repair shows the funnel, the 1 model call and the rejection.
- *   (The semantic break runs last: it leaves Harbor non-Working.)
+ *   invariant and the engine's own climb runs (funnel, L2 skipped, one
+ *   L3 attempt live or replayed — or the explicit skip when neither
+ *   exists) and escalates to `error` with the operator question,
+ *   asserted from the break's own rows. The recorded step-4 repair is
+ *   the documented no-key fallback: it exists only when the break's L3
+ *   was skipped, and the journey never uses it when the break attempted
+ *   L3. (The semantic break runs last: it leaves Harbor non-Working.)
  *
  * Live-stack only: without a reachable control plane the spec skips
  * (the mocked test_06 journey covers the screens offline). Requires the
@@ -26,9 +28,11 @@
  * Python e2e suite, which runs separately).
  *
  * The recorded semantic repair exists only after `make demo` step 4 has
- * run once (POST /demo/record-climb): on a fresh seed that half skips.
- * The semantic halves are split on purpose — the live half needs the
- * seed frame, the recorded half needs only the recorded row (step 4
+ * run once on a stack whose break could not attempt L3 (no key and no
+ * recording: POST /demo/record-climb fallback): on a fresh seed that half
+ * skips, and it never runs when the break's own repair already attempted
+ * L3. The semantic halves are split on purpose — the live half needs the
+ * seed frame, the recorded half needs only the fallback row (step 4
  * leaves Harbor non-Working, since its recorded drift stays open).
  * Full coverage is two passes: seed → journey (live passes, recorded
  * skips) → `make demo` → journey again (recorded passes; live skips, its
@@ -564,8 +568,10 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       ).toEqual([repair.id]);
 
       // The repair page explains itself from the live rows: the decision,
-      // the deterministic climb, the explicit 0 model calls, the operator
-      // question and the reject path (a semantic drift is never patched).
+      // the funnel the engine derived from the wire, the one L3 attempt
+      // (live or replayed — or the explicit skip naming the capture when
+      // neither exists), the operator question and the reject path (a
+      // semantic drift is never patched).
       await page.goto(`${UI_BASE}/repairs/${encodeURIComponent(repair.id)}`, {
         waitUntil: "domcontentloaded",
       });
@@ -574,9 +580,22 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       await expect(page.getByTestId("repair-section-happened")).toBeVisible();
       await expect(page.getByTestId("happened-class")).toContainText("Semantic value drift");
       await expect(page.getByTestId("repair-section-did")).toBeVisible();
+      await expect(page.getByTestId("hypothesis-funnel-headline")).toBeVisible();
       await expect(page.getByTestId("rung-timeline-0")).toBeVisible();
+      await expect(page.getByTestId("rung-timeline-3")).toBeVisible();
       await expect(page.getByTestId("rung-timeline-4")).toBeVisible();
-      await expect(page.getByTestId("model-call-box-empty")).toContainText("0 model calls");
+      const liveLedger = await control<{ attempts?: Array<{ calls?: unknown[] }> }>(
+        "GET",
+        `/repairs/${encodeURIComponent(repair.id)}/ledger`,
+      );
+      const liveCalls = (liveLedger?.attempts ?? []).reduce((n, a) => n + (a.calls ?? []).length, 0);
+      if (liveCalls > 0) {
+        await expect(page.getByTestId("model-call-box")).toBeVisible();
+        await expect(page.getByTestId("model-call-box-total")).toBeVisible();
+      } else {
+        await expect(page.getByTestId("model-call-box-empty")).toContainText("0 model calls");
+        await expect(page.getByTestId("rung-timeline-3")).toContainText("L3 skipped");
+      }
       await expect(page.getByTestId("decided-question")).toBeVisible();
       await expect(page.getByTestId("verifier-verdict")).toBeVisible();
       await expect(page.getByTestId("approve-preview")).toBeVisible();

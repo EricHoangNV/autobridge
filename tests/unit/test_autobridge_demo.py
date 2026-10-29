@@ -381,6 +381,34 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
                     "body": {"repair_run_id": "rr-rec", "decision": "escalate", "resolved_rung": 4,
                              "attempts": [{"rung": 2, "calls": by_tier.get("small", [])},
                                           {"rung": 3, "calls": by_tier.get("frontier", [])}]}}
+        if path == "/runs/rr-harbor-1/evidence" and method == "GET":
+            # REQ-039: the derivation funnel persists as hypothesis
+            # evidence on the break's repair row.
+            return {"method": method, "path": path, "status": 200,
+                    "body": [{
+                        "id": "e-hyp-1", "kind": "hypothesis", "run_id": "repair_runs:rr-harbor-1",
+                        "payload": {
+                            "drift_class": "SEMANTIC_VALUE_DRIFT",
+                            "enumerator_yield_count": 1,
+                            "stages": [
+                                {"name": "generated", "count": 6,
+                                 "ids": ["amount:amount:gross", "amount:amount:net",
+                                         "amount:amount:tax_inclusive", "amount:total_amount:gross",
+                                         "amount:total_amount:net", "amount:total_amount:tax_inclusive"]},
+                                {"name": "amount", "count": 6, "ids": []},
+                                {"name": "wire_consistent", "count": 2,
+                                 "ids": ["amount:amount:net", "amount:total_amount:net"]},
+                                {"name": "distinct", "count": 1,
+                                 "ids": ["amount:total_amount:net"],
+                                 "siblings": ["amount:amount:net"]},
+                            ],
+                        },
+                    }]}
+        if path == "/repairs/rr-harbor-1/ledger" and method == "GET":
+            # No call was made (explicit L3 skip), so the ledger is empty.
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"repair_run_id": "rr-harbor-1", "decision": "escalate",
+                             "attempts": [{"rung": 3, "calls": []}]}}
         if path == "/demo/pabx-restart" and method == "POST":
             p = dict(_payload or {})
             return {"method": method, "path": path, "status": 200,
@@ -418,16 +446,26 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
             conn = next((c for c in connectors.values() if c["id"] == query), None)
             if conn is not None and conn["name"] == "harborpms" and harbor_injects["n"] > 0:
                 harbor_live_repair["created"] = True
+                # REQ-039: the break's repair carries the live semantic
+                # climb (funnel + exactly one L3 attempt-or-explicit-skip),
+                # never the deterministic 0-call escalation. This stub stack
+                # has no key and no recording, so rung 3 is the explicit
+                # skip naming the capture the replay mode needs.
                 return {"method": method, "path": path, "status": 200, "body": [{
                     "id": "rr-harbor-1", "drift_event_ids": ["d-harbor-1"],
                     "drift_class": "SEMANTIC_VALUE_DRIFT",
                     "ladder_level_reached": 4, "rule_id": None, "decision": "escalate",
                     "model_usage": {"frontier_tokens": 0, "small_tokens": 0, "calls": 0},
                     "ladder_trace": [
-                        {"level": 0, "action": "knowledge_miss", "reason": "L0 stub miss"},
-                        {"level": 1, "action": "no_rule", "reason": "L1 stub no rule"},
+                        {"level": 0, "action": "l0_skipped", "reason": "L0 skipped: no fingerprint delta"},
+                        {"level": 1, "action": "no_rule_matched", "reason": "L1: no rule matched"},
+                        {"level": 2, "action": "l2_skipped", "reason": "L2 skipped: fewer than two hypotheses (1)"},
+                        {"level": 3, "action": "l3_skipped",
+                         "reason": "L3 skipped: no replay recording for prompt deadbeef; run make record-frontier SCENARIO=gross_to_net to capture it",
+                         "messages": [{"role": "user", "content": "stub prompt"}]},
                         {"level": 4, "action": "escalate", "reason": "stub semantic escalate"},
                     ],
+                    "hypothesis_ids": ["amount:total_amount:net"],
                     "escalation_bundle": {"question": "stub: map total_amount or add a canonical field?"},
                 }]}
             if conn is not None and conn["name"] == "atlaspms":

@@ -7,6 +7,14 @@
     "text": "[{\"op\": \"replace\", \"path\": \"/entities/Reservation/fields/total_amount/path\", \"value\": \"$.net_amount\"}]",
     "tool_calls": []
   },
+  "1a8149810a4963f44939eb0c1a3a67abfccc4ee93478348dd1ea7c2a74bcbcc1": {
+    "captured_at": "synthetic-test-fixture",
+    "input_tokens": 1150,
+    "model": "muse-spark-1.3",
+    "output_tokens": 60,
+    "text": "[{\"op\": \"replace\", \"path\": \"/entities/Reservation/fields/total_amount/path\", \"value\": \"$.net_amount\"}]",
+    "tool_calls": []
+  },
   "6048096586f540100d8b97cf0ab4a3e168f14a55878dbd7719c54f46f1a78bb4": {
     "captured_at": "synthetic-test-fixture",
     "input_tokens": 96,
@@ -15,6 +23,7 @@
     "text": "[\"gross_is_canonical\", \"net_is_canonical\"]",
     "tool_calls": []
   },
+  "_note": "Synthetic test fixture for the gross_to_net climb (replay mechanics only). Mirrors the shape of a make record-frontier capture; never shown as a model capture (labelled test fixture everywhere). 1a814981 covers the unified engine prompt (spec + records evidence, one net hypothesis \u2014 the same prompt the live repair path asks); b36d2ed8 is the retired docs-excerpt prompt; the older hashes cover the hand-built matrix/climb prompts.",
   "b36d2ed8e1c3729d649a957a4cdb5fb6c3d39ea44e6ce5effeac36cae91b3fe3": {
     "captured_at": "synthetic-test-fixture",
     "input_tokens": 1150,
@@ -22,6 +31,5 @@
     "output_tokens": 60,
     "text": "[{\"op\": \"replace\", \"path\": \"/entities/Reservation/fields/total_amount/path\", \"value\": \"$.net_amount\"}]",
     "tool_calls": []
-  },
-  "_note": "Synthetic test fixture for the gross_to_net climb (replay mechanics only). Mirrors the shape of a make record-frontier capture; never shown as a model capture (labelled test fixture everywhere). b36d2ed8 covers the detector-derived prompt (real spec/records/docs evidence, one net hypothesis); the older hashes cover the hand-built matrix/climb prompts."
+  }
 }

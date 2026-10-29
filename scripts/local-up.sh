@@ -88,6 +88,12 @@ export EDGE_TOKEN="${EDGE_TOKEN:-${AUTOBRIDGE_CONTROL_TOKEN:-sim-demo-key}}"
 export AUTOBRIDGE_SYNC_INTERVAL_S="${AUTOBRIDGE_SYNC_INTERVAL_S:-10}"
 export EDGE_RELAY_DB="$LOCAL_DIR/edge_relay.db"
 export EDGE_STORE_PATH="$LOCAL_DIR/edge_agent.db"
+# Serialize first-boot schema creation (REQ-039): control, worker and the
+# engine each create tables at startup; on a fresh (or shared-filesystem)
+# database the concurrent writers corrupt it ("database disk image is
+# malformed" on the first write). Migrating once up front makes every
+# service boot a no-op read afterwards.
+uv run python -c "from autobridge.control.migrate import ensure_migrated; print('migrated:', ensure_migrated())"
 # Persist the effective env for local-down diagnostics (values only used
 # for logging; secrets stay in .env and are never printed).
 export LOCAL_ACTIVE_ENV=1

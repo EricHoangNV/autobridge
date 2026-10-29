@@ -286,20 +286,49 @@ def test_record_frontier_rejects_unknown_scenario(tmp_path: pathlib.Path) -> Non
         record_scenario("nope", tmp_path)
 
 
-def test_tapping_provider_records_shape() -> None:
-    from bench.record_frontier import TappingProvider
+def test_live_l3_prompt_picks_newest_semantic_escalation_with_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-039: the capture replays the exact prompt the live climb recorded."""
+    import bench.record_frontier as rf
 
-    fake = FakeProvider(
-        responses={"default": Completion(text='[{"op": "replace"}]', usage=Usage(10, 20))}
-    )
-    tap = TappingProvider(fake, model="muse-spark-1.3")
-    out = tap.complete([{"role": "user", "content": "hi"}], tier="frontier", purpose="p")
-    assert out.text == '[{"op": "replace"}]'
-    key = prompt_hash([{"role": "user", "content": "hi"}])
-    entry = tap.recordings[key]
-    assert entry["model"] == "muse-spark-1.3"
-    assert (entry["input_tokens"], entry["output_tokens"]) == (10, 20)
-    assert entry["captured_at"]
+    old = {
+        "id": "rep-old",
+        "drift_class": "SEMANTIC_VALUE_DRIFT",
+        "decision": "escalate",
+        "created_at": "2026-10-29T20:00:00Z",
+        "ladder_trace": [{"level": 3, "action": "l3_skipped", "messages": [{"role": "user", "content": "old"}]}],
+    }
+    new = {
+        "id": "rep-new",
+        "drift_class": "SEMANTIC_VALUE_DRIFT",
+        "decision": "escalate",
+        "created_at": "2026-10-29T21:00:00Z",
+        "ladder_trace": [{"level": 3, "action": "frontier_generate", "messages": [{"role": "user", "content": "new"}]}],
+    }
+    other = {
+        "id": "rep-other",
+        "drift_class": "PAGINATION_CHANGE",
+        "decision": "propose",
+        "created_at": "2026-10-29T22:00:00Z",
+        "ladder_trace": [],
+    }
+    monkeypatch.setattr(rf, "_api_get", lambda _base, _path: [other, old, new])
+    repair_id, drift_class, messages = rf._live_l3_prompt("http://localhost:8101")
+    assert repair_id == "rep-new"
+    assert drift_class == "SEMANTIC_VALUE_DRIFT"
+    assert messages == [{"role": "user", "content": "new"}]
+
+
+def test_live_l3_prompt_fails_loudly_without_a_live_climb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No live climb yet: the capture says to break first, never invents."""
+    import bench.record_frontier as rf
+
+    monkeypatch.setattr(rf, "_api_get", lambda _base, _path: [])
+    with pytest.raises(SystemExit, match="no live semantic repair"):
+        rf._live_l3_prompt("http://localhost:8101")
 
 
 # ---------------------------------------------------------------------------
@@ -521,20 +550,6 @@ def test_replay_round_trips_reasoning_tokens(tmp_path: pathlib.Path) -> None:
     out = p.complete(messages, tier="frontier")
     assert out.usage.reasoning_tokens == 4000
     assert out.usage.total_tokens == 319 + 4319
-
-
-def test_tapping_provider_records_reasoning_tokens() -> None:
-    from bench.record_frontier import TappingProvider
-
-    fake = FakeProvider(
-        responses={
-            "default": Completion(text="   ", usage=Usage(10, 20, reasoning_tokens=15))
-        }
-    )
-    tap = TappingProvider(fake, model="muse-spark-1.3")
-    tap.complete([{"role": "user", "content": "hi"}], tier="frontier", purpose="p")
-    key = prompt_hash([{"role": "user", "content": "hi"}])
-    assert tap.recordings[key]["reasoning_tokens"] == 15
 
 
 # ---------------------------------------------------------------------------
