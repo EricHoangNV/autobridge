@@ -26,7 +26,7 @@ Connectors and Knowledge pages.
 
 
 ### REQ-058 — Refused build → "Download capability request": the engine drafts the gap for the build loop (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 18:41)
+Status: DONE (sbx1 2026-10-30 -- refusal facts on vocabulary-check, deterministic Markdown download, pick resets every field, developers-portal link; ui 294 pass, test_10 18/18 + test_06 green mocked, full gates green; owner check: deck 6 refusal, download, open the file)
 Owner (2026-10-30): when a vocabulary refuses the docs, the product should draft the capability request itself (the
 gap, the vendor's spec, acceptance tests) so "refused → new language version" needs no human writing in between,
 only an approval of the result. For now: **prove the point with a download**; handing it to a coding-agent loop is

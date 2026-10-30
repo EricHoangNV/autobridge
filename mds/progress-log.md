@@ -3945,3 +3945,6 @@ drift→repair links; Signature column header + full-value hover tooltips + keyb
 truncated hash (releases, sync runs, spec picker/viewer, fingerprint groups). Tests: ui 284 pass
 (+18), test_10 layout 16/16 + test_06 green mocked, full make test green (90.11/91.49/90.48/284).
 Owner check: Aside screenshots at 1440 (long spec + 30+ runs). Next: REQ-058.
+
+## 2026-10-30 19:20 UTC — REQ-058 DONE (sbx1; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Refused build → "Download capability request": vocabulary-check now carries the refusal facts; the build page drafts the deterministic Markdown (gap table, operations, acceptance tests, no secret, dated footer, no model call); simulator pick resets every field (Atlas→PABX→Atlas→Harbor tested); developers-portal link per pick. Gates: lint/typecheck/ui-typecheck/openapi-check green, make test green (2882/134/409/294), test_10 18/18 + test_06 green mocked. Commit on branch; merging to main. Next: REQ-059 (unblocked), then REQ-052.
