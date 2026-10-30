@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import useSWR from "swr";
 import { PatchDiff } from "@/components/PatchDiff";
 import { ModelUsageView } from "@/components/ModelUsageView";
+import { ModelUsageChart } from "@/components/ModelUsageChart";
 import { DriftEvidenceSection } from "@/components/DriftEvidenceSection";
 import { EvidenceGraph } from "@/components/EvidenceGraph";
 import { HypothesesPanel } from "@/components/HypothesesPanel";
@@ -15,6 +16,7 @@ import { HypothesisFunnel, type FunnelStage } from "@/components/HypothesisFunne
 import { ModelCallBox, type LedgerAttempt } from "@/components/ModelCallBox";
 import { ApprovePreviewSection } from "@/components/ApprovePreview";
 import { AfterApproveTracker } from "@/components/AfterApproveTracker";
+import type { ModelUsageResponse } from "@/lib/api/client";
 import { useRunEvents } from "@/lib/sse";
 import { maxLadderLevel } from "@/lib/ladder-events";
 import { useFrontierTicker } from "@/lib/use-frontier-ticker";
@@ -111,6 +113,8 @@ type LedgerOut = {
 type CapabilitiesOut = {
   rules: { id: string; fixes: string; confidence: number }[];
 };
+
+type ModelUsageOut = ModelUsageResponse;
 
 type PageProps = {
   params: Promise<{ id: string }> | { id: string };
@@ -265,6 +269,14 @@ export default function RepairDetailPage({ params }: PageProps) {
   // Rule confidence for "confidence and why".
   const { data: capabilities } = useSWR<CapabilitiesOut>("/capabilities", fetcher);
   const ruleConfidence = capabilities?.rules.find((r) => r.id === repair?.rule_id)?.confidence;
+
+  // Per-run model-usage chart (appendix): persisted ModelCall rows from
+  // GET /metrics/model-usage; the current repair run is highlighted.
+  const { data: modelUsage, isLoading: modelUsageLoading } = useSWR<ModelUsageOut>(
+    repair ? "/metrics/model-usage" : null,
+    fetcher,
+    { refreshInterval: 10000 },
+  );
 
   const sseRunId = driftEvents?.[0]?.source_sync_run_id ?? null;
   const runEvents = useRunEvents(sseRunId);
@@ -661,6 +673,19 @@ export default function RepairDetailPage({ params }: PageProps) {
             run_id: e.run_id,
           }))}
           loading={!driftEvents && !!repair.drift_event_ids.length}
+        />
+      </section>
+
+      {/* Model usage per run (appendix, persisted ModelCall rows) */}
+      <section className="mt-6" aria-label="Model usage per run">
+        <h2 className="sec">Model usage per run</h2>
+        <p className="mb-2 text-xs text-ink-2">
+          Persisted model calls per repair run (frontier vs small tokens); the current repair is highlighted.
+        </p>
+        <ModelUsageChart
+          usage={modelUsage ?? null}
+          highlightRunIds={repair ? [repair.id] : []}
+          loading={modelUsageLoading && !modelUsage}
         />
       </section>
 

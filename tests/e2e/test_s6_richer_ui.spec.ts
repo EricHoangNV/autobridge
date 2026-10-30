@@ -218,6 +218,23 @@ test.describe("P2.S6.1 richer UI — per-run chart + evidence graph + screenshot
 
   test("per-run model-usage chart renders stacked frontier/small rows", async ({ page, request }) => {
     if (!(await gotoRepair(page, request))) return;
+    // Live stack: assert live-shaped data (run ids are real repair ids, and
+    // a repair with no model calls shows the empty state, not rows).
+    if (await isControlReachable(request)) {
+      const chart = page.getByTestId("model-usage-chart");
+      const empty = page.getByTestId("model-usage-chart-empty");
+      await expect(chart.or(empty)).toBeVisible({ timeout: 15000 });
+      if (await chart.isVisible()) {
+        const rows = page.getByTestId("model-usage-chart-row");
+        await expect(rows.first()).toBeVisible({ timeout: 15000 });
+        const count = await rows.count();
+        expect(count).toBeGreaterThan(0);
+        for (let i = 0; i < count; i++) {
+          await expect(rows.nth(i)).toHaveAttribute("data-run-id", /.+/);
+        }
+      }
+      return;
+    }
     const chart = page.getByTestId("model-usage-chart");
     await expect(chart).toBeVisible({ timeout: 15000 });
 
@@ -232,6 +249,15 @@ test.describe("P2.S6.1 richer UI — per-run chart + evidence graph + screenshot
 
   test("evidence graph renders drift, evidence and parent-link edges", async ({ page, request }) => {
     if (!(await gotoRepair(page, request))) return;
+    // Live stack: node ids are real drift/evidence ids — assert structure.
+    if (await isControlReachable(request)) {
+      const graph = page.getByTestId("evidence-graph");
+      await expect(graph).toBeVisible({ timeout: 15000 });
+      const nodes = page.locator('[data-testid^="evidence-graph-node-"]');
+      await expect(nodes.first()).toBeVisible({ timeout: 15000 });
+      expect(await nodes.count()).toBeGreaterThan(0);
+      return;
+    }
     const graph = page.getByTestId("evidence-graph");
     await expect(graph).toBeVisible({ timeout: 15000 });
 
@@ -245,8 +271,11 @@ test.describe("P2.S6.1 richer UI — per-run chart + evidence graph + screenshot
 
   test("screenshots: chart + graph captured to test-results", async ({ page, request }) => {
     if (!(await gotoRepair(page, request))) return;
-    await expect(page.getByTestId("model-usage-chart")).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId("evidence-graph")).toBeVisible({ timeout: 15000 });
+    const graph = page.getByTestId("evidence-graph");
+    await expect(graph).toBeVisible({ timeout: 15000 });
+    const chart = page.getByTestId("model-usage-chart");
+    const chartEmpty = page.getByTestId("model-usage-chart-empty");
+    await expect(chart.or(chartEmpty)).toBeVisible({ timeout: 15000 });
 
     const outDir = path.join("test-results", "s6");
     fs.mkdirSync(outDir, { recursive: true });
@@ -254,8 +283,9 @@ test.describe("P2.S6.1 richer UI — per-run chart + evidence graph + screenshot
     const graphShot = path.join(outDir, "s6-evidence-graph.png");
     const pageShot = path.join(outDir, "s6-repair-page.png");
 
-    await page.getByTestId("model-usage-chart").screenshot({ path: chartShot });
-    await page.getByTestId("evidence-graph").screenshot({ path: graphShot });
+    const chartTarget = (await chart.isVisible()) ? chart : chartEmpty;
+    await chartTarget.screenshot({ path: chartShot });
+    await graph.screenshot({ path: graphShot });
     await page.screenshot({ path: pageShot, fullPage: true });
 
     for (const f of [chartShot, graphShot, pageShot]) {

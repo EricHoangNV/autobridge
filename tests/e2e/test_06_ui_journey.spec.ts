@@ -347,7 +347,7 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
           }
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockEvidence) });
         }
-        if (url.includes("/evidence")) {
+        if (url.includes("/evidence") && !url.includes("/runs/")) {
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([mockEvidence]) });
         }
         if (url.includes("/releases")) {

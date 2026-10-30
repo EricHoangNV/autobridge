@@ -109,6 +109,40 @@ const mockSyncRun = {
   },
 };
 
+const mockModelUsage = {
+  total_calls: 2,
+  total_input_tokens: 800,
+  total_output_tokens: 400,
+  total_cost: "0.01",
+  frontier_tokens: 900,
+  small_tokens: 300,
+  by_tier: { frontier: 900, small: 300 },
+  by_provider: { anthropic: 2 },
+  by_purpose: { rank: 1, patch: 1 },
+  entries: [
+    {
+      provider: "anthropic",
+      model: "claude-haiku",
+      tier: "small",
+      total_calls: 1,
+      total_input_tokens: 200,
+      total_output_tokens: 100,
+      total_cost: "0.001",
+      by_run: [{ run_id: "repair-abc-123", purpose: "rank", tokens: 300 }],
+    },
+    {
+      provider: "anthropic",
+      model: "claude-opus",
+      tier: "frontier",
+      total_calls: 1,
+      total_input_tokens: 600,
+      total_output_tokens: 300,
+      total_cost: "0.009",
+      by_run: [{ run_id: "repair-abc-123", purpose: "patch", tokens: 900 }],
+    },
+  ],
+};
+
 function mockAll(repair: unknown = mockRepair) {
   mockedUseSWR
     .mockReturnValueOnce({ data: repair, error: undefined, isLoading: false, mutate: vi.fn() })
@@ -119,6 +153,7 @@ function mockAll(repair: unknown = mockRepair) {
     .mockReturnValueOnce({ data: mockConnector, error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: mockSyncRun, error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: { rules: [{ id: "page_to_cursor", fixes: "page→cursor", confidence: 0.95 }] }, error: undefined, isLoading: false })
+    .mockReturnValueOnce({ data: mockModelUsage, error: undefined, isLoading: false })
     .mockReturnValue({ data: undefined, error: undefined, isLoading: false });
 }
 
@@ -202,5 +237,15 @@ describe("RepairDetailPage", () => {
     mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("evidence-graph")).toBeInTheDocument();
+  });
+
+  it("restores the per-run model-usage chart appendix with the repair highlighted", () => {
+    mockAll();
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    const chart = screen.getByTestId("model-usage-chart");
+    expect(chart).toBeInTheDocument();
+    const row = screen.getByTestId("model-usage-chart-row");
+    expect(row).toHaveAttribute("data-run-id", "repair-abc-123");
+    expect(row).toHaveAttribute("data-highlight", "true");
   });
 });
