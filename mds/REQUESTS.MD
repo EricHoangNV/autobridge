@@ -32,6 +32,16 @@ result/trace, the docs text already on the page, and `GET /capabilities`.
    Meridian-on-v1 and PABX-on-v2 refusals contains the gap table, the operations, the acceptance tests, and no secret;
    deterministic (same input → same file). Must pass REQ-055's no-overlap check.
 Owner check after: deck 6 — v1 refused → Download capability request → open the file → it reads like REQ-020.
+3. **Build page: picking a simulator must reset every field it fills** (owner bug, 2026-10-30). In
+   `ui/components/NewConnectorForm.tsx` the base URL (~377) and the vendor name (~376) are filled **only when empty**,
+   so after the first pick they keep the previous simulator's values (owner saw AtlasPMS docs with base URL
+   `edge-relay://queue/fias-commands` and name "PABX edge"). On every simulator pick, set docs, base URL (edge relay
+   for the FIAS PABX, else the simulator's base), credential, vendor name and the default vocabulary for that
+   simulator — values the user typed by hand for the **current** simulator are kept only until the next pick. Test:
+   pick Atlas → PABX → Atlas → Harbor and assert every field each time.
+4. **Show the docs link** the moment a simulator is picked: under the docs picker, the simulator's developers portal
+   URL as a link that opens in a new tab (e.g. AtlasPMS → `http://localhost:8105/developers`; from `developers_url`,
+   already in the simulator row). Test: link text/href per simulator, `target="_blank"` with `rel="noopener"`.
 
 
 ### REQ-057 — Connector page: spec viewer with a fixed height, fingerprints grouped and collapsed (2026-10-30)
