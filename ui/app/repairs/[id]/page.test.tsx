@@ -143,13 +143,13 @@ const mockModelUsage = {
   ],
 };
 
-function mockAll(repair: unknown = mockRepair) {
+function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger) {
   mockedUseSWR
     .mockReturnValueOnce({ data: repair, error: undefined, isLoading: false, mutate: vi.fn() })
     .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: [mockEvidence], error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: [mockDerivation], error: undefined, isLoading: false })
-    .mockReturnValueOnce({ data: mockLedger, error: undefined, isLoading: false })
+    .mockReturnValueOnce({ data: ledger, error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: mockConnector, error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: mockSyncRun, error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: { rules: [{ id: "page_to_cursor", fixes: "page→cursor", confidence: 0.95 }] }, error: undefined, isLoading: false })
@@ -218,8 +218,7 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("approve-preview-loading")).toBeInTheDocument();
   });
 
-  it("shows the escalation question and rejected proposals for escalations", () => {
-    mockAll({
+  it("shows the escalation question and rejected proposals for escalations", () => {    mockAll({
       ...mockRepair,
       decision: "escalate",
       verifier_report_id: null,
@@ -231,6 +230,74 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Needs your decision");
     expect(screen.getByTestId("decided-question")).toHaveTextContent("Which mapping is correct?");
     expect(screen.getByTestId("decided-rejected")).toHaveTextContent("proposal_rejected");
+  });
+
+  it("shows the running view while the climb is in flight", () => {
+    const climbingLedger = {
+      ...mockLedger,
+      decision: "climbing",
+      resolved_rung: 3,
+      attempts: [
+        { rung: 0, action: "knowledge_miss", reason: "L0 miss: no known fix", calls: [] },
+        { rung: 1, action: "no_rule_matched", reason: "L1: no rule precondition matched", calls: [] },
+        { rung: 2, action: "l2_skipped", reason: "L2 skipped: fewer than two hypotheses (1)", calls: [] },
+        { rung: 3, action: "frontier_generate", reason: "L3 invoked", calls: [] },
+      ],
+    };
+    mockAll(
+      {
+        ...mockRepair,
+      decision: "climbing",
+      ladder_level_reached: 2,
+      verifier_report_id: null,
+      candidate_patch: [],
+      rule_id: null,
+      model_usage: {},
+      ladder_trace: [
+        { level: 0, action: "knowledge_miss", reason: "L0 miss: no known fix" },
+        { level: 1, action: "no_rule_matched", reason: "L1: no rule precondition matched" },
+        { level: 2, action: "l2_skipped", reason: "L2 skipped: fewer than two hypotheses (1)" },
+        {
+          level: 3,
+          action: "frontier_generate",
+          reason: "L3 invoked",
+          model: "sleep-frontier",
+          call_started_at: new Date(Date.now() - 45000).toISOString(),
+        },
+      ],
+      },
+      climbingLedger,
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-detail-page")).toHaveAttribute("data-state", "climbing");
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Repairing at L3");
+    expect(screen.getByTestId("repair-calling")).toHaveTextContent("calling sleep-frontier");
+    expect(screen.getByTestId("repair-calling")).toHaveTextContent("so far");
+    expect(screen.getByTestId("model-call-box-empty")).toHaveTextContent("no calls landed yet");
+    expect(screen.getByTestId("rung-timeline-3")).toHaveTextContent("L3 invoked");
+  });
+
+  it("names a failed climb without offering approve", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "failed",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [{ level: 3, action: "failed", reason: "RuntimeError: boom" }],
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Repair failed");
+  });
+
+  it("survives the loading-to-loaded transition without a hooks crash", () => {
+    // First render loading (SWR fetching), then data: hook order must be
+    // stable across the transition or React throws "rendered more hooks".
+    mockedUseSWR.mockReturnValue({ data: undefined, error: undefined, isLoading: true, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+    const { rerender } = render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-detail-page")).toHaveTextContent("Loading repair");
+    mockAll();
+    rerender(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Fix ready");
   });
 
   it("keeps the evidence graph appendix", () => {

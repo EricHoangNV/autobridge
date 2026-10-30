@@ -107,4 +107,44 @@ describe("ConnectorsTable", () => {
     expect(screen.getByText("Harbor")).toBeInTheDocument();
     expect(screen.getAllByTestId("health-badge")).toHaveLength(2);
   });
+
+  it("links a running repair from the connector row", () => {
+    const c = baseConnector({ state: "degrading", activity: "drift detected 4 s ago · repairing at L3" });
+    const climbing = {
+      id: "repair-running-1",
+      drift_event_ids: ["drift-1"],
+      ladder_level_reached: 0,
+      vendor: "harbor",
+      drift_signature: null,
+      drift_class: "SEMANTIC_VALUE_DRIFT",
+      approval: null,
+      fingerprint_delta: null,
+      candidate_patch: null,
+      rule_id: null,
+      hypothesis_ids: [],
+      visible_test_results: [],
+      verifier_report_id: null,
+      decision: "climbing",
+      model_usage: {},
+      ladder_trace: [
+        { level: 0, action: "knowledge_miss", reason: "L0 miss" },
+        { level: 1, action: "no_rule_matched", reason: "L1 miss" },
+        { level: 2, action: "l2_skipped", reason: "L2 skipped" },
+        { level: 3, action: "frontier_generate", reason: "L3 invoked", model: "sleep-frontier" },
+      ],
+      escalation_bundle: null,
+      created_at: new Date().toISOString(),
+      kind: "repair",
+    };
+    render(<ConnectorsTable connectors={[c]} repairsByConnector={{ [c.id]: [climbing as never] }} />);
+    const link = screen.getByTestId(`connector-repair-link-${c.id}`);
+    expect(link).toHaveTextContent("repairing at L3");
+    expect(link.getAttribute("href")).toBe("/repairs/repair-running-1");
+  });
+
+  it("shows no repair link without a running repair", () => {
+    const c = baseConnector();
+    render(<ConnectorsTable connectors={[c]} repairsByConnector={{}} />);
+    expect(screen.queryByTestId(`connector-repair-link-${c.id}`)).not.toBeInTheDocument();
+  });
 });

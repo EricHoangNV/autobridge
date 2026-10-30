@@ -32,9 +32,10 @@ function callTokens(c: LedgerCall): number {
  * Model-call box (REQ-032 §3): every call with rung, model, live or replay
  * with capture date, tokens in/out/reasoning, cost and outcome — and an
  * explicit "0 model calls" when the repair used none. All rows come from
- * `GET /repairs/{id}/ledger`.
+ * `GET /repairs/{id}/ledger`. While a repair is still climbing (`pending`),
+ * an empty box means no call has landed *yet*, not that none ran.
  */
-export function ModelCallBox({ attempts }: { attempts: LedgerAttempt[] }) {
+export function ModelCallBox({ attempts, pending = false }: { attempts: LedgerAttempt[]; pending?: boolean }) {
   const rows: Array<{ rung: number; call: LedgerCall }> = [];
   for (const a of attempts ?? []) {
     for (const call of a.calls ?? []) rows.push({ rung: a.rung, call });
@@ -43,10 +44,11 @@ export function ModelCallBox({ attempts }: { attempts: LedgerAttempt[] }) {
     const n = Number(call.cost);
     return acc + (Number.isFinite(n) ? n : 0);
   }, 0);
+  const totalReasoning = rows.reduce((acc, { call }) => acc + (call.reasoning_tokens || 0), 0);
   if (!rows.length) {
     return (
       <p data-testid="model-call-box-empty" className="font-mono text-sm">
-        0 model calls
+        {pending ? "climbing — no calls landed yet" : "0 model calls"}
       </p>
     );
   }
@@ -85,7 +87,8 @@ export function ModelCallBox({ attempts }: { attempts: LedgerAttempt[] }) {
       </table>
       <p data-testid="model-call-box-total" className="num mt-1 font-mono text-xs text-ink-2">
         {rows.length} call{rows.length === 1 ? "" : "s"} ·{" "}
-        {formatInt(rows.reduce((a, { call }) => a + callTokens(call), 0))} tokens · ${totalCost.toFixed(4)}
+        {formatInt(rows.reduce((a, { call }) => a + callTokens(call), 0))} tokens
+        {totalReasoning > 0 ? <span> ({formatInt(totalReasoning)} reasoning)</span> : null} · ${totalCost.toFixed(4)}
       </p>
     </div>
   );

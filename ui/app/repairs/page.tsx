@@ -17,7 +17,21 @@ const fetcher = async <T,>(path: string): Promise<T> => {
   return (await res.json()) as T;
 };
 
-export type RepairStatus = "fix ready" | "needs your decision" | "approved" | "applied" | "rejected";
+export type RepairStatus = "fix ready" | "needs your decision" | "approved" | "applied" | "rejected" | "repairing";
+
+/**
+ * Highest ladder level in a (possibly partial) trace; 0 when empty.
+ * While a repair climbs, the row's ladder_level_reached stays 0 until
+ * the final write — the trace carries the rung it is on (REQ-043).
+ */
+export function currentRungOf(repair: RepairRunOut): number {
+  let best = 0;
+  for (const entry of repair.ladder_trace ?? []) {
+    const level = (entry as Record<string, unknown>)["level"];
+    if (typeof level === "number" && Number.isFinite(level) && level > best) best = level;
+  }
+  return Math.max(best, repair.ladder_level_reached ?? 0);
+}
 
 function toNumber(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -41,7 +55,8 @@ export function modelCallsOf(repair: RepairRunOut): { calls: number; frontierTok
  * Live repair status (REQ-032 §2), from persisted rows only:
  * rejected (decision or reject approval) · applied (approved release is
  * active) · approved (approved but superseded) · fix ready (verified patch
- * waiting) · needs your decision (escalated or still climbing).
+ * waiting) · repairing (the climb is still running, REQ-043) ·
+ * needs your decision (escalated, failed, or still climbing without a row).
  */
 export function repairStatus(
   repair: RepairRunOut,
@@ -55,7 +70,11 @@ export function repairStatus(
     const applied = Object.values(activeReleaseByConnector).some((id) => id === approval.to_release_id);
     return applied ? "applied" : "approved";
   }
-  if (repair.decision === "escalate") return "needs your decision";
+  // REQ-043: a running repair is neither ready nor waiting — it is
+  // climbing, with the rung it is on. Failed climbs land back here as
+  // needing a decision (the trace names the crash).
+  if (repair.decision === "climbing") return "repairing";
+  if (repair.decision === "escalate" || repair.decision === "failed") return "needs your decision";
   if (repair.verifier_report_id || (repair.candidate_patch ?? []).length > 0) return "fix ready";
   void connectorByDrift;
   return "needs your decision";
@@ -64,6 +83,7 @@ export function repairStatus(
 function statusClass(status: RepairStatus): string {
   if (status === "fix ready") return "bg-emerald-100 text-emerald-800 border-emerald-200";
   if (status === "needs your decision") return "bg-band text-stop border-stop";
+  if (status === "repairing") return "bg-live text-ink border-live";
   if (status === "applied") return "bg-ground text-ink border-rule";
   if (status === "approved") return "bg-ground text-ink-2 border-rule";
   return "bg-ground text-ink-2 border-rule";
@@ -166,7 +186,7 @@ export default function RepairsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span data-testid={`repair-ladder-${r.id}`} className="inline-flex bg-ground px-2 py-0.5 text-xs font-medium text-ink-2">
-                        {levelBadge(r.ladder_level_reached)}
+                        {levelBadge(currentRungOf(r))}{status === "repairing" ? " · running" : ""}
                       </span>
                     </td>
                     <td data-testid={`repair-rule-${r.id}`} className="px-4 py-3 font-mono text-xs text-ink-2">

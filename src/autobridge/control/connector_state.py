@@ -143,6 +143,31 @@ def connector_state(session: Any, connector_id: str) -> dict[str, Any]:
     busy = connector_busy_reason(session, connector_id)
     in_flight = busy is not None and ("queued" in busy or "running" in busy)
 
+    # -- running repairs (REQ-043): a climb in flight for this connector.
+    # The row is created at job start, so a connector whose drift is being
+    # repaired names the rung it is on — the Repairs list and the linked
+    # repair page show the rest.
+    climbing: list[Any] = []
+    if drift_ids:
+        for run in session.execute(select(RepairRun)).scalars().all():
+            if run.decision != "climbing":
+                continue
+            if set(run.drift_event_ids or []) & drift_ids:
+                climbing.append(run)
+    climbing.sort(key=lambda r: str(getattr(r, "created_at", "")))
+    climbing_rung = 0
+    if climbing:
+        try:
+            from autobridge.repair.controller import current_rung_level  # noqa: PLC0415
+
+            climbing_rung = 0
+            for run in climbing:
+                rung = current_rung_level(list(run.ladder_trace or []))
+                rung = max(rung, int(run.ladder_level_reached or 0))
+                climbing_rung = max(climbing_rung, rung)
+        except Exception:
+            climbing_rung = 0
+
     # -- error ---------------------------------------------------------
     for run in awaiting:
         if run.decision == "escalate" or _model_tokens_used(run.model_usage) > 0:
@@ -161,6 +186,14 @@ def connector_state(session: Any, connector_id: str) -> dict[str, Any]:
 
     # -- degrading ------------------------------------------------------
     if in_flight and open_drift:
+        if climbing:
+            return {
+                "state": "degrading",
+                "activity": (
+                    f"drift detected {human_ago(_parse_ts(open_drift[0].created_at))} · repairing at L{climbing_rung}"
+                ),
+                "last_sync_at": last_sync_at,
+            }
         return {
             "state": "degrading",
             "activity": (

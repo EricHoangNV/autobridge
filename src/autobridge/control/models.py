@@ -68,7 +68,13 @@ HEALTH_STATUSES = frozenset(
 )
 SYNC_OUTCOMES = frozenset({"Complete", "Degraded", "Blocked"})
 DRIFT_STATUSES = frozenset({"open", "investigating", "repaired", "escalated", "dismissed"})
-REPAIR_DECISIONS = frozenset({"propose", "escalate", "reject"})
+REPAIR_DECISIONS = frozenset({"propose", "escalate", "reject", "climbing", "failed"})
+#: ``climbing`` — the repair job started and the ladder is running (the row
+#: is created at job start so the Repairs list and the repair page are
+#: reachable while the climb runs, REQ-043); ``failed`` — the job crashed,
+#: timed out or was orphaned by a restart before reaching a decision, with
+#: the reason recorded on the trace. Both are terminal for polling except
+#: ``climbing``; approvals only act on ``propose``.
 APPROVAL_DECISIONS = frozenset({"approve", "reject", "rollback"})
 EVIDENCE_KINDS = frozenset(
     {

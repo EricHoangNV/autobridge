@@ -19,6 +19,7 @@ import { AfterApproveTracker } from "@/components/AfterApproveTracker";
 import type { ModelUsageResponse } from "@/lib/api/client";
 import { useRunEvents } from "@/lib/sse";
 import { maxLadderLevel } from "@/lib/ladder-events";
+import { useNow } from "@/lib/use-now";
 import { useFrontierTicker } from "@/lib/use-frontier-ticker";
 
 // Same-origin /api base (REQ-018): the rewrite + middleware forward to control.
@@ -290,6 +291,11 @@ export default function RepairDetailPage({ params }: PageProps) {
   const earlyTrack = Math.max(earlyLevel, sseLevel ?? earlyLevel);
   const earlyReport = !!repair?.verifier_report_id;
   const tickingFrontier = useFrontierTicker(earlyFrontier, earlyTrack >= 3 || earlyReport);
+  // Ticks the in-flight "calling <model> · Ns" line below; placed with the
+  // other hooks (before the loading/error early returns) so hook order is
+  // stable across renders.
+  const nowMs = useNow(1000);
+
 
   if (repairLoading || !repairId) {
     return (
@@ -354,8 +360,29 @@ export default function RepairDetailPage({ params }: PageProps) {
   const isEscalated = repair.decision === "escalate";
   const hasReport = !!repair.verifier_report_id;
   const hasPatch = (repair.candidate_patch ?? []).length > 0;
-  const climbingNow = !hasReport && repair.decision === "propose";
+  // REQ-043: a running repair (decision "climbing") is still climbing by
+  // definition; the old propose-without-report shape keeps its meaning.
+  const climbingNow = repair.decision === "climbing" || (!hasReport && repair.decision === "propose");
   const trackLevel = Math.max(level, sseLevel ?? level);
+  // The rung the climb is on, from the persisted trace (the row's
+  // ladder_level_reached stays 0 until the final write).
+  const runningRung = Math.max(
+    trackLevel,
+    ...(repair.ladder_trace ?? []).map((e) => (typeof e["level"] === "number" ? (e["level"] as number) : 0)),
+  );
+  // In-flight model call, if any: the rung entry stamped with the model id
+  // and call start just before the call went out (REQ-043 item 3).
+  const inFlightEntry = repair.decision === "climbing"
+    ? [...(repair.ladder_trace ?? [])].reverse().find(
+        (e) => typeof e["model"] === "string" && typeof e["call_started_at"] === "string",
+      )
+    : undefined;
+  const inFlightElapsed = (() => {
+    if (!inFlightEntry) return null;
+    const started = Date.parse(String(inFlightEntry["call_started_at"]));
+    if (!Number.isFinite(started)) return null;
+    return Math.max(0, Math.floor((nowMs - started) / 1000));
+  })();
   const pageState = isEscalated ? "escalated" : climbingNow ? "climbing" : "ready";
 
   const shortId = repair.id.slice(0, 8);
@@ -369,13 +396,17 @@ export default function RepairDetailPage({ params }: PageProps) {
   const totalCalls =
     toNumber(mu["calls"] ?? mu["total_calls"]) || toNumber(mu["frontier_calls"]) + toNumber(mu["small_calls"]);
 
-  const decisionLine = isEscalated
-    ? "Needs your decision: the engine is not confident"
-    : hasReport && hasPatch
-      ? `Fix ready: verified, ${frontierTokens === 0 && smallTokens === 0 ? "0 model calls" : `${formatInt(frontierTokens + smallTokens)} tokens`}`
-      : repair.decision === "reject"
-        ? "Rejected"
-        : "Still climbing: the verifier has not run yet";
+  const decisionLine = repair.decision === "climbing"
+    ? `Repairing at L${runningRung}: the engine is still climbing — no Approve or Reject until it decides`
+    : isEscalated
+      ? "Needs your decision: the engine is not confident"
+      : hasReport && hasPatch
+        ? `Fix ready: verified, ${frontierTokens === 0 && smallTokens === 0 ? "0 model calls" : `${formatInt(frontierTokens + smallTokens)} tokens`}`
+        : repair.decision === "reject"
+          ? "Rejected"
+          : repair.decision === "failed"
+            ? "Repair failed: the climb crashed before deciding — the trace names the reason"
+            : "Still climbing: the verifier has not run yet";
 
   const syncPayload = sourceSyncRun?.kind === "sync" ? sourceSyncRun.payload.sync_run : null;
   const syncDuration = syncPayload ? shortDuration(syncPayload.started_at, syncPayload.finished_at) : null;
@@ -571,7 +602,14 @@ export default function RepairDetailPage({ params }: PageProps) {
           <p className="text-sm text-ink-2">No probe records linked.</p>
         )}
         <h3 className="mb-1 mt-4 text-sm font-semibold">Model calls</h3>
-        <ModelCallBox attempts={attempts} />
+        {inFlightEntry ? (
+          <p data-testid="repair-calling" className="mb-2 font-mono text-xs">
+            calling {String(inFlightEntry["model"])}
+            {inFlightElapsed !== null ? <span className="num text-ink-2"> · {inFlightElapsed} s so far</span> : null}
+            <span className="text-ink-2"> — tokens land when the call returns</span>
+          </p>
+        ) : null}
+        <ModelCallBox attempts={attempts} pending={climbingNow} />
         <div className="mt-2">
           <ModelUsageView modelUsage={repair.model_usage} liveFrontierTokens={tickingFrontier} pending={climbingNow} />
         </div>

@@ -92,6 +92,7 @@ services:
       FRONTIER_API_KEY: ${FRONTIER_API_KEY:-}
       FRONTIER_BASE_URL: ${FRONTIER_BASE_URL:-}
       FRONTIER_MODEL: ${FRONTIER_MODEL:-}
+      FRONTIER_MAX_TOKENS: ${FRONTIER_MAX_TOKENS:-}
       SMALL_MODEL: ${SMALL_MODEL:-}
       # REQ-022 B: cloud command queue for the on-premise agent (engine-net
       # DNS; the agent polls it outbound, control enqueues through it).
@@ -139,6 +140,7 @@ services:
       FRONTIER_API_KEY: ${FRONTIER_API_KEY:-}
       FRONTIER_BASE_URL: ${FRONTIER_BASE_URL:-}
       FRONTIER_MODEL: ${FRONTIER_MODEL:-}
+      FRONTIER_MAX_TOKENS: ${FRONTIER_MAX_TOKENS:-}
       SMALL_MODEL: ${SMALL_MODEL:-}
       # REQ-027: same simulator demo-key defaults as control: sync jobs
       # executed here authenticate the same way.

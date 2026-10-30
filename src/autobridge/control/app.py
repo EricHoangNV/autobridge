@@ -74,6 +74,24 @@ async def lifespan(app: FastAPI):
             )
     except Exception:
         pass
+    # REQ-043 item 4: a restart must never leave a repair stuck at
+    # "repairing". Rows still ``climbing`` (their worker died with the old
+    # process) go to ``failed`` with the reason; a reclaimed job that runs
+    # again resets its row to ``climbing`` when it restarts.
+    try:
+        from autobridge.control.deps import get_session_factory  # noqa: PLC0415
+        from autobridge.repair.controller import fail_orphaned_repairs  # noqa: PLC0415
+
+        with get_session_factory()() as _session:
+            failed = fail_orphaned_repairs(_session)
+        if failed:
+            import logging  # noqa: PLC0415
+
+            logging.getLogger("autobridge.control").warning(
+                "marked %d orphaned repair(s) failed", failed
+            )
+    except Exception:
+        pass
     scheduler_task: asyncio.Task[None] | None = None
     repair_task: asyncio.Task[None] | None = None
     try:

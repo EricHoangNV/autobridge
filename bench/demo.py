@@ -1260,10 +1260,14 @@ def _poll_live_repair_for_drift(
     background repair job: POST /sync returns at once with
     ``repair_pending``, and the repair row appears seconds later when
     the job finishes. Every poll is a recorded call; the bound (~150 s)
-    covers the L3 budget with margin. Returns the repair row or {}.
+    covers the L3 budget with margin.
     """
     import time as _time  # noqa: PLC0415
 
+    # REQ-043: the running row exists from the start of the climb
+    # (decision "climbing"), so the poll waits for a *terminal* decision —
+    # a climbing row is progress, not the answer.
+    _TERMINAL = ("propose", "escalate", "reject", "failed")
     repair_row: dict[str, Any] = {}
     for _ in range(tries):
         rep_rows: list[Any] = _control_get_raw(base_url, f"/repairs?connector_id={connector_id}") or []
@@ -1271,7 +1275,7 @@ def _poll_live_repair_for_drift(
             if (
                 isinstance(rep, dict)
                 and drift_id in (rep.get("drift_event_ids") or [])
-                and rep.get("decision")
+                and rep.get("decision") in _TERMINAL
             ):
                 calls.append(_control_call(base_url, "GET", f"/repairs?connector_id={connector_id}"))
                 return dict(rep)

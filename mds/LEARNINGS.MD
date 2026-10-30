@@ -544,3 +544,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 
 - The W5.7 negative test forbids the literal `generated/connectors` in every file under `src/autobridge` except four named files — a docstring that merely *names* the path the client reads (the server never opens it) still fails the suite. Widening a guard test needs an owner note (REQ-024 precedent), so the fix was rewording, not a carve-out.
 - **Rule:** when a guard test scans for forbidden strings, treat the scan as the contract: keep the strings out of engine code entirely (including comments and docstrings); if a carve-out is truly needed, add the owner note in REQUESTS first, never widen silently.
+
+---
+
+## 60. Hooks after early returns crash only on the second render — unit tests with mocked loaded state never see it
+
+**Context:** REQ-043 added a ticking "calling \<model\> · Ns" line to the repair page via a new `useNow(1000)` hook placed after the loading/error early returns, while every existing hook sits before them. Unit tests (SWR mocked with data on first render) stayed green; the live browser crashed with "Application error" on every repair page load (first render returns early, second render calls one more hook).
+
+- The rule is per-render hook-count stability, so the bug is invisible whenever the first render already has data — exactly what mocked SWR tests produce.
+- The fix is placement (all hooks before any early return), and the guard is a test that renders loading first, then rerenders with data.
+- **Rule:** Any new hook in a component with early returns goes with the other hooks above them, plus a loading-then-data rerender test; never trust a hooks change that only ever rendered loaded state.

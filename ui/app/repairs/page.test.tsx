@@ -6,7 +6,7 @@ vi.mock("swr", () => ({
 }));
 
 import useSWR from "swr";
-import RepairsPage, { repairStatus } from "./page";
+import RepairsPage, { currentRungOf, repairStatus } from "./page";
 import type { RepairRunOut } from "@/lib/api/client";
 
 const mockedUseSWR = useSWR as unknown as ReturnType<typeof vi.fn>;
@@ -156,9 +156,19 @@ describe("repairStatus", () => {
     expect(repairStatus(approved, { c1: "rel-8" }, drifts)).toBe("approved");
   });
 
-  it("maps escalations and climbing repairs to needs your decision", () => {
+  it("maps escalations, failures and undecided repairs to needs your decision", () => {
     expect(repairStatus({ ...base, decision: "escalate" }, {}, drifts)).toBe("needs your decision");
+    expect(repairStatus({ ...base, decision: "failed" }, {}, drifts)).toBe("needs your decision");
     expect(repairStatus({ ...base }, {}, drifts)).toBe("needs your decision");
+  });
+
+  it("maps running repairs to repairing", () => {
+    expect(repairStatus({ ...base, decision: "climbing" }, {}, drifts)).toBe("repairing");
+    // Even a climbing row that already carries a candidate still reads
+    // as running until the climb writes its decision.
+    expect(
+      repairStatus({ ...base, decision: "climbing", candidate_patch: [{ op: "replace" }] }, {}, drifts),
+    ).toBe("repairing");
   });
 
   it("maps verified patches to fix ready", () => {
@@ -171,5 +181,36 @@ describe("repairStatus", () => {
     render(<RepairsPage />);
     const status = screen.getByTestId("repair-status-rep-1");
     expect(within(status).getByText("fix ready")).toBeInTheDocument();
+  });
+});
+
+describe("currentRungOf", () => {
+  const drifts = new Map([["d1", "c1"]]);
+  const mk = (trace: Array<Record<string, unknown>>, level: number) => ({
+    id: "r",
+    drift_event_ids: ["d1"],
+    ladder_level_reached: level,
+    vendor: null,
+    drift_signature: null,
+    drift_class: null,
+    approval: null,
+    fingerprint_delta: null,
+    candidate_patch: null,
+    rule_id: null,
+    hypothesis_ids: [],
+    visible_test_results: [],
+    verifier_report_id: null,
+    decision: "climbing",
+    model_usage: {},
+    ladder_trace: trace,
+    escalation_bundle: null,
+    created_at: "2026-10-29T11:00:00Z",
+    kind: "repair" as const,
+  });
+
+  it("reads the rung from the trace while climbing", () => {
+    expect(currentRungOf(mk([{ level: 0 }, { level: 3 }], 0) as never)).toBe(3);
+    expect(currentRungOf(mk([], 0) as never)).toBe(0);
+    expect(currentRungOf(mk([{ level: 1 }], 4) as never)).toBe(4);
   });
 });

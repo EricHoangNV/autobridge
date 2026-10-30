@@ -18,7 +18,9 @@ Trust boundary: no import of verifier/simulators.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from autobridge.llm.provider import (
@@ -44,7 +46,32 @@ from autobridge.repair.knowledge import (
 from autobridge.repair.registry import matching_rules
 
 #: Output cap for the L3 frontier call (reasoning + answer); see run_frontier_climb.
+#: The live default lives in :func:`autobridge.config.frontier_max_tokens`
+#: (env ``FRONTIER_MAX_TOKENS``); this constant is the compiled-in default
+#: used when config is unavailable (tests importing this module directly).
 L3_MAX_TOKENS = 131072
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time as an ISO string (rung call-started stamps)."""
+    return datetime.now(UTC).isoformat()
+
+
+def _provider_model_name(provider: Any, tier: str) -> str:
+    """Best-effort model id for a rung entry; never raises, never empty."""
+    for getter_name in ("model_for_tier", "_model_for_tier"):
+        getter = getattr(provider, getter_name, None)
+        if callable(getter):
+            try:
+                name = getter(tier)
+            except Exception:
+                continue
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    inner = getattr(provider, "inner", None)
+    if inner is not None and inner is not provider:
+        return _provider_model_name(inner, tier)
+    return tier
 
 # Drift classes that always escalate (no patch attempted)
 _NON_FIXABLE: frozenset[str] = frozenset({"CAPABILITY_REMOVED", "AUTH_REVOKED"})
@@ -1463,6 +1490,15 @@ def run_frontier_climb(
     # model (L2/L3) can decide. Defaults preserve existing behavior exactly.
     enable_knowledge: bool = True,
     enable_rules: bool = True,
+    # REQ-043: live progress. When given, called after every rung the climb
+    # records (L0, L1, L2, L3 — including the entry written *before* a
+    # model call starts, stamped with the model id and call start time) and
+    # after each rung's post-call update, with snapshots of the attempts so
+    # far and the usage so far. The repair job handler uses it to update the
+    # running RepairRun row (committing between rungs, never holding a
+    # transaction across a model call). Never raises: emission failures are
+    # swallowed so progress can never break the climb.
+    on_rung: Any | None = None,
 ) -> dict[str, Any]:
     """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then stop (REQ-021).
 
@@ -1506,6 +1542,14 @@ def run_frontier_climb(
     replay_missing: list[str] = []
     replay_captured_at = ""
 
+    def _emit() -> None:
+        # REQ-043 live progress: snapshots only, never the live lists, and
+        # never raising — a progress sink must not break the climb.
+        if on_rung is None:
+            return
+        with contextlib.suppress(Exception):
+            on_rung([dict(a) for a in attempts], dict(usage))
+
     # --- L0: learned knowledge ---
     if not enable_knowledge:
         attempts.append(
@@ -1545,6 +1589,7 @@ def run_frontier_climb(
                     "calls": [],
                 }
             )
+            _emit()
             return {
                 "attempts": attempts,
                 "usage": usage,
@@ -1616,6 +1661,10 @@ def run_frontier_climb(
                 "calls": [],
             }
         )
+    # REQ-043: L0 and L1 resolve locally in milliseconds, but the running
+    # repair row should show them as soon as they land — before a minutes-
+    # long L2/L3 call starts.
+    _emit()
 
     # --- L2: small-model ranking with a confidence gate ---
     ranked: list[Any] = list(hypotheses)
@@ -1629,6 +1678,7 @@ def run_frontier_climb(
                 "calls": [],
             }
         )
+        _emit()
         return {
             "attempts": attempts,
             "usage": usage,
@@ -1646,8 +1696,13 @@ def run_frontier_climb(
             "action": "small_rank",
             "reason": f"L2 ranking {len(ranked)} hypotheses for {drift_class}",
             "calls": [],
+            # REQ-043: stamped before the call starts, so the repair page
+            # can show "calling <model> · Ns" while the call is in flight.
+            "model": _provider_model_name(provider, "small"),
+            "call_started_at": _utc_now_iso(),
         }
         attempts.append(l2_entry)
+        _emit()
         try:
             ranked, delta = _call_small_model_rank(ranked, provider, budget, run_id=run_id, session=session)
         except ReplayMissing as exc:
@@ -1656,6 +1711,7 @@ def run_frontier_climb(
             l2_entry["reason"] = (
                 f"L2 skipped: no replay recording for prompt {exc.prompt_hash}; {_record_hint()}"
             )
+            _emit()
             return {
                 "attempts": attempts,
                 "usage": usage,
@@ -1676,6 +1732,7 @@ def run_frontier_climb(
                 f"L2 confident: {top_prior:.2f} >= {l2_threshold:.2f}; ranking stands, no frontier call"
             )
             l2_entry["model_usage_delta"] = delta
+            _emit()
             return {
                 "attempts": attempts,
                 "usage": usage,
@@ -1691,6 +1748,7 @@ def run_frontier_climb(
             f"L2 confidence {top_prior:.2f} < {l2_threshold:.2f}: ranking cannot decide; continuing to L3"
         )
         l2_entry["model_usage_delta"] = delta
+        _emit()
     else:
         attempts.append(
             {
@@ -1700,6 +1758,7 @@ def run_frontier_climb(
                 "calls": [],
             }
         )
+        _emit()
 
     # --- L3: frontier proposal (plan §2.6 gate: enumerator yielded < 2) ---
     # The frontier answers the climb with a patch proposal (JSON Patch);
@@ -1714,6 +1773,7 @@ def run_frontier_climb(
                 "calls": [],
             }
         )
+        _emit()
         return {
             "attempts": attempts,
             "usage": usage,
@@ -1730,8 +1790,13 @@ def run_frontier_climb(
         "action": "frontier_generate",
         "reason": f"L3 invoked: enumerator yielded {enumerator_yield_count} < 2 for {drift_class}",
         "calls": [],
+        # REQ-043: stamped before the call starts, so the repair page can
+        # show "calling <model> · Ns" while the frontier thinks.
+        "model": _provider_model_name(provider, "frontier"),
+        "call_started_at": _utc_now_iso(),
     }
     attempts.append(l3_entry)
+    _emit()
     l3_user = f"drift_class: {drift_class}; ranked hypotheses: {[getattr(h, 'id', str(h)) for h in ranked]}"
     if evidence:
         # Real observed evidence rides as untrusted data (never
@@ -1772,14 +1837,22 @@ def run_frontier_climb(
     # 8192 still ran out (8,190 reasoning tokens, empty text, keyed demo
     # 2026-10-30). Billing is per token used, not per cap, so the cap is the
     # Muse maximum (131072, accepted live) rather than another guess.
+    # REQ-043 item 5: the cap is configurable (``FRONTIER_MAX_TOKENS``).
     try:
-        l3_result = effective.complete(l3_messages, max_tokens=L3_MAX_TOKENS, tier="frontier", purpose="l3-generate-patch")
+        from autobridge.config import frontier_max_tokens  # noqa: PLC0415
+
+        l3_cap = frontier_max_tokens()
+    except Exception:
+        l3_cap = L3_MAX_TOKENS
+    try:
+        l3_result = effective.complete(l3_messages, max_tokens=l3_cap, tier="frontier", purpose="l3-generate-patch")
     except ReplayMissing as exc:
         replay_missing.append(exc.prompt_hash)
         l3_entry["action"] = "l3_skipped"
         l3_entry["reason"] = (
             f"L3 skipped: no replay recording for prompt {exc.prompt_hash}; {_record_hint()}"
         )
+        _emit()
         return {
             "attempts": attempts,
             "usage": usage,
@@ -1852,6 +1925,7 @@ def run_frontier_climb(
             l3_outcome = "no_patch"
         stamp_call_outcome(session, run_id=run_id, tier="frontier", outcome=l3_outcome)
     replay_captured_at = str(getattr(provider, "last_captured_at", "") or "")
+    _emit()
     return {
         "attempts": attempts,
         "usage": usage,

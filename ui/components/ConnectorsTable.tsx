@@ -66,6 +66,23 @@ export function waitingRepairs(repairs: RepairRunOut[]): RepairRunOut[] {
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 }
 
+/** A repair whose climb is still running (REQ-043), newest first. */
+export function climbingRepairs(repairs: RepairRunOut[]): RepairRunOut[] {
+  return repairs
+    .filter((r) => r.decision === "climbing")
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+
+/** Highest ladder level in a (possibly partial) trace; 0 when empty. */
+export function currentRungOfTrace(trace: Array<Record<string, unknown>> | null | undefined): number {
+  let best = 0;
+  for (const entry of trace ?? []) {
+    const level = entry["level"];
+    if (typeof level === "number" && Number.isFinite(level) && level > best) best = level;
+  }
+  return best;
+}
+
 /**
  * Attribute repairs to connectors via their drift events.
  * Repairs whose drift ids are unknown (drift fetch failed) are skipped.
@@ -183,6 +200,25 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage: _modelUsa
                 {drift.length > 0 ? `${drift.length} open` : "0"}
               </span>
               {drift.length ? <code>{drift[0].drift_class}</code> : null}
+              {(() => {
+                // REQ-043: the connector row's activity links to the
+                // running repair — the break → watch-it-fix demo moment.
+                const climbing = climbingRepairs(repairs)[0];
+                if (!climbing) return null;
+                const rung = Math.max(
+                  currentRungOfTrace(climbing.ladder_trace as Array<Record<string, unknown>>),
+                  climbing.ladder_level_reached ?? 0,
+                );
+                return (
+                  <Link
+                    href={`/repairs/${encodeURIComponent(climbing.id)}`}
+                    data-testid={`connector-repair-link-${c.id}`}
+                    className="mt-1 inline-block text-xs hover:underline"
+                  >
+                    repairing at L{rung} →
+                  </Link>
+                );
+              })()}
             </div>
             <div className="cspark">
               <span className="clbl">Model tokens, per repair</span>

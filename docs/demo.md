@@ -200,10 +200,16 @@ POST /connectors/{harbor_id}/sync      → SyncRun Degraded, unmet: [money_invar
 
 The semantic repair arrives a few seconds after the break when the
 frontier call is live: `POST /sync` records the sync run and the drift
-and returns, and the repair row lands when the background job finishes
-(the Repairs page polls; `make demo` step 4 polls the repair job, then
-the repair row, bounded by the L3 budget). With no key the replay (or
-the explicit skip) runs inline, so the row is there at once.
+and returns, and the repair row is created at once when the background
+job starts (decision `climbing`) — the Repairs list shows it at the top
+as `repairing` within one poll, and the repair page is reachable while
+the climb runs (rungs so far, the current rung, and during a model call
+the model id with elapsed seconds; no Approve/Reject until the climb
+writes its decision). The row is filled in place when the job finishes;
+a crashed or timed-out job leaves it `failed`, never stuck at
+`repairing` (a restart marks orphaned running rows `failed`). The L3
+output cap is `FRONTIER_MAX_TOKENS` (default 131072). With no key the
+replay (or the explicit skip) runs inline, so the row is final at once.
 
 Renders in `/repairs/[id]`: `Degraded` with the failing money invariant named,
 the derivation funnel, the L3 model-call box (or the explicit skip with the

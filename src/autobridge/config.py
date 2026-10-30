@@ -87,6 +87,28 @@ def small_model() -> str:
     return os.environ.get("SMALL_MODEL", "") or frontier_model()
 
 
+#: Default cap on L3 frontier output tokens (REQ-043 item 5). Reasoning
+#: models spend most of a small budget on thinking and return an empty
+#: message (keyed demo 2026-10-30: 8,190 reasoning tokens, empty text at
+#: 8,192); billing is per token used, not per cap, so the default is the
+#: Muse maximum (131072, accepted live) rather than another guess.
+DEFAULT_FRONTIER_MAX_TOKENS = 131072
+
+
+def frontier_max_tokens() -> int:
+    """L3 output-token cap (env ``FRONTIER_MAX_TOKENS``, default 131072)."""
+    raw = (os.environ.get("FRONTIER_MAX_TOKENS", "") or "").strip()
+    if not raw:
+        return DEFAULT_FRONTIER_MAX_TOKENS
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"FRONTIER_MAX_TOKENS must be an integer, got {raw!r}") from None
+    if value <= 0:
+        raise ValueError(f"FRONTIER_MAX_TOKENS must be positive, got {value}")
+    return value
+
+
 def opencode_model() -> str:
     """Model for the opencode baseline driver (env ``OPENCODE_MODEL``).
 

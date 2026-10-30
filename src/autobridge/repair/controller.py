@@ -14,6 +14,7 @@ AUTH_EXPIRED tries refresh if spec auth permits, else escalates.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import replace as _replace
 from typing import TYPE_CHECKING, Any
 
@@ -103,6 +104,94 @@ def _existing_evidence_ids(session: Any, candidate_ids: list[str]) -> list[str]:
     except Exception:
         return []
 
+def trace_from_attempts(attempts: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Normalize rung-keyed climb attempts to level-keyed ladder trace entries.
+
+    The same normalization the semantic climb applies to its final write —
+    the repair page reads ``ladder_trace`` levels, and the running row must
+    show the rungs so far while the climb is still in flight (REQ-043).
+    """
+    trace: list[dict[str, Any]] = []
+    for attempt in attempts or []:
+        if not isinstance(attempt, dict):
+            continue
+        entry = dict(attempt)
+        rung = entry.pop("rung", None)
+        if isinstance(rung, int) and not isinstance(rung, bool):
+            entry["level"] = rung
+        trace.append(entry)
+    return trace
+
+
+def current_rung_level(trace: list[dict[str, Any]] | None) -> int:
+    """Highest ladder level in a (possibly partial) trace; 0 when empty."""
+    best = 0
+    for entry in trace or []:
+        if not isinstance(entry, dict):
+            continue
+        level = entry.get("level")
+        if isinstance(level, int) and not isinstance(level, bool) and level > best:
+            best = level
+    return best
+
+
+def _finalize_repair_row(
+    session: Any,
+    *,
+    result: Any,
+    existing_repair_run_id: str | None,
+    drift_event_ids: list[str],
+    vendor: str | None,
+    fingerprint_delta: Any | None,
+    drift_class: str | None,
+    hypotheses: list[Any] | None,
+) -> Any:
+    """Fill the repair row for a finished climb (REQ-043).
+
+    When *existing_repair_run_id* names the ``climbing`` row the repair job
+    created at start, that same row is filled in place (decision, patch,
+    trace, usage, bundle) — never a second row. Otherwise a new row is
+    inserted, as before. Returns the row; the caller flushes.
+    """
+    bundle_dict = result.escalation_bundle.to_dict() if result.escalation_bundle else None
+    fields: dict[str, Any] = {
+        "ladder_level_reached": result.ladder_level_reached,
+        "vendor": vendor,
+        "drift_signature": delta_signature(fingerprint_delta),
+        "drift_class": drift_class,
+        "fingerprint_delta": delta_to_json(fingerprint_delta),
+        "candidate_patch": result.candidate_patch,
+        "rule_id": result.rule_id,
+        "hypothesis_ids": _hypothesis_ids(hypotheses),
+        # A finished climb owns these columns: the judge (verifier verdict)
+        # and the candidate release write them after this, never before —
+        # resetting keeps a retried climb from showing a stale verdict.
+        "visible_test_results": [],
+        "verifier_report_id": None,
+        "model_usage": dict(result.model_usage),
+        "ladder_trace": list(result.ladder_trace),
+        "escalation_bundle": bundle_dict,
+        "decision": result.decision,
+    }
+    run: Any = None
+    if existing_repair_run_id:
+        try:
+            run = session.get(RepairRun, existing_repair_run_id)
+        except Exception:
+            run = None
+    if run is None:
+        run = RepairRun(
+            drift_event_ids=list(drift_event_ids or []),
+            **fields,
+        )
+        session.add(run)
+    else:
+        for key, value in fields.items():
+            setattr(run, key, value)
+    session.flush()
+    return run
+
+
 class RepairController:
     """Deterministic repair orchestration (L0/L1 for W4.4)."""
 
@@ -151,12 +240,22 @@ class RepairController:
         # are kept. Defaults preserve existing behavior exactly.
         enable_knowledge: bool = True,
         enable_rules: bool = True,
+        # REQ-043: live progress + pre-created row. *existing_repair_run_id*
+        # names the ``climbing`` row the repair job created at start; the
+        # final write fills that same row instead of inserting a second one
+        # (REQ-040 threading stays the only link). *on_rung* streams rung
+        # snapshots to the job handler, which commits them to the row
+        # between rungs — never across a model call.
+        on_rung: Any | None = None,
+        existing_repair_run_id: str | None = None,
     ) -> LadderResult:
         """Run ladder for given drift context and optionally persist RepairRun.
 
         If *session* is provided, a RepairRun row is inserted and committed
-        (flush). Caller is responsible for outer commit/rollback. If session is
-        None, only the LadderResult is returned (pure logic, no DB side-effect).
+        (flush) — or, when *existing_repair_run_id* names the job's running
+        row, that same row is filled in place (no second row). Caller is
+        responsible for outer commit/rollback. If session is None, only the
+        LadderResult is returned (pure logic, no DB side-effect).
 
         Evidence is not written here; callers that need evidence chains should
         use handle_with_evidence or create EvidenceRecords manually.
@@ -186,6 +285,8 @@ class RepairController:
                 hypothesis_stages=hypothesis_stages,
                 enable_knowledge=enable_knowledge,
                 enable_rules=enable_rules,
+                on_rung=on_rung,
+                existing_repair_run_id=existing_repair_run_id,
             )
 
         result = run_ladder(
@@ -209,26 +310,16 @@ class RepairController:
 
         # Persist RepairRun if session provided
         if session is not None:
-            bundle_dict = result.escalation_bundle.to_dict() if result.escalation_bundle else None
-            run = RepairRun(
+            run = _finalize_repair_row(
+                session,
+                result=result,
+                existing_repair_run_id=existing_repair_run_id,
                 drift_event_ids=list(drift_event_ids or []),
-                ladder_level_reached=result.ladder_level_reached,
                 vendor=vendor_val,
-                drift_signature=delta_signature(fingerprint_delta),
+                fingerprint_delta=fingerprint_delta,
                 drift_class=drift_class,
-                fingerprint_delta=delta_to_json(fingerprint_delta),
-                candidate_patch=result.candidate_patch,
-                rule_id=result.rule_id,
-                hypothesis_ids=_hypothesis_ids(hypotheses),
-                visible_test_results=[],
-                verifier_report_id=None,
-                decision=result.decision,
-                model_usage=dict(result.model_usage),
-                ladder_trace=list(result.ladder_trace),
-                escalation_bundle=bundle_dict,
+                hypotheses=hypotheses,
             )
-            session.add(run)
-            session.flush()
             # The row this climb persisted — callers link candidates and
             # verdicts through it, never by re-fetching "the newest row"
             # (concurrent repairs would cross-link, REQ-040/REQ-042).
@@ -326,6 +417,8 @@ class RepairController:
         hypothesis_stages: list[dict[str, Any]] | None = None,
         enable_knowledge: bool = True,
         enable_rules: bool = True,
+        on_rung: Any | None = None,
+        existing_repair_run_id: str | None = None,
     ) -> LadderResult:
         """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then escalate.
 
@@ -341,7 +434,12 @@ class RepairController:
 
         from autobridge.repair.ladder import run_frontier_climb  # noqa: PLC0415
 
-        active_run_id = run_id or f"repair-{_uuid.uuid4().hex[:12]}"
+        # REQ-043: when the repair job pre-created the running row, the
+        # climb's ModelCalls link to it directly — no post-hoc relink —
+        # and the final write fills that same row.
+        active_run_id = (
+            existing_repair_run_id or run_id or f"repair-{_uuid.uuid4().hex[:12]}"
+        )
         # AR-4-3 / REQ-036: never fabricate the L3 gate count. The gate on
         # L3 is the enumerator's yield — the surviving hypotheses after wire
         # filtering — so derive it from the hypotheses actually passed in.
@@ -367,6 +465,7 @@ class RepairController:
             evidence=evidence,
             enable_knowledge=enable_knowledge,
             enable_rules=enable_rules,
+            on_rung=on_rung,
         )
         if climb.get("resolved_rung") == 0:
             # L0 knew this drift: fall back to the deterministic path, which
@@ -382,19 +481,13 @@ class RepairController:
                 session=session,
                 enable_knowledge=enable_knowledge,
                 enable_rules=enable_rules,
+                on_rung=on_rung,
+                existing_repair_run_id=existing_repair_run_id,
             )
 
         # Normalize rung-keyed climb attempts to level-keyed ladder trace
         # entries (what rung_ledger and the repairs UI read).
-        trace: list[dict[str, Any]] = []
-        for attempt in climb.get("attempts", []):
-            if not isinstance(attempt, dict):
-                continue
-            entry = dict(attempt)
-            rung = entry.pop("rung", None)
-            if isinstance(rung, int) and not isinstance(rung, bool):
-                entry["level"] = rung
-            trace.append(entry)
+        trace = trace_from_attempts(climb.get("attempts"))
         l3_entry = next((e for e in trace if e.get("level") == 3), None)
         if l3_entry is not None and climb.get("proposal") is not None:
             # Record the actual L3 proposal on its rung (JSON-safe list):
@@ -443,25 +536,16 @@ class RepairController:
             requires_release=False,
         )
         if session is not None:
-            run = RepairRun(
+            run = _finalize_repair_row(
+                session,
+                result=result,
+                existing_repair_run_id=existing_repair_run_id,
                 drift_event_ids=list(drift_event_ids or []),
-                ladder_level_reached=result.ladder_level_reached,
                 vendor=vendor_val,
-                drift_signature=delta_signature(fingerprint_delta),
+                fingerprint_delta=fingerprint_delta,
                 drift_class=drift_class,
-                fingerprint_delta=delta_to_json(fingerprint_delta),
-                candidate_patch=result.candidate_patch,
-                rule_id=result.rule_id,
-                hypothesis_ids=_hypothesis_ids(surviving),
-                visible_test_results=[],
-                verifier_report_id=None,
-                decision=result.decision,
-                model_usage=dict(result.model_usage),
-                ladder_trace=list(result.ladder_trace),
-                escalation_bundle=bundle.to_dict(),
+                hypotheses=surviving,
             )
-            session.add(run)
-            session.flush()
             # The row this climb persisted — callers link candidates and
             # verdicts through it, never by re-fetching "the newest row"
             # (concurrent repairs would cross-link, REQ-040/REQ-042).
@@ -663,6 +747,11 @@ def run_semantic_repair(
     knowledge_cache: Any | None = None,
     scenario: str | None = None,
     verifier_url: str | None = None,
+    # REQ-043: when the repair job pre-created the running row, thread it
+    # through so the final write fills that same row and rung snapshots
+    # stream to it while the climb runs.
+    on_rung: Any | None = None,
+    existing_repair_run_id: str | None = None,
 ) -> tuple[LadderResult, dict[str, Any]]:
     """Climb a semantic drift the way the live repair path does (REQ-039).
 
@@ -724,6 +813,8 @@ def run_semantic_repair(
         validate_against=spec,
         evidence=evidence or None,
         hypothesis_stages=stages,
+        on_rung=on_rung,
+        existing_repair_run_id=existing_repair_run_id,
     )
     info: dict[str, Any] = {"provider_mode": mode, "stages": stages}
     l3_entry = next(
@@ -853,6 +944,122 @@ def _judge_semantic_proposal(
     return verdict_summary
 
 
+def _start_running_repair_row(
+    session: Any,
+    *,
+    drift_event_ids: list[str],
+    drift_class: str | None,
+    vendor: str | None,
+    fingerprint_delta: Any | None,
+    job_id: str | None,
+) -> Any | None:
+    """Create (or reuse, on job retry) the running RepairRun row (REQ-043).
+
+    The row starts at decision ``climbing`` with the drift link, so the
+    Repairs list and the repair page are reachable while the climb runs.
+    The job's ``run_id`` is pointed at it at once, so a crash, a poll, or a
+    restart can always find the row from the job. Best-effort: returns
+    ``None`` when the row cannot be created (the final write still lands
+    the decision on its own row).
+    """
+    try:
+        from autobridge.control.models import Job as _Job  # noqa: PLC0415
+
+        job = session.get(_Job, job_id) if job_id else None
+        if job is not None and job.run_id:
+            try:
+                existing = session.get(RepairRun, job.run_id)
+            except Exception:
+                existing = None
+            if existing is not None and existing.decision in ("climbing", "failed"):
+                existing.decision = "climbing"
+                trace = list(existing.ladder_trace or [])
+                trace.append(
+                    {
+                        "level": current_rung_level(trace),
+                        "action": "restarted",
+                        "reason": f"repair job {job_id} retrying the climb",
+                    }
+                )
+                existing.ladder_trace = trace
+                session.commit()
+                return existing
+        row = RepairRun(
+            drift_event_ids=list(drift_event_ids or []),
+            ladder_level_reached=0,
+            vendor=vendor,
+            drift_signature=delta_signature(fingerprint_delta),
+            drift_class=drift_class,
+            fingerprint_delta=delta_to_json(fingerprint_delta),
+            candidate_patch=None,
+            rule_id=None,
+            hypothesis_ids=[],
+            visible_test_results=[],
+            verifier_report_id=None,
+            decision="climbing",
+            model_usage={},
+            ladder_trace=[],
+            escalation_bundle=None,
+        )
+        session.add(row)
+        session.flush()
+        if job is not None:
+            job.run_id = row.id
+        session.commit()
+        return row
+    except Exception:
+        with contextlib.suppress(Exception):
+            session.rollback()
+        return None
+
+
+def fail_orphaned_repairs(
+    session: Any,
+    *,
+    reason: str = "control restarted while the repair was running",
+) -> int:
+    """Mark every still-``climbing`` repair ``failed`` (REQ-043 item 4).
+
+    A control restart reclaims orphaned ``running`` jobs back to ``queued``;
+    their repair rows would otherwise sit at ``repairing`` forever. The
+    retried job resets its row to ``climbing`` when it restarts. Returns
+    the number of rows marked.
+    """
+    try:
+        from sqlalchemy import select as _select  # noqa: PLC0415
+
+        rows = (
+            session.execute(_select(RepairRun).where(RepairRun.decision == "climbing"))
+            .scalars()
+            .all()
+        )
+    except Exception:
+        return 0
+    count = 0
+    for row in rows:
+        try:
+            trace = list(row.ladder_trace or [])
+            trace.append(
+                {
+                    "level": current_rung_level(trace),
+                    "action": "failed",
+                    "reason": reason[:500],
+                }
+            )
+            row.ladder_trace = trace
+            row.decision = "failed"
+            count += 1
+        except Exception:
+            continue
+    try:
+        session.commit()
+    except Exception:
+        with contextlib.suppress(Exception):
+            session.rollback()
+        return 0
+    return count
+
+
 def repair_job_handler(ctx: Any) -> dict[str, Any]:
     """JobRunner handler for repair jobs (wires RepairController to DB).
 
@@ -926,7 +1133,104 @@ def repair_job_handler(ctx: Any) -> dict[str, Any]:
     if drift_class is None:
         drift_class = payload.get("drift_class") or "UNKNOWN"
 
+    # REQ-043: the RepairRun row exists from the start of the climb — not
+    # after it. Create it here (decision "climbing"), commit at once, and
+    # update the same row as the climb moves rung by rung (each update
+    # commits before any model call runs, so no transaction is ever held
+    # across a call — REQ-042 still holds). The final write fills this
+    # same row; there is never a second row for the job (REQ-040).
+    running_row = _start_running_repair_row(
+        ctx.session,
+        drift_event_ids=drift_ids,
+        drift_class=drift_class,
+        vendor=vendor,
+        fingerprint_delta=payload.get("fingerprint_delta"),
+        job_id=getattr(ctx, "job_id", None),
+    )
+    running_row_id: str | None = running_row.id if running_row is not None else None
+    if running_row_id is not None:
+        ctx.run_id = running_row_id
+
+    def _progress(
+        climb_attempts: list[dict[str, Any]], climb_usage: dict[str, Any]
+    ) -> None:
+        """Write rung snapshots to the running row (REQ-043 item 1)."""
+        if running_row_id is None:
+            return
+        try:
+            row = ctx.session.get(RepairRun, running_row_id)
+            if row is None or row.decision != "climbing":
+                return  # finalized or gone; stop emitting
+            trace = trace_from_attempts(climb_attempts)
+            row.ladder_trace = trace
+            row.model_usage = dict(climb_usage or {})
+            row.ladder_level_reached = current_rung_level(trace)
+            ctx.session.commit()
+        except Exception:
+            with contextlib.suppress(Exception):
+                ctx.session.rollback()
+
+    def _fail_running_row(reason: str) -> None:
+        """Leave a crashed/timed-out climb in a terminal state (REQ-043 item 4)."""
+        if running_row_id is None:
+            return
+        try:
+            row = ctx.session.get(RepairRun, running_row_id)
+            if row is None:
+                return
+            trace = list(row.ladder_trace or [])
+            trace.append(
+                {
+                    "level": current_rung_level(trace),
+                    "action": "failed",
+                    "reason": reason[:500],
+                }
+            )
+            row.ladder_trace = trace
+            row.decision = "failed"
+            ctx.session.commit()
+        except Exception:
+            with contextlib.suppress(Exception):
+                ctx.session.rollback()
+
     controller = RepairController()
+    assert spec is not None  # noqa: S101 — the fallback above guarantees a spec
+    try:
+        return _run_repair_climb(
+            ctx,
+            controller=controller,
+            spec=spec,
+            drift_class=drift_class,
+            vendor=vendor,
+            drift_ids=drift_ids,
+            payload=payload,
+            running_row_id=running_row_id,
+            on_rung=_progress,
+        )
+    except Exception as exc:
+        _fail_running_row(f"{type(exc).__name__}: {exc}")
+        raise
+
+
+def _run_repair_climb(
+    ctx: Any,
+    *,
+    controller: RepairController,
+    spec: dict[str, Any],
+    drift_class: str,
+    vendor: str | None,
+    drift_ids: list[str],
+    payload: dict[str, Any],
+    running_row_id: str | None,
+    on_rung: Any | None,
+) -> dict[str, Any]:
+    """Climb the ladder for a repair job and build its result (REQ-043).
+
+    The running RepairRun row already exists (created at job start);
+    *running_row_id* threads it through the climb so the final write fills
+    that same row, and *on_rung* streams rung snapshots to it while the
+    climb runs. ModelCalls link to the running row directly.
+    """
     if drift_class == "SEMANTIC_VALUE_DRIFT":
         # REQ-039: the worker repair path climbs the same semantic climb
         # as the sync-inline path (funnel + L3 attempt + verifier judge),
@@ -977,6 +1281,8 @@ def repair_job_handler(ctx: Any) -> dict[str, Any]:
                 validate_against=spec,
                 evidence=payload.get("l3_evidence") or None,
                 hypothesis_stages=payload.get("hypothesis_stages"),
+                on_rung=on_rung,
+                existing_repair_run_id=running_row_id,
             )
             info: dict[str, Any] = {"provider_mode": mode}
             l3_entry = next(
@@ -1014,6 +1320,8 @@ def repair_job_handler(ctx: Any) -> dict[str, Any]:
                 vendor=vendor,
                 drift_event_ids=drift_ids,
                 session=ctx.session,
+                on_rung=on_rung,
+                existing_repair_run_id=running_row_id,
             )
     else:
         info = {}
@@ -1026,6 +1334,8 @@ def repair_job_handler(ctx: Any) -> dict[str, Any]:
             vendor=vendor,
             drift_event_ids=drift_ids,
             session=ctx.session,
+            on_rung=on_rung,
+            existing_repair_run_id=running_row_id,
         )
 
     # Build job result

@@ -520,7 +520,7 @@ def test_ensure_migrated_repairs_stale_version_row(
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "alembic"))
     command.stamp(cfg, "0008_model_call_reasoning_tokens")
-    assert ensure_migrated(url) == "0010_scheduler_pause"
+    assert ensure_migrated(url) == "0011_repair_running_states"
 
 
 def test_model_call_ledger_stores_reasoning_split(session: Session) -> None:
