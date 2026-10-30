@@ -63,12 +63,14 @@ Build a connector page (`ui/app/connectors/new`) does not expose it. Scope is ex
    on-premise edge agent and the relay address; HTTP → cloud), and the build page **displays** that decision as a
    message on the result ("runs: cloud" / "runs: on-premise edge agent, via the relay"). No base-URL typing for the
    PABX on camera.
-7. **Then deck 7's break, unchanged:** `make demo-break SCENARIO=fias_record_layout_change` on the live-built PABX
-   connector → link re-handshakes on the new layout, postings resume, connector stays ● Working (as today). The
-   `agent_restart_inflight` step is **not** part of the demo script.
+7. **Then deck 7's break is a link drop** (owner, 2026-10-30: the most common real FIAS failure):
+   `make demo-break SCENARIO=fias_link_resync` on the live-built PABX connector → the PABX panel shows the link go
+   down, the agent re-handshakes (LS/LD/LR/LA), the link comes back, postings resume, **nothing lost, nothing
+   duplicated** (counts shown), connector ● Working throughout or back to ● within one tick. No repair, no Approve.
+   `fias_record_layout_change` and `agent_restart_inflight` are **not** part of the demo script.
 Tests: seed without Meridian or PABX; build page shows the engine's runtime decision (cloud for
 HTTP docs, edge agent for the FIAS docs) and sends no runtime choice; FIAS docs v3 build → edge release → postings
-→ Working; layout change handled on it; build page sends `spec_vocabulary`; v1 refusal shown with reason and no release; v2
+→ Working; link drop + resync on it loses and duplicates nothing; build page sends `spec_vocabulary`; v1 refusal shown with reason and no release; v2
 build connects; connector page shows both attempts. Gates unkeyed + `make demo` 8/8.
 
 
