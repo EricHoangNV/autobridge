@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 12:30): **REQ-044, then REQ-045, then REQ-046** (REQ-046 must land before any benchmark rehearsal).
 
 ### REQ-045 — Every model prompt lives in a file loaded at startup, and each one asks a well-posed, specific question (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 05:37)
 Owner audit (2026-10-30), after REQ-044 showed the L3 patch prompt was ill-posed: the other engine prompts have the
 same defect — they are one-line stubs in code that do not give the model what it needs to answer.
 - **L2 ranking** (`repair/ladder.py` `_call_small_model_rank` ~230; callers `ladder.py` ~718, ~1707,
