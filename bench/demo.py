@@ -938,8 +938,8 @@ def step2_unfamiliar_api(seed: int, live: bool, base_url: str) -> dict[str, Any]
     )
 
 
-def _poll_job_terminal(base_url: str, job_id: str, calls: list[dict[str, Any]], *, tries: int = 30) -> dict[str, Any] | None:
-    """Poll GET /jobs/{id} until terminal; every poll is a recorded call."""
+def _poll_job_terminal(base_url: str, job_id: str, calls: list[dict[str, Any]], *, tries: int = 150) -> dict[str, Any] | None:
+    """Poll GET /jobs/{id} until terminal (up to 5 min: a live L3 call may think long); every poll is a recorded call."""
     import time as _time  # noqa: PLC0415
 
     last: dict[str, Any] | None = None

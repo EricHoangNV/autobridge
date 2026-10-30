@@ -43,6 +43,9 @@ from autobridge.repair.knowledge import (
 )
 from autobridge.repair.registry import matching_rules
 
+#: Output cap for the L3 frontier call (reasoning + answer); see run_frontier_climb.
+L3_MAX_TOKENS = 131072
+
 # Drift classes that always escalate (no patch attempted)
 _NON_FIXABLE: frozenset[str] = frozenset({"CAPABILITY_REMOVED", "AUTH_REVOKED"})
 
@@ -1766,8 +1769,11 @@ def run_frontier_climb(
     # the frontier call room for thinking *and* an answer. The
     # OpenAI-compatible wire shape takes no reasoning-effort knob, so budget
     # is the only lever; reasoning tokens are recorded separately below.
+    # 8192 still ran out (8,190 reasoning tokens, empty text, keyed demo
+    # 2026-10-30). Billing is per token used, not per cap, so the cap is the
+    # Muse maximum (131072, accepted live) rather than another guess.
     try:
-        l3_result = effective.complete(l3_messages, max_tokens=8192, tier="frontier", purpose="l3-generate-patch")
+        l3_result = effective.complete(l3_messages, max_tokens=L3_MAX_TOKENS, tier="frontier", purpose="l3-generate-patch")
     except ReplayMissing as exc:
         replay_missing.append(exc.prompt_hash)
         l3_entry["action"] = "l3_skipped"

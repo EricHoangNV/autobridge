@@ -524,7 +524,7 @@ def test_l3_requests_output_room_for_reasoning() -> None:
         scenario="gross_to_net",
         validate_against=_harbor_ref(),
     )
-    assert seen["max_tokens"] >= 8192
+    assert seen["max_tokens"] == 131072
 
 
 def test_replay_round_trips_reasoning_tokens(tmp_path: pathlib.Path) -> None:
