@@ -2400,3 +2400,25 @@ verifier 91.49%, simulators 90.48%; ui 192 pass); `make lint`,
 green. E2E/live-stack runs need Compose or a key — not in sandbox (owner
 step). `tests/unit/test_autobridge_control_contract.py` still uncollectable
 here (no `schemathesis` module installed — pre-existing env gap).
+
+### REQ-040 — repair provenance threaded, never newest-row (sbx1 2026-10-30)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). The source fix
+landed under REQ-042 (unscoped `select(RepairRun).order_by(created_at.desc())
+.limit(1)` deleted; `LadderResult` carries `repair_run_id`; `_finalize_proposal`,
+`repair_job_handler`, `_judge_semantic_proposal` and both `detect_*_after_sync`
+paths link by it). This task verified every path and added the prescribed test:
+- `tests/unit/test_autobridge_req040_provenance.py` (2 tests): (1) two
+  concurrent `detect_and_repair_after_sync` runs on different connectors
+  (barrier start, verifier gate mocked passing) each return their own
+  `repair_run_id`, candidate (`provenance_repair_run_id`) and
+  `verifier_report_id`; (2) deterministic twin — both `RepairRun` rows
+  persisted before either `_finalize_proposal` links, so the old newest-row
+  shape would hand both candidates the same row. Negative control: with the
+  re-fetch restored, test (2) fails, test (1) passes (SQLite serializes the
+  threads) — hence both shapes are kept. No `created_at` tie-break anywhere.
+- Gotcha: connector ids in specs must be slugs (`atlas-a`, not `Atlas-A`);
+  the L1 patch fails validation otherwise and the climb escalates.
+Gates: `make test` 2678 + 134 + 409 pass, 0 fail (autobridge 90% TOTAL,
+verifier 91%, simulators 90%; ui 192 pass); `make lint`, `make typecheck`
+green; e2e on local stack (`make local-up`, SIM token via load_dotenv):
+test_03 (6/6), test_09 + test_027_live_chain (14/14) green.

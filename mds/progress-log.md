@@ -3603,3 +3603,30 @@ fail (90.35/91.49/90.48%), ui 192, lint+typecheck+openapi-check+ui-typecheck
 green. Owner step: keyed full run + demo. Side effect: REQ-040's prescribed
 fix (threaded repair_run_id, unscoped re-fetch deleted) is implemented and
 tested here; REQ-040 left OPEN for its own flip.
+
+## 2026-10-30 02:40 UTC — REQ-040 DONE in sbx1
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Prescribed fix
+was already in code via REQ-042; verified it on all five link sites
+(inline + deferred `detect_*_after_sync`, `_finalize_proposal`, deferred
+`repair_job_handler`, `_judge_semantic_proposal`) — every one addresses the
+repair row by threaded id (`session.get`), no unscoped newest-row query
+remains outside intentionally-scoped list views. Added the prescribed
+regression test plus a deterministic interleave twin (new file
+`tests/unit/test_autobridge_req040_provenance.py`, 2 tests, incl. negative
+control against the restored bug). Full gates green; e2e repair paths green
+on the local stack. No owner step left on REQ-040.
+
+**Key decisions:**
+- Kept both test shapes: the REQ-prescribed concurrent runs (passes even on
+  the bug under SQLite serialization) and the deterministic persist-then-link
+  interleave (fails on the bug) — together they pin the fix.
+- No source change needed; the only edit besides the new test was the
+  REQUESTS.MD status flip.
+
+**Files changed:**
+- `tests/unit/test_autobridge_req040_provenance.py` — new (2 tests)
+- `mds/REQUESTS.MD` — REQ-040 OPEN → DONE
+
+**Notes for next iteration:**
+- Next request in owner priority is REQ-041 (S6 chart vs test_s6 e2e-ui).
+- Owner keyed verifications still open: REQ-042/027/028/021/024/025/039/031/033/032/030.
