@@ -4,53 +4,6 @@
 
 Owner priority (2026-10-30 12:30): **REQ-044, then REQ-045, then REQ-046** (REQ-046 must land before any benchmark rehearsal).
 
-### REQ-045 — Every model prompt lives in a file loaded at startup, and each one asks a well-posed, specific question (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 05:37)
-Owner audit (2026-10-30), after REQ-044 showed the L3 patch prompt was ill-posed: the other engine prompts have the
-same defect — they are one-line stubs in code that do not give the model what it needs to answer.
-- **L2 ranking** (`repair/ladder.py` `_call_small_model_rank` ~230; callers `ladder.py` ~718, ~1707,
-  `discovery/resolver.py` ~346): asks to "rank by prior and evidence" but sends **only hypothesis ids and priors** —
-  no evidence, drift, or values. The model can only sort by prior, which code already does; L2 adds nothing.
-- **L3 hypothesis generator** (`ladder.py` `_call_frontier_generate` ~315; callers `ladder.py` ~651,
-  `resolver.py` ~179): "propose one additional hypothesis" with only the existing ids and "need novel hypothesis for
-  unresolved drift" — no drift, evidence or docs. A blind guess.
-- **L3 patch** (REQ-044): being fixed in REQ-044; this REQ moves it to a file too.
-Fix:
-1. **Prompts out of code.** Every engine prompt (system + user template) lives in its own file under
-   `config/prompts/` (e.g. `l2_rank.md`, `l3_hypothesis.md`, `l3_patch.md`, plus any other engine model call found by
-   `git grep '\.complete('`): Markdown with a small front-matter (`id`, `version`, `purpose`, `tier`, `max_tokens`,
-   declared `inputs`, `answer_format`), then the system text and the user template with named placeholders.
-   `config/` already ships in the engine images (as `demo_targets.yaml` does); `AUTOBRIDGE_PROMPTS_DIR` overrides the
-   directory. No prompt text remains in Python.
-2. **Loaded once at startup**, not per call and not hot-reloaded: control/worker load and validate all prompts at
-   boot (every declared placeholder is supplied by its call site and none is left unrendered; missing file or bad
-   front-matter **fails startup** with the file name). Editing a prompt takes effect on the next engine restart —
-   document this in `docs/` ("improve a prompt: edit `config/prompts/<id>.md`, restart").
-3. **Traceable.** Each model call records the prompt `id`, `version` and a content hash on the ModelCall ledger and the
-   rung entry; the repair page "what the engine did" shows them next to the call (and can show the rendered prompt,
-   as REQ-039 already stores the messages). Replay recordings are keyed by the rendered messages as today, so an edited
-   prompt shows as "replay missing — re-record" (labelled, never a silent fallback); note it in docs/demo.md.
-4. **Each prompt asks a specific, answerable question** — the model is given everything it needs and a closed answer
-   format:
-   - **L2 rank**: for each hypothesis, its id, a one-line claim, and the evidence that supports or contradicts it (the
-     wire signals, the observed vs expected values, the field and entity, redacted); the drift class; the instruction
-     to rank by how well each hypothesis explains the evidence, not by prior. Answer: JSON
-     `{"ranking": [ids...], "confidence": 0..1, "rationale": "<one sentence>"}`; parse failures fall back to prior
-     order **labelled** on the rung.
-   - **L3 hypothesis**: the drift class, the signals and evidence, the spec excerpt for the affected entity, the
-     relevant docs excerpt (redacted, size-capped), the existing hypotheses with claims, and the hypothesis families the
-     engine can verify. Answer: `{"hypothesis": {"id","family","field","claim"}, "rationale"}` or `{"none": "<why>"}`;
-     an unknown family is rejected labelled.
-   - **L3 patch**: REQ-044's prompt, moved verbatim into `config/prompts/l3_patch.md`.
-   Untrusted data (docs, wire values) is fenced and labelled as data, never instructions; secrets never enter a
-   prompt (existing redaction seam).
-5. Tests: loader (valid, missing file, bad front-matter, unrendered/undeclared placeholder → startup error); each call
-   site renders its prompt with all inputs and no secret; L2 output parse + labelled fallback; L3 hypothesis parse /
-   `none` / unknown family; ledger records id/version/hash; replay round-trip with the new prompts; a test that fails
-   if any string passed as `messages` to `.complete(` is built from a literal in Python instead of the loader.
-6. Gates keyed and unkeyed: `make demo` 8/8 both ways. Owner check after: keyed step 4 rung entries show prompt
-   id/version; edit one prompt file, restart, and the next call shows the new version.
-
 ### REQ-046 — Fair benchmark: frontier arms get the same context the engine has, prompts in files (2026-10-30)
 Status: OPEN
 Must land **before** any benchmark rehearsal or the pre-registered run (a starved baseline is a strawman judges
@@ -739,6 +692,55 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-045 — Every model prompt lives in a file loaded at startup, and each one asks a well-posed, specific question (2026-10-30)
+Status: DONE (sbx1 2026-10-30)
+Owner audit (2026-10-30), after REQ-044 showed the L3 patch prompt was ill-posed: the other engine prompts have the
+same defect — they are one-line stubs in code that do not give the model what it needs to answer.
+- **L2 ranking** (`repair/ladder.py` `_call_small_model_rank` ~230; callers `ladder.py` ~718, ~1707,
+  `discovery/resolver.py` ~346): asks to "rank by prior and evidence" but sends **only hypothesis ids and priors** —
+  no evidence, drift, or values. The model can only sort by prior, which code already does; L2 adds nothing.
+- **L3 hypothesis generator** (`ladder.py` `_call_frontier_generate` ~315; callers `ladder.py` ~651,
+  `resolver.py` ~179): "propose one additional hypothesis" with only the existing ids and "need novel hypothesis for
+  unresolved drift" — no drift, evidence or docs. A blind guess.
+- **L3 patch** (REQ-044): being fixed in REQ-044; this REQ moves it to a file too.
+Fix:
+1. **Prompts out of code.** Every engine prompt (system + user template) lives in its own file under
+   `config/prompts/` (e.g. `l2_rank.md`, `l3_hypothesis.md`, `l3_patch.md`, plus any other engine model call found by
+   `git grep '\.complete('`): Markdown with a small front-matter (`id`, `version`, `purpose`, `tier`, `max_tokens`,
+   declared `inputs`, `answer_format`), then the system text and the user template with named placeholders.
+   `config/` already ships in the engine images (as `demo_targets.yaml` does); `AUTOBRIDGE_PROMPTS_DIR` overrides the
+   directory. No prompt text remains in Python.
+2. **Loaded once at startup**, not per call and not hot-reloaded: control/worker load and validate all prompts at
+   boot (every declared placeholder is supplied by its call site and none is left unrendered; missing file or bad
+   front-matter **fails startup** with the file name). Editing a prompt takes effect on the next engine restart —
+   document this in `docs/` ("improve a prompt: edit `config/prompts/<id>.md`, restart").
+3. **Traceable.** Each model call records the prompt `id`, `version` and a content hash on the ModelCall ledger and the
+   rung entry; the repair page "what the engine did" shows them next to the call (and can show the rendered prompt,
+   as REQ-039 already stores the messages). Replay recordings are keyed by the rendered messages as today, so an edited
+   prompt shows as "replay missing — re-record" (labelled, never a silent fallback); note it in docs/demo.md.
+4. **Each prompt asks a specific, answerable question** — the model is given everything it needs and a closed answer
+   format:
+   - **L2 rank**: for each hypothesis, its id, a one-line claim, and the evidence that supports or contradicts it (the
+     wire signals, the observed vs expected values, the field and entity, redacted); the drift class; the instruction
+     to rank by how well each hypothesis explains the evidence, not by prior. Answer: JSON
+     `{"ranking": [ids...], "confidence": 0..1, "rationale": "<one sentence>"}`; parse failures fall back to prior
+     order **labelled** on the rung.
+   - **L3 hypothesis**: the drift class, the signals and evidence, the spec excerpt for the affected entity, the
+     relevant docs excerpt (redacted, size-capped), the existing hypotheses with claims, and the hypothesis families the
+     engine can verify. Answer: `{"hypothesis": {"id","family","field","claim"}, "rationale"}` or `{"none": "<why>"}`;
+     an unknown family is rejected labelled.
+   - **L3 patch**: REQ-044's prompt, moved verbatim into `config/prompts/l3_patch.md`.
+   Untrusted data (docs, wire values) is fenced and labelled as data, never instructions; secrets never enter a
+   prompt (existing redaction seam).
+5. Tests: loader (valid, missing file, bad front-matter, unrendered/undeclared placeholder → startup error); each call
+   site renders its prompt with all inputs and no secret; L2 output parse + labelled fallback; L3 hypothesis parse /
+   `none` / unknown family; ledger records id/version/hash; replay round-trip with the new prompts; a test that fails
+   if any string passed as `messages` to `.complete(` is built from a literal in Python instead of the loader.
+6. Gates keyed and unkeyed: `make demo` 8/8 both ways. Owner check after: keyed step 4 rung entries show prompt
+   id/version; edit one prompt file, restart, and the next call shows the new version.
+
+Resolution: engine prompts (l2_rank, l3_hypothesis, l3_patch + optional l3_patch_retry) live in config/prompts/ with front-matter, loaded+validated at control/worker startup (AUTOBRIDGE_PROMPTS_DIR overrides; bad file fails boot naming it); L2 ranks by evidence with confidence + labelled prior-order fallback, L3-hypothesis answers hypothesis/none with unknown-family rejection, L3 patch renders the REQ-044 question from the file; prompt id/version/hash on every ModelCall (migration 0012) + rung entry, shown on the repair page; replay fixture re-captured for the new hashes. Gates: lint/typecheck/openapi/ui-typecheck green, make test 2749+134+409+202 green (cov >=90%), make demo 8/8 unkeyed live-stack (new-hash L3 skip), matrix 21 + test_05 24 green. Owner step: keyed step-4 check (rung entries show prompt id/version; edit a prompt, restart, next call shows new version).
 
 ### REQ-044 — Ask L3 a well-posed question: show the spec it patches, the raw record, and allow an explicit escalation (2026-10-30)
 Status: DONE (sbx1 2026-10-30)

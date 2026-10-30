@@ -3661,3 +3661,29 @@ Repair rows now exist from the start of the climb: `repair_job_handler` creates 
 
 ## 2026-10-30 — REQ-044 DONE (sbx1; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Ask L3 a well-posed question: the prompt now names the connector-spec patch target with exact JSON Pointers per patchable member, includes the entity spec subtree and 1–2 redacted raw vendor records, and accepts `{"patch": [...], "rationale"}` or `{"escalate": question, "rationale"}` (fenced/bare-list tolerated). A non-applying or off-pointer patch gets one retry with the error appended (both calls on the ledger), then escalates; a model escalation resolves L4 with the model's question, labelled as the model's on the repair page (rung reason carries rationale + changed pointers). Replay fixtures/tests updated for the new prompt hashes (bd59fb05, b327e844); demo/recordings left for the owner's keyed re-capture. Gates: make test 2698+134+409/ui-201 green (cov 90.09/91.49/≥90), lint/typecheck/openapi/ui-typecheck green, demo 8/8 unkeyed on local-up (step 4 explicit skip), matrix 21 + test_05 24 e2e green live. Owner step: keyed step-4 L3 answer check (applying patch or explicit escalation, never "does not apply") + record-frontier re-capture commit. Known env notes: demo DNS-teardown errors + req030 flake under full-suite load (pass solo); live e2e shells need SIM_ADMIN_TOKEN + AUTOBRIDGE_CONTROL_TOKEN exported.
+
+## REQ-045 — engine prompts in files, well-posed L2/L3 questions
+**Date:** 2026-10-30
+**Ref:** REQUESTS.MD REQ-045 (owner audit after REQ-044)
+
+**What was done:**
+- `config/prompts/` holds `l2_rank.md`, `l3_hypothesis.md`, `l3_patch.md` (+ optional `l3_patch_retry.md`); new `src/autobridge/llm/prompts.py` loader validates front-matter and renders with all inputs (startup-loaded in control + worker lifespans, `AUTOBRIDGE_PROMPTS_DIR` override).
+- L2 ranks by evidence with model confidence (+ labelled prior-order fallback); L3-hypothesis answers hypothesis/`none` with unknown-family rejection; L3 patch renders the REQ-044 question from the file (retry from its own file).
+- Prompt id/version/hash on every `ModelCall` (alembic 0012) and rung entry; repair page model-call box shows them; replay fixture re-captured for the new hashes.
+- 51 new prompt tests + updated frontier-climb/parity/rung-ledger/db-models suites + new UI prompt test.
+
+**Key decisions:**
+- Single `{evidence_sections}` placeholder for L3 patch keeps the REQ-044 rendering verbatim; block defaults are "(none recorded)" data and the guidance line lives in the file, so no prompt text stays in Python.
+- Retry without `l3_patch_retry.md` is an explicit skip, never an invented message.
+- `prompt=` only travels the `BudgetedProvider` path (raw providers keep their protocol).
+
+**Files changed:**
+- `config/prompts/*.md`, `src/autobridge/llm/prompts.py`, `src/autobridge/llm/__init__.py`, `src/autobridge/llm/provider.py`
+- `src/autobridge/repair/ladder.py`, `src/autobridge/discovery/resolver.py`
+- `src/autobridge/control/{app,migrate,models}.py`, `src/autobridge/control/routes/demo.py`, `src/autobridge/control/schemas.py`, `src/autobridge/engine/app.py`
+- `alembic/versions/0012_model_call_prompt_ref.py`, `tests/unit/test_autobridge_prompts.py`, `tests/fixtures/replay/gross_to_net.json`, UI `ModelCallBox.tsx` + test, `ui/openapi.json`, `ui/lib/api/schema.d.ts`, `docs/architecture.md`, `docs/demo.md`
+
+**Notes for next iteration:**
+- REQ-046 (bench prompts in files) is the next owner-priority item and reuses this loader.
+- Owner verify for REQ-045: keyed step-4 run shows prompt id/version on rung entries; edit one prompt file, restart, next call shows the new version; then `make record-frontier SCENARIO=gross_to_net` re-capture and commit.
+- One full-suite run hit an unrelated sandbox-proxy DNS teardown flake (green on re-run); `make test` must run with `--extra dev`.
