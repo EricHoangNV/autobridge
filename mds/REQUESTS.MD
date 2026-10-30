@@ -2,7 +2,55 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 15:20): **REQ-048 next.**
+Owner priority (2026-10-30 16:00): **REQ-048, then REQ-049.**
+
+### REQ-049 — Deck 5 Green → Red → Green: Harbor built from its wiki carries the totals check; the model proposes "accept the vendor's change" for the human to approve (2026-10-30)
+Status: OPEN
+Owner decision (2026-10-30). Today deck 5's totals check comes from the **hand-written** Harbor reference spec
+(`generated/connectors/harborpms/reference/spec.yaml` ~127, `money_invariant` vs `$.gross_sum`) loaded by
+`make demo-seed`; a Harbor built from its docs gets no such check (discovery never emits `money_invariant`; the wiki
+never documents `meta.gross_sum`, though `simulators/harborpms/app.py` ~185 returns it), and the escalation ends Red
+with nothing to approve. Wanted flow, one connector, one take: deck 3 builds Harbor from its wiki (● Working, with the
+totals check) → deck 5 `gross_to_net` → ■ Error, the model's question **and one proposed change** → presenter clicks
+**Approve** ("accept net") → ● Working; or **Deny** ("keep everything as-is, contact the vendor") → stays ■ Error.
+1. **Docs.** Harbor's wiki page (devportal) and `simulators/docs/harborpms.md` document the page-level
+   `meta.gross_sum` ("sum of the gross amounts of the records on this page") for reservations and folios, in the wiki's
+   existing stale-wiki voice. Do not touch LegacyStay (never tuned on) or held-out material.
+2. **Discovery adds the check from the docs.** When the docs describe a page-level total for a money field, the built
+   spec gets the `money_invariant` check for that field (`compare_to` the documented path); never inferred when the
+   docs are silent (never-guess stands). The build page shows it ("check added from the docs: totals must match
+   `meta.gross_sum`"). Generic: keyed on "docs describe a total of a money field", not on Harbor.
+3. **Seed.** `make demo-seed` no longer creates Harbor (three connectors: Atlas, Meridian, PABX edge). Deck 3 builds it
+   in the UI; `make demo` keeps working stand-alone (it builds Harbor from docs itself; the hand-written reference spec
+   stays for tests/bench only where they need it). Update the "four connectors" wording everywhere.
+4. **The model may propose one change for a human decision — a real proposal, not a canned one.** Extend the L3 answer
+   format in `config/prompts/l3_patch.md` generically: besides `{"patch"...}` and `{"escalate"...}`, the model may answer
+   `{"escalate": "<question>", "rationale": "...", "proposal": {"label": "<short button text>", "effect": "<what
+   Approve does, one sentence>", "patch": [<RFC 6902 ops on the allowed spec pointers>]}}` — "if the operator accepts
+   the vendor's new behaviour, this is the change". The prompt explains the option generically (a business decision the
+   evidence cannot settle may come with the change the operator could approve) and **must not mention gross, net,
+   totals, Harbor or this scenario**; a test fails if any prompt file or engine module contains scenario-specific
+   wording for this. The proposal patch passes the existing apply + allowed-pointer check (one retry on error, as
+   REQ-044); a malformed proposal is dropped, labelled, and the repair stays a plain escalation. The engine never
+   synthesises a proposal itself.
+5. **Approve / Deny on the repair page** (escalation top box from REQ-048): the model's question, its rationale, and two
+   actions — **Approve: <model's label>** with its effect and the diff, and **Deny: keep everything as-is, contact the
+   vendor** (generic, always present; = reject: connector stays ■ Error, drift stays open, note recorded). Approve
+   creates release r2 from the proposal, activates it, runs the verifying sync; Harbor → ● Working.
+6. **Honest labels.** An approved proposal is recorded and shown as **"business decision by <actor>"**, not "verified
+   fix": the verifier confirms r2 syncs and its checks pass but makes no claim that the new meaning is correct, and
+   the verifier's trap list (`verifier/invalid_patches.py`) still rejects the same change when the engine tries to
+   apply it on its own. Business decisions are **not** learned into L0 knowledge (next time, it asks again); the
+   Knowledge page may list them as "decisions" separately. Rollback to r1 stays available.
+7. **Tests:** docs with a documented total → built spec has the check; docs without → none; Harbor seed absent;
+   prompt contains no scenario wording; parse escalate+proposal / escalate-only / malformed proposal; proposal patch
+   apply-check + retry; Approve creates r2 labelled business decision, no knowledge entry; Deny keeps Error; UI tests for
+   both buttons. Gates unkeyed + `make demo` 8/8 (deck order: build Harbor before breaking it).
+8. **Owner check after:** keyed, run deck 3 → deck 5 three times from one seed each; report how many runs the model
+   proposed a valid "accept the vendor's change" and the labels it chose (a real proposal can vary; if it proposes
+   nothing, deck 5 ends Red with the question — no fallback option); then the Aside UI run Green → Red → Approve → Green
+   with screenshots.
+
 
 ### REQ-048 — Deck 5 on screen: an escalation reads as a question, not a disabled Approve (2026-10-30)
 Status: IN_PROGRESS (sbx1 since 2026-10-30 08:29)
