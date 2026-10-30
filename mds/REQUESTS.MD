@@ -262,7 +262,7 @@ proposal → approved).
 
 
 ### REQ-052 — Benchmark quality: the frontier arms must make real, complete, gradable attempts (2026-10-30)
-Status: OPEN (owner released it 2026-10-30: run after REQ-059, before the daily validation)
+Status: IN_PROGRESS (sbx1 since 2026-10-30 20:29)
 Owner keyed run (2026-10-30, sandbox, `origin/main` 6cf0511b, `BENCH_TRIALS=1 make bench-ablation`, 16 min): engine
 arms are right (AutoBridge cold/warm: 6/6 fixable faults fixed, 6/6 unfixable held back, 0 wrong patches). The
 frontier arms' **quality** numbers are not trustworthy — they measure our harness, not the model. Owner: focus on
