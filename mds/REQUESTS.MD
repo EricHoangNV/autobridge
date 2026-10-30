@@ -6,11 +6,12 @@ Owner priority (2026-10-30 16:00): **REQ-048, then REQ-049.**
 
 ### REQ-049 — Deck 5 Green → Red → Green: Harbor built from its wiki carries the totals check; the model proposes "accept the vendor's change" for the human to approve (2026-10-30)
 Status: OPEN
+Deck order (owner, 2026-10-30): 1 knowledge · 2 Atlas reusable · 3 Atlas zero-token fix · **4 build Harbor from its wiki · 5 break Harbor right after** · 6 Meridian · 7 PABX · 8 proof. Use this numbering in README/docs/demo.md.
 Owner decision (2026-10-30). Today deck 5's totals check comes from the **hand-written** Harbor reference spec
 (`generated/connectors/harborpms/reference/spec.yaml` ~127, `money_invariant` vs `$.gross_sum`) loaded by
 `make demo-seed`; a Harbor built from its docs gets no such check (discovery never emits `money_invariant`; the wiki
 never documents `meta.gross_sum`, though `simulators/harborpms/app.py` ~185 returns it), and the escalation ends Red
-with nothing to approve. Wanted flow, one connector, one take: deck 3 builds Harbor from its wiki (● Working, with the
+with nothing to approve. Wanted flow, one connector, one take: deck 4 builds Harbor from its wiki (● Working, with the
 totals check) → deck 5 `gross_to_net` → ■ Error, the model's question **and one proposed change** → presenter clicks
 **Approve** ("accept net") → ● Working; or **Deny** ("keep everything as-is, contact the vendor") → stays ■ Error.
 1. **Docs.** Harbor's wiki page (devportal) and `simulators/docs/harborpms.md` document the page-level
@@ -20,7 +21,7 @@ totals check) → deck 5 `gross_to_net` → ■ Error, the model's question **an
    spec gets the `money_invariant` check for that field (`compare_to` the documented path); never inferred when the
    docs are silent (never-guess stands). The build page shows it ("check added from the docs: totals must match
    `meta.gross_sum`"). Generic: keyed on "docs describe a total of a money field", not on Harbor.
-3. **Seed.** `make demo-seed` no longer creates Harbor (three connectors: Atlas, Meridian, PABX edge). Deck 3 builds it
+3. **Seed.** `make demo-seed` no longer creates Harbor (three connectors: Atlas, Meridian, PABX edge). Deck 4 builds it
    in the UI; `make demo` keeps working stand-alone (it builds Harbor from docs itself; the hand-written reference spec
    stays for tests/bench only where they need it). Update the "four connectors" wording everywhere.
 4. **The model may propose one change for a human decision — a real proposal, not a canned one.** Extend the L3 answer
@@ -46,7 +47,7 @@ totals check) → deck 5 `gross_to_net` → ■ Error, the model's question **an
    prompt contains no scenario wording; parse escalate+proposal / escalate-only / malformed proposal; proposal patch
    apply-check + retry; Approve creates r2 labelled business decision, no knowledge entry; Deny keeps Error; UI tests for
    both buttons. Gates unkeyed + `make demo` 8/8 (deck order: build Harbor before breaking it).
-8. **Owner check after:** keyed, run deck 3 → deck 5 three times from one seed each; report how many runs the model
+8. **Owner check after:** keyed, run deck 4 → deck 5 three times from one seed each; report how many runs the model
    proposed a valid "accept the vendor's change" and the labels it chose (a real proposal can vary; if it proposes
    nothing, deck 5 ends Red with the question — no fallback option); then the Aside UI run Green → Red → Approve → Green
    with screenshots.
