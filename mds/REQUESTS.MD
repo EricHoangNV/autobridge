@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 14:10): **REQ-047 next.**
 
 ### REQ-047 — When the model escalates, every label must say so: reason line, question, verifier line (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 07:47)
+Status: DONE (sbx1 2026-10-30 -- reason/question/rationale/verifier/title/docs fixed, full gates green unkeyed + keyed-shaped escalate test; owner check: keyed step 4 + repair-page screenshots)
 Owner run (2026-10-30, sandbox, `origin/main` 28de2ffe, keyed): `make demo` 8/8 (41 s) and 8/8 per step. Step 4's
 live L3 (`muse-spark-1.3`, prompt from `config/prompts/l3_patch.md`) now answers well — 4,321 tokens (2,983
 reasoning), $0.015:

@@ -3712,3 +3712,12 @@ Fair benchmark context landed: `bench/context.py` shared bundle, `bench/bench_pr
 
 **Notes for next iteration:**
 - Owner: keyed `BENCH_TRIALS=1 make bench-ablation`, record table, then close REQ-028 (and REQ-046's identical owner step in the same run)
+
+## 2026-10-30 08:05 UTC — REQ-047 DONE (sbx1, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process climb), RepairController bundle, /demo/record-climb route + schema, repair page, VerifierVerdict, docs/demo.md.
+- Reason line: escalate answer now yields "L3 called <mode> (<model>, <tokens> tokens (<reasoning> reasoning)): the model asked for a human decision" (was "no applicable patch ...; raw response: {escalate...}"); why_escalated + rung table follow it; patch and no-answer wordings unchanged.
+- Question: bundle/escalation_question is the model's question when it escalates (canned Harbor text only as fallback); rationale travels with it (controller bundle reason, record-climb model_rationale, repair-page "Model rationale:" line under "The model's question for you:").
+- Verifier: model-escalated path sets checked_by "no patch to verify (the model escalated)" and never runs verify_spec (was live verifier fail invalid_patch_trap on the unpatched spec); recorded-climb verdict is not_verified when no proposal; UI shows the same line (modelEscalated) instead of a fail badge.
+- Title: dynamic — escalated names "model asked for a business decision"; trapped/proposal/no-answer keep their judged wording; docs/demo.md §4 rewritten to the new truth.
+- Tests: 2 new demo tests (escalate labels with the owner's live JSON incl. reasoning tokens; patch unchanged), 1 controller bundle test (question + rationale + L4 reason), 2 VerifierVerdict tests, 1 repair-page rationale test; full make test green (ui 205), offline run_demo 8/8, openapi regen + ui-typecheck green.
+- Not run: live-stack make demo / e2e (no stack, no FRONTIER_API_KEY in sandbox) — owner check: keyed step 4 + repair-page screenshots. Connector activity left as the "needs your decision" status (no false reason shown there).
