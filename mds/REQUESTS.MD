@@ -2,7 +2,47 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 14:10): **REQ-047 next.**
+Owner priority (2026-10-30 15:20): **REQ-048 next.**
+
+### REQ-048 — Deck 5 on screen: an escalation reads as a question, not a disabled Approve (2026-10-30)
+Status: OPEN
+Owner UI run (2026-10-30, host `make local-up` keyed, `origin/main` 6b677b2d, Aside at 1440×900): `make demo-reset &&
+make demo-seed`, then `make demo-break SCENARIO=gross_to_net TARGET=harbor`. The flow works (running repair on top
+within ~2 s, "Repairing at L3 … calling muse-spark-1.3 · 4 s so far", then the model's question + rationale, prompt
+`l3_patch v1`, 3,530 tokens, $0.0107, Harbor ■ Error "needs your decision"). What a judge would notice:
+1. **Repair page leads with the wrong thing for an escalation.** The first screen is a large (disabled) **Approve
+   release** button, Reject patch, Roll back to [release id], and "Approve/Reject available only when decision is
+   'propose' (current: escalate)". The model's question is two screens down. For `decision == escalate`: the top box
+   shows the decision line, **the question** (model's, labelled, or the engine's when no model question), the
+   rationale, and what the operator can do now (e.g. edit the spec / build a new release, or Reject to close it —
+   only actions that exist); no Approve button at all, no internal wording like "decision is 'propose'". Roll back
+   stays available but secondary. For `propose` and `climbing` the top box is unchanged.
+2. **Connectors header contradicts the rows.** It reads "nothing waiting for you." while HarborPMS shows ■ Error
+   "needs your decision". The header counts from the same connector-state source as the rows: "1 waiting for you"
+   (linking to it) whenever any connector is `error`/awaiting a decision.
+3. **The question and rationale are printed four times** (L3 rung, L4 rung, escalation bundle, decision section).
+   Show them once, in the top/decision box; rungs say "L3: the model asked for a human decision" and "L4: escalated to
+   you"; the escalation bundle keeps reason/action without repeating the question.
+4. **Harbor's "Model tokens, per repair" cell shows a lone tall `|`** (a one-bar chart). With one repair show the
+   number only ("3,530 in 1 repair"); draw bars only for 2+ repairs, scaled so one bar never fills the cell height.
+5. **Repairs list says "0 model calls" while the call is in flight.** Show "1 call in flight" (from the running row's
+   rung snapshot) until it lands.
+6. **Budget vs cap mismatch.** The page shows "of a 40,000 budget" while `FRONTIER_MAX_TOKENS` is 131072. Find the
+   40,000 frontier budget; make the repair's frontier budget ≥ the L3 cap (one source of truth, configurable), show the
+   budget that actually applies, and on `BudgetExhausted` label it on the repair page.
+7. **Small glitches:** sync outcome "took 0 ms" on the faulted sync (show the real duration or omit it); the
+   "meridianpms" name overlaps the "Last sync" column at 1440 px (wrap or truncate with title); the running repair
+   says "No hypothesis derivation was recorded" until the climb ends (show "deriving…" while `climbing`, or the
+   funnel stages as they land).
+8. **Docs still describe the old deck-5 outcome**: `README.md` (~123) and `docs/demo.md` (~88, ~198, ~232) say "the
+   rejected `net_amount → total_amount` decoy". Rewrite to: the model sees the evidence and either asks for a business
+   decision (its question shown) or proposes a patch that the verifier judges. Keep the `invalid_patch_trap`
+   catalogue row (that scenario still exists) but do not present it as deck 5's outcome.
+Tests: UI component/page tests for the escalate top box (no Approve, question first), the header count, the single
+question rendering, the one-repair token cell, the in-flight call count, the running funnel text; a unit test that
+the frontier budget is ≥ the L3 cap. Gates unkeyed + `make demo` 8/8. Owner check after: the same Aside run, with
+screenshots of the repair page top, Connectors header, and Repairs list during the call.
+
 
 ### REQ-047 — When the model escalates, every label must say so: reason line, question, verifier line (2026-10-30)
 Status: DONE (sbx1 2026-10-30 -- reason/question/rationale/verifier/title/docs fixed, full gates green unkeyed + keyed-shaped escalate test; owner check: keyed step 4 + repair-page screenshots)
