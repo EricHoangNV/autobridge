@@ -2,7 +2,28 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 23:00): **REQ-055, then REQ-056, then REQ-057, then REQ-058.** Do not start REQ-051 or REQ-052 until the owner says so.
+Owner priority (2026-10-30 23:30): **REQ-055 (remaining items), then REQ-056, REQ-057, REQ-058, then REQ-059.** Do not start REQ-051 or REQ-052 until the owner says so.
+
+### REQ-059 — Blank-slate demo: the seed creates no connectors; every connector is built live from its docs (2026-10-30)
+Status: OPEN
+Run **after REQ-058** (needs its build-page fix: a simulator pick resets every field). Owner decision (2026-10-30):
+start from nothing — deck 1 Knowledge (nothing built, nothing learned) → deck 2 build **Atlas** from its OpenAPI on v1
+→ ● Working, syncing with 0 model calls → deck 3 break Atlas (`page_to_cursor`) → L1 fix → Approve → deck 4 build
+**Harbor** from its wiki → deck 5 `gross_to_net` → tested proposal → Approve → Green → deck 6 **Meridian** v1 refused
+(Download capability request) → v2 → Working → deck 7 **PABX** **v2 refused** → v3 → Working → `fias_link_resync`.
+1. `make demo-seed` creates **no connectors**: it resets to a clean, ready stack and checks it (every simulator up and
+   on its baseline scenario, no connectors, no repairs, knowledge empty, no injected faults) and prints the opening
+   frame ("0 connectors · ready to build"). The Connectors page's empty state leads with **"Build a connector"**.
+2. `make demo` (terminal-only) still runs stand-alone: every step that needs a connector builds it itself (Atlas
+   included), as the Meridian/PABX/Harbor steps already do.
+3. Knowledge page with nothing built reads cleanly (each vocabulary "no connector built on it yet", "Nothing learned
+   yet"); Connectors header "0 connectors".
+4. Docs: `README.md` and `docs/demo.md` describe the blank-slate take with this deck order (deck 7 shows the refusal
+   on **v2**, then v3).
+Tests: seed leaves zero connectors and passes its readiness checks; `make demo` 8/8 from a blank seed; UI-identical
+builds of all four from a blank seed (keyed and unkeyed) reach ● Working; REQ-055's layout check covers the empty
+Connectors and Knowledge pages.
+
 
 ### REQ-058 — Refused build → "Download capability request": the engine drafts the gap for the build loop (2026-10-30)
 Status: OPEN
