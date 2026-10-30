@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 12:30): **REQ-044, then REQ-045, then REQ-046** (REQ-046 must land before any benchmark rehearsal).
 
 ### REQ-046 — Fair benchmark: frontier arms get the same context the engine has, prompts in files (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 06:26)
 Must land **before** any benchmark rehearsal or the pre-registered run (a starved baseline is a strawman judges
 will spot).
 Owner audit (2026-10-30):
