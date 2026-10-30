@@ -2950,6 +2950,21 @@
             "title": "Output Tokens",
             "type": "integer"
           },
+          "prompt_hash": {
+            "default": "",
+            "title": "Prompt Hash",
+            "type": "string"
+          },
+          "prompt_id": {
+            "default": "",
+            "title": "Prompt Id",
+            "type": "string"
+          },
+          "prompt_version": {
+            "default": "",
+            "title": "Prompt Version",
+            "type": "string"
+          },
           "purpose": {
             "title": "Purpose",
             "type": "string"

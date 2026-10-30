@@ -553,6 +553,10 @@ class RungCallOut(BaseModel):
     output_tokens: int
     reasoning_tokens: int = 0
     cost: str
+    #: Which engine prompt the call rendered (REQ-045); empty for pre-file calls.
+    prompt_id: str = ""
+    prompt_version: str = ""
+    prompt_hash: str = ""
 
 
 class RungAttemptOut(BaseModel):

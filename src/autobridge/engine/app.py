@@ -7,6 +7,7 @@ fixture volume or the simulator admin API (plan §2.1).
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
@@ -16,7 +17,19 @@ from autobridge.health import healthz, readyz_response
 if TYPE_CHECKING:
     from fastapi.responses import JSONResponse
 
-app = FastAPI(title="AutoBridge Worker")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ARG001 - lifespan signature is fixed by FastAPI
+    # REQ-045: the worker executes the ladder, so it validates the engine
+    # prompts at boot too — fail startup naming the file, never repair
+    # with a broken prompt.
+    from autobridge.llm.prompts import ensure_prompts_loaded  # noqa: PLC0415
+
+    ensure_prompts_loaded()
+    yield
+
+
+app = FastAPI(title="AutoBridge Worker", lifespan=lifespan)
 
 
 @app.get("/healthz")

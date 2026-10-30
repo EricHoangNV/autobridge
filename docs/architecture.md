@@ -287,7 +287,15 @@ reaches an identical ladder outcome on both providers. `FakeProvider` powers uni
 a ceiling raises `BudgetExhausted` and the ladder escalates to L4 — never a
 silent guess. `src/autobridge/evidence/redact.py` strips credential values
 from every payload at the store boundary before it can enter a prompt or an
-API response.
+API response. Every engine prompt (system + user template) lives in its own
+file under `config/prompts/` (`src/autobridge/llm/prompts.py` loader with
+front-matter: id, version, purpose, tier, max_tokens, inputs, answer
+format); control and worker load and validate all prompts at boot (a
+missing file or bad front-matter fails startup naming the file), and each
+model call records the prompt id/version/content hash on its `ModelCall`
+row and rung entry — the repair page shows them next to the call. No
+prompt text remains in Python; to improve a prompt, edit
+`config/prompts/<id>.md` and restart.
 
 ## 7. E2E harness (plan §4 W9, P1.W1.10)
 

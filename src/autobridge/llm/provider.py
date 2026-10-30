@@ -241,6 +241,9 @@ def record_model_call(
     mode: str = "live",
     captured_at: str = "",
     outcome: str | None = None,
+    prompt_id: str = "",
+    prompt_version: str = "",
+    prompt_hash: str = "",
 ) -> Any:
     """Insert a :class:`ModelCall` row and flush (caller commits).
 
@@ -250,6 +253,8 @@ def record_model_call(
     is the replay recording's capture date (empty for live calls);
     ``outcome`` is what the call produced (``ranked``, ``proposal``,
     ``proposal_rejected``, ``no_patch``, ``unparsable``, ``hypothesis``).
+    ``prompt_id``/``prompt_version``/``prompt_hash`` name the engine prompt
+    file the call rendered (REQ-045); empty for pre-file calls.
     Returns the inserted row.
     """
     from autobridge.control.models import ModelCall  # noqa: PLC0415 (avoid cycle)
@@ -270,6 +275,9 @@ def record_model_call(
         mode=mode or "live",
         captured_at=captured_at or "",
         outcome=outcome,
+        prompt_id=prompt_id or "",
+        prompt_version=prompt_version or "",
+        prompt_hash=prompt_hash or "",
     )
     session.add(row)
     session.flush()
@@ -359,6 +367,7 @@ class BudgetedProvider:
         purpose: str = "",
         tools: list[dict[str, Any]] | None = None,
         outcome: str | None = None,
+        prompt: dict[str, str] | None = None,
     ) -> Completion:
         self.budget.check_pre_call()
         if self.session is not None:
@@ -404,6 +413,9 @@ class BudgetedProvider:
                 mode="replay" if result.replayed else "live",
                 captured_at=(result.captured_at or "").strip(),
                 outcome=outcome,
+                prompt_id=(prompt or {}).get("id", ""),
+                prompt_version=(prompt or {}).get("version", ""),
+                prompt_hash=(prompt or {}).get("hash", ""),
             )
             # REQ-042: commit right after the call too — the ModelCall row
             # is durable (and visible in the ledger) even while the ladder

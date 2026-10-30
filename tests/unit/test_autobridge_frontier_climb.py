@@ -80,6 +80,24 @@ def _spec() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _l2_pair_messages() -> list[dict[str, str]]:
+    """The L2 prompt the engine renders for the documented pair (REQ-045).
+
+    Built through the loader, exactly as :func:`_call_small_model_rank`
+    renders it — so these tests pin the real prompt, not a copy of it.
+    """
+    from autobridge.llm.prompts import get_prompt, render_prompt
+    from autobridge.repair.ladder import _hypotheses_block, _shared_evidence_block
+
+    template = get_prompt("l2_rank")
+    return render_prompt(
+        template,
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses_block=_hypotheses_block(gross_net_hypotheses()),
+        evidence_block=_shared_evidence_block("SEMANTIC_VALUE_DRIFT", None),
+    )
+
+
 def test_prompt_hash_stable() -> None:
     messages = [{"role": "user", "content": "hi"}]
     assert prompt_hash(messages) == prompt_hash(list(messages))
@@ -89,10 +107,7 @@ def test_prompt_hash_stable() -> None:
 def test_replay_hit_returns_replayed_completion() -> None:
     p = ReplayProvider(recordings_dir=str(REPO_ROOT / "tests" / "fixtures" / "replay"))
     assert p.model_for_tier("frontier") == "muse-spark-1.3"
-    l2 = [
-        {"role": "system", "content": "You are a deterministic hypothesis ranker. Rank hypotheses by prior and evidence. Return JSON list of hypothesis ids in ranked order."},
-        {"role": "user", "content": "hypotheses: ['gross_is_canonical', 'net_is_canonical']; priors: [0.41, 0.39]"},
-    ]
+    l2 = _l2_pair_messages()
     out = p.complete(l2, tier="small", purpose="l2-rank-hypotheses")
     assert out.replayed is True
     assert out.text == '["gross_is_canonical", "net_is_canonical"]'
@@ -112,10 +127,7 @@ def test_replay_purpose_labelled_in_ledger(tmp_path: pathlib.Path) -> None:
     Base.metadata.create_all(engine)
     factory = session_factory(engine)
     p = ReplayProvider(recordings_dir=str(REPO_ROOT / "tests" / "fixtures" / "replay"))
-    l2 = [
-        {"role": "system", "content": "You are a deterministic hypothesis ranker. Rank hypotheses by prior and evidence. Return JSON list of hypothesis ids in ranked order."},
-        {"role": "user", "content": "hypotheses: ['gross_is_canonical', 'net_is_canonical']; priors: [0.41, 0.39]"},
-    ]
+    l2 = _l2_pair_messages()
     with factory() as s:
         budgeted = BudgetedProvider(ReplayProvider(recordings_dir=str(REPO_ROOT / "tests" / "fixtures" / "replay")), Budget(), session=s, run_id="run-1")
         budgeted.complete(l2, tier="small", purpose="l2-rank-hypotheses")
@@ -883,16 +895,7 @@ def test_l3_envelope_replay_round_trip(tmp_path: Any) -> None:
         "model": "muse-spark-1.3",
         "captured_at": "synthetic-test-fixture",
     }
-    l2_messages = [
-        {
-            "role": "system",
-            "content": "You are a deterministic hypothesis ranker. Rank hypotheses by prior and evidence. Return JSON list of hypothesis ids in ranked order.",
-        },
-        {
-            "role": "user",
-            "content": "hypotheses: ['gross_is_canonical', 'net_is_canonical']; priors: [0.41, 0.39]",
-        },
-    ]
+    l2_messages = _l2_pair_messages()
     l2_recording = {
         "text": '["gross_is_canonical", "net_is_canonical"]',
         "tool_calls": [],

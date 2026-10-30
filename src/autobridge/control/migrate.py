@@ -124,6 +124,22 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
         },
     ),
     ("0010_scheduler_pause", {"tables": ["scheduler_state"], "columns": []}),
+    # 0011 only widened a CHECK constraint (no schema objects to detect).
+    ("0011_repair_running_states", {"tables": [], "columns": []}),
+    (
+        "0012_model_call_prompt_ref",
+        {
+            "tables": [],
+            "columns": [
+                "model_calls.prompt_id",
+                "model_calls.prompt_version",
+                "model_calls.prompt_hash",
+                "model_call_archive.prompt_id",
+                "model_call_archive.prompt_version",
+                "model_call_archive.prompt_hash",
+            ],
+        },
+    ),
 )
 
 

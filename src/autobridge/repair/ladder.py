@@ -294,6 +294,154 @@ def _empty_model_usage() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _scrub_text(text: str, *, limit: int = 160) -> str:
+    """Scrub free text for a prompt: secret-shaped values become ``<redacted>``.
+
+    Provenance snippets and wire values are untrusted data (never
+    instructions) and must never carry secrets. Values assigned to
+    sensitive-looking keys (``api_token=...``, ``"secret": "..."``) are
+    replaced; the text is truncated defense-in-depth.
+    """
+    import re as _re  # noqa: PLC0415 - deferred so the ladder stays import-light
+
+    from autobridge.repair.semantic import SENSITIVE_KEY_FRAGMENTS  # noqa: PLC0415
+
+    out = str(text or "")
+    for frag in sorted(SENSITIVE_KEY_FRAGMENTS, key=len, reverse=True):
+        pattern = _re.compile(
+            r"(['\"]?" + _re.escape(frag) + r"[^'\"=:\s]*['\"]?\s*[:=]\s*)(['\"]?)([^\s,'\"}]+)\2",
+            _re.IGNORECASE,
+        )
+        out = pattern.sub(r"\1<redacted>", out)
+    if len(out) > limit:
+        out = out[:limit] + "…"
+    return " ".join(out.split())
+
+
+def _provenance_text(prov: Any) -> str:
+    """One-line evidence summary for a provenance record (scrubbed)."""
+    try:
+        source = str(getattr(prov, "source", "") or "")
+        line = getattr(prov, "line", "")
+        snippet = str(getattr(prov, "snippet", "") or "")
+    except Exception:
+        return ""
+    head = source
+    if line not in (None, ""):
+        head = f"{source}:{line}"
+    if snippet:
+        return f"{head} — {_scrub_text(snippet)}" if head else _scrub_text(snippet)
+    return head or "(no provenance detail)"
+
+
+def _hypotheses_block(hypotheses: list[Any]) -> str:
+    """Prompt block: every hypothesis with claim and for/against evidence."""
+    lines: list[str] = []
+    for h in hypotheses or []:
+        hid = str(getattr(h, "id", "?"))
+        claim = str(getattr(h, "claim", "") or "")
+        try:
+            prior = float(getattr(h, "prior", 0.5))
+        except Exception:
+            prior = 0.5
+        field = str(getattr(h, "field", "") or "")
+        family = str(getattr(h, "family", "") or "")
+        fors = [_provenance_text(p) for p in (getattr(h, "evidence_for", None) or ())]
+        againsts = [_provenance_text(p) for p in (getattr(h, "evidence_against", None) or ())]
+        fors = [s for s in fors if s]
+        againsts = [s for s in againsts if s]
+        header = f"- {hid}: {claim} (prior {prior:.2f}"
+        if family:
+            header += f"; family {family}"
+        if field:
+            header += f"; field {field}"
+        header += ")"
+        lines.append(header)
+        lines.append(f"  for: {'; '.join(fors) if fors else '(none recorded)'}")
+        lines.append(f"  against: {'; '.join(againsts) if againsts else '(none recorded)'}")
+    return "\n".join(lines) if lines else "(no hypotheses)"
+
+
+def _shared_evidence_block(drift_class: str, evidence: dict[str, Any] | None) -> str:
+    """Prompt block: the observed evidence shared by all hypotheses (scrubbed)."""
+    import json as _json  # noqa: PLC0415
+
+    if not evidence:
+        return (
+            f"drift_class {drift_class}; no shared evidence recorded "
+            "(wire shape intact — rank on the hypotheses' own evidence)"
+        )
+    try:
+        rendered = _json.dumps(evidence, sort_keys=True, separators=(",", ":"), default=str)
+    except Exception:
+        rendered = str(evidence)
+    return _scrub_text(rendered, limit=2000)
+
+
+def _parse_l2_response(text: str) -> dict[str, Any]:
+    """Parse an L2 ranking reply (REQ-045).
+
+    The well-posed answer is ``{"ranking": [...], "confidence": 0..1,
+    "rationale": "..."}``; a bare id list (the pre-045 shape) still ranks
+    with no confidence. Anything else is a parse failure: the caller falls
+    back to prior order, labelled, never silent.
+    """
+    import json as _json  # noqa: PLC0415 - keep ladder import-light
+
+    stripped = (text or "").strip()
+    if not stripped:
+        return {
+            "ids": [],
+            "confidence": None,
+            "rationale": "",
+            "fallback": "empty response: the model returned no text; fell back to prior order",
+        }
+    try:
+        parsed = _json.loads(stripped)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("ranking"), list):
+        ids = [str(x) for x in parsed["ranking"]]
+        confidence: float | None = None
+        try:
+            raw_confidence = parsed.get("confidence")
+            confidence = float(raw_confidence) if raw_confidence is not None else None
+            if confidence is not None and not 0.0 <= confidence <= 1.0:
+                confidence = None
+        except Exception:
+            confidence = None
+        return {
+            "ids": ids,
+            "confidence": confidence,
+            "rationale": str(parsed.get("rationale") or ""),
+            "fallback": None,
+        }
+    if isinstance(parsed, list):
+        return {
+            "ids": [str(x) for x in parsed],
+            "confidence": None,
+            "rationale": "",
+            "fallback": None,
+            "detail": "legacy list shape (no confidence)",
+        }
+    for sep in (",", " ", "\n"):
+        parts = [s.strip().strip('"').strip("'") for s in stripped.split(sep) if s.strip()]
+        if len(parts) >= 2:
+            return {
+                "ids": parts,
+                "confidence": None,
+                "rationale": "",
+                "fallback": None,
+                "detail": "comma/space-separated shape (no confidence)",
+            }
+    return {
+        "ids": [],
+        "confidence": None,
+        "rationale": "",
+        "fallback": f"unparsable L2 response ({stripped[:120]}); fell back to prior order",
+    }
+
+
 def _call_small_model_rank(
     hypotheses: list[Any],
     provider: Any,
@@ -302,60 +450,76 @@ def _call_small_model_rank(
     run_id: str | None = None,
     session: Any | None = None,
     purpose: str = "l2-rank-hypotheses",
-) -> tuple[list[Any], dict[str, Any]]:
-    """L2: small model ranks hypotheses (budgeted).
+    drift_class: str = "UNKNOWN",
+    evidence: dict[str, Any] | None = None,
+) -> tuple[list[Any], dict[str, Any], dict[str, Any]]:
+    """L2: small model ranks hypotheses (budgeted, REQ-045 well-posed prompt).
 
-    Returns (ranked_hypotheses, model_usage_delta).
-    Every call goes through BudgetedProvider so BudgetExhausted propagates.
+    The model sees every hypothesis with its claim and for/against
+    evidence plus the shared observed evidence, and answers with a ranking
+    plus confidence. Returns ``(ranked, usage_delta, info)`` where ``info``
+    carries ``confidence`` (None when the answer carries none),
+    ``rationale`` and ``fallback`` (None, else the labelled reason prior
+    order was kept). Every call goes through BudgetedProvider so
+    BudgetExhausted propagates.
     """
+    from autobridge.llm.prompts import get_prompt, prompt_ref, render_prompt  # noqa: PLC0415
+
     if provider is None:
         # No provider — deterministic fallback: return input order
-        return list(hypotheses), _empty_model_usage()
-    # Build prompt as untrusted data blocks (docs + hypotheses)
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a deterministic hypothesis ranker. Rank hypotheses by prior and evidence. Return JSON list of hypothesis ids in ranked order.",
-        },
-        {
-            "role": "user",
-            "content": f"hypotheses: {[h.id for h in hypotheses]}; priors: {[h.prior for h in hypotheses]}",
-        },
-    ]
+        return list(hypotheses), _empty_model_usage(), {
+            "confidence": None,
+            "rationale": "",
+            "fallback": "no provider configured",
+        }
+    # REQ-045: the question lives in config/prompts/l2_rank.md — the model
+    # gets every hypothesis with its evidence and the shared observed
+    # evidence, and ranks by explanation fit, not by prior.
+    template = get_prompt("l2_rank")
+    ref = prompt_ref("l2_rank")
+    messages = render_prompt(
+        template,
+        drift_class=str(drift_class),
+        hypotheses_block=_hypotheses_block(hypotheses),
+        evidence_block=_shared_evidence_block(str(drift_class), evidence),
+    )
     # Wrap with budget if provided
     effective_provider: Any = provider
+    ledger_kwargs: dict[str, Any] = {}
     if budget is not None:
         effective_provider = BudgetedProvider(provider, budget, session=session, run_id=run_id)
+        # REQ-045: the ledger row names the prompt file (id/version/hash).
+        # Only BudgetedProvider accepts it — the inner provider protocol is
+        # unchanged, so direct (unbudgeted) calls never see this kwarg.
+        ledger_kwargs["prompt"] = ref
     # Will raise BudgetExhausted if ceiling hit — caller must catch and escalate
-    result = effective_provider.complete(messages, max_tokens=512, tier="small", purpose=purpose)
-    # Parse ranking: try to extract ordered ids from text (JSON list or comma)
-    ranked_ids: list[str] = []
-    try:
-        import json as _json
-
-        parsed = _json.loads(result.text.strip())
-        if isinstance(parsed, list):
-            ranked_ids = [str(x) for x in parsed]
-    except Exception:
-        # fallback: split text by comma/space
-        ranked_ids = [s.strip().strip('"').strip("'") for s in result.text.split(",") if s.strip()]
+    result = effective_provider.complete(
+        messages, max_tokens=template.max_tokens, tier="small", purpose=purpose, **ledger_kwargs
+    )
+    parsed = _parse_l2_response(result.text)
     # Map back to hypothesis objects in ranked order; unknown ids ignored
     id_map = {h.id: h for h in hypotheses}
     ranked: list[Any] = []
-    for hid in ranked_ids:
-        if hid in id_map and id_map[hid] not in ranked:
+    for hid in parsed["ids"]:
+        if isinstance(hid, str) and hid in id_map and id_map[hid] not in ranked:
             ranked.append(id_map[hid])
     # Append any missing (model didn't rank all)
     for h in hypotheses:
         if h not in ranked:
             ranked.append(h)
+    fallback = parsed.get("fallback")
+    if not any(h.id in parsed["ids"] for h in hypotheses):
+        # Nothing usable came back (or nothing known): prior order stands.
+        ranked = list(hypotheses)
+        if fallback is None:
+            fallback = "model ranked no known hypothesis id; fell back to prior order"
     if session is not None and run_id is not None and budget is not None:
         # REQ-030 item 3: what the L2 call produced, on the ledger row.
         stamp_call_outcome(
             session,
             run_id=run_id,
             tier="small",
-            outcome="ranked" if ranked_ids else "unparsable",
+            outcome="ranked" if fallback is None else "fallback",
         )
     # Build usage delta from result
     usage = {
@@ -371,7 +535,70 @@ def _call_small_model_rank(
         "frontier_reasoning": 0,
         "small_reasoning": result.usage.reasoning_tokens,
     }
-    return ranked, usage
+    info = {
+        "confidence": parsed.get("confidence"),
+        "rationale": str(parsed.get("rationale") or ""),
+        "fallback": fallback,
+        "detail": str(parsed.get("detail") or ""),
+        "prompt": dict(ref),
+    }
+    return ranked, usage, info
+
+
+def _parse_l3_hypothesis_response(text: str) -> dict[str, Any]:
+    """Parse an L3 hypothesis reply (REQ-045).
+
+    Well-posed answers: ``{"hypothesis": {...}, "rationale": ...}`` or
+    ``{"none": "<why>"}``; a bare ``{"id": ...}`` object (pre-045) still
+    proposes. An unknown family is rejected (the engine can only verify
+    its own families), never constructed.
+    """
+    import json as _json  # noqa: PLC0415 - keep ladder import-light
+
+    from autobridge.discovery.hypotheses import FAMILIES as _FAMILIES  # noqa: PLC0415
+
+    stripped = (text or "").strip()
+    if not stripped:
+        return {"items": [], "none_reason": "", "rejected": "", "rationale": "",
+                "detail": "empty response: the model returned no text"}
+    try:
+        parsed = _json.loads(stripped)
+    except Exception:
+        return {"items": [], "none_reason": "", "rejected": "", "rationale": "",
+                "detail": f"response is not JSON ({stripped[:120]})"}
+    if isinstance(parsed, dict) and isinstance(parsed.get("hypothesis"), dict):
+        item = dict(parsed["hypothesis"])
+        rationale = str(parsed.get("rationale") or "")
+        family = str(item.get("family", "") or "")
+        if family not in _FAMILIES:
+            return {"items": [], "none_reason": "", "rejected": family,
+                    "rationale": rationale,
+                    "detail": f"unknown family {family!r} (verifiable: {sorted(_FAMILIES)}); rejected"}
+        return {"items": [item], "none_reason": "", "rejected": "", "rationale": rationale, "detail": "parsed"}
+    if isinstance(parsed, dict) and "none" in parsed:
+        return {"items": [], "none_reason": str(parsed.get("none") or ""), "rejected": "",
+                "rationale": "", "detail": "model declined to propose (none)"}
+    items: list[dict[str, Any]] = []
+    if isinstance(parsed, dict) and "id" in parsed:
+        items = [parsed]
+    elif isinstance(parsed, list):
+        items = [x for x in parsed if isinstance(x, dict) and "id" in x]
+    if items:
+        kept: list[dict[str, Any]] = []
+        rejected = ""
+        for item in items:
+            family = str(item.get("family", "") or "")
+            if family and family not in _FAMILIES:
+                rejected = family
+                continue
+            kept.append(item)
+        if kept:
+            return {"items": kept, "none_reason": "", "rejected": rejected, "rationale": "",
+                    "detail": "parsed legacy shape"}
+        return {"items": [], "none_reason": "", "rejected": rejected, "rationale": "",
+                "detail": f"all proposals use unknown families ({rejected!r}); rejected"}
+    return {"items": [], "none_reason": "", "rejected": "", "rationale": "",
+            "detail": "response JSON is neither a hypothesis nor a none answer"}
 
 
 def _call_frontier_generate(
@@ -383,74 +610,108 @@ def _call_frontier_generate(
     run_id: str | None = None,
     session: Any | None = None,
     purpose: str = "l3-generate-hypothesis",
-) -> tuple[list[Any], dict[str, Any]]:
-    """L3: frontier model generates hypotheses for UNKNOWN/SEMANTIC.
+    drift_class: str = "UNKNOWN",
+    signals: list[Any] | None = None,
+    evidence: dict[str, Any] | None = None,
+    spec_excerpt: Any | None = None,
+    docs_excerpt: str | None = None,
+) -> tuple[list[Any], dict[str, Any], dict[str, Any]]:
+    """L3: frontier model generates hypotheses for UNKNOWN/SEMANTIC (REQ-045).
 
-    Asserts enumerator yielded fewer than two hypotheses (plan §2.6).
+    Asserts enumerator yielded fewer than two hypotheses (plan §2.6). The
+    model sees the drift class, wire signals, observed evidence, the spec
+    excerpt, the relevant docs excerpt, the existing hypotheses and the
+    verifiable families, and answers with one novel hypothesis or an
+    explicit ``none``. Returns ``(hypotheses, usage_delta, info)`` where
+    ``info`` carries ``proposed`` / ``rejected`` / ``none_reason``.
     Every call goes through BudgetedProvider.
     """
+    import json as _json  # noqa: PLC0415 - keep ladder import-light
+
+    from autobridge.llm.prompts import get_prompt, prompt_ref, render_prompt  # noqa: PLC0415
+
     assert enumerator_yield_count < 2, (
         f"L3 frontier invoked only when enumerator yields fewer than two hypotheses, got {enumerator_yield_count}"
     )
     if provider is None:
         # No provider — cannot generate; return input (caller will handle ambiguity)
-        return list(hypotheses), _empty_model_usage()
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a hypothesis generator for unknown API semantics. Propose one additional hypothesis that explains observed drift. Return JSON with fields id, family, claim.",
-        },
-        {
-            "role": "user",
-            "content": f"existing hypotheses: {[h.id for h in hypotheses]}; need novel hypothesis for unresolved drift",
-        },
-    ]
+        return list(hypotheses), _empty_model_usage(), {
+            "proposed": False, "rejected": "", "none_reason": "no provider configured", "rationale": "",
+        }
+    from autobridge.discovery.hypotheses import FAMILIES as _FAMILIES  # noqa: PLC0415
+
+    def _block(value: Any, *, empty_note: str, limit: int = 1500) -> str:
+        if value is None or value == "" or value == {} or value == []:
+            return empty_note
+        try:
+            rendered = _json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+        except Exception:
+            rendered = str(value)
+        return _scrub_text(rendered, limit=limit)
+
+    # REQ-045: the question lives in config/prompts/l3_hypothesis.md.
+    template = get_prompt("l3_hypothesis")
+    ref = prompt_ref("l3_hypothesis")
+    messages = render_prompt(
+        template,
+        drift_class=str(drift_class),
+        signals_block=_block(signals, empty_note="(no wire signals recorded)"),
+        evidence_block=_shared_evidence_block(str(drift_class), evidence),
+        spec_excerpt=_block(spec_excerpt, empty_note="(no spec excerpt recorded)"),
+        docs_excerpt=(
+            _scrub_text(str(docs_excerpt), limit=1500)
+            if docs_excerpt else "(no docs excerpt recorded)"
+        ),
+        existing_hypotheses=_hypotheses_block(hypotheses),
+        families=", ".join(sorted(_FAMILIES)),
+    )
     effective_provider: Any = provider
+    ledger_kwargs: dict[str, Any] = {}
     if budget is not None:
         effective_provider = BudgetedProvider(provider, budget, session=session, run_id=run_id)
-    result = effective_provider.complete(messages, max_tokens=1024, tier="frontier", purpose=purpose)
+        ledger_kwargs["prompt"] = ref
+    result = effective_provider.complete(
+        messages, max_tokens=template.max_tokens, tier="frontier", purpose=purpose, **ledger_kwargs
+    )
     # Try to parse frontier's new hypothesis as JSON; if fails, keep original list
     new_hyps = list(hypotheses)
-    try:
-        import json as _json
+    parsed = _parse_l3_hypothesis_response(result.text)
+    if parsed["items"]:
+        try:
+            from autobridge.discovery.docs_reader import Provenance as _Prov
+            from autobridge.discovery.hypotheses import Hypothesis as _Hyp
 
-        from autobridge.discovery.docs_reader import Provenance as _Prov
-        from autobridge.discovery.hypotheses import Hypothesis as _Hyp
-
-        parsed = _json.loads(result.text.strip())
-        items: list[dict[str, Any]] = []
-        if isinstance(parsed, dict) and "id" in parsed:
-            items = [parsed]
-        elif isinstance(parsed, list):
-            items = [x for x in parsed if isinstance(x, dict) and "id" in x]
-        for item in items:
-            prov = _Prov(source="l3-frontier", line=1, snippet="frontier generated")
-            hid = str(item.get("id", f"l3:generated:{len(new_hyps)}"))
-            try:
-                hyp = _Hyp(
-                    id=hid,
-                    family=str(item.get("family", "unknown")),
-                    claim=str(item.get("claim", "frontier generated hypothesis")),
-                    candidate_mapping_fragment=dict(item.get("fragment", {"generated": True})),
-                    prior=float(item.get("prior", 0.5)),
-                    evidence_for=(prov,),
-                    field=item.get("field"),
-                    strategy=item.get("strategy"),
-                )
-                new_hyps.append(hyp)
-            except Exception:
-                continue
-    except Exception:
-        # If frontier output not JSON, keep original list — caller will handle as ambiguity
-        pass
+            for item in parsed["items"]:
+                prov = _Prov(source="l3-frontier", line=1, snippet="frontier generated")
+                hid = str(item.get("id", f"l3:generated:{len(new_hyps)}"))
+                try:
+                    hyp = _Hyp(
+                        id=hid,
+                        family=str(item.get("family", "unknown")),
+                        claim=str(item.get("claim", "frontier generated hypothesis")),
+                        candidate_mapping_fragment=dict(item.get("fragment", {"generated": True})),
+                        prior=float(item.get("prior", 0.5)),
+                        evidence_for=(prov,),
+                        field=item.get("field"),
+                        strategy=item.get("strategy"),
+                    )
+                    new_hyps.append(hyp)
+                except Exception:
+                    continue
+        except Exception:
+            # If hypothesis construction fails, keep original list
+            new_hyps = list(hypotheses)
     if session is not None and run_id is not None and budget is not None:
         # REQ-030 item 3: what the L3-hypothesis call produced, on the ledger row.
-        stamp_call_outcome(
-            session,
-            run_id=run_id,
-            tier="frontier",
-            outcome="hypothesis" if len(new_hyps) > len(hypotheses) else "unparsable",
-        )
+        if len(new_hyps) > len(hypotheses):
+            _outcome = "hypothesis"
+        elif parsed.get("rejected"):
+            _outcome = "rejected_family"
+        elif parsed.get("none_reason"):
+            _outcome = "none"
+        else:
+            _outcome = "unparsable"
+        stamp_call_outcome(session, run_id=run_id, tier="frontier", outcome=_outcome)
     usage = {
         "frontier_tokens": result.usage.total_tokens,
         "small_tokens": 0,
@@ -464,7 +725,15 @@ def _call_frontier_generate(
         "small_output": 0,
         "small_reasoning": 0,
     }
-    return new_hyps, usage
+    info = {
+        "proposed": len(new_hyps) > len(hypotheses),
+        "rejected": str(parsed.get("rejected") or ""),
+        "none_reason": str(parsed.get("none_reason") or ""),
+        "rationale": str(parsed.get("rationale") or ""),
+        "detail": str(parsed.get("detail") or ""),
+        "prompt": dict(ref),
+    }
+    return new_hyps, usage, info
 
 
 def _merge_model_usage(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
@@ -529,6 +798,10 @@ def rung_ledger(
             "output_tokens": int(_call_field(call, "output_tokens", 0) or 0),
             "reasoning_tokens": int(_call_field(call, "reasoning_tokens", 0) or 0),
             "cost": str(_call_field(call, "cost_estimate", "0") or "0"),
+            # REQ-045: which prompt file the call rendered (id/version/hash).
+            "prompt_id": str(_call_field(call, "prompt_id", "") or ""),
+            "prompt_version": str(_call_field(call, "prompt_version", "") or ""),
+            "prompt_hash": str(_call_field(call, "prompt_hash", "") or ""),
         }
         rung = _CALL_TIER_TO_RUNG.get(tier)
         placed = False
@@ -733,18 +1006,24 @@ def _try_budgeted_ladder(
                         "hypothesis_count_before": len(active_hypotheses),
                     }
                 )
-                ranked, delta = _call_frontier_generate(
+                ranked, delta, l3_info = _call_frontier_generate(
                     active_hypotheses,
                     provider,
                     budget,
                     enumerator_yield_count=enumerator_yield_count,
                     run_id=run_id,
                     session=session,
+                    drift_class=drift_class,
                 )
                 model_usage = _merge_model_usage(model_usage, delta)
                 active_hypotheses = ranked
                 trace[-1]["hypothesis_count_after"] = len(active_hypotheses)
                 trace[-1]["model_usage_delta"] = delta
+                trace[-1]["prompt"] = dict(l3_info.get("prompt") or {})
+                if l3_info.get("rejected"):
+                    trace[-1]["l3_rejected_family"] = str(l3_info["rejected"])
+                if l3_info.get("none_reason"):
+                    trace[-1]["l3_none_reason"] = str(l3_info["none_reason"])
             except AssertionError:
                 # Re-raise assertion for test visibility (L3 only when <2)
                 raise
@@ -800,11 +1079,19 @@ def _try_budgeted_ladder(
                     "hypothesis_ids": [getattr(h, "id", str(h)) for h in active_hypotheses[:5]],
                 }
             )
-            ranked, delta = _call_small_model_rank(active_hypotheses, provider, budget, run_id=run_id, session=session)
+            ranked, delta, l2_info = _call_small_model_rank(
+                active_hypotheses, provider, budget, run_id=run_id, session=session,
+                drift_class=drift_class,
+            )
             model_usage = _merge_model_usage(model_usage, delta)
             active_hypotheses = ranked
             trace[-1]["ranked_ids"] = [getattr(h, "id", str(h)) for h in active_hypotheses[:5]]
             trace[-1]["model_usage_delta"] = delta
+            trace[-1]["prompt"] = dict(l2_info.get("prompt") or {})
+            if l2_info.get("rationale"):
+                trace[-1]["model_rationale"] = " ".join(str(l2_info["rationale"]).split())[:300]
+            if l2_info.get("fallback"):
+                trace[-1]["l2_fallback"] = str(l2_info["fallback"])
             # If ranking still leaves ambiguity (e.g., top 2 have equal prior), check surviving ambiguity
             # For now, if we have >1 hypothesis with equal prior, treat as ambiguity
             if len(active_hypotheses) > 1:
@@ -1549,22 +1836,10 @@ L2_CONFIDENCE_THRESHOLD = 0.70
 
 
 #: System prompt for the L3 frontier call (REQ-044). It names the patch
-#: target (the connector spec document, never the vendor response), the
-#: allowed ops and members, and the one-JSON-object answer shape — patch
-#: or an explicit escalation — so the model is asked a well-posed
-#: question instead of guessing paths.
-L3_SYSTEM_PROMPT = (
-    "You repair API connectors. The fix is a JSON Patch (RFC 6902 list of "
-    "op/path/value objects) applied to the connector spec document described "
-    "below: every path in the patch addresses that document only, never a "
-    "JSONPath into a vendor response. You may use only the ops 'replace' and "
-    "'add', only on the listed patchable members, using only the "
-    "vocabulary's transforms by name. Answer with one JSON object and "
-    "nothing else: either {\"patch\": [...], \"rationale\": \"<one sentence>\"} "
-    "or, when the right mapping is a business decision the evidence does not "
-    "settle, {\"escalate\": \"<the one question for the human>\", "
-    "\"rationale\": \"<one sentence>\"}."
-)
+#: The L2/L3 questions live in ``config/prompts/*.md`` (REQ-045), loaded
+#: once at startup and rendered by the call sites below — no prompt text
+#: remains in this module. The answer shapes (a patch proposal or an
+#: explicit escalation, never invented paths) are unchanged from REQ-044.
 
 #: Fallback pointer shape when the climb carries no patch target (REQ-044).
 #: A semantic fix remaps a field's wire path or transform; anything outside
@@ -1576,66 +1851,43 @@ _L3_FIELD_POINTER = __import__("re").compile(
 )
 
 
-def _l3_user_message(
-    *,
-    drift_class: str,
-    ranked_ids: list[str],
-    evidence: dict[str, Any] | None,
-) -> str:
-    """User message for the L3 frontier call (REQ-044).
+def _l3_evidence_blocks(evidence: dict[str, Any] | None) -> dict[str, str]:
+    """L3 patch template inputs from climb evidence (REQ-044 content, REQ-045 file).
 
-    Drift class plus ranked hypotheses, then — when the climb carries
-    observed evidence — the patch target (document + allowed ops +
-    pointers), the patchable spec subtree with exact JSON Pointers, the
-    redacted raw vendor records, and the observed evidence, all as
-    untrusted data blocks. Ends with the answer-format reminder.
+    The patch target (document + allowed ops + pointers), the patchable
+    spec subtree with exact JSON Pointers, the redacted raw vendor
+    records, and the observed evidence — each rendered as its REQ-044
+    block, or ``"(none recorded)"`` when the climb carries no evidence.
+    All values are data (redacted upstream); the instructional text lives
+    in ``config/prompts/l3_patch.md``.
     """
     import json as _json  # noqa: PLC0415
 
-    parts = [
-        f"drift_class: {drift_class}; ranked hypotheses: {ranked_ids}",
-    ]
-    if evidence:
-        target = evidence.get("patch_target") if isinstance(evidence, dict) else None
-        subtree = evidence.get("spec_subtree") if isinstance(evidence, dict) else None
-        raw_records = evidence.get("raw_records") if isinstance(evidence, dict) else None
-        observed = (
-            {k: v for k, v in evidence.items() if k not in ("patch_target", "spec_subtree", "raw_records")}
-            if isinstance(evidence, dict)
-            else {}
+    blocks = {
+        "patch_target_block": "(none recorded)",
+        "spec_subtree_block": "(none recorded)",
+        "raw_records_block": "(none recorded)",
+        "observed_evidence_block": "(none recorded)",
+    }
+    if not isinstance(evidence, dict) or not evidence:
+        return blocks
+    target = evidence.get("patch_target")
+    subtree = evidence.get("spec_subtree")
+    raw_records = evidence.get("raw_records")
+    observed = {k: v for k, v in evidence.items() if k not in ("patch_target", "spec_subtree", "raw_records")}
+    if isinstance(target, dict) and target:
+        blocks["patch_target_block"] = _json.dumps(target, sort_keys=True, separators=(",", ":"), default=str)
+    if isinstance(subtree, dict) and subtree:
+        blocks["spec_subtree_block"] = _json.dumps(subtree, sort_keys=True, separators=(",", ":"), default=str)
+    if isinstance(raw_records, list) and raw_records:
+        blocks["raw_records_block"] = _json.dumps(
+            raw_records, sort_keys=True, separators=(",", ":"), default=str
         )
-        if isinstance(target, dict) and target:
-            parts.append(
-                "The patch applies to this document (paths into it only): "
-                + _json.dumps(target, sort_keys=True, separators=(",", ":"), default=str)
-            )
-        if isinstance(subtree, dict) and subtree:
-            parts.append(
-                "Patchable spec subtree with exact JSON Pointers: "
-                + _json.dumps(subtree, sort_keys=True, separators=(",", ":"), default=str)
-            )
-        if isinstance(raw_records, list) and raw_records:
-            parts.append(
-                "Redacted raw vendor records for the entity "
-                "(field names and value shapes; money as strings): "
-                + _json.dumps(raw_records, sort_keys=True, separators=(",", ":"), default=str)
-            )
-        if observed:
-            parts.append(
-                "observed evidence (untrusted, redacted): "
-                + _json.dumps(observed, sort_keys=True, separators=(",", ":"), default=str)
-            )
-    else:
-        parts.append(
-            "No observed evidence was recorded (wire shape intact): the patch "
-            "applies to the connector spec document (/entities/... paths only); "
-            "propose nothing unless a hypothesis names an exact spec member."
+    if observed:
+        blocks["observed_evidence_block"] = _json.dumps(
+            observed, sort_keys=True, separators=(",", ":"), default=str
         )
-    parts.append(
-        'Answer with one JSON object: {"patch": [...], "rationale": "<one sentence>"} '
-        'or {"escalate": "<the one question for the human>", "rationale": "<one sentence>"}.'
-    )
-    return "\n".join(parts)
+    return blocks
 
 
 def _l3_pointer_error(
@@ -1929,6 +2181,8 @@ def run_frontier_climb(
             "replay_captured_at": replay_captured_at,
         }
     if len(ranked) >= 2:
+        from autobridge.llm.prompts import prompt_ref as _prompt_ref  # noqa: PLC0415
+
         l2_entry: dict[str, Any] = {
             "rung": 2,
             "action": "small_rank",
@@ -1938,11 +2192,16 @@ def run_frontier_climb(
             # can show "calling <model> · Ns" while the call is in flight.
             "model": _provider_model_name(provider, "small"),
             "call_started_at": _utc_now_iso(),
+            # REQ-045: the rung names the prompt the call renders.
+            "prompt": _prompt_ref("l2_rank"),
         }
         attempts.append(l2_entry)
         _emit()
         try:
-            ranked, delta = _call_small_model_rank(ranked, provider, budget, run_id=run_id, session=session)
+            ranked, delta, l2_info = _call_small_model_rank(
+                ranked, provider, budget, run_id=run_id, session=session,
+                drift_class=drift_class, evidence=evidence,
+            )
         except ReplayMissing as exc:
             replay_missing.append(exc.prompt_hash)
             l2_entry["action"] = "l2_skipped"
@@ -1963,11 +2222,21 @@ def run_frontier_climb(
             }
         usage = _merge_model_usage(usage, delta)
         l2_entry["ranked_ids"] = [getattr(h, "id", str(h)) for h in ranked[:5]]
+        if l2_info.get("rationale"):
+            l2_entry["model_rationale"] = " ".join(str(l2_info["rationale"]).split())[:300]
+        if l2_info.get("fallback"):
+            # REQ-045: a parse failure falls back to prior order, labelled
+            # on the rung — never silent.
+            l2_entry["l2_fallback"] = str(l2_info["fallback"])
         top_prior = float(getattr(ranked[0], "prior", 0.0)) if ranked else 0.0
-        l2_confidence = top_prior
-        if top_prior >= l2_threshold:
+        # REQ-045: the model's own confidence decides when it answered with
+        # one; otherwise the winner's prior, as before.
+        l2_confidence = l2_info.get("confidence")
+        if l2_confidence is None:
+            l2_confidence = top_prior
+        if l2_confidence >= l2_threshold:
             l2_entry["reason"] = (
-                f"L2 confident: {top_prior:.2f} >= {l2_threshold:.2f}; ranking stands, no frontier call"
+                f"L2 confident: {l2_confidence:.2f} >= {l2_threshold:.2f}; ranking stands, no frontier call"
             )
             l2_entry["model_usage_delta"] = delta
             _emit()
@@ -1983,8 +2252,10 @@ def run_frontier_climb(
                 "replay_captured_at": replay_captured_at,
             }
         l2_entry["reason"] = (
-            f"L2 confidence {top_prior:.2f} < {l2_threshold:.2f}: ranking cannot decide; continuing to L3"
+            f"L2 confidence {l2_confidence:.2f} < {l2_threshold:.2f}: ranking cannot decide; continuing to L3"
         )
+        if l2_info.get("fallback"):
+            l2_entry["reason"] += f" ({l2_entry['l2_fallback']})"
         l2_entry["model_usage_delta"] = delta
         _emit()
     else:
@@ -2036,22 +2307,39 @@ def run_frontier_climb(
     attempts.append(l3_entry)
     _emit()
     ranked_ids = [getattr(h, "id", str(h)) for h in ranked]
-    l3_user = _l3_user_message(drift_class=drift_class, ranked_ids=ranked_ids, evidence=evidence)
-    l3_messages = [
-        {"role": "system", "content": L3_SYSTEM_PROMPT},
-        {"role": "user", "content": l3_user},
-    ]
+    # REQ-045: the L3 question lives in config/prompts/l3_patch.md — the
+    # model gets the drift class, ranked hypotheses and the evidence
+    # blocks, all rendered from the file (no prompt text in Python).
+    from autobridge.llm.prompts import get_prompt as _get_prompt  # noqa: PLC0415
+    from autobridge.llm.prompts import prompt_ref as _prompt_ref  # noqa: PLC0415
+    from autobridge.llm.prompts import render_prompt as _render_prompt  # noqa: PLC0415
+
+    l3_template = _get_prompt("l3_patch")
+    l3_ref = _prompt_ref("l3_patch")
+    l3_blocks = _l3_evidence_blocks(evidence)
+    l3_messages = _render_prompt(
+        l3_template,
+        drift_class=str(drift_class),
+        ranked_ids=str(ranked_ids),
+        **l3_blocks,
+    )
     if evidence:
         l3_entry["evidence_keys"] = sorted(str(k) for k in evidence)
     # REQ-039: the exact prompt rides on the rung (prompts carry no
     # credentials by construction — hypothesis ids and redacted evidence
     # only). `make record-frontier` replays these messages live to capture
     # the recording the replay mode needs; the repair page can show what
-    # the engine asked.
+    # the engine asked. REQ-045: the rung also names the prompt id,
+    # version and content hash.
     l3_entry["messages"] = [dict(m) for m in l3_messages]
+    l3_entry["prompt"] = dict(l3_ref)
     effective: Any = provider
+    ledger_kwargs: dict[str, Any] = {}
     if budget is not None:
         effective = BudgetedProvider(provider, budget, session=session, run_id=run_id)
+        # REQ-045: prompt id/version/hash land on the ledger row (only the
+        # budgeted path writes ledger rows; direct calls never see the kwarg).
+        ledger_kwargs["prompt"] = l3_ref
     # Reasoning models spend most of a small max_tokens on thinking and then
     # return an empty message (owner check: 4,319 tokens, empty text): give
     # the frontier call room for thinking *and* an answer. The
@@ -2068,7 +2356,9 @@ def run_frontier_climb(
     except Exception:
         l3_cap = L3_MAX_TOKENS
     try:
-        l3_result = effective.complete(l3_messages, max_tokens=l3_cap, tier="frontier", purpose="l3-generate-patch")
+        l3_result = effective.complete(
+            l3_messages, max_tokens=l3_cap, tier="frontier", purpose="l3-generate-patch", **ledger_kwargs
+        )
     except ReplayMissing as exc:
         replay_missing.append(exc.prompt_hash)
         l3_entry["action"] = "l3_skipped"
@@ -2159,94 +2449,111 @@ def run_frontier_climb(
             l3_entry["proposal_validated"] = True
             _stamp_outcome("proposal")
         else:
-            # REQ-044 item 4: one retry with the apply error appended, then
-            # escalate. Both calls land on the ledger and the repair page.
+            # REQ-044 item 4: one retry with the apply error, then escalate.
+            # REQ-045: the retry renders config/prompts/l3_patch_retry.md —
+            # same question plus the rejection as data. Both calls land on
+            # the ledger and the repair page. Without the optional retry
+            # file the retry is skipped explicitly (never invented).
             _stamp_outcome("proposal_rejected")
-            retry_user = (
-                l3_user
-                + f"\nYour patch was rejected before the verifier: {apply_error}. "
-                "Answer again with one JSON object "
-                '({"patch": [...], "rationale": "..."} or '
-                '{"escalate": "<the one question for the human>", "rationale": "..."}).'
-            )
-            retry_messages = [
-                {"role": "system", "content": L3_SYSTEM_PROMPT},
-                {"role": "user", "content": retry_user},
-            ]
-            l3_entry["retry_error"] = apply_error
             try:
-                retry_result = effective.complete(
-                    retry_messages,
-                    max_tokens=l3_cap,
-                    tier="frontier",
-                    purpose="l3-generate-patch-retry",
-                )
-            except ReplayMissing as exc:
+                retry_template = _get_prompt("l3_patch_retry")
+                retry_ref = _prompt_ref("l3_patch_retry")
+            except KeyError:
+                retry_template = None
+                retry_ref = dict(l3_ref)
+            l3_entry["retry_error"] = apply_error
+            if retry_template is None:
                 proposal = None
-                replay_missing.append(exc.prompt_hash)
                 l3_entry["action"] = "proposal_rejected"
                 l3_entry["reason"] = (
-                    f"L3 proposal rejected: {apply_error}; retry has no replay recording "
-                    f"for prompt {exc.prompt_hash}"
+                    f"L3 proposal rejected: {apply_error}; no l3_patch_retry prompt file, retry skipped"
                 )
                 l3_entry["raw_preview"] = l3_text.strip()[:300]
             else:
-                retry_delta = _accumulate(retry_result)
-                usage = _merge_model_usage(usage, retry_delta)
-                l3_entry["retry_model_usage_delta"] = retry_delta
-                l3_entry["retry_reasoning_tokens"] = retry_result.usage.reasoning_tokens
-                retry_text = retry_result.text or ""
-                l3_entry["retry_text_preview"] = retry_text.strip()[:300]
-                retry_parsed = _parse_l3_response(retry_text)
-                if retry_parsed.get("rationale"):
-                    l3_entry["retry_rationale"] = " ".join(
-                        str(retry_parsed["rationale"]).split()
-                    )[:300]
-                if retry_parsed["kind"] == "escalate":
+                retry_messages = _render_prompt(
+                    retry_template,
+                    drift_class=str(drift_class),
+                    ranked_ids=str(ranked_ids),
+                    apply_error=str(apply_error),
+                    **l3_blocks,
+                )
+                try:
+                    retry_kwargs = dict(ledger_kwargs)
+                    if ledger_kwargs:
+                        retry_kwargs["prompt"] = retry_ref
+                    retry_result = effective.complete(
+                        retry_messages,
+                        max_tokens=l3_cap,
+                        tier="frontier",
+                        purpose="l3-generate-patch-retry",
+                        **retry_kwargs,
+                    )
+                except ReplayMissing as exc:
                     proposal = None
-                    model_escalated = True
-                    model_question = normalize_model_question(str(retry_parsed.get("question") or ""))
-                    l3_entry["action"] = "model_escalation"
-                    l3_entry["model_question"] = model_question
+                    replay_missing.append(exc.prompt_hash)
+                    l3_entry["action"] = "proposal_rejected"
                     l3_entry["reason"] = (
-                        f"L3 retry asked for a human decision after {apply_error}: {model_question}"
+                        f"L3 proposal rejected: {apply_error}; retry has no replay recording "
+                        f"for prompt {exc.prompt_hash}"
                     )
-                    _stamp_outcome("model_escalation")
-                elif retry_parsed["kind"] == "patch":
-                    candidate = retry_parsed["patch"]
-                    retry_error = _l3_pointer_error(
-                        candidate, target_spec=validate_against, evidence=evidence
-                    )
-                    if retry_error is None:
-                        proposal = candidate
-                        l3_entry["proposal_ops"] = len(proposal)
-                        l3_entry["proposal_pointers"] = sorted(
-                            {str(op.get("path", "")) for op in proposal if isinstance(op, dict)}
-                        )
-                        l3_entry["proposal_validated"] = True
-                        l3_entry["retried"] = True
+                    l3_entry["raw_preview"] = l3_text.strip()[:300]
+                else:
+                    retry_delta = _accumulate(retry_result)
+                    usage = _merge_model_usage(usage, retry_delta)
+                    l3_entry["retry_model_usage_delta"] = retry_delta
+                    l3_entry["retry_reasoning_tokens"] = retry_result.usage.reasoning_tokens
+                    retry_text = retry_result.text or ""
+                    l3_entry["retry_text_preview"] = retry_text.strip()[:300]
+                    retry_parsed = _parse_l3_response(retry_text)
+                    if retry_parsed.get("rationale"):
+                        l3_entry["retry_rationale"] = " ".join(
+                            str(retry_parsed["rationale"]).split()
+                        )[:300]
+                    if retry_parsed["kind"] == "escalate":
+                        proposal = None
+                        model_escalated = True
+                        model_question = normalize_model_question(str(retry_parsed.get("question") or ""))
+                        l3_entry["action"] = "model_escalation"
+                        l3_entry["model_question"] = model_question
                         l3_entry["reason"] = (
-                            f"L3 retry proposed a patch after {apply_error} "
-                            f"({len(proposal)} ops: {', '.join(l3_entry['proposal_pointers'])})"
+                            f"L3 retry asked for a human decision after {apply_error}: {model_question}"
                         )
-                        _stamp_outcome("proposal")
+                        _stamp_outcome("model_escalation")
+                    elif retry_parsed["kind"] == "patch":
+                        candidate = retry_parsed["patch"]
+                        retry_error = _l3_pointer_error(
+                            candidate, target_spec=validate_against, evidence=evidence
+                        )
+                        if retry_error is None:
+                            proposal = candidate
+                            l3_entry["proposal_ops"] = len(proposal)
+                            l3_entry["proposal_pointers"] = sorted(
+                                {str(op.get("path", "")) for op in proposal if isinstance(op, dict)}
+                            )
+                            l3_entry["proposal_validated"] = True
+                            l3_entry["retried"] = True
+                            l3_entry["reason"] = (
+                                f"L3 retry proposed a patch after {apply_error} "
+                                f"({len(proposal)} ops: {', '.join(l3_entry['proposal_pointers'])})"
+                            )
+                            _stamp_outcome("proposal")
+                        else:
+                            proposal = None
+                            l3_entry["action"] = "proposal_rejected"
+                            l3_entry["reason"] = (
+                                f"L3 proposal rejected: {apply_error}; retry failed too: {retry_error}"
+                            )
+                            l3_entry["raw_preview"] = retry_text.strip()[:300]
+                            _stamp_outcome("proposal_rejected")
                     else:
                         proposal = None
                         l3_entry["action"] = "proposal_rejected"
                         l3_entry["reason"] = (
-                            f"L3 proposal rejected: {apply_error}; retry failed too: {retry_error}"
+                            f"L3 proposal rejected: {apply_error}; "
+                            f"retry unparsable ({retry_parsed['detail']})"
                         )
                         l3_entry["raw_preview"] = retry_text.strip()[:300]
                         _stamp_outcome("proposal_rejected")
-                else:
-                    proposal = None
-                    l3_entry["action"] = "proposal_rejected"
-                    l3_entry["reason"] = (
-                        f"L3 proposal rejected: {apply_error}; "
-                        f"retry unparsable ({retry_parsed['detail']})"
-                    )
-                    l3_entry["raw_preview"] = retry_text.strip()[:300]
-                    _stamp_outcome("proposal_rejected")
     else:
         # No usable patch is a normal outcome, never an error: record what
         # the text contained plus a truncated preview so a live answer is

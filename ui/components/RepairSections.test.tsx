@@ -79,6 +79,38 @@ describe("ModelCallBox", () => {
     expect(row).toHaveTextContent("proposal_rejected");
     expect(screen.getByTestId("model-call-box-total")).toHaveTextContent("1 call");
   });
+
+  it("shows the prompt id and version next to the call (REQ-045)", () => {
+    render(
+      <ModelCallBox
+        attempts={[
+          {
+            rung: 3,
+            action: "frontier proposal",
+            reason: "L2 not confident",
+            calls: [
+              {
+                tier: "frontier",
+                purpose: "l3-generate-patch",
+                model: "muse-spark-1.3",
+                mode: "live",
+                outcome: "proposal",
+                input_tokens: 1000,
+                output_tokens: 200,
+                reasoning_tokens: 0,
+                cost: "0.0056",
+                prompt_id: "l3_patch",
+                prompt_version: "1",
+                prompt_hash: "abc123",
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+    const row = screen.getByTestId("model-call-row-0");
+    expect(row).toHaveTextContent("prompt l3_patch v1");
+  });
 });
 
 describe("ApprovePreviewSection", () => {

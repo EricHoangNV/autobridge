@@ -55,7 +55,8 @@ def test_rung_ledger_links_calls_to_rungs() -> None:
     assert attempts[2]["calls"] == [
         {"tier": "small", "purpose": "l2-rank-hypotheses", "model": "", "mode": "live",
          "captured_at": "", "outcome": None,
-         "input_tokens": 100, "output_tokens": 20, "reasoning_tokens": 0, "cost": "0.000120"}
+         "input_tokens": 100, "output_tokens": 20, "reasoning_tokens": 0, "cost": "0.000120",
+         "prompt_id": "", "prompt_version": "", "prompt_hash": ""}
     ]
     assert attempts[3]["calls"][0]["purpose"] == "l3-generate-hypothesis"
     assert attempts[4]["calls"] == []

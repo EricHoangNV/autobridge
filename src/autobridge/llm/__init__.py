@@ -1,6 +1,17 @@
 """LLM provider package."""
 
 from autobridge.health import healthz
+from autobridge.llm.prompts import (
+    PromptError,
+    PromptTemplate,
+    ensure_prompts_loaded,
+    get_prompt,
+    get_prompts,
+    load_prompts,
+    prompt_ref,
+    render_prompt,
+    reset_prompts_cache,
+)
 from autobridge.llm.provider import (
     AnthropicProvider,
     Budget,
@@ -31,13 +42,22 @@ __all__ = [
     "LLMProvider",
     "MuseProvider",
     "OpenAIProvider",
+    "PromptError",
+    "PromptTemplate",
     "ReplayMissing",
     "ReplayProvider",
     "ToolCall",
     "Usage",
+    "ensure_prompts_loaded",
     "estimate_cost",
+    "get_prompt",
+    "get_prompts",
     "healthz",
+    "load_prompts",
     "prompt_hash",
+    "prompt_ref",
     "record_model_call",
+    "render_prompt",
+    "reset_prompts_cache",
     "resolve_frontier_provider",
 ]

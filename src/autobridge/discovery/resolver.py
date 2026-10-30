@@ -118,6 +118,7 @@ def resolve_hypotheses(
     run_id: str | None = None,
     session: Any | None = None,
     evidence_ids: list[str] | None = None,
+    drift_class: str = "UNKNOWN",
 ) -> ResolutionResult:
     """Resolve hypotheses via probing within budgets.
 
@@ -176,18 +177,24 @@ def resolve_hypotheses(
                 # Use ladder's L3 helper via import to avoid duplication
                 from autobridge.repair.ladder import _call_frontier_generate  # noqa: PLC0415
 
-                new_hyps, delta = _call_frontier_generate(
+                new_hyps, delta, l3_info = _call_frontier_generate(
                     current,
                     provider,
                     llm_budget,
                     enumerator_yield_count=enumerator_yield_count,
                     run_id=run_id,
                     session=session,
+                    drift_class=drift_class,
                 )
                 model_usage = _merge_usage(model_usage, delta)
                 current = list(new_hyps)
                 trace[-1]["hypothesis_count_after"] = len(current)
                 trace[-1]["model_usage_delta"] = delta
+                trace[-1]["prompt"] = dict(l3_info.get("prompt") or {})
+                if l3_info.get("rejected"):
+                    trace[-1]["l3_rejected_family"] = str(l3_info["rejected"])
+                if l3_info.get("none_reason"):
+                    trace[-1]["l3_none_reason"] = str(l3_info["none_reason"])
             except AssertionError:
                 raise
             except BudgetExhausted as exc:
@@ -343,11 +350,17 @@ def resolve_hypotheses(
                     "hypothesis_ids": [getattr(h, "id", str(h)) for h in current],
                 }
             )
-            ranked, delta = _call_small_model_rank(current, provider, llm_budget, run_id=run_id, session=session)
+            ranked, delta, l2_info = _call_small_model_rank(
+                current, provider, llm_budget, run_id=run_id, session=session,
+                drift_class=drift_class,
+            )
             model_usage = _merge_usage(model_usage, delta)
             current = ranked
             trace[-1]["ranked_ids"] = [getattr(h, "id", str(h)) for h in current]
             trace[-1]["model_usage_delta"] = delta
+            trace[-1]["prompt"] = dict(l2_info.get("prompt") or {})
+            if l2_info.get("fallback"):
+                trace[-1]["l2_fallback"] = str(l2_info["fallback"])
         except BudgetExhausted as exc:
             bundle = escalation_from_budget_exhausted(exc, evidence_ids=ev_ids, context="L2 resolver")
             trace.append({"level": 4, "action": "escalate", "reason": f"BudgetExhausted in L2: {exc.reason}"})

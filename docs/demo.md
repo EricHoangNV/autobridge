@@ -225,9 +225,12 @@ stays `Decimal` throughout; the UI never shows a guessed mapping. Capture
 the live prompt for replay with
 `make record-frontier SCENARIO=gross_to_net` (keyed stack, after the break).
 The L3 prompt hash changes with the prompt: after any change to what the
-engine asks (REQ-044 well-posed prompt), the previous capture no longer
+engine asks (REQ-044 well-posed prompt, REQ-045 prompts-in-files), the previous capture no longer
 matches — the repair records an explicit skip naming the new hash — until
 the owner re-runs the capture and commits `demo/recordings/gross_to_net.json`.
+To improve a prompt, edit `config/prompts/<id>.md` and restart the engine
+(prompts load once at boot; the repair page shows each call's prompt
+id/version next to it).
 
 ## 5. Head-to-head — `/bench/scorecards`
 

@@ -638,6 +638,13 @@ class ModelCall(Base):
     #: (L3), ``hypothesis`` (L3-hypothesis generation). Null when the caller
     #: did not classify it; the rung trace always carries the reason too.
     outcome: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Which engine prompt the call rendered (REQ-045): the prompt file
+    #: ``id`` (``l2_rank`` / ``l3_hypothesis`` / ``l3_patch``), its
+    #: ``version``, and the sha256 of the file text. Empty for calls that
+    #: predate prompts-in-files or that never rendered one.
+    prompt_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    prompt_version: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -689,6 +696,10 @@ class ModelCallArchive(Base):
     mode: Mapped[str] = mapped_column(String(16), nullable=False, default="live")
     captured_at: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     outcome: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Mirrors :class:`ModelCall` (REQ-045): prompt id/version/hash.
+    prompt_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    prompt_version: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )

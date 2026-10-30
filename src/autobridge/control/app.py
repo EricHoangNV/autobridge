@@ -59,6 +59,13 @@ async def lifespan(app: FastAPI):
     from autobridge.control.migrate import ensure_migrated  # noqa: PLC0415
 
     ensure_migrated(get_engine())
+    # REQ-045: load and validate every engine prompt now — a missing file
+    # or bad front-matter raises PromptError naming the file, failing
+    # startup instead of serving with a broken prompt. Editing a prompt
+    # takes effect on the next restart (never hot-reloaded).
+    from autobridge.llm.prompts import ensure_prompts_loaded  # noqa: PLC0415
+
+    ensure_prompts_loaded()
     # Re-queue jobs orphaned by a dead process (restart/crash path): a
     # ``running`` row with no living worker would otherwise wedge its
     # connector in "sync running" forever, because the scheduler skips

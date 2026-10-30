@@ -2508,6 +2508,21 @@ export interface components {
             outcome?: string | null;
             /** Output Tokens */
             output_tokens: number;
+            /**
+             * Prompt Hash
+             * @default
+             */
+            prompt_hash: string;
+            /**
+             * Prompt Id
+             * @default
+             */
+            prompt_id: string;
+            /**
+             * Prompt Version
+             * @default
+             */
+            prompt_version: string;
             /** Purpose */
             purpose: string;
             /**

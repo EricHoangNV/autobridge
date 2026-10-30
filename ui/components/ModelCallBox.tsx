@@ -7,6 +7,9 @@ export type LedgerCall = {
   mode?: string;
   captured_at?: string;
   outcome?: string | null;
+  prompt_id?: string;
+  prompt_version?: string;
+  prompt_hash?: string;
   input_tokens: number;
   output_tokens: number;
   reasoning_tokens?: number;
@@ -72,6 +75,12 @@ export function ModelCallBox({ attempts, pending = false }: { attempts: LedgerAt
               <td className="py-1 pr-3">
                 {call.model || call.tier || "—"}
                 {call.purpose ? <span className="text-ink-2"> · {call.purpose}</span> : null}
+                {call.prompt_id ? (
+                  <span className="text-ink-2" title={call.prompt_hash || undefined}>
+                    {" "}· prompt {call.prompt_id}
+                    {call.prompt_version ? ` v${call.prompt_version}` : ""}
+                  </span>
+                ) : null}
               </td>
               <td className="py-1 pr-3">
                 {call.mode === "replay" ? `replayed${call.captured_at ? ` ${call.captured_at}` : ""}` : "live"}

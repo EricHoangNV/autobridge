@@ -366,6 +366,9 @@ def demo_reset(
                 mode=call.mode or "live",
                 captured_at=call.captured_at or "",
                 outcome=call.outcome,
+                prompt_id=call.prompt_id or "",
+                prompt_version=call.prompt_version or "",
+                prompt_hash=call.prompt_hash or "",
             )
         )
         archived += 1

@@ -157,10 +157,10 @@ def test_s5_l2_rank_identical_on_both_providers(monkeypatch: pytest.MonkeyPatch)
     _mock_openai_sdk(monkeypatch, ranked_text)
     anthropic_p, openai_p = _make_providers()
 
-    a_ranked, a_usage = _call_small_model_rank(
+    a_ranked, a_usage, _ = _call_small_model_rank(
         _stub_hypotheses(), anthropic_p, Budget(), purpose="parity-l2"
     )
-    o_ranked, o_usage = _call_small_model_rank(
+    o_ranked, o_usage, _ = _call_small_model_rank(
         _stub_hypotheses(), openai_p, Budget(), purpose="parity-l2"
     )
 
