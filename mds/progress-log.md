@@ -3690,3 +3690,25 @@ Ask L3 a well-posed question: the prompt now names the connector-spec patch targ
 
 ## 2026-10-30 06:26–07:00 UTC — REQ-046 DONE (sbx1; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Fair benchmark context landed: `bench/context.py` shared bundle, `bench/bench_prompts.py` + two files under `config/prompts/bench/`, one-shot/agent/llm-fallback arms all render the same context the engine has, `ArmResult.prompt/context_hash` flow into the scorecard (`prompts` + `context_hashes` + report rendering + ablation summary), 9-test fair-context suite green, docs/benchmark.md + preregistration amendment describe what each arm is given. Gates: lint (7 ruff autofixes) + typecheck clean, full `make test` green at the 90% gates (2758/134/409 + UI 202), test_07 e2e pass, BENCH_TRIALS=1 rehearsal 12/12 matched (frontier_oneshot loud ReplayMissing on the new hash; agent fake without key). Owner step: keyed bench-ablation for live frontier numbers (re-record first), then close. Next: owner verify queue (REQ-045/044/043/041/042/027/028/021/024/025).
+
+## REQ-028 code re-verified, marked BLOCKED on owner keyed run
+**Date:** 2026-10-30
+**Ref:** REQUESTS.MD REQ-028 (owner rehearsal 2026-10-29)
+
+**What was done:**
+- Reclaimed stale sbx1 IN_PROGRESS claim (>6h old) and verified every codeable item is landed and green
+- Confirmed in code: empty-delta L0 guard, drift-class-scoped L0 key, NO_LEARN_CLASSES, scoped one-shot docs, arm availability, `ran` label, warm-never-worse test, SCHEMA_RENAME taxonomy
+- Ran targeted suites: bench ablation invariant + availability (2 passed), ladder L0/empty-delta (8 passed), repair rules + knowledge (91 passed)
+- Moved REQ-028 to `Status: BLOCKED` in place (kept in Open Requests) with the exact owner unblock step; no code changed
+
+**Key decisions:**
+- BLOCKED rather than DONE: acceptance needs keyed frontier numbers and the sandbox has no FRONTIER_API_KEY; closing it unkeyed would repeat the starved-baseline mistake REQ-046 was filed to prevent
+- Did not touch the sibling stale claims (REQ-021/024/025/027) — one task at a time; they keep their IN_PROGRESS lines until their own verification pass
+
+**Files changed:**
+- `mds/REQUESTS.MD` — REQ-028 status IN_PROGRESS → BLOCKED + Blocked line with owner step
+- `mds/BUILD-NOTES.md` — appended `### REQ-028` note
+- `mds/progress-state.md` — REQ-028 moved from IN_PROGRESS list to BLOCKED
+
+**Notes for next iteration:**
+- Owner: keyed `BENCH_TRIALS=1 make bench-ablation`, record table, then close REQ-028 (and REQ-046's identical owner step in the same run)
