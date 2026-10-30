@@ -2641,3 +2641,57 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation)
 - Tests: page suite 28 (headline/storyline, rails per state, Now-from-spec, fact-once, reduced motion on/off; SWR mocks now dispatch by key — learning 64); RepairActions Deny tests; `test_06` updated (storyline/headline, collapsed evidence opened, proof tile, op-row, state-aware live approve/deny); `test_08` stale assertions updated (decision line, proof tile). `docs/demo.md` decks 3+5 + `docs/architecture.md` repair-page item rewritten.
 - Gates: ui 244 pass, ui-typecheck + lint + mypy + openapi-check clean, `make test` all green (90% gates), `make demo` 8/8 unkeyed on local stack, `test_06` 8/8 live. `make e2e-ui` full runner still blocked by the pre-existing sandbox test_08 ESM loader failure (fails identically on clean main; UI covered by vitest + live test_06).
 - Owner check after: Aside screenshots at 1440 of deck 3 (propose → approved) and deck 5 (climbing → escalated with proposal → approved).
+
+### REQ-055 items 1, 2, 3(a)-(d) (sbx1 2026-10-30; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Items 3(e)(f), 4, 5 were added by the owner after the claim and stay OPEN.
+- Item 1 (Approve 422 on migrated DB): two compounding causes. (a) The `Base`
+  naming convention stores every `_check()` under the doubled name
+  (`ck_repair_runs_ck_repair_runs_decision`), so 0011/0013's
+  `drop_constraint("ck_repair_runs_decision")` only works via Alembic's
+  convention expansion — verified it resolves on SQLite+PG paths. (b) Worse,
+  `_REVISION_EFFECTS` recorded CHECK-only migrations as empty, so
+  `ensure_migrated` detecting a 0012-era DB stamped 0013 without running its
+  DDL (then upgraded only to 0014) — reproduced exactly (version 0014 +
+  5-value CHECK), then repaired. Fix: 0015 migration re-enforcing the 0013
+  value set + backfill (idempotent); detection now verifies CHECK contents
+  (SQLite `IN` + Postgres `ANY(ARRAY)` shapes, fail-open on unknown
+  dialects); new `test_autobridge_req055_migration.py` (per-revision
+  upgrade→ensure_migrated→approve-proposal+approve-fix matrix, stuck-0014
+  repair, approve routes on migrated schema, all-CHECKs-match-create_all
+  audit). Only repair_runs decision CHECK is touched by migrations.
+- Item 2 (dry-run passed for the wrong reason): shared
+  `looks_like_money_sum` predicate in `runtime/checks.py` (same behavior
+  live); `dryrun.py` fails a money check pointed at a non-money value with
+  "the patched check did not run: `<ptr>` is not a money sum" (new
+  pointers AND old ones — `$.total` was already an old no_loss pointer, so
+  the exemption had to be kind-scoped, not pointer-scoped); mirror money
+  re-run guarded the same way; retry carries the exact message via the
+  existing `l3_patch_retry.md` `apply_error` slot. `field_notes_for_proposal`
+  annotates each offered op from observed evidence (resolved value + shape,
+  old→new pointer contrast, removal wording) — rides the L3 rung, the
+  escalation bundle, and the detect-layer gate rung; rendered under the op
+  in chapter-3 Now→Proposed and the rail PatchDiff. "What the docs say" is
+  cited from the response the break's sync saw (the engine cannot read the
+  wiki — trust boundary); item 4(a) will enrich the retry from docs text.
+- Item 3: (a) subline Approve segment only when approvable (never while
+  climbing/failed); (b) chapter 3 renders `displayPatch` (candidate or the
+  escalated tested proposal) with notes + dry-run; (c) verifier tile shows
+  the dry-run result next to a tested proposal (plain escalations unchanged);
+  (d) `.repair-acts .more` wraps (Deny full row, rollback cluster below).
+  UI tests for each; `data-testid`s added (`no-patch-note`, `op-note-N`,
+  `verifier-dry-run-note`, `patch-op-note-N`).
+- Test-isolation learning: the Harbor fault client prefers ambient sim
+  state (`/tmp/sim_state.json`, rewritten by any live stack) for gross
+  sums — exact-sum dry-run tests now build the fault inside
+  `isolated_sim_state()` and pin the parcel's gross sum. Pre-existing tests
+  were unaffected (they assert messages/shapes, not sums).
+- Sandbox note: a stale `.local/ACTIVE` (dead pids, pre-existing) trips the
+  unit DNS guard via `stack_mode.probe_runtime_mode(localhost)` → 4
+  teardown errors; removed the dead marker file (gitignored scratch) after
+  verifying no live processes. The probe default stays `localhost` (REQ-037
+  territory, out of scope).
+- Gates: autobridge 90.03% (was 89.65% on base — added ~60 targeted tests),
+  verifier 91.49%, simulators 90.48%; ui 253 pass; make lint + typecheck +
+  ui-typecheck + openapi-check green; make demo 8/8 unkeyed on local stack;
+  tests/e2e/test_06 8/8 live. Full make test green except the 4 pre-existing
+  DNS teardown errors when a stale marker is present (0 with it removed).

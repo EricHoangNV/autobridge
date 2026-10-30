@@ -3878,3 +3878,28 @@ Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process
 **Notes for next iteration:**
 - Owner check outstanding: Aside screenshots at 1440 deck 3 + deck 5.
 - `make e2e-ui` full runner blocked by pre-existing sandbox test_08 ESM loader failure (identical on clean main); run test files individually in sandbox.
+
+## REQ-055 items 1, 2, 3(a)-(d) — migrated-DB approve, honest dry-run, repair-page fixes
+**Date:** 2026-10-30
+**Ref:** REQUESTS REQ-055 items 1, 2, 3(a)–(d) (items 3(e)(f), 4, 5 added after the claim stay OPEN)
+
+**What was done:**
+- Item 1: new Alembic 0015 re-enforcing the terminal-decision CHECK + 0013 backfill; CHECK-aware `ensure_migrated` detection (SQLite + Postgres shapes); `test_autobridge_req055_migration.py` with the per-revision upgrade→approve matrix, stuck-0014 repair test, approve routes on migrated schema, CHECK audit vs `create_all`
+- Item 2: shared `looks_like_money_sum` predicate; dry-run fails non-evaluable money checks with the generic message (retry carries it); per-op field notes from observed evidence, rendered next to the change in chapter 3 and the rail
+- Item 3: subline without Approve while climbing/failed; chapter 3 shows the tested proposal; verifier tile shows the dry-run result; rail Deny/rollback wraps
+- Coverage: ~60 targeted tests to lift autobridge 89.65% → 90.03% (gate green); docs/demo.md dry-run paragraph updated
+
+**Key decisions:**
+- Field-note meanings cite the observed response, not wiki wording (engine trust boundary forbids reading docs); item 4(a) owns docs-derived retry meanings
+- Fault-parcel pinning (`isolated_sim_state` + explicit gross) instead of changing the fault client's ambient-state preference (bench behavior untouched)
+- Left the `localhost` probe default alone (REQ-037 territory); removed only the dead scratch marker in this worktree
+
+**Files changed:**
+- `alembic/versions/0015_repair_decision_check_repair.py` (new), `src/autobridge/control/migrate.py`, `src/autobridge/repair/dryrun.py`, `src/autobridge/runtime/checks.py`, `src/autobridge/repair/ladder.py`, `src/autobridge/repair/controller.py`, `src/autobridge/engine/detect_repair.py`
+- `ui/app/repairs/[id]/page.tsx`, `ui/components/PatchDiff.tsx`, `ui/components/VerifierVerdict.tsx`, `ui/app/globals.css` + page/PatchDiff tests
+- `tests/unit/test_autobridge_req055_migration.py` (new) + coverage tests in req053_dryrun, demo_reset, demo_targets, cli, runtime_http_interpreter, semantic_invariants; `docs/demo.md`
+
+**Verification:**
+- autobridge 90.03% / verifier 91.49% / simulators 90.48%; ui 253 pass; lint + typecheck + ui-typecheck + openapi-check green
+- `make demo` 8/8 unkeyed on local stack; `tests/e2e/test_06_ui_journey.spec.ts` 8/8 live
+- Owner keyed check outstanding: decks 4 → 5 through the browser to Harbor ● Working

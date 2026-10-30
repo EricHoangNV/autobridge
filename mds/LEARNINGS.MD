@@ -588,3 +588,25 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - `mockReturnValueOnce` chains assume one render pass consumes N mocks in order. React 18 invokes the component twice per commit, so the queue drains 2× and the committed pass sees the default — repair undefined, "Repair not found", while a sibling test order still passes, which misleads.
 - Fixed by dispatching on the SWR key (`mockImplementation`: repair path → repair, `drift-for-repair-*` → drifts, `*/sync-runs` → `[]`, etc.), immune to render count and to hook additions that shift positions.
 - **Rule:** Mock data-fetching hooks by request identity (key/URL), never by call sequence; sequence mocks rot the moment render count or hook order changes.
+
+## 65. CHECK-only migrations are invisible to table/column detection — verify CHECK contents
+
+**Context:** REQ-055 item 1: a live DB at `alembic_version 0014` still rejected `SET decision='approved'` — migration 0013's DDL had been stamped over, never run.
+
+- Two compounding causes: (a) the `Base` naming convention stores every `_check()` under the doubled name, so drop/create only works via Alembic's convention expansion (passing the canonical single name); (b) `_REVISION_EFFECTS` recorded CHECK-only revisions as `{"tables": [], "columns": []}` (always satisfied), so `ensure_migrated` detecting a 0012-era DB stamped 0013 and upgraded only to 0014.
+- Fixed with a repair migration (0015, idempotent + backfill) and CHECK-aware detection that parses the value set from reflected SQL in both the SQLite (`IN (...)`) and Postgres (`ANY (ARRAY[...])`) shapes, failing open on unknown dialects.
+- **Rule:** Every migration revision's detectable effects must include its CHECK value sets in a dialect-portable parse; the stamp path must never jump over an unsatisfied revision — a skipped CHECK widening fails closed as a constraint violation on live data, not as a loud migration error.
+
+## 66. A dry-run that cannot evaluate a check must fail it — silent skips become false "verified" labels
+
+**Context:** REQ-055 item 2: a money-invariant repointed at a record count passed the dry-run because the engine ignored non-money `compare_to` values, switching the totals comparison off while the label claimed a repoint.
+
+- The exemption has to be kind-scoped, not pointer-scoped: `$.total` was already an old `no_loss` pointer, so "new pointers only" still skipped the money check. Failing loudly (`the patched check did not run: ...`) also fixed the retry message for free via the existing `apply_error` slot.
+- **Rule:** Share one money-sum predicate between the live and dry-run paths; any check that is skipped or cannot evaluate during judgement counts as not passed, with generic wording the retry can reuse.
+
+## 67. Simulator-served test fixtures must pin the parcel, not trust ambient simulator state
+
+**Context:** REQ-055 item 2 tests: the Harbor fault client prefers the global simulator state file (`/tmp/sim_state.json`, rewritten by any live stack) for gross sums, so exact-sum assertions flipped between runs (and with test order).
+
+- Fixed by building the fault inside the existing `isolated_sim_state()` and pinning the parcel's raw gross sum to a computed-safe value (record sum for pass-tests, huge sum + scaled records for fail-tests). No bench behavior changed.
+- **Rule:** Tests that judge sums against faulted records isolate sim state and pin every compared value in the parcel; never assert on ambient-served totals.

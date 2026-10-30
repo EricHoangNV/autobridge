@@ -123,7 +123,7 @@ dry-run line in both forms. Owner check after: Aside screenshots at 1440 of deck
 
 
 ### REQ-055 — Deck 5 keyed: Approve fails on the migrated DB; the dry-run passed for the wrong reason; repair-page contradictions (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 14:31)
+Status: DONE (sbx1 2026-10-30 — items 1, 2, 3(a)–(d) code + full gates green; items 3(e)(f), 4, 5 added after the claim stay OPEN for the next loop; owner keyed check outstanding: decks 4 → 5 break → tested proposal whose label matches what it does → Approve → verifying sync Complete → Harbor ● Working)
 Owner keyed check (2026-10-30, host `make local-up`, origin/main 5955fcca, fresh reset+seed, Aside at 1440): deck 4
 (Harbor from the wiki, "check added from the docs") and deck 5 up to the decision work — repairing view live, first
 proposal failed the dry-run, one retry, second passed ("tested on the current records: the checks pass"), 2 calls,
