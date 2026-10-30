@@ -2,7 +2,59 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 21:30): **REQ-055 next.** Do not start REQ-051 or REQ-052 until the owner says so.
+Owner priority (2026-10-30 22:00): **REQ-055, then REQ-056.** Do not start REQ-051 or REQ-052 until the owner says so.
+
+### REQ-056 — Repair page you can scan: plain-language summary per step, technical detail behind a toggle (2026-10-30)
+Status: OPEN
+Run **after REQ-055** (same page). Owner: "I need a way for users to scan the page and get the summary right away.
+Right now it's a lot of technical info, and it's very confusing … 'Semantic value drift' is still cryptic." UI only;
+no new API (all numbers already come back from existing endpoints). Still **facts only** (REQ-054): no per-drift
+narrative sentences — plain wording comes from **two small lookup tables + the real numbers**.
+1. **Rule per step:** one plain-language headline + 2–3 key facts; everything technical goes behind a
+   **"Technical details ▸"** toggle (closed by default) in that step. A reader of the storyline strip alone knows what
+   happened, what the engine did and what is asked of them.
+2. **Storyline strip** (top): per step a plain headline + one fact, e.g. deck 5: "Amounts no longer add up · 10% below
+   Harbor's own total" → "Asked the AI model · rules couldn't decide" → "Accept net amounts? · tested · reversible";
+   deck 3: "Paging changed · Atlas now returns cursors" → "Fixed by a known rule · no AI needed" → "Approve the fix ·
+   verified · reversible".
+3. **Step 1 — What happened** (convey: what broke, in business terms, and the impact). Headline from the plain drift
+   name and the failed check's plain meaning; facts: the observed vs expected numbers from the check's evidence (e.g.
+   "Reservation amounts are 10% below Harbor's page total (900.00 vs 1,000.00)"), records affected per entity, sync
+   state and since when. Technical details ▸: drift class code, unmet check code, sync/evidence ids, wire before/after,
+   evidence records.
+4. **Step 2 — What the engine did** (convey: how far it had to go, whether AI was used, what was checked). Headline by
+   the rung that held (e.g. "Fixed by a known rule — no AI needed" / "Rules couldn't decide, so it asked the AI
+   model"). The ladder as five plain chips with outcomes: **Known fix · Rule · Small model · AI model · You**, the
+   rung that held lit, AI chip showing calls + tokens. **Dry-run line (always, when a proposal exists):** "Our test on
+   today's records: passed" or, after a retry, "The model's first idea used a field <vendor> doesn't send — our test
+   rejected it; the second idea passed" (from REQ-055 item 4 data). Technical details ▸: rung reasons, funnel, model-call
+   table, usage across runs, evidence graph.
+5. **Step 3 — Recommendation** (convey: what the engine suggests, what changes, is it safe). Headline: the fix or the
+   model's proposal in plain words; facts: **What changes** (the patch in plain words, from the check/field lookup,
+   e.g. "Stop comparing reservation totals with Harbor's gross total"), **Tested** (verifier / dry-run result),
+   **Reversible** (roll back to rN), and for a model proposal **"Your business decision — not learned for next time"**.
+   Technical details ▸: Now → Proposed table, raw JSON Patch.
+6. **Lookup tables** (one place in `ui/lib/`, unit-tested, every code used anywhere has an entry; unknown code → the
+   code itself, never blank). Draft wording for the owner to review in the PR/BUILD-NOTES:
+   - Drift class → plain name: `SEMANTIC_VALUE_DRIFT` "Values changed meaning" · `PAGINATION_CHANGE` "Paging changed" ·
+     `PAGINATION_BUG` "Paging is broken" · `SCHEMA_RENAME` "A field was renamed" · `STATUS_VOCAB` "Status codes
+     changed" · `DUPLICATE_DELIVERY` "Records arrive twice" · `RATE_LIMIT` "The vendor is throttling us" ·
+     `TRANSIENT_ERROR` "The vendor is briefly down" · `CLOUD_SLOW` "The connection is slow" · `AUTH_EXPIRED` "Access
+     expired" · `AUTH_REVOKED` "Access was revoked" · `CAPABILITY_REMOVED` "The vendor removed something we use" ·
+     `PROTOCOL_VIOLATION` "The device broke the protocol" · `LINK_RESYNC` "The device link dropped" · `ACK_TIMEOUT`
+     "The device stopped answering" · `SESSION_LOST` "The device session dropped mid-command" · `STALE_COMMAND` "An
+     outdated command arrived" · `AGENT_RESTART` "The on-site agent restarted".
+   - Check → plain meaning: `money_invariant` "amounts don't add up to the vendor's total" · `count_invariant` "record
+     counts don't match" · `no_loss` "records went missing" · `unique_key` "duplicate records" · `date_order`
+     "dates are out of order" · `business_date_invariant` "postings land on the wrong business day" · `http_error`
+     "the vendor's API returned errors" · `feed_unavailable` "the device feed is unavailable".
+7. Same treatment for every repair state (propose, climbing, escalated with / without proposal, approved, rejected,
+   rolled back) and the decision rail's top line. Keep all `data-testid`s (technical blocks keep theirs inside the
+   toggle); REQ-055's automated no-overlap check must still pass.
+Tests: lookup completeness (every drift class in `simulators/scenarios/` and every check kind has an entry); storyline
+and step headlines for deck 3 and deck 5 fixtures; technical toggles closed by default and contain the old content;
+dry-run line in both forms. Owner check after: Aside screenshots at 1440 of deck 3 and deck 5 — readable in 5 seconds.
+
 
 ### REQ-055 — Deck 5 keyed: Approve fails on the migrated DB; the dry-run passed for the wrong reason; repair-page contradictions (2026-10-30)
 Status: IN_PROGRESS (sbx1 since 2026-10-30 14:31)
