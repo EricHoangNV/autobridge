@@ -95,7 +95,7 @@ viewer height + inner scroll + section jump.
 
 
 ### REQ-056 — Repair page you can scan: plain-language summary per step, technical detail behind a toggle (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 17:33)
 Run **after REQ-055** (same page). Owner: "I need a way for users to scan the page and get the summary right away.
 Right now it's a lot of technical info, and it's very confusing … 'Semantic value drift' is still cryptic." UI only;
 no new API (all numbers already come back from existing endpoints). Still **facts only** (REQ-054): no per-drift
