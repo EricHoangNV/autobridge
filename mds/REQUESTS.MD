@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 06:00): **REQ-042 first, then REQ-040, then REQ-041.**
 
 ### REQ-042 — A model call must never run inside a request or a held transaction: keyed demo fails 3/8 (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 01:33)
 Owner run (2026-10-30, sandbox, fresh checkout of `origin/main` at 57670155, the Cycle 5 PASS commit, **with the
 owner's `.env` incl. `FRONTIER_API_KEY`**): `make up && make demo-reset && make demo` → **steps 4, 7, 8 failed**:
 step 4 `POST /connectors/{id}/sync -> unreachable: "timed out"` (no `Degraded`, no drift row); steps 7 and 8
