@@ -2,10 +2,10 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 17:30): **REQ-049, then REQ-050, then REQ-051.**
+Owner priority (2026-10-30 18:00): **REQ-049, then REQ-050, then STOP** (owner runs the demo cases next; more changes will follow). **Do not start REQ-051.**
 
 ### REQ-051 — Deck 7: the PABX layout change is detected and repaired live (rename_field, Approve), not only in-process (2026-10-30)
-Status: OPEN
+Status: DEFERRED (owner 2026-10-30: low priority; deck 7 now uses the link drop. Do not start until the owner reopens it.)
 Owner review (2026-10-30). The scenario definition (`simulators/scenarios/fias_record_layout_change.yaml`) says: "The
 connector detects the drift from the handshake LR and repairs the FolioCharge mapping with a JSON Patch through the
 ladder (L1 rule, 0 frontier tokens), then postings flow again." On the live stack that never happens:
