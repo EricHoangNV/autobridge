@@ -35,7 +35,14 @@ narrative sentences — plain wording comes from **two small lookup tables + the
    **Reversible** (roll back to rN), and for a model proposal **"Your business decision — not learned for next time"**.
    Technical details ▸: Now → Proposed table, raw JSON Patch.
 6. **Lookup tables** (one place in `ui/lib/`, unit-tested, every code used anywhere has an entry; unknown code → the
-   code itself, never blank). Draft wording for the owner to review in the PR/BUILD-NOTES:
+   code itself, never blank). **All wording is written by the LLM once, at build time (owner decision (a)):** you (the
+   loop's model) generate the plain-language text for **every placeholder** — every drift class, every check kind,
+   every repair state's headline and decision-rail line, every rung chip outcome, the "what changes" phrasing per
+   patch shape (replace/remove/add on a mapping, a check, pagination, auth) and the dry-run lines — and ship it as
+   fixed text in those tables. **No model call at runtime** for any of it (the page must not change a repair's model
+   calls; deck 3 stays "0 model calls"). Plain words a hotel operator understands, no internal codes, ≤ 8 words per
+   headline. List the full generated wording in BUILD-NOTES for the owner to review. Starting draft below (replace or
+   improve freely):
    - Drift class → plain name: `SEMANTIC_VALUE_DRIFT` "Values changed meaning" · `PAGINATION_CHANGE` "Paging changed" ·
      `PAGINATION_BUG` "Paging is broken" · `SCHEMA_RENAME` "A field was renamed" · `STATUS_VOCAB` "Status codes
      changed" · `DUPLICATE_DELIVERY` "Records arrive twice" · `RATE_LIMIT` "The vendor is throttling us" ·
