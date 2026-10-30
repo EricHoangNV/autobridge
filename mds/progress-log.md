@@ -3903,3 +3903,32 @@ Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process
 - autobridge 90.03% / verifier 91.49% / simulators 90.48%; ui 253 pass; lint + typecheck + ui-typecheck + openapi-check green
 - `make demo` 8/8 unkeyed on local stack; `tests/e2e/test_06_ui_journey.spec.ts` 8/8 live
 - Owner keyed check outstanding: decks 4 → 5 through the browser to Harbor ● Working
+
+## REQ-055 items 3(e), 3(f), 4, 5 — pinned rail, layout check, dry-run gate in UI, no dollar amounts
+**Date:** 2026-10-30
+**Ref:** REQUESTS.MD REQ-055 (owner reopen 2026-10-30 23:10)
+
+**What was done:**
+- 3e: slimmed the decision rail to the decision only (one-line question + tooltip, proposal label + dry-run, Approve/Deny, rollback, collapsed consequences); chapter 3 keeps Now → Proposed + raw JSON; rail pinned via sticky + viewport-capped scroll.
+- 3f: evidence-graph nodes size to content with full-text tooltips; added automated Playwright no-overlap/overflow check (16 cases, mocked + live-branch green).
+- 4a: retry error now lists each available wire field with its documented meaning from the connector's spec (generic, no scenario names); verified the Harbor wording ("total" → number of records, "gross_sum" → compared by money_invariant).
+- 4b: rung `proposals[]` per L3 call + ledger Outcome labels ("rejected by dry-run" / "passed dry-run" / "no proposal"); chapter 2 model-call table renders call → proposal → verdict.
+- 5: removed all dollar amounts from ModelCallBox, ModelUsageView (incl. raw dump), RungLedger; API/ledger cost fields untouched.
+- Docs: architecture.md repair-page section updated (tokens tile, slim rail, sized graph nodes).
+
+**Key decisions:**
+- Outcome labels stamped at the source (ledger rows) rather than mapped in the UI, so API consumers see the same words; rung `action` codes kept stable for existing assertions.
+- Layout checker treats closed-`<details>` content as invisible (Chromium reports phantom boxes) and measures action wraps by text Range rects (padding-proof).
+- Retry meanings derived from the connector's own spec + observed response (the only "docs" available at repair time), not from stored docs text.
+
+**Files changed:**
+- `src/autobridge/repair/dryrun.py` — `field_meanings_for_retry`, pagination/mapping/check meaning helpers, enriched missing-field error.
+- `src/autobridge/repair/ladder.py` — per-call `proposals`, proposal Outcome stamps, `rung_ledger` proposals passthrough.
+- `src/autobridge/control/schemas.py`, `ui/openapi.json`, `ui/lib/api/schema.d.ts` — `RungProposalOut`.
+- `ui/components/ModelCallBox.tsx`, `ModelUsageView.tsx`, `RungLedger.tsx`, `EvidenceGraph.tsx`, `ui/app/repairs/[id]/page.tsx`, `ui/app/globals.css` — items 3e/3f/4b/5.
+- `tests/unit/test_autobridge_req053_dryrun.py` (5 new tests), `tests/unit/test_autobridge_live_semantic_climb.py` (labels + proposals), UI component/page tests, `tests/e2e/test_10_layout_no_overlap.spec.ts` (new), `playwright.config.ts` + `ui/playwright.config.ts`, `docs/architecture.md`.
+
+**Notes for next iteration:**
+- Owner keyed check outstanding: decks 4 → 5 through the browser (break → tested proposal with matching label → Approve → verifying sync Complete → Harbor ● Working).
+- Ladder branches still uncovered (retry-patch-supersedes, retry-escalate-dry-reject, malformed drops, first-try escalate-adopt) — same record/stamp helpers, covered logic; add if the margin thins.
+- 4 demo-DNS teardown errors are environmental to this sandbox (verified on clean tree); the final gate run passed them.

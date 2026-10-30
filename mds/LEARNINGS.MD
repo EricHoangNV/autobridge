@@ -610,3 +610,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 
 - Fixed by building the fault inside the existing `isolated_sim_state()` and pinning the parcel's raw gross sum to a computed-safe value (record sum for pass-tests, huge sum + scaled records for fail-tests). No bench behavior changed.
 - **Rule:** Tests that judge sums against faulted records isolate sim state and pin every compared value in the parcel; never assert on ambient-served totals.
+---
+
+## 68. Playwright's Chromium reports layout boxes for closed-details content — treat it as invisible
+
+**Context:** REQ-055 item 3f automated layout check (Playwright, repair page with collapsed `<details>` appendices)
+
+- A no-overlap checker using `getBoundingClientRect` flagged dozens of "overlaps" between visibly correct, stacked sections; screenshots showed a clean page.
+- Root cause: in this Chromium build, children of a closed `<details>` (verified `open=false`) still report real boxes via `getBoundingClientRect` and computed `display: block` — contradicting the standard rendering where they have no box.
+- Fix: the checker skips any element inside a `details:not([open])` (except that details' own `summary`), alongside `.sr-only`/aria-hidden skips; action-wrap squeezes are measured by text Range rects so button padding never counts as wrapping.
+
+**Rule:** Any in-page geometry assertion must treat closed-`<details>` content as invisible and measure text wraps by Range client rects, never by element height.
