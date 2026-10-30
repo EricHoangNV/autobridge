@@ -3787,3 +3787,34 @@ Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process
 **Notes for next iteration:**
 - Keyed owner check outstanding: deck 4→5 x3 + Aside run + `make record-frontier SCENARIO=gross_to_net` (new l3_patch v2 hash).
 - Next: REQ-050 (Meridian/PABX live builds; seed drops Meridian — do not start before REQ-049 merges).
+
+## REQ-050 — Decks 6 and 7 live (Meridian v1 refused/v2 connects, PABX built from spec, deck 7 break is the link drop)
+**Date:** 2026-10-30
+**Ref:** REQUESTS.MD REQ-050 (owner decision 2026-10-30)
+
+**What was done:**
+- Seed trimmed to AtlasPMS only; Meridian and the PABX edge connector build live in decks 6/7 (demo steps ensure them by name, so `make demo` stays stand-alone). Connector-count wording updated (seed, Makefile, README, docs/demo.md, e2e titles).
+- Build page: vocabulary radio carries each version's one-line release note (shared strings with Knowledge), sends `spec_vocabulary` but no runtime choice; FIAS PABX picker fills the relay address, hides base-URL typing, suggests v3 + FolioCharge-only, adds `EDGE_TOKEN`; result shows the engine's runtime decision ("runs: cloud" / "runs: on-premise edge agent, via the relay") derived from the built draft spec.
+- Engine: framed/Event docs builds flip the connector record to `{"kind":"edge"}` (HTTP builds untouched); connector detail lists every build attempt with vocabulary, success, degradation reason and release (backing the connector page's new Builds section).
+- Demo step 8 rewritten around the link drop: live build → baseline sync → `fias_link_resync` → link flap → key-set proof on the relay log (every pre-break idempotency key still present exactly once) → post-resync sync Complete → Working, no drift, no repair. Layout change and agent restart leave the demo script (catalogue entries kept, live repair is deferred REQ-051).
+- README + docs/demo.md decks 6/7 rewritten for the live builds; catalogue `main_step` updated (`fias_link_resync` → 8, layout change + restart → None).
+
+**Key decisions:**
+- Runtime is engine-derived from the docs (protocol/framed marker), never a page setting; the page only displays it. The record flip happens in `run_build_handler` so link snapshots and the PABX panel work on UI-built edge connectors.
+- Resync honest proof is the idempotency key set (superset + uniqueness), not a rising count — the relay folds re-sends by `INSERT OR IGNORE`, so a static count is the passing signal (recorded as LEARNINGS 62).
+
+**Files changed:**
+- `bench/demo_seed.py` — AtlasPMS-only seed, wording
+- `bench/demo.py` — step 8 rewrite (link-drop live leg, key proof), `_step7_live` build-attempts assertion, catalogue `main_step` updates
+- `src/autobridge/control/schemas.py`, `src/autobridge/control/routes/connectors.py` — `BuildAttemptOut` + detail `builds`
+- `src/autobridge/engine/build_run.py` — runtime derivation from framed spec
+- `ui/components/NewConnectorForm.tsx` (+ tests) — notes, no runtime choice, PABX no-typing, runtime decision line
+- `ui/app/connectors/[id]/page.tsx` — Builds section
+- `ui/lib/api/schema.d.ts`, `ui/openapi.json` — regen
+- `README.md`, `docs/demo.md`, `Makefile` — deck/seed wording
+- `tests/unit/test_autobridge_control_api.py`, `test_autobridge_engine_build_run.py`, `test_autobridge_demo.py`, `test_autobridge_req049_proposal.py`, `tests/e2e/test_09_demo_seed_break_heal.py`, `tests/e2e/test_08_recording_journey.spec.ts` — seed/builds/runtime/resync coverage
+
+**Notes for next iteration:**
+- Owner check outstanding: Aside run of decks 6 and 7 (live build flows + link-drop break) on a keyed stack.
+- e2e-ui (Playwright) cannot load specs in this sandbox (pre-existing `import.meta` module error, reproduces on the pristine tree); UI covered by vitest + the live demo. Owner runs `make e2e-ui` keyed.
+- `make test` shows a roving single-ERROR flake between full runs (unrelated files, pass in isolation); final run here was fully green.

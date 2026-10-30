@@ -562,3 +562,11 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - `prompt_hash` covers the fully rendered L3 messages, so both the prompt file text and the evidence blocks (which carry `patch_target.allowed_pointers`) rotate the key. The fixture `tests/fixtures/replay/gross_to_net.json` is keyed by that hash, and its own note documents the rotation procedure ("an edited prompt file changes the hash").
 - Fix: render the same three input sets (l2 pair, matrix pair-no-evidence, demo single+evidence) through the loader with old then new prompts, verify the old hashes match the committed keys (sanity), and swap in the new keys keeping the synthetic payloads byte-identical. The old demo key did NOT match a naive replication — the evidence change (new pointers) was the second hash input, which is exactly why the fixture note says re-capture rather than hand-edit.
 - **Rule:** when a replay test fails on a hash miss after a prompt or evidence change, re-render the recorded inputs and rekey; never delete the test, never invent a recording, and always verify old-hash == committed-key first so a genuinely changed input (not just the prompt) is caught.
+
+## 62. Prove a resync on idempotency keys, not on counts — the relay folds re-sends by design
+
+**Context:** REQ-050 deck 7 first asserted `/edge/postings` count rises after `fias_link_resync`; live it stayed 138 → 138 and the step failed. The relay stores postings with `INSERT OR IGNORE` on the idempotency key, so a re-handshake that resends un-PA'd postings with the same P# correctly changes nothing — a rising count would have meant duplication, not recovery.
+
+- Stay postings are queued once per process at link start; a quiet link resends nothing new. Fresh PABX activity (new P#) is the only thing that grows the log.
+- Fix: snapshot the key set before the break, and after one settle tick assert every pre-break key is still logged exactly once (nothing lost: no missing keys; nothing duplicated: unique count == total count), plus link back up, post-resync sync `Complete`, connector Working, no drift/repair.
+- **Rule:** when a store deduplicates by key, assert on the key set (superset + uniqueness), never on a rising count; a count that must not move is the passing signal.

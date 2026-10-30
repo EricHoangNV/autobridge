@@ -34,45 +34,6 @@ Tests: heartbeat with a renamed layout → drift + repair queued; no drift when 
 applies and postings after r2 carry the amount; e2e on the live stack (break → repair → approve → Working, amounts
 present). Gates unkeyed + `make demo` 8/8. Owner check after: the Aside UI rehearsal of deck 7.
 
-### REQ-050 — Decks 6 and 7: build Meridian live (v1 refused, v2 connects) and the PABX live from its spec (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 10:12)
-Owner decision (2026-10-30). Today `make demo-seed` builds Meridian twice behind the scenes (v1 refused, v2 release;
-`bench/demo_seed.py` ~181–205) and deck 6 only points at the result. The owner wants it built live in the UI, like
-Harbor in deck 4. The control API already takes `spec_vocabulary` per build (`control/routes/builds.py` ~176–192); the
-Build a connector page (`ui/app/connectors/new`) does not expose it. Scope is exactly:
-1. **Seed:** `make demo-seed` no longer creates MeridianPMS **or the PABX edge connector** (opening frame: AtlasPMS
-   only; Harbor is already out per REQ-049). `make demo` keeps working stand-alone (its Meridian step builds Meridian itself, as today).
-   Update connector-count wording everywhere.
-2. **Build page: choose the vocabulary version** for a build (v1 / v2 / v3, defaulting to the current default), with
-   each version's one-line release note (the Knowledge page's `RELEASE_NOTE`).
-3. **v1 build of the Meridian docs is refused on screen**, with the engine's existing named reason (request bodies /
-   POST not in ConnectorSpec v1); no release created; the attempt stays recorded on the connector page (as the seed
-   records it today).
-4. **v2 build of the same docs connects**: release r1, first sync `Complete`, MeridianPMS ● Working; the connector page
-   shows both attempts (v1 refused with its reason, v2 in use) and the Knowledge page lists Meridian under v2.
-5. Deck 6 has **no break** (`meridian_cursor_renamed` stays in the catalogue, not in the demo script). README and
-   `docs/demo.md` describe deck 6 as: build Meridian on v1 → refused (no POST) → build on v2 → connected.
-6. **Deck 7: build the PABX live from its spec** (owner, 2026-10-30). Build a connector → **FIAS PABX docs**
-   (`simulators/docs/fias-pabx.md`) → vocabulary **v3** → Build → release → the edge agent connects → postings flow →
-   PABX edge **● Working**. Today the seed does this through the API (`bench/demo_seed.py` ~96–106, `runtime_target:
-   edge`, base URL `edge-relay://queue/fias-commands`) and the build page cannot: it hard-codes
-   `runtime_target: local_process` (`ui/components/NewConnectorForm.tsx` ~351) and expects an http base URL.
-   **No runtime choice on the page** — it is a demo of the engine: the engine decides where the connector runs from
-   the docs (it already decides the transport by protocol, `discovery/bootstrap.py` ~1189: framed TCP / FIAS → the
-   on-premise edge agent and the relay address; HTTP → cloud), and the build page **displays** that decision as a
-   message on the result ("runs: cloud" / "runs: on-premise edge agent, via the relay"). No base-URL typing for the
-   PABX on camera.
-7. **Then deck 7's break is a link drop** (owner, 2026-10-30: the most common real FIAS failure):
-   `make demo-break SCENARIO=fias_link_resync` on the live-built PABX connector → the PABX panel shows the link go
-   down, the agent re-handshakes (LS/LD/LR/LA), the link comes back, postings resume, **nothing lost, nothing
-   duplicated** (counts shown), connector ● Working throughout or back to ● within one tick. No repair, no Approve.
-   `fias_record_layout_change` and `agent_restart_inflight` are **not** part of the demo script.
-Tests: seed without Meridian or PABX; build page shows the engine's runtime decision (cloud for
-HTTP docs, edge agent for the FIAS docs) and sends no runtime choice; FIAS docs v3 build → edge release → postings
-→ Working; link drop + resync on it loses and duplicates nothing; build page sends `spec_vocabulary`; v1 refusal shown with reason and no release; v2
-build connects; connector page shows both attempts. Gates unkeyed + `make demo` 8/8.
-
-
 ### REQ-048 — Deck 5 on screen: an escalation reads as a question, not a disabled Approve (2026-10-30)
 Status: DONE (sbx1 2026-10-30 -- escalate top box, single question, header count, in-flight calls, one-repair token cell, budget= L3 cap on row/ledger/page + BudgetExhausted label, funnel deriving, docs rewritten; full gates green unkeyed + make demo 8/8; owner check: Aside run + screenshots)
 Owner UI run (2026-10-30, host `make local-up` keyed, `origin/main` 6b677b2d, Aside at 1440×900): `make demo-reset &&
@@ -142,7 +103,6 @@ Fix all four across `bench/demo.py`, the repair controller / rung ledger, the re
 rationale, and verifier label as above (unit + UI component); patch answer → unchanged behaviour; no answer → the
 existing "no applicable patch" wording. Gates keyed-shaped (fake provider returning the escalate JSON above) and
 unkeyed: `make demo` 8/8. Owner check after: keyed step 4 + screenshots of the repair page.
-
 
 ### REQ-046 — Fair benchmark: frontier arms get the same context the engine has, prompts in files (2026-10-30)
 Status: DONE (sbx1 2026-10-30 -- fair context bundle + file prompts + scorecard provenance + docs/prereg amendment, full gates green unkeyed + BENCH_TRIALS=1 rehearsal 12/12 matched; owner step: keyed BENCH_TRIALS=1 make bench-ablation for live frontier numbers, then close)
@@ -834,6 +794,45 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 
 ## Resolved Requests (reference only)
 
+### REQ-050 — Decks 6 and 7: build Meridian live (v1 refused, v2 connects) and the PABX live from its spec (2026-10-30)
+Status: DONE (sbx1 2026-10-30)
+Owner decision (2026-10-30). Today `make demo-seed` builds Meridian twice behind the scenes (v1 refused, v2 release;
+`bench/demo_seed.py` ~181–205) and deck 6 only points at the result. The owner wants it built live in the UI, like
+Harbor in deck 4. The control API already takes `spec_vocabulary` per build (`control/routes/builds.py` ~176–192); the
+Build a connector page (`ui/app/connectors/new`) does not expose it. Scope is exactly:
+1. **Seed:** `make demo-seed` no longer creates MeridianPMS **or the PABX edge connector** (opening frame: AtlasPMS
+   only; Harbor is already out per REQ-049). `make demo` keeps working stand-alone (its Meridian step builds Meridian itself, as today).
+   Update connector-count wording everywhere.
+2. **Build page: choose the vocabulary version** for a build (v1 / v2 / v3, defaulting to the current default), with
+   each version's one-line release note (the Knowledge page's `RELEASE_NOTE`).
+3. **v1 build of the Meridian docs is refused on screen**, with the engine's existing named reason (request bodies /
+   POST not in ConnectorSpec v1); no release created; the attempt stays recorded on the connector page (as the seed
+   records it today).
+4. **v2 build of the same docs connects**: release r1, first sync `Complete`, MeridianPMS ● Working; the connector page
+   shows both attempts (v1 refused with its reason, v2 in use) and the Knowledge page lists Meridian under v2.
+5. Deck 6 has **no break** (`meridian_cursor_renamed` stays in the catalogue, not in the demo script). README and
+   `docs/demo.md` describe deck 6 as: build Meridian on v1 → refused (no POST) → build on v2 → connected.
+6. **Deck 7: build the PABX live from its spec** (owner, 2026-10-30). Build a connector → **FIAS PABX docs**
+   (`simulators/docs/fias-pabx.md`) → vocabulary **v3** → Build → release → the edge agent connects → postings flow →
+   PABX edge **● Working**. Today the seed does this through the API (`bench/demo_seed.py` ~96–106, `runtime_target:
+   edge`, base URL `edge-relay://queue/fias-commands`) and the build page cannot: it hard-codes
+   `runtime_target: local_process` (`ui/components/NewConnectorForm.tsx` ~351) and expects an http base URL.
+   **No runtime choice on the page** — it is a demo of the engine: the engine decides where the connector runs from
+   the docs (it already decides the transport by protocol, `discovery/bootstrap.py` ~1189: framed TCP / FIAS → the
+   on-premise edge agent and the relay address; HTTP → cloud), and the build page **displays** that decision as a
+   message on the result ("runs: cloud" / "runs: on-premise edge agent, via the relay"). No base-URL typing for the
+   PABX on camera.
+7. **Then deck 7's break is a link drop** (owner, 2026-10-30: the most common real FIAS failure):
+   `make demo-break SCENARIO=fias_link_resync` on the live-built PABX connector → the PABX panel shows the link go
+   down, the agent re-handshakes (LS/LD/LR/LA), the link comes back, postings resume, **nothing lost, nothing
+   duplicated** (counts shown), connector ● Working throughout or back to ● within one tick. No repair, no Approve.
+   `fias_record_layout_change` and `agent_restart_inflight` are **not** part of the demo script.
+Tests: seed without Meridian or PABX; build page shows the engine's runtime decision (cloud for
+HTTP docs, edge agent for the FIAS docs) and sends no runtime choice; FIAS docs v3 build → edge release → postings
+→ Working; link drop + resync on it loses and duplicates nothing; build page sends `spec_vocabulary`; v1 refusal shown with reason and no release; v2
+build connects; connector page shows both attempts. Gates unkeyed + `make demo` 8/8.
+Resolution: seed is AtlasPMS only; build page carries vocabulary release notes, sends no runtime choice, hides base-URL typing for the PABX and shows the engine's runtime decision; framed docs builds set the edge runtime on the record; connector detail lists build attempts (v1 refused with reason, v2 in use); demo step 8 is the link-drop resync proved on relay idempotency keys (0 lost/duplicated); layout change and restart leave the demo script (REQ-051 deferred); README + docs/demo.md decks 6/7 rewritten. Gates green unkeyed: make test (90% gates), ui 231, lint/typecheck/ui-typecheck/openapi-check, make demo 8/8 + STEP=7/8 alone, tests/e2e/test_09 5/5 live. Owner check after: Aside run of decks 6 and 7.
+
 ### REQ-049 — Deck 5 Green → Red → Green: Harbor built from its wiki carries the totals check; the model proposes "accept the vendor's change" for the human to approve (2026-10-30)
 Status: DONE (sbx1 2026-10-30)
 Deck order (owner, 2026-10-30): 1 knowledge · 2 Atlas reusable · 3 Atlas zero-token fix · **4 build Harbor from its wiki · 5 break Harbor right after** · 6 Meridian · 7 PABX · 8 proof. Use this numbering in README/docs/demo.md.
@@ -982,7 +981,6 @@ Fix (L3 prompt and parsing only — no change to the gate, the verifier, or whic
    never "does not apply"; report tokens (reasoning vs answer) and the answer.
 Resolution: L3 prompt now names the connector-spec patch target with exact JSON Pointers per patchable member, shows redacted raw vendor records, and answers {patch|escalate}+rationale (one retry with the apply error, then escalate; a model escalation resolves L4 with the model's question, labelled on the repair page). Replay fixtures/tests updated (new prompt hashes). Gates: make test + lint/typecheck/openapi/ui-typecheck green, make demo 8/8 unkeyed (L3 explicit skip naming the new hash), matrix + test_05 e2e green live. Owner step: keyed step-4 run (live L3 answer is a spec-applying patch or an explicit escalation, never 'does not apply') + make record-frontier re-capture and commit.
 
-
 ### REQ-041 — Directive: §7 / P2.S6.1 — the REQ-032 repair-page restructure dropped the per-run model-usage chart, and `tests/e2e/test_s6_richer_ui.spec.ts` is red in both modes (2026-10-29)
 Status: DONE (sbx1 2026-10-30)
 Found by the 2026-10-29 directives audit (diff `2cea2072..d2d9c9d2`). REQ-032 (`cf467198`) restructured `ui/app/repairs/[id]/page.tsx` around `ModelCallBox`/`ModelUsageView`; the P2.S6.1 `ModelUsageChart` (`ui/components/ModelUsageChart.tsx`, still unit-tested) is now imported by no page, and `tests/e2e/test_s6_richer_ui.spec.ts` (3 tests: chart rows, screenshots) fails on the live stack and in mocked mode — verified live in this audit (`make e2e-ui`: 4 failed, incl. these 3; the 4th was the audit-fixed approve-preview locator). Decide: restore the per-run chart on the repair page (appendix, from persisted `ModelCall` rows) and make test_s6's live branch assert live-shaped data instead of the mock run ids (`run-s6-a`/`run-s6-b` can only ever match fixtures), or retire the chart component + its tests and rewrite test_s6 against the ModelCallBox — either way `make e2e-ui` must be green on `make up` and the S6 "model-usage charts per run" deliverable must exist somewhere a user can see it, or be explicitly dropped in `docs/`.
@@ -1031,7 +1029,6 @@ pauses while `demo-reset` / `demo-seed` / `demo-heal` run (an explicit pause/res
 reset waits for any in-flight sync to finish, and gate-internal syncs never create drift or repair rows. Acceptance:
 `make demo-reset && make demo-seed` green 20 times in a row with the scheduler on and no retry; after one
 `make demo-break`, exactly one drift and one repair appear for that connector.
-
 
 ### REQ-033 — UI-first demo, part D: README "How to run the demo", docs, UI e2e journeys (2026-10-29)
 Status: DONE (sbx1 2026-10-29)
@@ -1136,7 +1133,6 @@ Wanted: `docs/demo.md` rewritten to this structure as steps land (main script on
 scenario | vendor | expected outcome | rung | model calls | REQ), `make demo` running the main script and
 `make demo SCENARIO=…` any catalogue entry, `docs/demo.md` and `make demo` kept in sync by a test that every catalogue
 entry has a scenario file, an e2e test and a row in REQ-021's model-usage matrix.
-
 
 ### REQ-022 — FIAS PABX simulator and a real on-premise edge agent (replaces EdgePOS) (2026-10-28)
 Status: DONE (2026-10-29)
@@ -1279,7 +1275,6 @@ green; grep proves no EdgePOS remnants and no private names. Split into claimabl
    make it hermetic the same way. Acceptance: the 3-test repro above and the full `uv run pytest tests/unit` pass on
    macOS with zero new crash reports (owner verifies; the sandbox is Linux and cannot show it).
    This item is independent of sub-step D; do it next.
-
 
 **Owner check (2026-10-29, on 2df1bd33): e2e matrix test is stale since sub-step A.** Against the live local stack,
 `tests/e2e/test_model_usage_matrix.py::test_matrix_live_reset_repeatability` fails (19 of 20 pass): it pins the
@@ -1427,7 +1422,6 @@ to `/source` (404). Use the absolute `/developers/source` like the other portals
 references `/developers/source` and a rendering test (or Playwright check) that at least one operation page appears.
 8. Gates as REQ-019, README vendor table updated. This is the largest REQ in the queue: split it into claimable
    sub-steps in the build note (4, 5a schema+runtime, 5b discovery, 5c joins, 6, 7) and merge each one green.
-
 
 ### REQ-026 — Per-test timeout so a hanging test fails fast with a stack trace (2026-10-29)
 Status: DONE (2026-10-28)
