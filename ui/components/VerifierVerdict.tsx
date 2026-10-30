@@ -8,6 +8,10 @@ type Props = {
   // REQ-047 item 3: when the model escalated, no patch was proposed, so no
   // check ran — say so instead of showing a fail verdict.
   modelEscalated?: boolean;
+  // REQ-055 item 3c: a tested proposal (dry-run passed) rides the
+  // escalation — show the dry-run result here instead of "no patch to
+  // verify", which contradicts the proposal beside it.
+  proposalDryRun?: string | null;
 };
 
 function countPassed(results: Array<Record<string, unknown>>): { passed: number; total: number } {
@@ -37,7 +41,7 @@ export function displayBundleReason(reason: unknown): string {
   return text.replace(/;?\s*model rationale:.*$/is, "").trim();
 }
 
-export function VerifierVerdict({ verifierReportId, visibleTestResults, escalationBundle, decision, modelEscalated = false }: Props) {
+export function VerifierVerdict({ verifierReportId, visibleTestResults, escalationBundle, decision, modelEscalated = false, proposalDryRun = null }: Props) {
   const hasReport = !!verifierReportId;
   const hasEscalation = !!escalationBundle;
 
@@ -77,8 +81,8 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
           </span>
         ) : null}
         {!hasReport && hasEscalation ? (
-          <span className="text-xs text-ink-2">
-            {modelEscalated ? "no patch to verify (the model escalated)" : "no verifier report — escalated"}
+          <span className="text-xs text-ink-2" data-testid="verifier-dry-run-note">
+            {proposalDryRun ? `tested proposal — ${proposalDryRun}` : modelEscalated ? "no patch to verify (the model escalated)" : "no verifier report — escalated"}
           </span>
         ) : null}
       </div>

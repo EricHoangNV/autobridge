@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 from typing import Any
 
 #: Alembic script location override (tests point it at the repo ``alembic/``).
@@ -72,7 +73,11 @@ def _has_full_schema(url: str) -> bool:
 #: actually has: stamp the newest satisfied prefix, then upgrade head.
 #: Never stamp head blindly — a create_all-built database from an older
 #: release has tables but lacks newer columns (owner check, REQ-021).
-_REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
+#: ``checks`` maps ``"<table>.<column>"`` to the CHECK's expected value set
+#: (REQ-055 item 1): CHECK-only migrations (0011, 0013, 0015) are invisible
+#: to tables/columns detection, and stamping over one silently skips its
+#: DDL — the exact failure that left live databases rejecting 'approved'.
+_REVISION_EFFECTS: tuple[tuple[str, dict[str, Any]], ...] = (
     (
         "0001_core_data_model",
         {
@@ -89,22 +94,34 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
                 "dependency_registrations",
             ],
             "columns": [],
+            "checks": {},
         },
     ),
-    ("0002_job_queue", {"tables": ["jobs"], "columns": []}),
-    ("0003_escalation_bundle", {"tables": [], "columns": ["repair_runs.escalation_bundle"]}),
-    ("0004_discovery_records", {"tables": ["discovery_records"], "columns": []}),
-    ("0005_model_call_archive", {"tables": ["model_call_archive"], "columns": []}),
-    ("0006_repair_ladder_trace", {"tables": [], "columns": ["repair_runs.ladder_trace"]}),
+    ("0002_job_queue", {"tables": ["jobs"], "columns": [], "checks": {}}),
+    (
+        "0003_escalation_bundle",
+        {"tables": [], "columns": ["repair_runs.escalation_bundle"], "checks": {}},
+    ),
+    ("0004_discovery_records", {"tables": ["discovery_records"], "columns": [], "checks": {}}),
+    ("0005_model_call_archive", {"tables": ["model_call_archive"], "columns": [], "checks": {}}),
+    (
+        "0006_repair_ladder_trace",
+        {"tables": [], "columns": ["repair_runs.ladder_trace"], "checks": {}},
+    ),
     (
         "0007_repair_knowledge_provenance",
-        {"tables": [], "columns": ["repair_runs.vendor", "repair_runs.drift_signature"]},
+        {
+            "tables": [],
+            "columns": ["repair_runs.vendor", "repair_runs.drift_signature"],
+            "checks": {},
+        },
     ),
     (
         "0008_model_call_reasoning_tokens",
         {
             "tables": [],
             "columns": ["model_calls.reasoning_tokens", "model_call_archive.reasoning_tokens"],
+            "checks": {},
         },
     ),
     (
@@ -121,11 +138,22 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
                 "model_call_archive.captured_at",
                 "model_call_archive.outcome",
             ],
+            "checks": {},
         },
     ),
-    ("0010_scheduler_pause", {"tables": ["scheduler_state"], "columns": []}),
-    # 0011 only widened a CHECK constraint (no schema objects to detect).
-    ("0011_repair_running_states", {"tables": [], "columns": []}),
+    ("0010_scheduler_pause", {"tables": ["scheduler_state"], "columns": [], "checks": {}}),
+    (
+        # REQ-055 item 1: the CHECK contents are the detectable effect —
+        # tables/columns alone always pass and let the stamp skip the DDL.
+        "0011_repair_running_states",
+        {
+            "tables": [],
+            "columns": [],
+            "checks": {
+                "repair_runs.decision": ["propose", "escalate", "reject", "climbing", "failed"],
+            },
+        },
+    ),
     (
         "0012_model_call_prompt_ref",
         {
@@ -138,15 +166,76 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
                 "model_call_archive.prompt_version",
                 "model_call_archive.prompt_hash",
             ],
+            "checks": {},
         },
     ),
-    # 0013 only widened a CHECK constraint (no schema objects to detect).
-    ("0013_repair_terminal_decisions", {"tables": [], "columns": []}),
+    (
+        # REQ-055 item 1: same as 0011 — the terminal values must be present.
+        "0013_repair_terminal_decisions",
+        {
+            "tables": [],
+            "columns": [],
+            "checks": {
+                "repair_runs.decision": [
+                    "propose",
+                    "escalate",
+                    "reject",
+                    "climbing",
+                    "failed",
+                    "approved",
+                    "rolled_back",
+                ],
+            },
+        },
+    ),
     (
         "0014_refused_build_attempts",
-        {"tables": ["refused_build_attempts"], "columns": []},
+        {"tables": ["refused_build_attempts"], "columns": [], "checks": {}},
+    ),
+    (
+        # REQ-055 item 1: re-enforces the 0013 value set on databases whose
+        # stamp skipped 0013's DDL. Same detectable effect as 0013.
+        "0015_repair_decision_check_repair",
+        {
+            "tables": [],
+            "columns": [],
+            "checks": {
+                "repair_runs.decision": [
+                    "propose",
+                    "escalate",
+                    "reject",
+                    "climbing",
+                    "failed",
+                    "approved",
+                    "rolled_back",
+                ],
+            },
+        },
     ),
 )
+
+
+def _check_values(inspector: Any, table: str, column: str) -> set[str] | None:
+    """Value set of the ``<column>`` membership CHECK on *table*.
+
+    SQLite stores it as ``decision IN ('a', 'b', ...)``; Postgres reflects
+    it as ``(decision)::text = ANY (ARRAY['a', ...])`` — both reduce to the
+    quoted literals once the column is named. Returns ``None`` when CHECK
+    reflection is unavailable or unparseable (fail-open: detection treats
+    the check as satisfied rather than looping upgrades on an exotic
+    dialect), the empty set when the table has no such CHECK.
+    """
+    try:
+        checks = inspector.get_check_constraints(table)
+    except Exception:
+        return None
+    for chk in checks or []:
+        sql = str((chk or {}).get("sqltext") or "")
+        if re.search(rf"\b{re.escape(column)}\b", sql) is None:
+            continue
+        vals = set(re.findall(r"'([^']*)'", sql))
+        return vals if vals else None
+    return set()
 
 
 def _detect_revision(url: str) -> str | None:
@@ -168,20 +257,34 @@ def _detect_revision(url: str) -> str | None:
                     columns[table] = {c["name"] for c in insp.get_columns(table)}
                 except Exception:
                     columns[table] = set()
+            # REQ-055 item 1: CHECK contents are read while the connection
+            # is open (an inspector outlives nothing after dispose).
+            check_values: dict[str, set[str] | None] = {}
+            for _revision, effects in _REVISION_EFFECTS:
+                for dotted in effects.get("checks", {}):
+                    if dotted not in check_values:
+                        table, _, column = dotted.partition(".")
+                        check_values[dotted] = _check_values(insp, table, column)
     except Exception:
         return None
     finally:
         engine.dispose()
     detected: str | None = "base"
     for revision, effects in _REVISION_EFFECTS:
-        tables_ok = all(t in tables for t in effects["tables"])
+        tables_ok = all(t in tables for t in effects.get("tables", []))
         cols_ok = True
-        for dotted in effects["columns"]:
+        for dotted in effects.get("columns", []):
             table, _, column = dotted.partition(".")
             if column not in columns.get(table, set()):
                 cols_ok = False
                 break
-        if not (tables_ok and cols_ok):
+        checks_ok = True
+        for dotted, expected in effects.get("checks", {}).items():
+            found = check_values.get(dotted)
+            if found is not None and not set(expected) <= found:
+                checks_ok = False
+                break
+        if not (tables_ok and cols_ok and checks_ok):
             break
         detected = revision
     return detected

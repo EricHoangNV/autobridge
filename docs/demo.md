@@ -109,10 +109,13 @@ approval — nothing auto-applies, so every transition stays on screen.
   non-applying patch gets one retry with the error, then escalates.
   Every proposal is also dry-run against the break's own records before
   it is offered: a patch that references a wire field the vendor never
-  sends, or that leaves the failing checks failing, gets one retry with
-  the exact error, then is dropped to question-only — never offered for
-  Approve. A proposal that passes shows "tested on the current records:
-  the checks pass". If a verifying sync after an approval still fails,
+  sends, that leaves the failing checks failing, or whose patched check
+  cannot evaluate on those records (e.g. a money check repointed at a
+  record count — the comparison would silently switch off), gets one
+  retry with the exact error, then is dropped to question-only — never
+  offered for Approve. A proposal that passes shows "tested on the current records:
+  the checks pass", with each changed target field annotated from the
+  observed response (e.g. what `$.total` actually carries on the wire). If a verifying sync after an approval still fails,
   the engine rolls back automatically and the original escalation stays
   the one open item (never a second escalation for the same drift).
   The L3 answer may also carry the change the operator could approve

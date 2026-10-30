@@ -326,3 +326,76 @@ def test_normalize_connector_base_url(tmp_path: pathlib.Path, monkeypatch: pytes
     assert normalize_connector_base_url("fias://listen:5010", reg) == "fias://listen:5010"
     assert normalize_connector_base_url("", reg) == ""
     assert normalize_connector_base_url(None, reg) is None
+
+
+def test_optional_display_validators_fail_closed() -> None:
+    """REQ-055 gate: optional display fields accept blanks, reject wrong types."""
+    from autobridge.control.demo_targets import (
+        _optional_entities,
+        _optional_port,
+        _optional_text,
+    )
+
+    assert _optional_text({}, "display_name", "w") == ""
+    assert _optional_text({"display_name": None}, "display_name", "w") == ""
+    assert _optional_text({"display_name": "  Probe "}, "display_name", "w") == "Probe"
+    with pytest.raises(DemoTargetsError):
+        _optional_text({"display_name": 7}, "display_name", "w")
+    assert _optional_port({}, "public_port", "w") == 0
+    assert _optional_port({"public_port": None}, "public_port", "w") == 0
+    assert _optional_port({"public_port": 8300}, "public_port", "w") == 8300
+    for bad in (True, 0.5, -1, 70000, "8300"):
+        with pytest.raises(DemoTargetsError):
+            _optional_port({"public_port": bad}, "public_port", "w")
+    assert _optional_entities({}, "target_entities", "w") == []
+    assert _optional_entities({"target_entities": None}, "target_entities", "w") == []
+    assert _optional_entities({"target_entities": [" a ", "b"]}, "target_entities", "w") == ["a", "b"]
+    for bad in ("x", [""], [1], ["ok", 2]):
+        with pytest.raises(DemoTargetsError):
+            _optional_entities({"target_entities": bad}, "target_entities", "w")
+
+
+def test_loader_unreadable_and_invalid_registries_fail_closed(tmp_path: pathlib.Path) -> None:
+    """REQ-055 gate: broken registry files fail closed with the reason."""
+    bad_yaml = tmp_path / "bad.yaml"
+    bad_yaml.write_text("targets: [unclosed", encoding="utf-8")
+    with pytest.raises(DemoTargetsError, match="unreadable"):
+        load_demo_targets(bad_yaml)
+    not_dict = tmp_path / "list.yaml"
+    not_dict.write_text("- just\n- a\n- list\n", encoding="utf-8")
+    with pytest.raises(DemoTargetsError, match="non-empty 'targets' list"):
+        load_demo_targets(not_dict)
+
+
+def test_loader_entry_validation_fail_closed(tmp_path: pathlib.Path) -> None:
+    """REQ-055 gate: malformed entries name the field, duplicates are refused."""
+    bad_aliases = _entry("sim-x", 8301, aliases=["ok", 7])  # type: ignore[list-item]
+    with pytest.raises(DemoTargetsError, match="aliases"):
+        load_demo_targets(_write_registry(tmp_path, [bad_aliases]))
+    bad_port = _entry("sim-x", 8301)
+    bad_port["host_admin_port"] = True
+    with pytest.raises(DemoTargetsError, match="host_admin_port"):
+        load_demo_targets(_write_registry(tmp_path, [bad_port]))
+    bad_extra = _entry("sim-x", 8301, extra=[{"suffix": "x"}])
+    with pytest.raises(DemoTargetsError, match="extra_resets entries"):
+        load_demo_targets(_write_registry(tmp_path, [bad_extra]))
+    dup = [_entry("sim-x", 8301, aliases=["Shared"]), _entry("sim-y", 8302, aliases=["shared"])]
+    with pytest.raises(DemoTargetsError, match="duplicate alias"):
+        load_demo_targets(_write_registry(tmp_path, dup))
+
+
+def test_compose_detection_and_normalize_degrade(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-055 gate: infrastructure probes fail closed, never raise."""
+    import os as _os
+    import urllib.parse as _parse
+
+    from autobridge.control.demo_targets import (
+        in_compose_network,
+        normalize_connector_base_url,
+    )
+
+    monkeypatch.delenv("ADMIN_NET_HOST", raising=False)
+    monkeypatch.setattr(_os.path, "exists", lambda _p: (_ for _ in ()).throw(OSError("no stat")))
+    assert in_compose_network() is False
+    monkeypatch.setattr(_parse, "urlsplit", lambda _u: (_ for _ in ()).throw(ValueError("bad url")))
+    assert normalize_connector_base_url("http://x/", None) == "http://x/"

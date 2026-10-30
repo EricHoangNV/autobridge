@@ -9,11 +9,22 @@ type PatchOp = {
   from?: string;
 };
 
+type FieldNote = {
+  path: string;
+  note: string;
+};
+
 type Props = {
   candidatePatch: PatchOp[] | null | undefined;
   oldSpec?: Record<string, unknown> | null;
   newSpec?: Record<string, unknown> | null;
   title?: string;
+  /**
+   * REQ-055 item 2: what each changed target wire field means, from the
+   * break's observed records — rendered under the matching op so the
+   * operator sees it next to the change, not only in the label.
+   */
+  fieldNotes?: FieldNote[] | null;
 };
 
 function formatPatchValue(value: unknown): string {
@@ -40,9 +51,15 @@ function opBadge(op: string): string {
   return "bg-ground text-ink-2";
 }
 
-export function PatchDiff({ candidatePatch, oldSpec: _oldSpec, newSpec: _newSpec, title }: Props) {
+export function PatchDiff({ candidatePatch, oldSpec: _oldSpec, newSpec: _newSpec, title, fieldNotes }: Props) {
   const [copied, setCopied] = useState(false);
   const ops = candidatePatch ?? [];
+  const notesByPath = new Map<string, string>();
+  for (const n of fieldNotes ?? []) {
+    if (n && typeof n.path === "string" && typeof n.note === "string" && n.note && !notesByPath.has(n.path)) {
+      notesByPath.set(n.path, n.note);
+    }
+  }
 
   const hasPatch = ops.length > 0;
 
@@ -110,6 +127,11 @@ export function PatchDiff({ candidatePatch, oldSpec: _oldSpec, newSpec: _newSpec
                   >
                     {formatPatchValue(op.value)}
                   </pre>
+                ) : null}
+                {notesByPath.get(op.path) ? (
+                  <p data-testid={`patch-op-note-${idx}`} className="mt-1 text-xs text-ink-2">
+                    {notesByPath.get(op.path)}
+                  </p>
                 ) : null}
               </li>
             ))}

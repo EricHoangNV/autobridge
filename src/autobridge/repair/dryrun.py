@@ -135,6 +135,146 @@ def _available_keys(raw_first_page: Any) -> list[str]:
     return []
 
 
+def _short_json(value: Any, limit: int = 40) -> str:
+    try:
+        import json as _json
+
+        rendered = _json.dumps(value, default=str)
+    except Exception:
+        rendered = str(value)
+    return rendered if len(rendered) <= limit else rendered[: limit - 1] + "…"
+
+
+def _value_shape(value: Any) -> str:
+    """One-line shape of a resolved ``compare_to`` value (generic wording)."""
+    if value is None:
+        return "missing or null"
+    if isinstance(value, bool):
+        return "a boolean"
+    try:
+        from autobridge.runtime.checks import looks_like_money_sum  # noqa: PLC0415
+
+        if looks_like_money_sum(value):
+            return "a money sum"
+    except Exception:
+        pass
+    if isinstance(value, int):
+        return "an integer"
+    if isinstance(value, float):
+        return "a number"
+    if isinstance(value, str):
+        return "a string"
+    return f"a {type(value).__name__}"
+
+
+def _check_ref(checks: Any, index: int) -> dict[str, Any] | None:
+    if isinstance(checks, list) and 0 <= index < len(checks) and isinstance(checks[index], dict):
+        return checks[index]
+    return None
+
+
+def field_notes_for_proposal(
+    spec: dict[str, Any],
+    patch: list[dict[str, Any]] | None,
+    fault: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    """Per-op notes naming what the target wire field means (REQ-055 item 2).
+
+    Built from observed evidence only — the raw first page the break's sync
+    saw, plus the previous pointer the patch replaces. The note cites the
+    resolved value and its shape (`` `$.total` is `30` in the current
+    response (an integer)``), so the operator sees what the vendor docs'
+    field carries without the engine inventing docs wording. Returns
+    ``[{path, note}]`` for ops that change a check's ``compare_to`` (or
+    remove a check); ``[]`` otherwise and when there is no fault context.
+    """
+    notes: list[dict[str, str]] = []
+    if not isinstance(patch, list) or fault is None or not isinstance(spec, dict):
+        return notes
+    try:
+        from autobridge.runtime.interpreter import extract_jsonpath  # noqa: PLC0415
+    except Exception:
+        return notes
+    raw_first_pages = fault.get("raw_first_pages")
+    if not isinstance(raw_first_pages, dict):
+        return notes
+    old_entities = spec.get("entities") if isinstance(spec, dict) else {}
+    if not isinstance(old_entities, dict):
+        return notes
+    for op in patch:
+        if not isinstance(op, dict):
+            continue
+        op_kind = op.get("op")
+        path = op.get("path")
+        if not isinstance(path, str):
+            continue
+        parts = path.split("/")
+        if len(parts) < 4 or parts[1] != "entities" or not parts[2]:
+            continue
+        entity = parts[2]
+        old_ent = old_entities.get(entity)
+        old_checks = old_ent.get("checks") if isinstance(old_ent, dict) else []
+        raw_first = raw_first_pages.get(_entity_op_name(spec, entity))
+        if not isinstance(raw_first, dict):
+            continue
+        # A removed check: name what stops being verified.
+        if op_kind == "remove" and len(parts) == 5 and parts[3] == "checks":
+            try:
+                idx = int(parts[4])
+            except (TypeError, ValueError):
+                continue
+            old_chk = _check_ref(old_checks, idx)
+            if old_chk is None:
+                continue
+            kind = str(old_chk.get("kind") or "check")
+            field = str(old_chk.get("field") or entity)
+            old_ptr = old_chk.get("compare_to")
+            if isinstance(old_ptr, str) and old_ptr:
+                notes.append(
+                    {
+                        "path": path,
+                        "note": (
+                            f"removes the {kind} check on `{field}` "
+                            f"(was comparing against `{old_ptr}`); "
+                            "nothing verifies it after this change"
+                        ),
+                    }
+                )
+            else:
+                notes.append(
+                    {
+                        "path": path,
+                        "note": f"removes the {kind} check on `{field}`; nothing verifies it after this change",
+                    }
+                )
+            continue
+        # A changed compare_to pointer: cite the resolved value and shape,
+        # contrasting with the pointer it replaces.
+        if op_kind in ("replace", "add") and len(parts) == 6 and parts[3] == "checks" and parts[5] == "compare_to":
+            ptr = op.get("value")
+            if not isinstance(ptr, str) or not ptr:
+                continue
+            try:
+                idx = int(parts[4])
+            except (TypeError, ValueError):
+                continue
+            old_chk = _check_ref(old_checks, idx)
+            old_ptr = old_chk.get("compare_to") if old_chk else None
+            try:
+                resolved = extract_jsonpath(raw_first, ptr)
+            except Exception:
+                resolved = None
+            note = f"`{ptr}` is `{_short_json(resolved)}` in the current response ({_value_shape(resolved)})"
+            if isinstance(old_ptr, str) and old_ptr and old_ptr != ptr:
+                try:
+                    old_resolved = extract_jsonpath(raw_first, old_ptr)
+                except Exception:
+                    old_resolved = None
+                note += f"; was `{old_ptr}` (`{_short_json(old_resolved)}`, {_value_shape(old_resolved)})"
+            notes.append({"path": path, "note": note})
+    return notes
+
+
 def dry_run_proposal(
     spec: dict[str, Any],
     patch: list[dict[str, Any]],
@@ -163,7 +303,10 @@ def dry_run_proposal(
     touched = _touched_entities(patch)
     if not touched:
         return True, "patch touches no entity: nothing to judge"
-    from autobridge.runtime.checks import evaluate_entity_checks  # noqa: PLC0415
+    from autobridge.runtime.checks import (
+        evaluate_entity_checks,  # noqa: PLC0415
+        looks_like_money_sum,  # noqa: PLC0415
+    )
     from autobridge.runtime.interpreter import extract_jsonpath  # noqa: PLC0415
 
     canonical_records = fault.get("canonical_records")
@@ -200,7 +343,9 @@ def dry_run_proposal(
 
         # A new compare_to pointer that resolves to nothing names the
         # missing field (generic wording, no scenario names): the model's
-        # retry gets the exact error.
+        # retry gets the exact error. Pointers the old spec already used
+        # resolve the same way — a missing old field is the drift's story,
+        # not the patch's, so only new pointers fail here.
         old_pointers = {
             str(c.get("compare_to"))
             for c in old_checks
@@ -210,8 +355,9 @@ def dry_run_proposal(
             if not isinstance(chk, dict):
                 continue
             ptr = chk.get("compare_to")
-            if not ptr or not isinstance(ptr, str) or ptr in old_pointers:
+            if not ptr or not isinstance(ptr, str):
                 continue
+            is_new = ptr not in old_pointers
             found: Any = None
             if isinstance(raw_first, dict):
                 try:
@@ -219,9 +365,20 @@ def dry_run_proposal(
                 except Exception:
                     found = None
             if found is None:
+                if not is_new:
+                    continue
                 available = _available_keys(raw_first)
                 avail = f"; available: {', '.join(available)}" if available else ""
                 return False, f"`{ptr}` is not a field in the response{avail}"
+            # REQ-055 item 2: a money check pointed at a value that is not
+            # a money sum (e.g. a record count) cannot evaluate — the totals
+            # comparison would silently switch off while the label claims it
+            # was repointed. This holds whether the patch introduced the
+            # pointer or not: a check that is skipped or cannot evaluate
+            # counts as not passed (generic wording, so the retry message
+            # says so too).
+            if chk.get("kind") == "money_invariant" and not looks_like_money_sum(found):
+                return False, f"the patched check did not run: `{ptr}` is not a money sum"
 
         # Records to judge on: re-map the wire records with the patched
         # spec when the patch changes the mapping; otherwise the faulted
@@ -281,7 +438,10 @@ def dry_run_proposal(
                 money_sum = extract_jsonpath(raw_first, ptr)
             except Exception:
                 money_sum = None
-            if money_sum is None:
+            # REQ-055 item 2: never judge a money invariant against a value
+            # that is not a money sum (defense in depth: the patched-pointer
+            # check above already rejects such proposals).
+            if money_sum is None or not looks_like_money_sum(money_sum):
                 continue
             try:
                 from autobridge.runtime.checks import check_money_invariant  # noqa: PLC0415

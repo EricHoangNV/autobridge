@@ -503,3 +503,41 @@ def test_knowledge_text_empty_and_entry(monkeypatch: Any, capsys: Any) -> None:
     assert "pagination:/reservations:cursor" in out
     assert main(["--output", "json", "knowledge"]) == 0
     assert json.loads(capsys.readouterr().out)["counts"]["entries"] == 1
+
+
+def test_activate_posts_and_handles_errors(monkeypatch: Any, capsys: Any) -> None:
+    seen = _client_for(lambda _r: _ok({"id": "rel-2", "active": True}), monkeypatch)
+    assert main(["activate", "c-1", "rel-2"]) == 0
+    assert seen[0].url.path == "/connectors/c-1/releases/rel-2/activate"
+
+    def _boom(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    _client_for(_boom, monkeypatch)
+    assert main(["activate", "c-1", "rel-2"]) == 1
+    assert "activate failed" in capsys.readouterr().err
+
+
+def test_capabilities_and_knowledge_connection_errors(monkeypatch: Any, capsys: Any) -> None:
+    def _boom(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    _client_for(_boom, monkeypatch)
+    assert main(["capabilities"]) == 1
+    assert "capabilities failed" in capsys.readouterr().err
+    assert main(["knowledge"]) == 1
+    assert "knowledge failed" in capsys.readouterr().err
+
+
+def test_capabilities_prints_version_diffs(monkeypatch: Any, capsys: Any) -> None:
+    payload = {
+        "versions": {},
+        "v1_v2_diff": ["POST ops"],
+        "v2_v3_diff": ["event feeds"],
+        "tools": [],
+        "rules": [],
+    }
+    _client_for(lambda r: _ok(payload) if r.url.path == "/capabilities" else _ok({}), monkeypatch)
+    assert main(["capabilities"]) == 0
+    out = capsys.readouterr().out
+    assert "POST ops" in out and "event feeds" in out

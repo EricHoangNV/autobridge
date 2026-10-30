@@ -482,7 +482,24 @@ h2.sec {
 }
 .repair-acts .more {
   display: flex;
-  gap: 20px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+/* REQ-055 item 3d: the rail is narrow — Deny/Reject take a full readable
+   row instead of squeezing beside the rollback input into a one-word-per-
+   line column (at 1440 and 1280); the rollback cluster wraps underneath. */
+.repair-acts .more > button.link {
+  flex: 1 1 100%;
+  min-width: 0;
+  text-align: left;
+  white-space: normal;
+}
+.repair-acts .more > label.link {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 .pend-only {
   display: none;

@@ -13,8 +13,23 @@ from autobridge.runtime.checks import (
     check_count_invariant,
     check_money_invariant,
     evaluate_entity_checks,
+    looks_like_money_sum,
     run_checks,
 )
+
+
+def test_looks_like_money_sum():
+    """REQ-055 item 2: one shared predicate separates money sums from counts."""
+    assert looks_like_money_sum("1234.56") is True
+    assert looks_like_money_sum(Decimal("10354.17")) is True
+    assert looks_like_money_sum(1000.5) is True
+    assert looks_like_money_sum(30) is False
+    assert looks_like_money_sum("30") is False
+    assert looks_like_money_sum("42.00") is False
+    assert looks_like_money_sum(None) is False
+    assert looks_like_money_sum(True) is False
+    assert looks_like_money_sum("not-a-number") is False
+    assert looks_like_money_sum([1]) is False
 
 
 def test_money_invariant_pass():

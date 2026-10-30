@@ -1381,3 +1381,23 @@ def test_post_sends_auth_body_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [r["Id"] for r in result.records] == ["r-1"]
     assert seen[0]["ClientToken"] == "ct-secret"
     assert seen[0]["EnterpriseIds"] == ["e1"]
+
+
+def test_extract_helpers_cover_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-055 gate: JSONPath/total/next-token extraction degradations."""
+    import autobridge.runtime.interpreter as interp
+
+    assert interp._extract_next_token({"a": 1}, None) is None
+    assert interp._extract_next_token({"a": {"b": 2}}, "$.a.b") == 2
+    assert interp._extract_total({"t": 5}, "$.t") == 5
+    assert interp._extract_total({}, None) is None
+    assert interp._extract_total({"t": True}, "$.t") is None
+    assert interp._extract_total({"t": -3}, "$.t") is None
+    assert interp._extract_total({"t": "7"}, "$.t") == 7
+    assert interp._extract_total({"t": "x"}, "$.t") is None
+    assert interp._extract_total({"t": "-2"}, "$.t") is None
+    monkeypatch.setattr(interp, "jsonpath_parse", None)
+    with pytest.raises(RuntimeError, match="jsonpath-ng"):
+        interp._jsonpath_find({"a": 1}, "$.a")
+    with pytest.raises(RuntimeError, match="jsonpath-ng"):
+        interp._jsonpath_find_all({"a": 1}, "$.a")

@@ -52,6 +52,24 @@ def _parse_date_value(value: Any) -> datetime.date | None:
     return None
 
 
+def looks_like_money_sum(value: Any) -> bool:
+    """Whether a ``compare_to`` resolution reads as a money sum (REQ-055 item 2).
+
+    Money sums in our wire shapes are decimal strings (``"1234.56"``) or
+    decimals well above page-count scale; record counts are small ints
+    (``30``). A money check pointed at a count silently stops verifying
+    the totals comparison, so the dry-run (and the live money branch
+    below) treats a non-money resolution as "did not run", never as a
+    pass. Same predicate everywhere: one helper, no per-callsite drift.
+    """
+    try:
+        text = str(value).strip() if not isinstance(value, str) else value.strip()
+        as_decimal = value if isinstance(value, Decimal) else Decimal(text)
+        return "." in text and as_decimal > Decimal("100")
+    except Exception:
+        return False
+
+
 def check_unique_key(
     records: list[dict[str, Any]],
     key_field: str = "reservation_id",
@@ -425,20 +443,12 @@ def run_checks(
                 exp_sum = chk.get("expected_sum")
                 # W6.2: if compare_to points to gross_sum, use compare_to_values; but avoid
                 # using no_loss count (e.g., 30) as money expected_sum. Only use if value
-                # looks like money sum (contains '.' or large).
+                # looks like money sum (contains '.' and Decimal > 100); counts are <1000 ints.
+                # REQ-055 item 2: one shared predicate (looks_like_money_sum).
                 if exp_sum is None and chk.get("compare_to") and compare_to_values and entity_name in compare_to_values:
                     cand = compare_to_values[entity_name]
-                    cand_str = str(cand).strip()
-                    # Money sums for our datasets are >1000 and have 2dp; counts are <1000 ints.
-                    # Use heuristic: if cand contains '.' and Decimal(cand) > 100, treat as money.
-                    try:
-                        from decimal import Decimal as _D
-
-                        d = _D(cand_str)
-                        if "." in cand_str and d > _D("100"):
-                            exp_sum = cand_str
-                    except Exception:
-                        pass
+                    if looks_like_money_sum(cand):
+                        exp_sum = str(cand).strip()
                 res = check_money_invariant(
                     records,
                     field=field,

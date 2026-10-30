@@ -637,4 +637,140 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("repair-section-approve")).toHaveAttribute("data-animate", "off");
     vi.unstubAllGlobals();
   });
+
+  it("climbing headline names no Approve action (REQ-055 item 3a)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "climbing",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_level_reached: 3,
+      ladder_trace: [
+        { level: 0, action: "knowledge lookup", reason: "L0 miss" },
+        { level: 3, action: "frontier_generate", reason: "L3 invoked", model: "muse-spark-1.3", call_started_at: new Date().toISOString() },
+      ],
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-subline")).not.toHaveTextContent(/Approve/);
+    expect(screen.getByTestId("repair-subline")).toHaveTextContent(/Detected/);
+  });
+
+  it("propose with a verified patch keeps the Approve action in the subline (REQ-055 item 3a)", () => {
+    mockAll(undefined, undefined, undefined, mockConnectorWithSpec);
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-subline")).toHaveTextContent(/Approve to ship it as release r2/);
+  });
+
+  it("escalated chapter 3 shows the tested proposal Now → Proposed, with the dry-run and the field note (REQ-055 items 2, 3b)", () => {
+    mockAll(
+      {
+        ...mockRepair,
+        decision: "escalate",
+        verifier_report_id: null,
+        candidate_patch: [],
+        ladder_level_reached: 3,
+        ladder_trace: [
+          { level: 3, action: "model_escalation", reason: "L3 asked for a human decision", model_question: "Should the new behaviour stand?" },
+          { level: 4, action: "escalate", reason: "L3 asked for a human decision (gross_to_net)" },
+        ],
+        escalation_bundle: {
+          reason: "gross_to_net: semantic drift, no verified fix",
+          question: "Should the new behaviour stand?",
+          suggested_action: "manual review",
+          proposal: {
+            label: "Accept net",
+            effect: "Retarget the totals check to the page total.",
+            patch: [{ op: "replace", path: "/entities/Reservation/checks/2/compare_to", value: "$.total" }],
+            dry_run: "tested on the current records: the checks pass",
+            field_notes: [
+              { path: "/entities/Reservation/checks/2/compare_to", note: "`$.total` is `30` in the current response (an integer)" },
+            ],
+          },
+        },
+      },
+      undefined,
+      undefined,
+      mockConnectorWithSpec,
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    // No "nothing to apply" while the tested proposal exists.
+    expect(screen.queryByTestId("no-patch-note")).not.toBeInTheDocument();
+    // Now → Proposed rows from the active spec, with the note next to the change.
+    expect(screen.getByTestId("op-row-0")).toBeInTheDocument();
+    expect(screen.getByTestId("op-proposed-0")).toHaveTextContent("$.total");
+    expect(screen.getByTestId("op-note-0")).toHaveTextContent("`$.total` is `30`");
+    // The dry-run result reads in chapter 3, once.
+    expect(screen.getByTestId("patch-dry-run")).toHaveTextContent("tested on the current records: the checks pass");
+  });
+
+  it("verifier tile shows the dry-run result next to a tested proposal (REQ-055 item 3c)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [
+        { level: 3, action: "model_escalation", reason: "L3 asked for a human decision", model_question: "Should the new behaviour stand?" },
+        { level: 4, action: "escalate", reason: "L3 asked for a human decision" },
+      ],
+      escalation_bundle: {
+        reason: "semantic drift, no verified fix",
+        question: "Should the new behaviour stand?",
+        suggested_action: "manual review",
+        proposal: {
+          label: "Accept net",
+          effect: "Retarget the totals check.",
+          patch: [{ op: "replace", path: "/entities/Reservation/checks/2/compare_to", value: "$.total" }],
+          dry_run: "tested on the current records: the checks pass",
+        },
+      },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("verifier-dry-run-note")).toHaveTextContent("tested proposal — tested on the current records: the checks pass");
+    expect(screen.getByTestId("verifier-verdict")).not.toHaveTextContent("no patch to verify");
+  });
+
+  it("verifier tile keeps 'no patch to verify' for a plain escalation (REQ-055 item 3c)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [
+        { level: 3, action: "model_escalation", reason: "L3 asked for a human decision" },
+        { level: 4, action: "escalate", reason: "no verified fix" },
+      ],
+      escalation_bundle: { reason: "no verified fix", question: "Which mapping is correct?", suggested_action: "pick one" },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("verifier-dry-run-note")).toHaveTextContent("no patch to verify (the model escalated)");
+  });
+
+  it("Deny and rollback stay usable side by side in the rail (REQ-055 item 3d)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [{ level: 4, action: "escalate", reason: "no verified fix" }],
+      escalation_bundle: { reason: "no verified fix", question: "Which mapping is correct?", suggested_action: "pick one" },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    // Both actions render in the rail; the wrap fix is asserted in CSS below.
+    expect(screen.getByTestId("repair-deny-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("rollback-target-input")).toBeInTheDocument();
+    expect(screen.getByTestId("rollback-btn")).toHaveTextContent("Roll back");
+  });
+
+  it("rail Deny/rollback row wraps instead of squeezing into a column (REQ-055 item 3d)", async () => {
+    // jsdom computes no layout: assert the stylesheet rule itself, so a
+    // future edit cannot silently reintroduce the tall one-word-per-line
+    // column beside the release-id input. Cwd for vitest is ui/.
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("app/globals.css", "utf8");
+    const more = /\.repair-acts\s+\.more\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
+    expect(more).toMatch(/flex-wrap\s*:\s*wrap/);
+    const deny = /\.repair-acts\s+\.more\s*>\s*button\.link\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
+    expect(deny).toMatch(/flex\s*:\s*1\s+1\s+100%/);
+  });
 });

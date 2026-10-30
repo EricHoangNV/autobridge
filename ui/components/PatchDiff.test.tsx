@@ -42,4 +42,24 @@ describe("PatchDiff", () => {
     expect(screen.getByTestId("patch-diff-old")).toBeInTheDocument();
     expect(screen.getByTestId("patch-diff-new")).toBeInTheDocument();
   });
+
+  it("shows the field note next to the matching change (REQ-055)", () => {
+    render(
+      <PatchDiff
+        candidatePatch={[{ op: "replace", path: "/entities/Reservation/checks/3/compare_to", value: "$.total" }]}
+        fieldNotes={[{ path: "/entities/Reservation/checks/3/compare_to", note: "`$.total` is `30` in the current response (an integer)" }]}
+      />,
+    );
+    expect(screen.getByTestId("patch-op-note-0")).toHaveTextContent("`$.total` is `30`");
+  });
+
+  it("shows no note when no field note matches", () => {
+    render(
+      <PatchDiff
+        candidatePatch={[{ op: "replace", path: "/a", value: "b" }]}
+        fieldNotes={[{ path: "/other", note: "elsewhere" }]}
+      />,
+    );
+    expect(screen.queryByTestId("patch-op-note-0")).not.toBeInTheDocument();
+  });
 });

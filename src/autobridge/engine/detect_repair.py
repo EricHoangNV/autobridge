@@ -878,13 +878,18 @@ def _gate_proposal_on_fault_records(
     if result.decision != "propose" or not result.candidate_patch or not result.repair_run_id:
         return result, None
     from autobridge.control.models import RepairRun  # noqa: PLC0415
-    from autobridge.repair.dryrun import build_dry_run_fault, dry_run_proposal  # noqa: PLC0415
+    from autobridge.repair.dryrun import (  # noqa: PLC0415
+        build_dry_run_fault,
+        dry_run_proposal,
+        field_notes_for_proposal,  # noqa: PLC0415
+    )
 
     try:
         fault = build_dry_run_fault(summary if isinstance(summary, dict) else None)
         ok, detail = dry_run_proposal(spec_dict, list(result.candidate_patch), fault)
+        notes = field_notes_for_proposal(spec_dict, list(result.candidate_patch), fault)
     except Exception as exc:  # noqa: BLE001 — judgement failure is row data
-        ok, detail = False, f"dry-run errored: {exc}"
+        ok, detail, notes = False, f"dry-run errored: {exc}", []
     if ok:
         # Record the pass on the proposing rung: the repair page shows it
         # with the offered patch ("tested on the current records: ...").
@@ -899,6 +904,9 @@ def _gate_proposal_on_fault_records(
             for entry in reversed(trace):
                 if isinstance(entry, dict) and entry.get("level") == result.ladder_level_reached:
                     entry["dry_run"] = "tested on the current records: the checks pass"
+                    # REQ-055 item 2: what each changed target field means.
+                    if notes:
+                        entry["field_notes"] = [dict(n) for n in notes if isinstance(n, dict)]
                     break
             row.ladder_trace = trace
             session.flush()

@@ -2229,18 +2229,26 @@ def run_frontier_climb(
         climb), else the one-line error for the single retry. Never
         raises: a dry-run failure is row data, never a climb error — the
         caller routes it into the existing retry, then drops the proposal.
+        On a pass, per-op field notes ride the L3 rung (REQ-055 item 2:
+        what the target wire field means, from observed evidence).
         """
         nonlocal dry_run_note
         if not candidate or dry_run_fault is None or validate_against is None:
             return None
         try:
-            from autobridge.repair.dryrun import dry_run_proposal  # noqa: PLC0415
+            from autobridge.repair.dryrun import (
+                dry_run_proposal,  # noqa: PLC0415
+                field_notes_for_proposal,  # noqa: PLC0415
+            )
 
             ok, detail = dry_run_proposal(validate_against, list(candidate), dry_run_fault)
+            notes = field_notes_for_proposal(validate_against, list(candidate), dry_run_fault)
         except Exception as exc:  # noqa: BLE001 — judgement is best-effort
             return f"dry-run errored: {exc}"
         if ok:
             dry_run_note = "tested on the current records: the checks pass"
+            if notes:
+                l3_entry["field_notes"] = notes
             return None
         return f"proposal failed dry-run on the current records: {detail}"
 

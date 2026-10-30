@@ -534,6 +534,13 @@ class RepairController:
                 "patch": [dict(op) for op in climb["proposal"] if isinstance(op, dict)],
                 # REQ-053 item 6: shown with the proposal on the repair page.
                 "dry_run": str(climb.get("dry_run") or ""),
+                # REQ-055 item 2: what each changed target field means,
+                # from observed evidence (rides the L3 rung from the dry-run).
+                "field_notes": [
+                    dict(n)
+                    for n in ((l3_entry.get("field_notes") or []) if l3_entry else [])
+                    if isinstance(n, dict)
+                ],
             }
             if not model_proposal["label"] or not model_proposal["effect"]:
                 model_proposal = None

@@ -216,14 +216,23 @@ function formatSpecValue(v: unknown): string {
 }
 
 type PatchOp = { op: string; path: string; value?: unknown; from?: string };
-type OpRow = { path: string; field: string; now: string; proposed: string };
+type FieldNote = { path: string; note: string };
+type OpRow = { path: string; field: string; now: string; proposed: string; note?: string };
 type OpGroup = { name: string; rows: OpRow[] };
 
 /**
  * Group a JSON Patch by operation (REQ-054 item 1): `Now` is read from the
  * current active spec — never a placeholder. `Proposed` is the patch value.
+ * REQ-055 item 2: each row carries its field note (what the target wire
+ * field means), matched by op path.
  */
-function groupPatchOps(ops: PatchOp[], activeSpec: Record<string, unknown> | null): OpGroup[] {
+function groupPatchOps(ops: PatchOp[], activeSpec: Record<string, unknown> | null, fieldNotes: FieldNote[] = []): OpGroup[] {
+  const notesByPath = new Map<string, string>();
+  for (const n of fieldNotes) {
+    if (n && typeof n.path === "string" && typeof n.note === "string" && n.note && !notesByPath.has(n.path)) {
+      notesByPath.set(n.path, n.note);
+    }
+  }
   const groups = new Map<string, OpRow[]>();
   for (const op of ops) {
     const path = String(op.path ?? "/");
@@ -257,7 +266,7 @@ function groupPatchOps(ops: PatchOp[], activeSpec: Record<string, unknown> | nul
       proposed = formatSpecValue(op.value);
     }
     if (!groups.has(name)) groups.set(name, []);
-    groups.get(name)!.push({ path, field, now, proposed });
+    groups.get(name)!.push({ path, field, now, proposed, note: notesByPath.get(path) });
   }
   return [...groups.entries()].map(([name, rows]) => ({ name, rows }));
 }
@@ -586,11 +595,17 @@ export default function RepairDetailPage({ params }: PageProps) {
     const rec = raw as Record<string, unknown>;
     const patch = Array.isArray(rec["patch"]) ? (rec["patch"] as Array<{ op: string; path: string; value?: unknown; from?: string }>) : [];
     if (patch.length === 0) return null;
+    const fieldNotes = Array.isArray(rec["field_notes"])
+      ? (rec["field_notes"] as Array<{ path?: unknown; note?: unknown }>)
+          .filter((n) => n && typeof n.path === "string" && typeof n.note === "string" && (n.note as string).trim())
+          .map((n) => ({ path: n.path as string, note: n.note as string }))
+      : [];
     return {
       label: typeof rec["label"] === "string" && rec["label"].trim() ? rec["label"] : "Approve",
       effect: typeof rec["effect"] === "string" ? rec["effect"] : "",
       patch,
       dryRun: typeof rec["dry_run"] === "string" && rec["dry_run"].trim() ? rec["dry_run"] : null,
+      fieldNotes,
     };
   })();
 
@@ -606,6 +621,31 @@ export default function RepairDetailPage({ params }: PageProps) {
     }
     return null;
   })();
+  // REQ-055 item 2: field notes on the proposing rung (deterministic
+  // path) — the escalated proposal carries its own in modelProposal.
+  const traceFieldNotes = (() => {
+    const out: Array<{ path: string; note: string }> = [];
+    for (const e of repair.ladder_trace ?? []) {
+      const rec = e as Record<string, unknown>;
+      if (typeof rec["level"] !== "number" || (rec["level"] as number) !== repair.ladder_level_reached) continue;
+      const notes = rec["field_notes"];
+      if (!Array.isArray(notes)) continue;
+      for (const n of notes) {
+        const r = n as Record<string, unknown>;
+        if (r && typeof r.path === "string" && typeof r.note === "string" && (r.note as string).trim()) {
+          out.push({ path: r.path as string, note: r.note as string });
+        }
+      }
+    }
+    return out;
+  })();
+  // REQ-055 item 3b: chapter 3 shows the proposal (Now → Proposed) whenever
+  // one exists — the candidate patch, or the tested proposal on an
+  // escalation (which keeps decision=escalate with no candidate patch).
+  const displayPatch = hasPatch
+    ? ((repair.candidate_patch ?? []) as Array<{ op: string; path: string; value?: unknown; from?: string }>)
+    : (modelProposal?.patch ?? []);
+  const displayNotes = hasPatch ? traceFieldNotes : (modelProposal?.fieldNotes ?? []);
   // REQ-048 item 6: the frontier budget that applies to this repair — the
   // row stamps it at write time; the ledger repeats it.
   const frontierBudget = (() => {
@@ -623,8 +663,8 @@ export default function RepairDetailPage({ params }: PageProps) {
   }).length;
   const totalTests = repair.visible_test_results.length;
 
-  // Touched vs untouched spec sections, from the patch paths themselves.
-  const touchedSections = [...new Set((repair.candidate_patch ?? []).map((op) => String(op.path ?? "").split("/").filter(Boolean)[0] || "/"))];
+  // Touched vs untouched spec sections, from the shown patch's paths.
+  const touchedSections = [...new Set(displayPatch.map((op) => String(op.path ?? "").split("/").filter(Boolean)[0] || "/"))];
 
   const attempts = ledger?.attempts ?? [];
   const rungByLevel = new Map(attempts.map((a) => [a.rung, a]));
@@ -641,8 +681,8 @@ export default function RepairDetailPage({ params }: PageProps) {
   })();
   const activeSpec = (activeRelease?.spec ?? null) as Record<string, unknown> | null;
   const candidateVersion = activeRelease ? activeRelease.version + 1 : null;
-  const opGroups = hasPatch ? groupPatchOps((repair.candidate_patch ?? []) as PatchOp[], activeSpec) : [];
-  const opCount = (repair.candidate_patch ?? []).length;
+  const opGroups = displayPatch.length ? groupPatchOps(displayPatch as PatchOp[], activeSpec, displayNotes) : [];
+  const opCount = displayPatch.length;
 
   // Ledger calls: the per-call proof rows. The tile carries the totals, so
   // the box renders only when there are per-call facts (or the climb is
@@ -674,10 +714,19 @@ export default function RepairDetailPage({ params }: PageProps) {
               : hasReport && hasPatch
                 ? `${connectorLabel} ${driftClass ? humanizeDriftClass(driftClass) : "drifted"}: fixed at L${trackLevel}${repair.rule_id ? ` by ${repair.rule_id}` : ""}, verified.`
                 : `${connectorLabel} ${driftClass ? humanizeDriftClass(driftClass) : "drifted"}: the climb ${repair.decision}.`;
+  // REQ-055 item 3a: no action wording until a decision exists — while
+  // the climb runs (or failed) there is nothing to approve yet.
+  const approveAction = climbingNow || repair.decision === "failed"
+    ? null
+    : isEscalated && modelProposal
+      ? `Approve the tested proposal: ${modelProposal.label}`
+      : hasPatch
+        ? `Approve to ship it as release r${candidateVersion ?? "?"}`
+        : null;
   const subline = [
     primaryDrift ? `Detected ${shortTime(primaryDrift.created_at)}${sourceSyncId ? ` in sync ${sourceSyncId.slice(0, 8)}` : ""}` : null,
     totalTests > 0 ? `verifier ${passedCount}/${totalTests} checks pass` : null,
-    `Approve to ship it as release r${candidateVersion ?? "?"}`,
+    approveAction,
   ].filter(Boolean).join(" · ");
 
   // Storyline: 1 happened → 2 did → 3 recommends. The yellow mark sits on
@@ -937,6 +986,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                   escalationBundle={repair.escalation_bundle as never}
                   decision={repair.decision}
                   modelEscalated={modelAsked}
+                  proposalDryRun={modelProposal?.dryRun ?? null}
                 />
                 <span data-testid="verifier-checks-line" className="s num">
                   {totalTests > 0 ? `${passedCount}/${totalTests} checks pass` : "no visible checks recorded"}
@@ -1069,7 +1119,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                 </ul>
               </div>
             ) : null}
-            {hasPatch ? (
+            {displayPatch.length ? (
               <div data-testid="patch-diff" className="rd-ops">
                 {opGroups.map((g, gi) => (
                   <div key={gi} data-testid={`op-group-${gi}`} className="rd-op">
@@ -1089,7 +1139,14 @@ export default function RepairDetailPage({ params }: PageProps) {
                             <tr key={ri} data-testid={`op-row-${idx}`}>
                               <td data-testid={`op-field-${idx}`}>{row.field}</td>
                               <td data-testid={`op-now-${idx}`} className="old">{row.now}</td>
-                              <td data-testid={`op-proposed-${idx}`} className="new">{row.proposed}</td>
+                              <td data-testid={`op-proposed-${idx}`} className="new">
+                                {row.proposed}
+                                {row.note ? (
+                                  <span data-testid={`op-note-${idx}`} className="mt-1 block font-sans text-xs text-ink-2">
+                                    {row.note}
+                                  </span>
+                                ) : null}
+                              </td>
                             </tr>
                           );
                         })}
@@ -1099,9 +1156,9 @@ export default function RepairDetailPage({ params }: PageProps) {
                 ))}
               </div>
             ) : (
-              <p className="mt-2 text-sm text-ink-2">No patch proposed{isEscalated ? " — nothing verified to apply" : " yet"}.</p>
+              <p data-testid="no-patch-note" className="mt-2 text-sm text-ink-2">No patch proposed{isEscalated ? " — nothing verified to apply" : " yet"}.</p>
             )}
-            {hasPatch ? (
+            {displayPatch.length ? (
               <>
                 <p data-testid="patch-touches" className="mb-2 mt-3 font-mono text-xs text-ink-2">
                   touches: {touchedSections.join(", ") || "—"} · everything else in the spec stays unchanged
@@ -1111,6 +1168,11 @@ export default function RepairDetailPage({ params }: PageProps) {
                     {candidateDryRun}
                   </p>
                 ) : null}
+                {isEscalated && modelProposal?.dryRun ? (
+                  <p data-testid="patch-dry-run" className="mb-2 font-mono text-xs text-ink-2">
+                    {modelProposal.dryRun}
+                  </p>
+                ) : null}
                 <details className="mt-2 border-t border-rule">
                   <summary className="cursor-pointer py-3 text-xs text-ink-2 hover:text-ink hover:underline">
                     Raw JSON Patch · {opCount} operation{opCount === 1 ? "" : "s"}
@@ -1118,10 +1180,10 @@ export default function RepairDetailPage({ params }: PageProps) {
                   <div className="pb-4">
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <span className="text-xs text-ink-2">RFC 6902{activeRelease ? `, against spec r${activeRelease.version}` : ""}</span>
-                      <CopyPatchButton patch={repair.candidate_patch ?? []} />
+                      <CopyPatchButton patch={displayPatch as Array<{ op: string; path: string; value?: unknown; from?: string }>} />
                     </div>
                     <pre data-testid="patch-raw" className="mt-1 overflow-auto border border-rule bg-ground p-2 font-mono text-xs">
-                      {JSON.stringify(repair.candidate_patch, null, 2)}
+                      {JSON.stringify(displayPatch, null, 2)}
                     </pre>
                   </div>
                 </details>
@@ -1187,7 +1249,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                     </p>
                   ) : null}
                   <div className="mt-2">
-                    <PatchDiff candidatePatch={modelProposal.patch as never} title="Proposed change" />
+                    <PatchDiff candidatePatch={modelProposal.patch as never} title="Proposed change" fieldNotes={modelProposal.fieldNotes} />
                   </div>
                 </div>
               ) : (

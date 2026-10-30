@@ -11,7 +11,7 @@ counts.
 from __future__ import annotations
 
 import pathlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
@@ -36,6 +36,9 @@ from autobridge.control.models import (
     SyncRun,
 )
 from autobridge.control.routes.demo import expected_reset_targets
+
+if TYPE_CHECKING:
+    import pytest
 from autobridge.llm.provider import Usage, record_model_call
 from autobridge.repair.knowledge import get_default_cache, reset_default_cache
 
@@ -429,3 +432,143 @@ def test_reset_repairs_lying_head_stamp(tmp_path: pathlib.Path) -> None:
     cfg.set_main_option("sqlalchemy.url", url)
     command.stamp(cfg, "head")
     _reset_and_serve_repairs(url)
+
+
+def test_admin_url_compose_branch_and_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-055 gate: admin routing honors compose mode and env overrides."""
+    import autobridge.control.routes.demo as _demo
+
+    monkeypatch.setattr(_demo, "in_compose_network", lambda: True)
+    assert _demo._admin_url_for_target("sim-atlas") == "http://sim-atlas:8001"
+    monkeypatch.setattr(_demo, "in_compose_network", lambda: False)
+    monkeypatch.setenv("SIMULATOR_ADMIN_URL", "http://127.0.0.1:9")
+    assert _demo._admin_base_for_target("sim-atlas") == "http://127.0.0.1:9"
+    monkeypatch.delenv("SIMULATOR_ADMIN_URL")
+    monkeypatch.setenv("SIM_ATLAS_ADMIN_URL", "http://127.0.0.1:8")
+    assert _demo._admin_base_for_target("sim-atlas") == "http://127.0.0.1:8"
+
+
+def test_reset_wait_and_target_env_branches(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-055 gate: reset wait knob degrades; per-target env wins."""
+    import autobridge.control.routes.demo as _demo
+
+    monkeypatch.setenv("AUTOBRIDGE_RESET_WAIT_S", "bogus")
+    assert _demo._reset_wait_s() == 90.0
+    monkeypatch.setenv("AUTOBRIDGE_RESET_WAIT_S", "0")
+    assert _demo._reset_wait_s() == 0.0
+    client, _factory = _client_for(tmp_path)
+    try:
+        monkeypatch.setenv("SIM_ATLAS_ADMIN_URL", "http://127.0.0.1:9")
+        with patch("httpx.Client") as mock_c:
+            mock_c.return_value.__enter__.return_value.post.return_value = _ok_admin()
+            r = client.post("/demo/reset", json={"targets": ["sim-atlas"]})
+            assert r.status_code == 200, r.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_inject_fault_reports_unparseable_admin_body(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-055 gate: a non-JSON admin reply is reported, not crashed on."""
+    from unittest.mock import Mock as _Mock
+
+    client, _factory = _client_for(tmp_path)
+    try:
+        monkeypatch.setenv("SIMULATOR_ADMIN_URL", "http://127.0.0.1:9")
+        bad = _Mock()
+        bad.status_code = 200
+        bad.content = b"not json"
+        bad.json.side_effect = ValueError("no json")
+        bad.text = "not json"
+        with patch("httpx.Client") as mock_c:
+            mock_c.return_value.__enter__.return_value.post.return_value = bad
+            r = client.post("/demo/inject-fault", json={"target": "sim-atlas", "scenario_id": "page_to_cursor"})
+            assert r.status_code == 200, r.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_simulators_probe_degrades_on_bad_admin(tmp_path: pathlib.Path) -> None:
+    """REQ-055 gate: non-200 and non-JSON admin probes degrade to unknown."""
+    from unittest.mock import Mock as _Mock
+
+    client, _factory = _client_for(tmp_path)
+    try:
+        down = _Mock()
+        down.status_code = 500
+        with patch("httpx.Client") as mock_c:
+            mock_c.return_value.__enter__.return_value.get.return_value = down
+            r = client.get("/demo/simulators")
+            assert r.status_code == 200, r.text
+        bad = _Mock()
+        bad.status_code = 200
+        bad.json.side_effect = ValueError("no json")
+        with patch("httpx.Client") as mock_c:
+            mock_c.return_value.__enter__.return_value.get.return_value = bad
+            r = client.get("/demo/simulators")
+            assert r.status_code == 200, r.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_demo_docs_public_url_failure_is_422(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-055 gate: an unresolvable public docs address is a 422."""
+    import autobridge.control.routes.demo as _demo
+
+    client, _factory = _client_for(tmp_path)
+    try:
+        monkeypatch.setattr(_demo, "public_base_url_for_target", lambda _r: (_ for _ in ()).throw(RuntimeError("x")))
+        r = client.get("/demo/docs", params={"target": "sim-atlas"})
+        assert r.status_code == 422, r.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_record_climb_404_rationale_and_bad_cost(tmp_path: pathlib.Path) -> None:
+    """REQ-055 gate: unknown connector 404s; rationale and cost degrade."""
+    from autobridge.control.models import session_factory as _session_factory
+
+    engine = create_engine(f"sqlite:///{tmp_path}/climb.db")
+    Base.metadata.create_all(engine)
+    client, factory = _client_for_db_url(f"sqlite:///{tmp_path}/climb.db")
+    assert factory is not None
+    _seed_state(_session_factory(engine))
+    with factory() as s:
+        from autobridge.control.models import Connector as _Connector
+
+        conn = s.query(_Connector).first()
+        assert conn is not None
+        cid = conn.id
+    try:
+        body = {
+            "connector_id": "missing",
+            "drift_class": "SEMANTIC_VALUE_DRIFT",
+            "escalation_question": "q?",
+        }
+        assert client.post("/demo/record-climb", json=body).status_code == 404
+        body = {
+            "connector_id": cid,
+            "drift_class": "SEMANTIC_VALUE_DRIFT",
+            "vendor": "harbor",
+            "scenario": "gross_to_net",
+            "escalation_question": "Net or gross?",
+            "model_rationale": "Observed sums differ.",
+            "model_calls": [
+                {
+                    "provider": "muse",
+                    "model": "muse-spark-1.3",
+                    "tier": "frontier",
+                    "input_tokens": 1,
+                    "output_tokens": 2,
+                    "purpose": "l3",
+                    "cost": "bogus",
+                }
+            ],
+        }
+        r = client.post("/demo/record-climb", json=body)
+        assert r.status_code == 200, r.text
+    finally:
+        app.dependency_overrides.clear()
