@@ -66,7 +66,7 @@ Owner check after: deck 6 — v1 refused → Download capability request → ope
 
 
 ### REQ-057 — Connector page: spec viewer with a fixed height, fingerprints grouped and collapsed (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 18:07)
 Owner review of the connector page (2026-10-30, Atlas). UI only, no new API.
 1. **Spec viewer ("Spec, rN"):** the YAML block grows to the full spec length and makes the page very long. Give it a
    fixed height (≈ 60 vh, with a sensible min/max) with its own scroll; the section list on its left (spec_version,
