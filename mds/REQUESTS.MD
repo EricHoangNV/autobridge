@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 11:30): **REQ-043 next.**
 
 ### REQ-043 — Show a repair while it is running: the repair row exists from the start of the climb (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 03:33)
 Owner run (2026-10-30, sandbox, fresh checkout of `origin/main` at 27e1bc6f with the owner's `.env` incl.
 `FRONTIER_API_KEY`): `make demo` 8/8 in 1m04s, and 8/8 with each step alone after `make demo-reset` — REQ-042's keyed
 owner step passes. But step 4's live L3 call (`muse-spark-1.3`) spent **8,190 of 8,192 output tokens on reasoning and
