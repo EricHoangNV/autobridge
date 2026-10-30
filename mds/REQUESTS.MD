@@ -33,7 +33,7 @@ Fix (do not raise timeouts to hide it):
 Owner priority (2026-10-30 03:40): **REQ-039 next**, before anything else.
 
 ### REQ-040 — Directive: §4/§7 repair provenance — the sync→repair path re-fetches "the newest RepairRun" unscoped, so concurrent syncs can cross-link candidate releases (2026-10-29)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 02:17)
 Found by the 2026-10-29 directives audit (diff `2cea2072..d2d9c9d2`). In `src/autobridge/engine/detect_repair.py` (~line 466), after `RepairController.handle*` persists a repair, the code re-fetches it with `select(RepairRun).order_by(created_at.desc()).limit(1)` — no connector, drift-event or run-id filter. Since REQ-030 the scheduler ticks every 10 s in-process while manual `POST /sync` calls run concurrently (skip-busy is per-connector only), so two connectors repairing at once can attach a candidate release (`provenance_repair_run_id`), its verifier report id and the returned `repair_run_id` to the *other* connector's repair row. Fix at the source: have the controller/semantic-climb path return the id of the row it persisted (thread it through `LadderResult` or return it alongside), and delete the unscoped re-fetch. Test: two concurrent `detect_and_repair_after_sync` runs on different connectors each link their own candidate/verifier report. Do not paper over it with a `created_at` tie-break.
 
 ### REQ-041 — Directive: §7 / P2.S6.1 — the REQ-032 repair-page restructure dropped the per-run model-usage chart, and `tests/e2e/test_s6_richer_ui.spec.ts` is red in both modes (2026-10-29)
