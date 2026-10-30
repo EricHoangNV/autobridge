@@ -34,6 +34,13 @@ proposal failed the dry-run, one retry, second passed ("tested on the current re
    one exists; (c) the verifier tile says "not_verified · no patch to verify (the model escalated)" next to a tested
    proposal — show the dry-run result there; (d) in the rail, **Deny** and **Roll back** render as a tall one-word-per-
    line column (squeezed beside the release-id input) — lay them out readably at 1440 and 1280.
+   (e) **The decision rail must stay pinned while scrolling** (owner, 2026-10-30, screenshot: it scrolls away). It is
+   taller than the viewport (question + full patch table + raw JSON + buttons + both consequence lists), so `sticky`
+   cannot hold it. The rail keeps only the decision: the question (one line), the proposal label + dry-run result,
+   Approve / Deny, roll back, and the "If you click Approve / Reject" consequences collapsed (▸). The Now → Proposed
+   table and raw JSON live in chapter 3 (see b). Safety net: `position: sticky; max-height: calc(100vh - <top>);
+   overflow-y: auto` so a long question still stays pinned. Verify at 1440×900 and 1280×800 by scrolling the deck-5
+   escalation page to the bottom: Approve stays visible.
 Tests: migration upgrade from each revision then approve; dry-run marks a skipped check as failed; UI tests for (a)–(d).
 Gates unkeyed + `make demo` 8/8. **Owner check after (keyed, through the browser):** decks 4 → 5: break → tested
 proposal whose label matches what it does → Approve → verifying sync Complete → Harbor ● Working.
