@@ -2,7 +2,25 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 22:00): **REQ-055, then REQ-056.** Do not start REQ-051 or REQ-052 until the owner says so.
+Owner priority (2026-10-30 22:30): **REQ-055, then REQ-056, then REQ-057.** Do not start REQ-051 or REQ-052 until the owner says so.
+
+### REQ-057 — Connector page: spec viewer with a fixed height, fingerprints grouped and collapsed (2026-10-30)
+Status: OPEN
+Owner review of the connector page (2026-10-30, Atlas). UI only, no new API.
+1. **Spec viewer ("Spec, rN"):** the YAML block grows to the full spec length and makes the page very long. Give it a
+   fixed height (≈ 60 vh, with a sensible min/max) with its own scroll; the section list on its left (spec_version,
+   connector, source, operations, entities, capabilities, health, commands) scrolls **inside** the viewer to that
+   section; Copy YAML and the release picker stay visible above it.
+2. **Fingerprint:** one row per sync run, all showing the same fingerprint (`3520bd6c039e71e2 (Complete)` × 28+).
+   Group **consecutive runs with the same fingerprint** into one line ("3520bd6c… · 28 syncs · Complete · 09:05 →
+   09:32 PM"), with ▸ to expand the run ids; a **fingerprint change** (drift) starts a new group and is highlighted
+   (e.g. "changed at 09:09 PM — drift 77b78e79", linking to the repair). The whole Fingerprint section is
+   collapsible and **collapsed by default**, showing a one-line summary ("2 fingerprints · last change 09:09 PM").
+3. Must pass REQ-055's automated no-overlap/overflow check (add the connector page with a long spec and 30+ sync runs
+   to it). Keep existing `data-testid`s.
+Tests: grouping (same fingerprint merged, change starts a new group and links its drift), collapsed by default, spec
+viewer height + inner scroll + section jump.
+
 
 ### REQ-056 — Repair page you can scan: plain-language summary per step, technical detail behind a toggle (2026-10-30)
 Status: OPEN
