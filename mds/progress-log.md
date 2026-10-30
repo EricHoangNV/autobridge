@@ -3936,3 +3936,12 @@ Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process
 ## 2026-10-30 18:10 — REQ-056 DONE (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). Repair page you can scan: plain lookup tables + chapter plain layers + closed Technical details toggles + ladder chips + always-on dry-run line + rail plain line; UI tests 266 green, layout/test_06/test_s6 Playwright green mocked, full make test + lint + typechecks green; docs/architecture.md updated. Owner check after: Aside screenshots at 1440 deck 3 + deck 5. Next: REQ-057 (owner order: 056 → 057 → 058 → 059 → 052).
 Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>
+
+## 2026-10-30 18:40 UTC — REQ-057 DONE (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Connector page (Atlas review), UI only:
+fixed-height spec viewer (clamp 320px/60vh/720px) with inner scroll + toc section jump; fingerprints
+grouped by consecutive value, collapsed by default with one-line summary, change groups highlighted with
+drift→repair links; Signature column header + full-value hover tooltips + keyboard focus on every
+truncated hash (releases, sync runs, spec picker/viewer, fingerprint groups). Tests: ui 284 pass
+(+18), test_10 layout 16/16 + test_06 green mocked, full make test green (90.11/91.49/90.48/284).
+Owner check: Aside screenshots at 1440 (long spec + 30+ runs). Next: REQ-058.

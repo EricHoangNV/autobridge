@@ -2722,3 +2722,45 @@ UI only, no new API. Plain-language scan layer over the REQ-054 story layout; al
 - Docs: `docs/architecture.md` §/repairs/[id] paragraph extended with the REQ-056 layer.
 - Owner check after: Aside screenshots at 1440 of deck 3 + deck 5 — readable in 5 seconds.
 Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>
+
+### REQ-057 — Connector page: spec viewer + grouped fingerprints + hash tooltips (sbx1 2026-10-30)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). UI only, no new API.
+- Spec viewer (`ui/components/SpecViewer.tsx`): root is now `.spec-viewer-box`
+  (`height: clamp(320px, 60vh, 720px)`, flex column); the YAML `<pre>` is the
+  scroll child, header (title + Copy YAML) stays visible above it; the release
+  picker in the page stays above the box. Top-level spec keys become section
+  anchors (`specSectionAnchor`); the toc buttons scroll inside the viewer via
+  `scrollIntoView({block:"start"})`. Raw-JSON toggle stays collapsed below.
+- Fingerprints (`ui/components/FingerprintGroups.tsx`, new):
+  `groupSyncRunsByFingerprint` groups **consecutive** runs with the same
+  fingerprint (a repeat value after a change starts a new group; runs without
+  a fingerprint are skipped); `fingerprintSummary` gives the one-line
+  collapsed summary ("2 fingerprints · last change 09:09 PM"). Each group row
+  shows `fp… · N syncs · outcome · start → end` with ▸ to expand run ids;
+  change groups are highlighted and show "changed at … — drift <id>" with a
+  "view repair" link resolved from open drift `source_sync_run_id` → repair.
+  The whole section is a `<details data-testid="fingerprints-section">`,
+  collapsed by default. All existing `fingerprint-entry-<id>` testids are
+  kept on the expanded rows.
+- Hash tooltips (item 4): Releases table gains a "Signature" column header
+  with the "proves this release's spec is exactly the one that was verified
+  and approved" tooltip; signature cells, release-version cells, sync-run
+  fingerprint cells, run-id cells, group fingerprint codes and expanded run
+  ids are all `tabIndex={0}` with `title` = full value (+ the Signature /
+  "shape of the vendor's responses; a change means drift" explanation where
+  the item asks). Spec h2, release `<select>` (+ each `<option>`) and viewer
+  title carry full release id + full signature + Signature explanation.
+- `tests/e2e/test_10_layout_no_overlap.spec.ts`: connector-page step now
+  opens the summary, expands group 0, asserts the entry + the full-value
+  `title`, then scrolls back to top before measuring (the clicks scroll the
+  page; the tall sync-runs table's unclipped rect would otherwise paint false
+  overlaps mid-page — pre-existing checker blind spot, documented in the
+  test comment; no checker change).
+- Gates: ui 284 pass (36 files; +18 new), `npm run typecheck` clean,
+  Playwright test_10 16/16 + test_06 7 pass/1 skip (mocked, dev server),
+  `make lint` + `make typecheck` clean, full `make test` green
+  (autobridge 2880 pass 90.11% / verifier 134 pass 91.49% / simulators
+  409 pass 90.48% / ui 284 pass).
+- Owner check after: Aside screenshots at 1440 of a connector page with a
+  long spec and 30+ sync runs (spec viewer height/scroll, collapsed
+  Fingerprint summary, one expanded group).
