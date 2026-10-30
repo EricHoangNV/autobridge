@@ -44,7 +44,7 @@ proposal → approved).
 
 
 ### REQ-053 — First owner demo run (UI, keyed, 2026-10-30): fix what broke (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 12:09)
 Owner ran decks 1–7 in the browser on `make local-up` (origin/main f8554ecc), after `make demo-reset && make
 demo-seed`. REQ-050's gates passed because `make demo` builds Meridian/PABX through the API; **the build page path
 broke**. Every acceptance check below runs **through the UI build page's own requests** (Playwright, or API calls
