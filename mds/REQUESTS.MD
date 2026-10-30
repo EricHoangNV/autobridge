@@ -48,6 +48,21 @@ proposal failed the dry-run, one retry, second passed ("tested on the current re
    climbing, escalated with proposal, approved) at 1440×900 and 1280×800 and fails on: text overflowing its box
    (`scrollWidth > clientWidth` on bordered/fixed-width elements), sibling boxes whose rectangles intersect, and
    one-word-per-line squeezes (an action link or label wrapping to > 3 lines). Fix everything it finds.
+4. **Show the dry-run gate at work, and stop our retry message steering the model** (owner, 2026-10-30). In the
+   keyed run the first proposal (`compare_to "$.net_sum"`) was rejected by the dry-run and the retry produced the
+   `$.total` proposal — but **nothing of this is in the UI**: the rung carries `retried`, `retry_error`,
+   `proposal_dropped` and the dry-run result, and no UI code reads them; the model-call table shows Outcome
+   `model_escalation` and `—`.
+   (a) **Retry message carries meanings:** "available: cursor, data, gross_sum, limit, next_cursor, total" listed
+   names only, and `total` (the record count) looked like a net total. The retry lists each available field with its
+   documented meaning from the docs the connector was built from (e.g. "`total`: number of records",
+   "`gross_sum`: sum of gross amounts on this page"); generic, no scenario names.
+   (b) **Chapter 2, L3 rung, shows each call:** call 1 → its proposal (op/path/value) → "rejected by dry-run: <reason>";
+   call 2 (retry with that error) → its proposal → "passed dry-run" (or rejected → "question only"). The model-call
+   table's Outcome column reads "rejected by dry-run" / "passed dry-run" / "no proposal" instead of
+   `model_escalation` / `—`.
+   Tests: rung trace with a rejected-then-passed retry renders both calls and reasons; Outcome labels; retry prompt
+   contains field meanings and no scenario wording.
 Tests: migration upgrade from each revision then approve; dry-run marks a skipped check as failed; UI tests for (a)–(d).
 Gates unkeyed + `make demo` 8/8. **Owner check after (keyed, through the browser):** decks 4 → 5: break → tested
 proposal whose label matches what it does → Approve → verifying sync Complete → Harbor ● Working.
