@@ -2422,3 +2422,32 @@ Gates: `make test` 2678 + 134 + 409 pass, 0 fail (autobridge 90% TOTAL,
 verifier 91%, simulators 90%; ui 192 pass); `make lint`, `make typecheck`
 green; e2e on local stack (`make local-up`, SIM token via load_dotenv):
 test_03 (6/6), test_09 + test_027_live_chain (14/14) green.
+
+### REQ-041 — per-run model-usage chart restored on the repair page (sbx1 2026-10-30)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Chose restore
+over retire: the S6 deliverable ("model-usage charts per run") stays visible.
+- `ui/app/repairs/[id]/page.tsx`: renders `ModelUsageChart` in a new appendix
+  section fed by `GET /metrics/model-usage` (persisted `ModelCall` rows, no new
+  API surface), `highlightRunIds={[repair.id]}`; type is the generated
+  `ModelUsageResponse` (no hand-written API types, §7).
+- `tests/e2e/test_s6_richer_ui.spec.ts`: mocked branch keeps the exact
+  run-s6-a/b assertions; live branch asserts shape (chart-or-empty visible,
+  rows carry `data-run-id`, graph has ≥1 node) instead of fixture ids. The
+  screenshots test screenshots whichever chart state is rendered.
+- `tests/e2e/test_06_ui_journey.spec.ts`: one-line mock fix — the generic
+  `/evidence` branch swallowed `/runs/<id>/evidence`, so the derivation stages
+  never reached the page and the funnel headline was missing in mocked mode
+  (`&& !url.includes("/runs/")` guard).
+- `ui/app/repairs/[id]/page.test.tsx`: `mockAll` gains the `/metrics/model-usage`
+  SWR slot + a new test asserting the chart appendix renders with the repair
+  highlighted (`data-highlight="true"`).
+- Gotchas: the REQ-018 bundle test fails against `npm run dev` (dev chunks keep
+  the `control:8000` JSDoc comment in `ui/lib/api/base.ts`); prod build strips
+  it — verified green on `npm run start`. e2e-ui live branches need Compose + a
+  key (owner step).
+Gates: `make test` 2678 + 134 + 409 pass, 0 fail (autobridge 90.38%, verifier
+91.49%, simulators 90%+; ui 193 pass); `make lint`, `make typecheck`,
+`make openapi-check`, `make ui-typecheck` green. e2e-ui on prod UI build with
+mocked control: 10 passed / 9 skipped (live-only tests).
+Remaining OWNER STEP: keyed `make e2e-ui` on Compose (exercises the live
+branches: chart-or-empty with real repair ids).

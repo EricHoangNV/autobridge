@@ -2,22 +2,22 @@
 
 ## Current State
 
-REQ-040 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): repair
-provenance threaded on all paths (no newest-row re-fetch); 2 new regression tests
-(concurrent + deterministic interleave, negative-controlled); full gates green.
+REQ-041 DONE in sbx1 (opencode meta/muse-spark-1.3-contributor (escalation)): per-run
+model-usage chart restored on the repair page (appendix, live ModelCall rows);
+test_s6 live branches assert shape, test_06 mock-ordering bug fixed; gates green.
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
-  - REQ-001…REQ-039 all DONE except IN_PROGRESS REQ-021/024/025/027/028 (remaining bits are owner keyed/live runs)
+  - REQ-001…REQ-040 all DONE except IN_PROGRESS REQ-021/024/025/027/028 (remaining bits are owner keyed/live runs)
   - P2.S1.1 … P2.S7.1 DONE (Phase 2 complete)
-  - REQ-034/035/036/037/038/040/042 DONE; REQ-041 OPEN
+  - REQ-034/035/036/037/038/040/041/042 DONE
   - Edge readyz closed-store 500 fixed (honest degraded + regression test)
   - local-up.sh pre-migrates the DB once (fixes fresh-boot "malformed" scheduler_state on shared filesystems)
-- Tests: make test 2678 + 134 + 409 pass / 0 fail (autobridge 90%, verifier 91%, simulators 90%; ui 192 pass); lint + typecheck + openapi-check + ui-typecheck green
-- Stack: local-stack e2e green (test_03 6/6, test_09 + test_027 14/14); Compose not in sandbox, owner runs keyed gates
+- Tests: make test 2678 + 134 + 409 pass / 0 fail (autobridge 90%, verifier 91%, simulators 90%; ui 193 pass); lint + typecheck + openapi-check + ui-typecheck green
+- Stack: prod-build UI + mocked control e2e-ui 10 pass / 9 skip (live-only); Compose not in sandbox, owner runs keyed gates
 
 ## Next tasks
-1. **REQ-041** — restore or retire the S6 model-usage chart; make e2e-ui green on Compose
+1. **REQ-041 (VERIFY)** — owner: keyed `make e2e-ui` on Compose (live chart/graph branches)
 2. **REQ-042 (VERIFY)** — owner: keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` with FRONTIER_API_KEY, then unkeyed
 3. **REQ-027 (VERIFY)** — owner: keyed-stack run (make demo 8/8 twice, L3 reasoning line, /knowledge state, UI spec)
 4. **REQ-028 (VERIFY)** — owner: keyed `BENCH_TRIALS=1 make bench-ablation`, record frontier numbers; then close

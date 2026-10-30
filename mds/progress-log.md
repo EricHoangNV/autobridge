@@ -3630,3 +3630,28 @@ on the local stack. No owner step left on REQ-040.
 **Notes for next iteration:**
 - Next request in owner priority is REQ-041 (S6 chart vs test_s6 e2e-ui).
 - Owner keyed verifications still open: REQ-042/027/028/021/024/025/039/031/033/032/030.
+
+## REQ-041 — restore the S6 per-run model-usage chart, green e2e-ui
+**Date:** 2026-10-30
+**Ref:** REQUESTS.MD REQ-041 (2026-10-29 directives audit)
+
+**What was done:**
+- Restored `ModelUsageChart` on `ui/app/repairs/[id]/page.tsx` as an appendix ("Model usage per run") fed by `GET /metrics/model-usage`, highlighting the current repair run; no new API surface
+- Rewrote `test_s6_richer_ui.spec.ts` live branches to assert live-shaped data (chart-or-empty, `data-run-id` attributes, ≥1 graph node) instead of fixture ids `run-s6-a/b`
+- Fixed a `test_06_ui_journey.spec.ts` mock-ordering bug: generic `/evidence` branch swallowed `/runs/<id>/evidence`, hiding funnel stages in mocked mode
+- Added unit coverage: `page.test.tsx` mocks the new SWR slot and asserts the chart appendix + highlight
+
+**Key decisions:**
+- Restore over retire (REQ-041's option a): the S6 "model-usage charts per run" deliverable stays visible on the repair page
+- Used the generated `ModelUsageResponse` type for the new SWR hook (§7: no hand-written API types in ui/)
+- Live e2e branches accept the empty state: a repair with 0 model calls legitimately has no chart rows
+
+**Files changed:**
+- `ui/app/repairs/[id]/page.tsx` — chart import, `/metrics/model-usage` SWR, appendix section
+- `tests/e2e/test_s6_richer_ui.spec.ts` — live-shaped assertions, screenshot either chart state
+- `tests/e2e/test_06_ui_journey.spec.ts` — `/runs/` guard on the generic `/evidence` mock branch
+- `ui/app/repairs/[id]/page.test.tsx` — model-usage mock slot + chart appendix test
+
+**Notes for next iteration:**
+- Owner step: keyed `make e2e-ui` on Compose exercises the new live branches with real repair ids
+- REQ-018 bundle test fails against `npm run dev` (dev chunks keep a `control:8000` doc comment); green on prod builds — not a regression
