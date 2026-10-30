@@ -95,7 +95,7 @@ viewer height + inner scroll + section jump.
 
 
 ### REQ-056 — Repair page you can scan: plain-language summary per step, technical detail behind a toggle (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 17:33)
+Status: DONE (sbx1 2026-10-30 -- plain scan layer live: lookup tables, chapter plain headlines + tech toggles, ladder chips, dry-run line, rail line; ui 266 pass, layout 16/16, test_06 + s6 green mocked, full gates green; owner check: Aside screenshots at 1440 deck 3 + deck 5)
 Run **after REQ-055** (same page). Owner: "I need a way for users to scan the page and get the summary right away.
 Right now it's a lot of technical info, and it's very confusing … 'Semantic value drift' is still cryptic." UI only;
 no new API (all numbers already come back from existing endpoints). Still **facts only** (REQ-054): no per-drift

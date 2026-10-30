@@ -160,7 +160,7 @@ const mockModelUsage = {
   ],
 };
 
-function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger, runEvidence: unknown = [mockDerivation], connector: unknown = mockConnector, evidence: unknown = [mockEvidence]) {
+function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger, runEvidence: unknown = [mockDerivation], connector: unknown = mockConnector, evidence: unknown = [mockEvidence], sync: unknown = mockSyncRun) {
   const repairId = (repair as { id: string }).id;
   mockedUseSWR.mockImplementation(((key: unknown) => {
     const ok = (data: unknown) => ({ data, error: undefined, isLoading: false, mutate: vi.fn() });
@@ -170,7 +170,7 @@ function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger, run
     if (key.startsWith("drift-for-repair-")) return ok([mockDrift]);
     if (key.startsWith("evidence-for-repair-")) return ok(evidence);
     if (key.endsWith("/evidence")) return ok(runEvidence);
-    if (key.startsWith("/runs/")) return ok(mockSyncRun);
+    if (key.startsWith("/runs/")) return ok(sync);
     if (key.endsWith("/sync-runs")) return ok([]);
     if (key.startsWith("/connectors/")) return ok(connector);
     if (key === "/capabilities") return ok({ rules: [{ id: "page_to_cursor", fixes: "page→cursor", confidence: 0.95 }] });
@@ -812,5 +812,184 @@ describe("RepairDetailPage", () => {
     expect(more).toMatch(/flex-wrap\s*:\s*wrap/);
     const deny = /\.repair-acts\s+\.more\s*>\s*button\.link\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
     expect(deny).toMatch(/flex\s*:\s*1\s+1\s+100%/);
+  });
+
+  // REQ-056: plain-language scan layer — deck-3 rule fix.
+  it("deck 3 reads plain in 5 seconds: headlines, chips, facts, toggles shut", () => {
+    mockAll(
+      {
+        ...mockRepair,
+        drift_class: "PAGINATION_CHANGE",
+        ladder_level_reached: 1,
+      },
+      mockLedger,
+      [mockDerivation],
+      mockConnectorWithSpec,
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    // Storyline: plain headline + one fact per step.
+    expect(screen.getByTestId("storyline-1")).toHaveTextContent("Paging changed");
+    expect(screen.getByTestId("storyline-2")).toHaveTextContent("Fixed by a known rule");
+    expect(screen.getByTestId("storyline-2")).toHaveTextContent("no AI needed");
+    expect(screen.getByTestId("storyline-3")).toHaveTextContent("Approve the fix");
+    // Step 1: business headline + key facts.
+    expect(screen.getByTestId("happened-plain-headline")).toHaveTextContent("Paging changed");
+    expect(screen.getByTestId("happened-plain-facts")).toBeInTheDocument();
+    // Step 2: headline by the rung that held + five plain chips, L1 lit.
+    expect(screen.getByTestId("did-plain-headline")).toHaveTextContent("Fixed by a known rule");
+    expect(screen.getByTestId("did-plain-headline")).toHaveTextContent("no AI needed");
+    for (const [rung, label] of [[0, "Known fix"], [1, "Rule"], [2, "Small model"], [3, "AI model"], [4, "You"]] as const) {
+      expect(screen.getByTestId(`rung-chip-${rung}`)).toHaveTextContent(label);
+    }
+    expect(screen.getByTestId("rung-chip-1")).toHaveAttribute("data-held", "true");
+    expect(screen.getByTestId("rung-chip-3")).toHaveAttribute("data-held", "false");
+    // Dry-run line always, when a proposal exists (verified L1 patch).
+    expect(screen.getByTestId("dry-run-line")).toHaveTextContent("passed");
+    // Step 3: what changes / tested / reversible in plain words.
+    expect(screen.getByTestId("decided-plain-headline")).toHaveTextContent("Change how pages are fetched");
+    expect(screen.getByTestId("decided-facts")).toHaveTextContent("What changes");
+    expect(screen.getByTestId("decided-facts")).toHaveTextContent("Tested:");
+    expect(screen.getByTestId("decided-facts")).toHaveTextContent("Reversible: roll back to r1");
+    // Rail top line.
+    expect(screen.getByTestId("rail-plain-line")).toHaveTextContent("Fix ready");
+    // Technical toggles closed by default, old content inside them.
+    for (const id of ["happened-technical", "did-technical", "decided-technical"]) {
+      const t = screen.getByTestId(id);
+      expect(t.tagName.toLowerCase()).toBe("details");
+      expect(t).not.toHaveAttribute("open");
+    }
+    expect(within(screen.getByTestId("happened-technical")).getByTestId("happened-connector")).toBeInTheDocument();
+    expect(within(screen.getByTestId("did-technical")).getByTestId("rung-timeline-1")).toBeInTheDocument();
+    expect(within(screen.getByTestId("decided-technical")).getByTestId("patch-diff")).toBeInTheDocument();
+  });
+
+  // REQ-056: deck-5 escalation with a tested proposal.
+  it("deck 5 reads plain: values headline, retry dry-run line, business note", () => {
+    const deck5Repair = {
+      ...mockRepair,
+      drift_class: "SEMANTIC_VALUE_DRIFT",
+      decision: "escalate",
+      ladder_level_reached: 3,
+      verifier_report_id: null,
+      candidate_patch: [],
+      rule_id: null,
+      model_usage: { frontier_tokens: 17405, small_tokens: 400, calls: 2 },
+      ladder_trace: [
+        { level: 0, action: "knowledge lookup", reason: "L0 miss" },
+        { level: 1, action: "no rule matched", reason: "L1 miss" },
+        { level: 2, action: "ranked", reason: "L2 below threshold" },
+        {
+          level: 3,
+          action: "model_escalation",
+          reason: "L3 asked for a human decision",
+          model_question: "Should total_amount track net or gross?",
+          proposals: [
+            {
+              patch: [{ op: "replace", path: "/entities/Reservation/checks/3/compare_to", value: "$.net_sum" }],
+              passed: false,
+              error: "`$.net_sum` is not sent by the vendor",
+            },
+            {
+              patch: [{ op: "replace", path: "/entities/Reservation/checks/3/compare_to", value: "$.gross_sum" }],
+              passed: true,
+              error: "",
+            },
+          ],
+          dry_run: "tested on the current records: the checks pass",
+        },
+        { level: 4, action: "escalate", reason: "escalated to you" },
+      ],
+      escalation_bundle: {
+        reason: "semantic drift",
+        question: "Should total_amount track net or gross?",
+        suggested_action: "pick one",
+        proposal: {
+          label: "Accept net",
+          effect: "Retarget the totals check to the page total.",
+          patch: [{ op: "replace", path: "/entities/Reservation/checks/3/compare_to", value: "$.gross_sum" }],
+          dry_run: "tested on the current records: the checks pass",
+        },
+      },
+    };
+    const deck5Ledger = {
+      repair_run_id: "repair-abc-123",
+      decision: "escalate",
+      resolved_rung: 4,
+      attempts: [
+        { rung: 0, action: "knowledge lookup", reason: "L0 miss", calls: [] },
+        { rung: 1, action: "no rule matched", reason: "L1 miss", calls: [] },
+        { rung: 2, action: "ranked", reason: "L2 below threshold", calls: [] },
+        {
+          rung: 3,
+          action: "model_escalation",
+          reason: "L3 asked for a human decision",
+          calls: [
+            { tier: "frontier", purpose: "l3-generate-patch", model: "muse-spark-1.3", mode: "live", outcome: "rejected by dry-run", input_tokens: 8000, output_tokens: 9000, cost: "0.05" },
+            { tier: "frontier", purpose: "l3-generate-patch-retry", model: "muse-spark-1.3", mode: "live", outcome: "passed dry-run", input_tokens: 100, output_tokens: 100, cost: "0.001" },
+          ],
+          proposals: [
+            { patch: [{ op: "replace", path: "/entities/Reservation/checks/3/compare_to", value: "$.net_sum" }], passed: false, error: "`$.net_sum` is not sent by the vendor" },
+            { patch: [{ op: "replace", path: "/entities/Reservation/checks/3/compare_to", value: "$.gross_sum" }], passed: true, error: "" },
+          ],
+        },
+      ],
+      total_calls: 2,
+      small_tokens: 400,
+      frontier_tokens: 17405,
+      total_cost: "0.05",
+    };
+    const deck5Sync = {
+      kind: "sync",
+      payload: {
+        sync_run: {
+          id: "sync-1",
+          release_id: "rel-1",
+          started_at: new Date(Date.now() - 5000).toISOString(),
+          finished_at: new Date().toISOString(),
+          records_observed: { Reservation: 30 },
+          records_emitted: { Reservation: 27 },
+          outcome: "Degraded",
+          unmet_criteria: ["money_invariant"],
+        },
+      },
+    };
+    const deck5Evidence = [
+      {
+        id: "ev-1",
+        kind: "observation",
+        payload: { check: "money_invariant", observed: "900.00", baseline: "1000.00" },
+        parent_ids: [],
+        run_id: "sync-1",
+        created_at: new Date().toISOString(),
+      },
+    ];
+    mockAll(deck5Repair, deck5Ledger, [mockDerivation], mockConnectorWithSpec, deck5Evidence, deck5Sync);
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    // Storyline strip alone tells the story.
+    expect(screen.getByTestId("storyline-1")).toHaveTextContent("Values changed meaning");
+    expect(screen.getByTestId("storyline-1")).toHaveTextContent("amounts");
+    expect(screen.getByTestId("storyline-2")).toHaveTextContent("Needs your decision");
+    expect(screen.getByTestId("storyline-3")).toHaveTextContent("Accept net");
+    expect(screen.getByTestId("storyline-3")).toHaveTextContent("tested · reversible");
+    // Step 1 with observed vs expected numbers.
+    expect(screen.getByTestId("happened-plain-headline")).toHaveTextContent("Values changed meaning");
+    expect(screen.getByTestId("happened-plain-headline")).toHaveTextContent("amounts");
+    expect(screen.getByTestId("happened-plain-facts")).toHaveTextContent("10% below");
+    expect(screen.getByTestId("happened-plain-facts")).toHaveTextContent("900.00 vs 1000.00");
+    // Step 2: AI chip shows calls; retry dry-run line names both ideas.
+    expect(screen.getByTestId("did-plain-headline")).toHaveTextContent("AI model");
+    expect(screen.getByTestId("rung-chip-3")).toHaveTextContent("2 calls");
+    expect(screen.getByTestId("dry-run-line")).toHaveTextContent("rejected");
+    expect(screen.getByTestId("dry-run-line")).toHaveTextContent("passed");
+    // Step 3 + rail.
+    expect(screen.getByTestId("decided-plain-headline")).toHaveTextContent("Accept net");
+    expect(screen.getByTestId("decided-facts")).toHaveTextContent("Compare against another total");
+    expect(screen.getByTestId("decided-facts")).toHaveTextContent("Tested:");
+    expect(screen.getByTestId("decided-business-note")).toHaveTextContent("not learned for next time");
+    expect(screen.getByTestId("rail-plain-line")).toHaveTextContent("Tested proposal");
+    // Toggles still shut.
+    for (const id of ["happened-technical", "did-technical", "decided-technical"]) {
+      expect(screen.getByTestId(id)).not.toHaveAttribute("open");
+    }
   });
 });

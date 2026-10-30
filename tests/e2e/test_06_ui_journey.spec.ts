@@ -775,6 +775,9 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
       await expect(page.getByTestId("happened-affects")).toContainText("Reservation");
     } else {
       // Live: the same rows render from the seeded/broken stack.
+      // REQ-056: the codes, ids and wire dumps live behind chapter 1's
+      // Technical details toggle — open it first.
+      await page.locator('[data-testid="happened-technical"] > summary').click();
       await expect(page.getByTestId("happened-connector")).toBeVisible();
       await expect(page.getByTestId("wire-change-summary")).toBeVisible();
       await page.getByTestId("affected-evidence-summary").click().catch(() => {});
@@ -786,6 +789,9 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     // §2 What the engine did — rung timeline, proof tiles, funnel, probes,
     // verifier run. Model cost reads once, in the proof tile.
     await expect(page.getByTestId("repair-section-did")).toBeVisible();
+    // REQ-056: rung reasons, funnel, tables and graphs live behind chapter
+    // 2's Technical details toggle — open it first.
+    await page.locator('[data-testid="did-technical"] > summary').click();
     await expect(page.getByTestId("rung-timeline-0")).toContainText(/L0/);
     await expect(page.getByTestId("proof-model-calls")).toBeVisible();
     await expect(page.getByTestId("hypothesis-funnel-headline")).toBeVisible();
@@ -801,6 +807,9 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     // operation, raw JSON one click away.
     await expect(page.getByTestId("repair-section-decided")).toBeVisible();
     await expect(page.getByTestId("decided-line")).toBeVisible();
+    // REQ-056: the Now → Proposed table and raw JSON live behind chapter
+    // 3's Technical details toggle — open it first.
+    await page.locator('[data-testid="decided-technical"] > summary').click().catch(() => {});
     const hasPatch = await page.getByTestId("patch-diff").isVisible().catch(() => false);
     if (hasPatch) {
       await expect(page.getByTestId("op-row-0")).toBeVisible();
@@ -814,6 +823,9 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
     // renders inside it for non-propose decisions, so an .or() locator
     // resolves to two elements and fails strict mode on escalations.)
     await expect(page.getByTestId("repair-section-approve")).toBeVisible();
+    // REQ-055 item 3e: the consequences (with the approve preview) live
+    // collapsed behind ▸ — open them first.
+    await page.locator('[data-testid="rail-consequences"] > summary').click().catch(() => {});
     await expect(page.getByTestId("approve-preview")).toBeVisible({ timeout: 8000 });
     if (!uiReachable) {
       await expect(page.getByTestId("approve-preview-line-0")).toContainText("Creates release r2 from r1");

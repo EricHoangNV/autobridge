@@ -573,7 +573,23 @@ with the scheduler ticking.
    / Deny (question only + Deny without a proposal); terminal rails show
    the outcome with actions disabled. Below 1100 px the rail moves after
    chapter 3 with a sticky bottom bar; reduced motion draws the storyline
-   bars full with no pulse. The demo "inject fault" drawer stays dashed at
+   bars full with no pulse. REQ-056 adds a plain-language scan layer over the
+   same chapters (UI only, no new API; wording from fixed lookup tables in
+   `ui/lib/repair-plain.ts` covering every drift class and check kind,
+   never a model call at runtime): the storyline strip reads one plain
+   headline + one fact per step, and each chapter opens with a plain
+   headline + key facts — ch1 the business headline (drift plain name +
+   failed check's plain meaning) with observed-vs-expected numbers,
+   records and sync state; ch2 the headline by the rung that held, five
+   plain ladder chips (Known fix · Rule · Small model · AI model · You,
+   held rung lit, AI calls shown) and the dry-run line whenever a proposal
+   exists ("Our test on today's records: passed", or the rejected-then-
+   passed retry form); ch3 the fix in plain words with What changes /
+   Tested / Reversible and "Your business decision — not learned for next
+   time" for model proposals. Everything technical lives behind a closed
+   "Technical details ▸" toggle per chapter (class/check codes, ids, wire
+   dumps, rung reasons, ledger table, usage chart, evidence graph, Now →
+   Proposed table, raw JSON). The demo "inject fault" drawer stays dashed at
    the bottom, clearly labelled. The list
    at `/repairs` shows connector, drift class, rung, rule, model calls
    and status (fix ready / needs your decision / approved / applied /

@@ -201,6 +201,11 @@ test.describe("P2.S6.1 richer UI — per-run chart + evidence graph + screenshot
       }
       await page.goto(`${UI_BASE}/repairs/${liveRepairId}`, { waitUntil: "domcontentloaded", timeout: 10000 });
       await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 15000 });
+      // REQ-056: chart + graph live behind chapter 2's Technical details
+      // toggle (and their own collapsed appendices) — open them first.
+      await page.locator('[data-testid="did-technical"] > summary').click().catch(() => {});
+      await page.locator('[data-testid="model-usage-runs"] > summary').click().catch(() => {});
+      await page.locator('[data-testid="evidence-graph-panel"] > summary').click().catch(() => {});
       return true;
     }
     try {
@@ -213,6 +218,11 @@ test.describe("P2.S6.1 richer UI — per-run chart + evidence graph + screenshot
       // Mocked mode still needs the Next.js server; the goto above proves it.
     }
     await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 15000 });
+    // REQ-056: chart + graph live behind chapter 2's Technical details
+    // toggle (and their own collapsed appendices) — open them first.
+    await page.locator('[data-testid="did-technical"] > summary').click().catch(() => {});
+    await page.locator('[data-testid="model-usage-runs"] > summary').click().catch(() => {});
+    await page.locator('[data-testid="evidence-graph-panel"] > summary').click().catch(() => {});
     return true;
   }
 

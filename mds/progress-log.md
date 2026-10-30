@@ -3932,3 +3932,7 @@ Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process
 - Owner keyed check outstanding: decks 4 → 5 through the browser (break → tested proposal with matching label → Approve → verifying sync Complete → Harbor ● Working).
 - Ladder branches still uncovered (retry-patch-supersedes, retry-escalate-dry-reject, malformed drops, first-try escalate-adopt) — same record/stamp helpers, covered logic; add if the margin thins.
 - 4 demo-DNS teardown errors are environmental to this sandbox (verified on clean tree); the final gate run passed them.
+
+## 2026-10-30 18:10 — REQ-056 DONE (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). Repair page you can scan: plain lookup tables + chapter plain layers + closed Technical details toggles + ladder chips + always-on dry-run line + rail plain line; UI tests 266 green, layout/test_06/test_s6 Playwright green mocked, full make test + lint + typechecks green; docs/architecture.md updated. Owner check after: Aside screenshots at 1440 deck 3 + deck 5. Next: REQ-057 (owner order: 056 → 057 → 058 → 059 → 052).
+Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>

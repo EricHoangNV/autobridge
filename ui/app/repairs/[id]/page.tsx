@@ -17,6 +17,20 @@ import { AfterApproveTracker } from "@/components/AfterApproveTracker";
 import type { ModelUsageResponse } from "@/lib/api/client";
 import { useRunEvents } from "@/lib/sse";
 import { maxLadderLevel } from "@/lib/ladder-events";
+import {
+  driftPlain,
+  checkPlain,
+  rungChip,
+  rungHeadline,
+  stateHeadline,
+  patchChangePlain,
+  storylineStep1,
+  storylineStep2,
+  storylineStep3,
+  railLine,
+  DRY_RUN_PASSED,
+  dryRunRetried,
+} from "@/lib/repair-plain";
 import { useNow } from "@/lib/use-now";
 import { useFrontierTicker } from "@/lib/use-frontier-ticker";
 
@@ -683,6 +697,106 @@ export default function RepairDetailPage({ params }: PageProps) {
   const opGroups = displayPatch.length ? groupPatchOps(displayPatch as PatchOp[], activeSpec, displayNotes) : [];
   const opCount = displayPatch.length;
 
+  // REQ-056: plain-language layer (facts only — tables + real numbers).
+  const syncPayloadForPlain = syncPayload;
+  const failedCheck: string | null =
+    syncPayloadForPlain && syncPayloadForPlain.unmet_criteria.length
+      ? String(syncPayloadForPlain.unmet_criteria[0])
+      : null;
+  // Observed vs expected, from the first observation carrying both numbers.
+  const observedPair: { observed: string; expected: string; pctBelow: string | null } | null = (() => {
+    for (const e of evidenceRecords ?? []) {
+      const p = e.payload as Record<string, unknown>;
+      const obs = p["observed"] ?? p["observed_sum"] ?? p["actual"];
+      const exp = p["baseline"] ?? p["expected"] ?? p["expected_sum"];
+      if (obs !== undefined && exp !== undefined) {
+        const o = String(obs);
+        const x = String(exp);
+        let pctBelow: string | null = null;
+        const on = Number(String(obs).replace(/,/g, ""));
+        const xn = Number(String(exp).replace(/,/g, ""));
+        if (Number.isFinite(on) && Number.isFinite(xn) && xn > 0 && on < xn) {
+          pctBelow = `${Math.round((1 - on / xn) * 100)}% below`;
+        }
+        return { observed: o, expected: x, pctBelow };
+      }
+    }
+    return null;
+  })();
+  const recordsLine: string | null = syncPayloadForPlain
+    ? [
+        ...Object.entries(syncPayloadForPlain.records_observed ?? {}).map(([k, v]) => `${k}: saw ${v}`),
+        ...Object.entries(syncPayloadForPlain.records_emitted ?? {}).map(([k, v]) => `emitted ${v}`),
+      ].join(" · ") || null
+    : null;
+  const happenedHeadline = failedCheck
+    ? `${driftPlain(driftClass)} — ${checkPlain(failedCheck)}`
+    : driftPlain(driftClass);
+  const happenedFacts: string[] = [
+    observedPair
+      ? `${observedPair.pctBelow ? `${observedPair.pctBelow} vendor total ` : ""}(${observedPair.observed} vs ${observedPair.expected})`
+      : null,
+    recordsLine,
+    syncPayloadForPlain
+      ? `${syncPayloadForPlain.outcome}${primaryDrift ? ` since ${shortTime(primaryDrift.created_at)}` : ""}`
+      : null,
+  ].filter((f): f is string => !!f);
+  // Ladder chips: resolved rung + per-rung outcome; the rung that held is lit.
+  const resolvedRung = !climbingNow ? repair.ladder_level_reached : runningRung;
+  const rungOutcome = (rung: number): string => {
+    const attempt = rungByLevel.get(rung);
+    if (climbingNow) return rung < runningRung ? "tried" : rung === runningRung ? "trying…" : "waiting";
+    if (!attempt) return "Not needed";
+    if (rung === resolvedRung) return "held here";
+    return "tried";
+  };
+  const aiUsed = totalCalls > 0;
+  const didHeadline = climbingNow ? "Still repairing — no action yet" : rungHeadline(resolvedRung, aiUsed);
+  // Dry-run line (always, when a proposal exists): passed, or retry form.
+  const allProposals: Array<{ passed: boolean; error: string }> = [
+    ...attempts.flatMap((a) => a.proposals ?? []).map((p) => ({
+      passed: p.passed,
+      error: typeof p.error === "string" ? p.error : "",
+    })),
+    ...(repair.ladder_trace ?? []).flatMap((e) =>
+      Array.isArray((e as Record<string, unknown>)["proposals"])
+        ? ((e as Record<string, unknown>)["proposals"] as Array<{ passed?: unknown; error?: unknown }>).map((p) => ({
+            passed: p.passed === true,
+            error: typeof p.error === "string" ? p.error : "",
+          }))
+        : [],
+    ),
+  ];
+  const firstRejection: string | null = (() => {
+    for (const p of allProposals) {
+      if (!p.passed) return typeof p.error === "string" && p.error.trim() ? p.error.trim() : "";
+      break;
+    }
+    return null;
+  })();
+  const anyPassed = allProposals.some((p) => p.passed) || !!candidateDryRun || !!modelProposal?.dryRun;
+  const dryRunPlain: string | null = !displayPatch.length
+    ? null
+    : firstRejection !== null
+      ? dryRunRetried(firstRejection)
+      : // Always, when a proposal exists: a verified L1 patch passed the
+        // verifier on today's records even without a model dry-run.
+        anyPassed || hasReport
+        ? DRY_RUN_PASSED
+        : null;
+  // Chapter 3 facts: what changes (plain per op), tested, reversible.
+  const changePhrases = [...new Set((displayPatch as PatchOp[]).map((op) => patchChangePlain(op.op, String(op.path ?? "/"))))];
+  const reversibleTo = activeRelease ? `r${activeRelease.version}` : null;
+  // Storyline: one plain headline + one fact per step (REQ-056 item 2).
+  const story1 = storylineStep1(driftClass, failedCheck);
+  const story2plain = climbingNow
+    ? { headline: "Repairing now", fact: `at L${runningRung}` }
+    : isEscalated
+      ? { headline: "Needs your decision", fact: modelProposal ? "tested proposal" : "no patch to ship" }
+      : storylineStep2(resolvedRung, totalCalls);
+  const story3plain = storylineStep3(repair.decision, displayPatch.length > 0, modelProposal?.label ?? null);
+  const railPlain = railLine(repair.decision, !!modelProposal);
+
   // Ledger calls: the per-call proof rows. The tile carries the totals, so
   // the box renders only when there are per-call facts (or the climb is
   // still landing them) — never a second "0".
@@ -730,46 +844,8 @@ export default function RepairDetailPage({ params }: PageProps) {
 
   // Storyline: 1 happened → 2 did → 3 recommends. The yellow mark sits on
   // the step that needs the operator: step 2 while climbing, step 3 after.
+  // REQ-056: the strip's headlines and facts are plain words (story1/2/3plain).
   const storyActive: number = climbingNow || repair.decision === "failed" ? 2 : 3;
-  const story2Sub = climbingNow
-    ? `Repairing at L${runningRung}`
-    : isEscalated
-      ? "Escalated to you"
-      : repair.decision === "failed"
-        ? "The climb failed"
-        : `Fixed at L${trackLevel}${repair.rule_id ? ` · ${repair.rule_id}` : ""}`;
-  const story3Sub = climbingNow
-    ? "Waiting on the climb"
-    : isEscalated && modelProposal
-      ? `Approve: ${modelProposal.label}`
-      : isEscalated
-        ? "Answer the question"
-        : hasPatch
-          ? `Approve release r${candidateVersion ?? "?"} · ${opCount} change${opCount === 1 ? "" : "s"}`
-          : repair.decision === "approved"
-            ? `Shipped${repair.approval?.to_release_id ? ` ${repair.approval.to_release_id.slice(0, 8)}` : ""}`
-            : repair.decision === "reject"
-              ? "Rejected"
-              : "No patch to ship";
-
-  const story2Meta = climbingNow
-    ? inFlightEntry
-      ? `calling ${String(inFlightEntry["model"])}`
-      : "still climbing"
-    : isEscalated
-      ? "no verified patch"
-      : hasReport
-        ? "verifier pass"
-        : "verifier pending";
-  const story3Meta = climbingNow
-    ? "no actions yet"
-    : isEscalated && modelProposal
-      ? "tested proposal"
-      : isEscalated
-        ? "answer needed"
-        : hasPatch
-          ? "verified, shippable"
-          : repair.decision;
   const stickySummary = climbingNow
     ? `Repairing at L${runningRung}…`
     : isEscalated
@@ -809,22 +885,22 @@ export default function RepairDetailPage({ params }: PageProps) {
           <li data-testid="storyline-1" data-active={storyActive === 1 ? "true" : "false"}>
             <a href="#happened">
               <span className="n">1 · What happened</span>
-              <span className="t">{driftClass ? humanizeDriftClass(driftClass) : "Drift detected"}</span>
-              <span className="m">{primaryDrift ? `${primaryDrift.severity} severity` : "no drift event linked yet"}</span>
+              <span className="t">{story1.headline}</span>
+              <span className="m">{story1.fact}</span>
             </a>
           </li>
           <li data-testid="storyline-2" data-active={storyActive === 2 ? "true" : "false"} className={storyActive === 2 ? "rd-now" : undefined}>
             <a href="#did">
               <span className="n">2 · What the engine did</span>
-              <span className="t">{story2Sub}</span>
-              <span className="m">{story2Meta}</span>
+              <span className="t">{story2plain.headline}</span>
+              <span className="m">{story2plain.fact}</span>
             </a>
           </li>
           <li data-testid="storyline-3" data-active={storyActive === 3 ? "true" : "false"} className={storyActive === 3 ? "rd-now" : undefined}>
             <a href="#recommends">
               <span className="n">3 · Recommendation</span>
-              <span className="t">{story3Sub}</span>
-              <span className="m">{story3Meta}</span>
+              <span className="t">{story3plain.headline}</span>
+              <span className="m">{story3plain.fact}</span>
             </a>
           </li>
         </ol>
@@ -838,6 +914,23 @@ export default function RepairDetailPage({ params }: PageProps) {
               <span className="no" aria-hidden="true">1</span>
               <h2>What happened</h2>
             </header>
+            {/* REQ-056 item 3: one plain headline + key facts; the codes,
+                ids and wire dumps live behind the toggle below. */}
+            <p data-testid="happened-plain-headline" className="text-sm font-semibold">
+              {happenedHeadline}
+            </p>
+            {happenedFacts.length ? (
+              <ul data-testid="happened-plain-facts" className="mt-1 list-disc space-y-0.5 pl-5 text-sm">
+                {happenedFacts.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            ) : null}
+            <details data-testid="happened-technical" className="mt-2 border-t border-rule">
+              <summary className="cursor-pointer py-2 text-xs text-ink-2 hover:text-ink hover:underline">
+                Technical details ▸
+              </summary>
+              <div className="pb-4">
             <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
               <div>
                 <dt className="text-ink-2">Connector and vendor</dt>
@@ -920,6 +1013,8 @@ export default function RepairDetailPage({ params }: PageProps) {
                 </div>
               </div>
             </details>
+            </div>
+            </details>
           </section>
 
           {/* Chapter 2: What the engine did — ladder, proof tiles, appendices. */}
@@ -928,6 +1023,40 @@ export default function RepairDetailPage({ params }: PageProps) {
               <span className="no" aria-hidden="true">2</span>
               <h2>What the engine did</h2>
             </header>
+            {/* REQ-056 item 4: plain headline + five chips + dry-run line.
+                Rung reasons, funnel, tables and graphs hide below. */}
+            <p data-testid="did-plain-headline" className="text-sm font-semibold">
+              {didHeadline}
+            </p>
+            <ol data-testid="rung-chips" aria-label="Ladder" className="mt-2 flex flex-wrap gap-1.5 text-xs">
+              {[0, 1, 2, 3, 4].map((rung) => {
+                const held = !climbingNow && resolvedRung === rung && (hasReport || isEscalated || isTerminal);
+                const trying = climbingNow && rung === runningRung;
+                return (
+                  <li
+                    key={rung}
+                    data-testid={`rung-chip-${rung}`}
+                    data-held={held || trying ? "true" : "false"}
+                    title={rungOutcome(rung)}
+                    className={held || trying ? "rung-held rounded border border-rule px-2 py-0.5" : "rounded border border-rule px-2 py-0.5 text-ink-2"}
+                  >
+                    {rungChip(rung)}
+                    {rung === 3 && aiUsed ? <span className="num"> · {formatInt(totalCalls)} call{totalCalls === 1 ? "" : "s"}</span> : null}
+                    <span className="sr-only">: {rungOutcome(rung)}</span>
+                  </li>
+                );
+              })}
+            </ol>
+            {dryRunPlain ? (
+              <p data-testid="dry-run-line" className="mt-2 font-mono text-xs text-ink-2">
+                {dryRunPlain}
+              </p>
+            ) : null}
+            <details data-testid="did-technical" className="mt-2 border-t border-rule">
+              <summary className="cursor-pointer py-2 text-xs text-ink-2 hover:text-ink hover:underline">
+                Technical details ▸
+              </summary>
+              <div className="pb-4">
             <ol data-testid="rung-timeline" className="list-none space-y-1 p-0 text-sm">
               {[0, 1, 2, 3, 4].map((rung) => {
                 const attempt = rungByLevel.get(rung);
@@ -1089,6 +1218,8 @@ export default function RepairDetailPage({ params }: PageProps) {
                 />
               </div>
             </details>
+              </div>
+            </details>
           </section>
 
           {/* Chapter 3: What the engine recommends — Now → Proposed, once. */}
@@ -1103,6 +1234,34 @@ export default function RepairDetailPage({ params }: PageProps) {
                 <span className="text-ink-2"> · rule {repair.rule_id} confidence {ruleConfidence}</span>
               ) : null}
             </p>
+            {/* REQ-056 item 5: plain headline + What changes / Tested /
+                Reversible. The Now → Proposed table and raw JSON hide below. */}
+            {displayPatch.length || isEscalated || isTerminal ? (
+              <>
+                <p data-testid="decided-plain-headline" className="mt-2 text-sm font-semibold">
+                  {isEscalated && modelProposal
+                    ? modelProposal.label
+                    : hasPatch
+                      ? changePhrases[0] ?? "Verified fix"
+                      : stateHeadline(repair.decision)}
+                </p>
+                <ul data-testid="decided-facts" className="mt-1 list-disc space-y-0.5 pl-5 text-sm">
+                  {displayPatch.length ? (
+                    <li>
+                      What changes: {changePhrases.join(" · ")} ({opCount} change{opCount === 1 ? "" : "s"})
+                    </li>
+                  ) : null}
+                  <li>
+                    Tested:{" "}
+                    {modelProposal?.dryRun ?? candidateDryRun ?? (hasReport ? `verifier ${passedCount}/${totalTests} checks pass` : "not yet — no patch to test")}
+                  </li>
+                  {reversibleTo ? <li>Reversible: roll back to {reversibleTo} stays available</li> : null}
+                  {isEscalated && modelProposal ? (
+                    <li data-testid="decided-business-note">Your business decision — not learned for next time</li>
+                  ) : null}
+                </ul>
+              </>
+            ) : null}
             {/* REQ-048 item 3: the escalation question and rationale live once,
                 in the rail — the decided section keeps the rejected
                 proposals and the patch, never the question. */}
@@ -1119,6 +1278,11 @@ export default function RepairDetailPage({ params }: PageProps) {
               </div>
             ) : null}
             {displayPatch.length ? (
+              <details data-testid="decided-technical" className="mt-2 border-t border-rule">
+                <summary className="cursor-pointer py-2 text-xs text-ink-2 hover:text-ink hover:underline">
+                  Technical details ▸
+                </summary>
+                <div className="pb-4">
               <div data-testid="patch-diff" className="rd-ops">
                 {opGroups.map((g, gi) => (
                   <div key={gi} data-testid={`op-group-${gi}`} className="rd-op">
@@ -1154,11 +1318,6 @@ export default function RepairDetailPage({ params }: PageProps) {
                   </div>
                 ))}
               </div>
-            ) : (
-              <p data-testid="no-patch-note" className="mt-2 text-sm text-ink-2">No patch proposed{isEscalated ? " — nothing verified to apply" : " yet"}.</p>
-            )}
-            {displayPatch.length ? (
-              <>
                 <p data-testid="patch-touches" className="mb-2 mt-3 font-mono text-xs text-ink-2">
                   touches: {touchedSections.join(", ") || "—"} · everything else in the spec stays unchanged
                 </p>
@@ -1186,8 +1345,11 @@ export default function RepairDetailPage({ params }: PageProps) {
                     </pre>
                   </div>
                 </details>
-              </>
-            ) : null}
+                </div>
+              </details>
+            ) : (
+              <p data-testid="no-patch-note" className="mt-2 text-sm text-ink-2">No patch proposed{isEscalated ? " — nothing verified to apply" : " yet"}.</p>
+            )}
           </section>
 
           <div className="rd-demo-foot">
@@ -1213,11 +1375,13 @@ export default function RepairDetailPage({ params }: PageProps) {
                 )}
               </p>
               <p className="sub">No Approve or Reject until the climb decides.</p>
+              <p data-testid="rail-plain-line" className="sub">{railPlain}</p>
             </div>
           ) : isEscalated ? (
             <div className="rd-card">
               <p className="k">Needs your decision</p>
               <h2 data-testid="repair-decision-line">{decisionLine}</h2>
+              <p data-testid="rail-plain-line" className="sub">{railPlain}</p>
               {repair.approval ? (
                 <p data-testid="repair-outcome" className="sub">
                   {repair.approval.decision === "approve" ? "Approved" : "Rejected"} by {repair.approval.actor} · {shortTime(repair.approval.created_at)}
@@ -1298,6 +1462,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                       : "Rejected"}
               </p>
               <h2 data-testid="repair-decision-line">{decisionLine}</h2>
+              <p data-testid="rail-plain-line" className="sub">{railPlain}</p>
               <p data-testid="repair-outcome" className="sub">
                 {repair.approval
                   ? `${repair.approval.decision === "approve" ? "Approved" : "Rejected"} by ${repair.approval.actor} · ${shortTime(repair.approval.created_at)}${
@@ -1330,6 +1495,7 @@ export default function RepairDetailPage({ params }: PageProps) {
             <div className="rd-card">
               <p className="k">Needs your decision</p>
               <p data-testid="repair-decision-line" className="decision">{decisionLine}</p>
+              <p data-testid="rail-plain-line" className="sub">{railPlain}</p>
               <h2>Approve release r{candidateVersion ?? "?"}</h2>
               <p className="sub">
                 {repair.rule_id ? `Rule ${repair.rule_id}` : "Verified patch"}
