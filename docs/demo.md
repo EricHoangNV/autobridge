@@ -35,22 +35,15 @@ shape + word, never colour alone; the Repairs list polls every 2 s, so new
 repairs appear at the top without a reload. The presenter clicks every
 approval — nothing auto-applies, so every transition stays on screen.
 
-- **What AutoBridge knows.** Point at `/knowledge` (top bar): vocabulary
+- **Deck 1 — What AutoBridge knows.** Point at `/knowledge` (top bar): vocabulary
   v1, v2, v3 rows each list "used by" their seed connector (atlaspms v1
   with no refusal, meridianpms v2 with v1 refused, PABX edge v3), and the
   right-hand column fills with learned fixes as repairs are approved
   ("learned from approval … by …", "reused N×").
-- **Reusable artifact.** On `/connectors`, AtlasPMS ● Working with
+- **Deck 2 — Reusable artifact.** On `/connectors`, AtlasPMS ● Working with
   0 model tokens: the reference release from step 1 below, healed
   through the ladder, not rebuilt.
-- **Unfamiliar API — build Harbor from its docs in the UI.** On
-  `/connectors/new` pick the Harbor docs (the picker lists the simulator
-  docs from `config/demo_targets.yaml`; the server fetches the text, the
-  browser only sends `docs_text` back, so the AR-2-2 SSRF guard stays
-  shut). Watch the five-stage progress — docs read → draft → probes →
-  result → release — the same stages as step 2 below, then the new
-  connector's page with its spec, releases and sync runs.
-- **Zero-token fix.** Left: `make demo-break SCENARIO=page_to_cursor`.
+- **Deck 3 — Zero-token fix.** Left: `make demo-break SCENARIO=page_to_cursor`.
   Right, on `/connectors`: AtlasPMS turns ▲ Degrading ("drift detected
   … · repairing at L1"). On `/repairs`: the new row reads connector
   AtlasPMS, class `PAGINATION_CHANGE`, rung L1, rule `page_to_cursor`,
@@ -70,38 +63,56 @@ approval — nothing auto-applies, so every transition stays on screen.
   the top: the page follows approval → release → verifying sync →
   Complete, and the connector returns to ● Working. Break it again:
   the same drift resolves at L0 and the Knowledge entry reads "reused 1×".
-- **Hard semantic failure.** Left: `make demo-break
+- **Deck 4 — Build Harbor from its wiki.** On
+  `/connectors/new` pick the Harbor docs (the picker lists the simulator
+  docs from `config/demo_targets.yaml`; the server fetches the text, the
+  browser only sends `docs_text` back, so the AR-2-2 SSRF guard stays
+  shut). Watch the five-stage progress — docs read → draft → probes →
+  result → release — including the line "check added from the docs:
+  totals must match `meta.gross_sum`" — the same stages as step 2 below,
+  then the new connector's page with its spec, releases and sync runs,
+  ● Working.
+- **Deck 5 — Break Harbor right after.** Left: `make demo-break
   SCENARIO=gross_to_net TARGET=harbor`. Right: the scheduled sync
   Degrades on `money_invariant` — HarborPMS turns ▲ Degrading ("drift
   detected …"), then ■ Error ("needs your decision") as the engine
   escalates. On `/repairs`: the new row reads connector HarborPMS,
-  class `SEMANTIC_VALUE_DRIFT`, rung L4, decision "escalate",
-  "0 model calls". Open it: the four sections read from the break's own
-  rows — the decision line "Needs your decision: the engine is not
-  confident", the climb (L0 miss → L1 no rule → L2 skipped with its one
-  explanation → exactly one L3 attempt → L4 escalate), the hypothesis
-  funnel (generated → amount → wire-consistent → distinct, ending on the
-  single "net" reading), the model-call box with the single frontier
-  call — live ("muse-spark-1.3, N tokens") with `FRONTIER_API_KEY` set,
-  otherwise the labelled replay ("replayed from a live Muse capture on
-  …"), or the explicit L3 skip naming the capture to run when neither
-  exists — and the escalation: the model saw the evidence and either
-  asked for a business decision (its question shown first, labelled as
-  the model's, with its rationale beneath) or proposed a patch that the
-  verifier judged. The operator answers the question from the repair
-  page (or Rejects to close it), and the Reject path stays available
+  class `SEMANTIC_VALUE_DRIFT`, rung L4, decision "escalate".
+  Open it: the top box leads with the model's question and its rationale
+  (or the engine's question when the model offered none) plus the one
+  proposed change when the model offered it — with its effect and the
+  diff. The four sections read from the break's own rows — the decision
+  line ("Needs your decision: the engine is not confident" or, after
+  the click below, "Business decision by …"), the climb (L0 miss →
+  L1 no rule → L2 skipped with its one explanation → exactly one L3
+  attempt → L4 escalate), the hypothesis funnel (generated → amount →
+  wire-consistent → distinct, ending on the single "net" reading), the
+  model-call box with the single frontier call — live
+  ("muse-spark-1.3, N tokens") with `FRONTIER_API_KEY` set, otherwise
+  the labelled replay ("replayed from a live Muse capture on …"), or the
+  explicit L3 skip naming the capture to run when neither exists — and
+  the verifier line ("no patch to verify (the model escalated)" when the
+  model asked, the verdict on the proposal otherwise). Click
+  **Approve: \<the model's label\>** ("accept net"): release r2 from the
+  proposal, verifying sync, Harbor back to ● Working — recorded as a
+  business decision, never learned, rollback to r1 stays available. Or
+  click **Deny** ("keep everything as-is, contact the vendor"): the
+  connector stays ■ Error and the drift stays open
   (a semantic drift is never patched without the operator). The L3 question is well-posed: the
   prompt names the patch target (the connector spec), lists the exact
   JSON Pointer of every patchable member, shows redacted raw vendor
   records, and lets the model answer `{"escalate": ...}` — a
   non-applying patch gets one retry with the error, then escalates.
-  When the break's L3 was skipped, `make demo` step 4 additionally records its
+  The L3 answer may also carry the change the operator could approve
+  (`{"escalate": ..., "proposal": {"label", "effect", "patch"}}`) — a
+  malformed proposal is dropped and labelled, never guessed. When the
+  break's L3 was skipped, `make demo` step 4 additionally records its
   instrumented climb (same inputs) as the documented fallback row; when
   the break attempted L3, no second row is written.
-- **New kind of API.** Meridian's connector page shows the refused v1
+- **Deck 6 — New kind of API.** Meridian's connector page shows the refused v1
   build with its reason and v2 in use (step 7). Break
   `meridian_cursor_renamed`, watch the L1 fix land, **Approve**, Working.
-- **On-premise PABX.** The PABX edge connector page carries the PABX
+- **Deck 7 — On-premise PABX.** The PABX edge connector page carries the PABX
   panel: link state, postings arriving (count rising, last posting
   time), current record layout (v3, announced in the handshake), and the
   last restart result. Break `fias_record_layout_change`: the link drops
@@ -111,10 +122,16 @@ approval — nothing auto-applies, so every transition stays on screen.
   the firmware change (catalogue kind "agent"); the L1 `rename_field`
   (TA → TM) patch is proven in-process by step 8, which also records
   the restart line. Break `agent_restart_inflight`, then compare with
-  the recorded row: "lost 0 · duplicated 0".
+  the    recorded row: "lost 0 · duplicated 0".
+- **Deck 8 — Proof.** The terminal `make demo` runs all eight steps
+  through the API against the same seeds and prints the release ids it
+  used; `experiments/scorecard.md` and the benchmark rehearsals carry
+  the head-to-head numbers (steps 5–6).
 
 Retakes are `make demo-heal` (clears faults, keeps connectors) and
-`make demo-reset && make demo-seed` (the opening frame). The terminal
+`make demo-reset && make demo-seed` (the opening frame: three connectors
+— Atlas, Meridian, PABX edge — since Harbor is built live in deck 4).
+The terminal
 `make demo` approves the same repairs through the API; everything it
 does lands in the database exactly like the clicks do (REQ-030), so the
 repair page, the Knowledge page and this recording agree.
@@ -184,22 +201,38 @@ Renders in `/repairs/[id]`: drift evidence, ladder badges L0→L1, old/new patch
 side by side, visible tests, verifier verdict, Approve action. The ledger line —
 `frontier_tokens == 0` — is the point of the step.
 
-## 4. Hard semantic failure — `gross_to_net` (the model asks for a business decision)
+## 4. Hard semantic failure — `gross_to_net` (decide, then approve)
 
-Inject the money drift; the sync degrades on a named invariant, the engine's
-own climb runs (funnel → L2 skipped → exactly one L3 attempt), and the run
-escalates with one operator question. The live model saw the evidence and
-asked for a business decision (its `{"escalate": ..., "rationale": ...}`
-answer): the reason line reads "L3 called live (…): the model asked for a
-human decision", the escalation question is the model's question (labelled
-"The model's question for you:" with its rationale beneath), and the
-verifier line reads "no patch to verify (the model escalated)" — no fail
-verdict is shown because no patch was proposed. When the model instead
-proposes a patch, the verifier verdict on that proposal decides (a
-non-applying shape such as `net_amount → total_amount` is rejected by the
-`invalid_patch_trap` catalogue check).
+Deck 4 builds Harbor from its wiki docs; deck 5 breaks it right after.
+The docs describe the page-level `meta.gross_sum` total, so the built
+spec carries the `money_invariant` check and the baseline sync lands
+`Complete`. The money drift then degrades the sync on the named
+invariant, the engine's own climb runs (funnel → L2 skipped → exactly
+one L3 attempt), and the run escalates with one operator question — plus
+the one proposed change when the model offered it. The demo approves the
+proposal as a business decision (release r2, verifying sync, Harbor back
+to `working`); a plain escalation stays red with the question.
+
+The L3 answer is the model's own words: `{"escalate": ...}` asks for a
+business decision (its question becomes the escalation question,
+labelled "The model's question for you:", with its rationale beneath;
+the reason line reads "L3 called live (…): the model asked for a human
+decision" and the verifier line reads "no patch to verify (the model
+escalated)" — no fail verdict, because no patch was proposed), while
+`{"escalate": ..., "proposal": {"label", "effect", "patch"}}` additionally
+carries the change the operator could approve. A malformed proposal is
+dropped and labelled — the escalation stands on the question alone. The
+engine never synthesises a proposal; a proposal the gate refuses
+fail-closes (422, the repair stays escalated). The `net_amount →
+total_amount` decoy still belongs to the `invalid_patch_trap` catalogue
+row: the verifier's trap list rejects it when the engine tries to apply
+it on its own.
 
 ```
+POST /connectors/{harbor_id}/build     { docs_text: simulators/docs/harborpms.md, spec_vocabulary: v1 }
+                                       → release r1 with money_invariant vs $.gross_sum
+                                         ("check added from the docs: totals must match meta.gross_sum")
+POST /connectors/{harbor_id}/sync      → SyncRun Complete (deck 4 green)
 POST /demo/inject-fault                { target: sim-harbor, scenario_id: gross_to_net, seed }
 POST /connectors/{harbor_id}/sync      → SyncRun Degraded, unmet: [money_invariant],
                                          class SEMANTIC_VALUE_DRIFT, signal invariant_failure
@@ -210,8 +243,14 @@ POST /connectors/{harbor_id}/sync      → SyncRun Degraded, unmet: [money_invar
                                        → engine climb L0 miss → L1 no rule → L2 skipped
                                          (one explanation) → L3 frontier attempt
                                          (live, replay, or explicit skip) → proposal
-                                         judged (verifier baseline gate), never released
-→ L4 escalate with EscalationBundle (one question + evidence ids)
+                                         apply-checked (one retry), never released
+→ L4 escalate with EscalationBundle (one question + optional model proposal)
+POST /repairs/{id}/approve-proposal    → release r2 from the proposal, verifier baseline
+                                         gate, activate, approval recorded as a business
+                                         decision (never learned); or
+                                         422 when the gate refuses (fail-closed)
+POST /connectors/{harbor_id}/sync      → verifying sync Complete → drift repaired →
+                                         Harbor working (or stays in error on Deny)
 ```
 
 The semantic repair arrives a few seconds after the break when the
@@ -230,10 +269,12 @@ replay (or the explicit skip) runs inline, so the row is final at once.
 Renders in `/repairs/[id]`: `Degraded` with the failing money invariant named,
 the derivation funnel, the L3 model-call box (or the explicit skip with the
 capture hint), the model's question with its rationale and the "no patch to
-verify (the model escalated)" verifier line — or, when a patch was proposed
-instead, the proposal with the verifier verdict on it —
-the escalation bundle side-by-side with Reject (no Approve: there is no
-verified patch) and roll back. Money
+verify (the model escalated)" verifier line — or, when the model offered a
+change, the question with the proposal (label, effect, diff) and the
+Approve/Deny actions beside the escalation bundle and roll back. After
+Approve the decision line reads "Business decision by \<operator\>" — never
+a verified fix — and the business decision is not learned (the next
+identical drift asks again). Money
 stays `Decimal` throughout; the UI never shows a guessed mapping. Capture
 the live prompt for replay with
 `make record-frontier SCENARIO=gross_to_net` (keyed stack, after the break).
@@ -358,7 +399,7 @@ has merged and its e2e test is green.
 | `page_to_cursor` | both | L1 rule patch, verified; reusable via L0 (step 3) | L1 | 0 | REQ-019/021 |
 | `cursor_repeat_token` | both | L1 rule + repeated_cursor loop guard | L1 | 0 | REQ-023 |
 | `fias_record_layout_change` | fias | Handshake detect + L1 mapping patch (step 8) | L1 | 0 | REQ-022 |
-| `gross_to_net` | both | Degraded → full climb L0→L4; L3 rejected (step 4) | L4 (via L0,L1,L2,L3) | 1 (replay: frontier; L2 skipped, one surviving reading) | REQ-021/023 |
+| `gross_to_net` | both | Deck 4 builds Harbor from its wiki (money check from the docs), deck 5 breaks it → full climb L0→L4; the model asks and optionally proposes (step 4 approve → business decision, deny → error) | L4 (via L0,L1,L2,L3) | 1 (replay: frontier; L2 skipped, one surviving reading) | REQ-021/023 |
 | `status_vocab_change` | both | Escalate, never guess a mapping | L4 | 0 | REQ-023 |
 | `tz_boundary_shift` | both | Degraded + operator question | L4 | 0 | REQ-023 |
 | `duplicate_late_records` | both | Escalate (no dedup rule invented) | L4 | 0 | REQ-023 |

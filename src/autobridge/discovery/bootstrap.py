@@ -1388,6 +1388,144 @@ def _compile_framed_spec(
     return spec
 
 
+# ---------------------------------------------------------------------------
+# documented page totals (REQ-049 item 2)
+# ---------------------------------------------------------------------------
+
+#: A documented page-level total: a backticked ``meta.<name>`` path.
+_PAGE_TOTAL_PATH_RE = re.compile(r"`meta\.([A-Za-z][A-Za-z0-9_]*)`")
+
+#: The wording that marks a page-level total (generic, not vendor-specific).
+_SUM_OF_RE = re.compile(r"\bsum of\b", re.IGNORECASE)
+
+
+def _docs_sections(text: str) -> list[str]:
+    """Split narrative docs into ``##`` sections (each a detection window)."""
+    sections: list[str] = []
+    current: list[str] = []
+    for line in (text or "").splitlines():
+        if line.startswith("## ") and current:
+            sections.append("\n".join(current))
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        sections.append("\n".join(current))
+    return sections if sections else [text or ""]
+
+
+def _money_fields_of_entities(entities: dict[str, Any]) -> dict[str, list[str]]:
+    """Entity -> canonical field names carrying the ``money`` transform."""
+    out: dict[str, list[str]] = {}
+    for ent_name, ent_spec in (entities or {}).items():
+        if not isinstance(ent_spec, dict):
+            continue
+        fields = ent_spec.get("fields")
+        if not isinstance(fields, dict):
+            continue
+        money_fields: list[str] = []
+        for fname, fspec in fields.items():
+            if not isinstance(fspec, dict):
+                continue
+            for step in fspec.get("transform") or []:
+                if isinstance(step, dict) and step.get("name") == "money":
+                    money_fields.append(str(fname))
+                    break
+        if money_fields:
+            out[str(ent_name)] = money_fields
+    return out
+
+
+def documented_page_totals(
+    docs_text: str, entities: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Page-level money totals the docs describe (generic, never guessed).
+
+    When a docs section names a ``meta.<name>`` path, says it is a "sum of"
+    something, and names a money field of an entity in the same section,
+    the built spec gets a ``money_invariant`` check for that field with
+    ``compare_to`` the documented path (``$.<name>``). Silence in the docs
+    yields no check — a total is never inferred.
+
+    Returns ``[{"entity", "field", "compare_to", "documented_path"}]``.
+    Entities that already carry a ``money_invariant`` for the field are
+    skipped (a hand-written check always wins over a documented one).
+    """
+    found: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    money_fields = _money_fields_of_entities(entities)
+    if not money_fields or not docs_text:
+        return found
+    for section in _docs_sections(docs_text):
+        if not _SUM_OF_RE.search(section):
+            continue
+        for match in _PAGE_TOTAL_PATH_RE.finditer(section):
+            total_name = match.group(1)
+            for ent_name, fields in money_fields.items():
+                for money_field in fields:
+                    if (ent_name, money_field) in seen:
+                        continue
+                    # The money field named in the same section (backticked
+                    # or as a bare word), so the total is tied to the field.
+                    if not re.search(
+                        rf"`{re.escape(money_field)}`|\b{re.escape(money_field)}\b",
+                        section,
+                    ):
+                        continue
+                    ent_spec = (entities or {}).get(ent_name)
+                    existing = (
+                        ent_spec.get("checks")
+                        if isinstance(ent_spec, dict)
+                        else None
+                    )
+                    if isinstance(existing, list) and any(
+                        isinstance(c, dict)
+                        and c.get("kind") == "money_invariant"
+                        and c.get("field") == money_field
+                        for c in existing
+                    ):
+                        seen.add((ent_name, money_field))
+                        continue
+                    seen.add((ent_name, money_field))
+                    found.append(
+                        {
+                            "entity": ent_name,
+                            "field": money_field,
+                            "compare_to": f"$.{total_name}",
+                            "documented_path": f"meta.{total_name}",
+                        }
+                    )
+    return found
+
+
+def apply_documented_page_totals(
+    docs_text: str, entities: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Append ``money_invariant`` checks for documented page totals.
+
+    Mutates *entities* in place (the compile dict, pre-validation) and
+    returns the added ``[{"entity", "field", "compare_to",
+    "documented_path"}]`` entries for the build trace.
+    """
+    added = documented_page_totals(docs_text, entities)
+    for entry in added:
+        ent_spec = entities.get(entry["entity"])
+        if not isinstance(ent_spec, dict):
+            continue
+        checks = ent_spec.get("checks")
+        if not isinstance(checks, list):
+            checks = []
+            ent_spec["checks"] = checks
+        checks.append(
+            {
+                "kind": "money_invariant",
+                "field": entry["field"],
+                "compare_to": entry["compare_to"],
+            }
+        )
+    return added
+
+
 def _compile_spec(
     iface: InterfaceDescription,
     classification: Any,
@@ -1929,6 +2067,30 @@ def build_draft_spec(
             degradation_reason=f"compile failed: {exc}",
             trace=trace + [{"stage": "compile", "error": str(exc)}],
         )
+
+    # Stage 5b: documented page totals (REQ-049 item 2). When the docs
+    # describe a page-level total for a money field (a ``meta.<name>``
+    # "sum of" the field, in the field's own section), the built spec
+    # carries the ``money_invariant`` check against the documented path.
+    # Silence in the docs adds nothing — a total is never guessed. Runs
+    # before visible tests so the added checks validate like any other.
+    try:
+        page_totals = apply_documented_page_totals(
+            docs_text, draft_spec.get("entities") or {}
+        )
+        if page_totals:
+            trace.append(
+                {
+                    "stage": "page_total_check",
+                    "added": list(page_totals),
+                    "detail": "check added from the docs: totals must match "
+                    + ", ".join(
+                        sorted({str(p.get("documented_path")) for p in page_totals})
+                    ),
+                }
+            )
+    except Exception as exc:
+        trace.append({"stage": "page_total_check", "error": str(exc)})
 
     # Stage 6: visible tests
     try:

@@ -405,4 +405,41 @@ describe("NewConnectorForm", () => {
     render(<NewConnectorForm />);
     expect(screen.getByTestId("radio-vocabulary-v3")).toBeInTheDocument();
   });
+
+  it("names the documented totals check on the draft stage (REQ-049)", async () => {
+    mockResponses([
+      simsRoute(),
+      { match: "/connectors/conn-p/build", json: { build_run_id: "bp", job_id: "jp" } },
+      { match: "/connectors", json: { id: "conn-p" } },
+      { match: "/jobs/", json: { state: "succeeded" } },
+      {
+        match: "/runs/",
+        json: {
+          kind: "build",
+          run: {
+            inputs: { source: "docs" },
+            draft_spec: { spec_version: 1, operations: { list_reservations: {} } },
+            ladder_trace: [
+              { stage: "classify" },
+              { stage: "page_total_check", detail: "check added from the docs: totals must match meta.gross_sum" },
+              { stage: "verify" },
+            ],
+            result: { success: true, verified: true, release_id: "rel-p" },
+            model_usage: {},
+          },
+        },
+      },
+    ]);
+
+    render(<NewConnectorForm />);
+    typeInto(screen.getByTestId("input-name"), "Progress");
+    typeInto(screen.getByTestId("input-base-url"), "http://sim-harbor:8000");
+    typeInto(screen.getByTestId("input-docs-text"), "docs");
+    fireEvent.click(screen.getByTestId("submit-build"));
+
+    await waitFor(() => expect(screen.getByTestId("build-progress")).toBeInTheDocument());
+    expect(screen.getByTestId("build-stage-draft")).toHaveTextContent(
+      "check added from the docs: totals must match meta.gross_sum",
+    );
+  });
 });

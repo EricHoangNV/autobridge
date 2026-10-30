@@ -1127,83 +1127,6 @@ def _live_build_and_poll(
     return {}
 
 
-def _reference_spec_for(connector_name: str) -> dict[str, Any] | None:
-    """Parsed reference spec for a seeded connector, or None when absent.
-
-    The client reads the file (bench-side); the server never reads files
-    (AR-2-2). ``make demo`` on a fresh checkout still has these files —
-    they are committed — so this only returns None when the workstream
-    never built one.
-    """
-    import yaml  # noqa: PLC0415
-
-    path = REPO_ROOT / "generated" / "connectors" / connector_name / "reference" / "spec.yaml"
-    if not path.is_file():
-        return None
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _ensure_harbor_reference_release(
-    base_url: str, connector_id: str, calls: list[dict[str, Any]]
-) -> str | None:
-    """Harbor's active release must carry the money invariant (REQ-031).
-
-    Registers ``generated/connectors/harborpms/reference/spec.yaml``
-    through ``POST /connectors/{id}/reference-release`` when the active
-    release has no ``money_invariant`` check (fresh ``make demo`` without
-    the seed, or a docs-built release that cannot see ``gross_to_net``).
-    A no-op when the active release already carries the check (the seed
-    registers it up front). Returns the reference release id, or None
-    when no reference spec is available — the caller then keeps the
-    labelled gap instead of inventing a release.
-    """
-    detail = _control_get_raw(base_url, f"/connectors/{connector_id}")
-    active: Any = detail.get("active_release_id") if isinstance(detail, dict) else None
-    releases = detail.get("releases") if isinstance(detail, dict) else []
-    for rel in releases or []:
-        if isinstance(rel, dict) and rel.get("id") == active:
-            if _money_fields_of_spec(rel.get("spec") or {}):
-                return str(active)
-            break
-    spec = _reference_spec_for("harborpms")
-    if spec is None:
-        calls.append(
-            {
-                "method": "ASSERT",
-                "path": "harbor reference spec",
-                "status": "assertion-failed",
-                "error": "no reference spec available and the active release has no money invariant",
-            }
-        )
-        return None
-    calls.append(
-        _control_call(
-            base_url,
-            "POST",
-            f"/connectors/{connector_id}/reference-release",
-            {
-                "spec": spec,
-                "spec_vocabulary": "v1",
-                "docs_source": "reference:harborpms",
-                "scenario_id": "baseline",
-            },
-        )
-    )
-    after = _control_get_raw(base_url, f"/connectors/{connector_id}")
-    active_after: Any = after.get("active_release_id") if isinstance(after, dict) else None
-    _assert_live(
-        calls,
-        "harbor reference release registered and active",
-        isinstance(active_after, str) and bool(active_after),
-        f"reference-release after: {active_after}",
-    )
-    return str(active_after) if isinstance(active_after, str) and active_after else None
-
-
 def _step_live_ensure_active_release(
     base_url: str, connector_id: str, docs_path: str, calls: list[dict[str, Any]],
     spec_vocabulary: str | None = None,
@@ -1544,22 +1467,27 @@ def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
 
 
 def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """Live half of step 4: break → sync → Degraded → climb → error, live.
+    """Live half of step 4: build Harbor from its wiki → break → error, live.
 
-    Harbor's active release carries the money invariant (the seed registers
-    the reusable reference release through the control API; a bare
-    ``make demo`` registers it here via the same route), so the faulted
-    sync degrades on ``money_invariant``, the detector and classifier name
+    Deck 4 (REQ-049): Harbor is built from its wiki docs
+    (``simulators/docs/harborpms.md``) through the control API — the
+    documented ``meta.gross_sum`` page total compiles into the
+    ``money_invariant`` check, the baseline sync lands ``Complete`` and
+    Harbor reads ``working``. Deck 5: the faulted sync then degrades on
+    ``money_invariant``, the detector and classifier name
     ``SEMANTIC_VALUE_DRIFT`` from the wire signals, and the engine's own
     climb runs: funnel (generated → amount → wire-consistent → distinct),
     L2 skipped (one explanation), exactly one L3 attempt — live with
     ``FRONTIER_API_KEY``, replayed from a capture otherwise, explicitly
     skipped with the capture hint when neither exists — the proposal
     judged, never released, one operator question. Harbor goes to
-    ``error``, all from the break. The instrumented in-process climb runs
-    the same inputs for the printed derivation; it is recorded via
-    ``POST /demo/record-climb`` only when the break's L3 was skipped, as
-    the documented no-key fallback.
+    ``error``, all from the break. When the model escalated *with* a
+    proposed change, the demo approves it as a business decision
+    (release r2, verifying sync, Harbor back to ``working``); with a plain
+    escalation the repair stays red with the question. The instrumented
+    in-process climb runs the same inputs for the printed derivation; it
+    is recorded via ``POST /demo/record-climb`` only when the break's L3
+    was skipped, as the documented no-key fallback.
     """
     ensure_calls = _live_ensure_connector(
         base_url,
@@ -1576,10 +1504,39 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
     if connector_id is None:
         _assert_live(calls, "connector harborpms id", False, "no connector id from ensure calls")
         return {"connector_id": None}
-    reference_id = _ensure_harbor_reference_release(base_url, connector_id, calls)
-    if reference_id is None:
-        _assert_live(calls, "harbor money invariant available live", False, "no reference release and no money check on the active release")
-        return {"connector_id": connector_id, "gap": "no money invariant anywhere; cannot break gross_to_net live"}
+    # Deck 4: Harbor from its wiki. The build must carry the documented
+    # totals check (REQ-049 item 2) and baseline-sync Complete.
+    built_release_id = _step_live_ensure_active_release(
+        base_url, connector_id, "simulators/docs/harborpms.md", calls,
+        spec_vocabulary="v1",
+    )
+    _assert_live(
+        calls, "harbor docs build with v1 succeeds (deck 4)",
+        isinstance(built_release_id, str) and bool(built_release_id),
+        f"build result: {built_release_id}",
+    )
+    if not isinstance(built_release_id, str) or not built_release_id:
+        return {"connector_id": connector_id, "gap": "harbor docs build produced no release"}
+    built_spec: Any = _control_get_raw(base_url, f"/releases/{built_release_id}")
+    built_checks: list[Any] = []
+    if isinstance(built_spec, dict):
+        for ent in ((built_spec.get("spec") or {}).get("entities") or {}).values():
+            if isinstance(ent, dict):
+                built_checks.extend(ent.get("checks") or [])
+    _assert_live(
+        calls, "built harbor spec carries the documented totals check",
+        any(
+            isinstance(c, dict) and c.get("kind") == "money_invariant" and c.get("compare_to") == "$.gross_sum"
+            for c in built_checks
+        ),
+        f"built release checks: {built_checks}",
+    )
+    baseline_result = _step_live_sync_terminal(base_url, connector_id, calls)
+    _assert_live(
+        calls, "harbor baseline sync Complete (deck 4 green)",
+        baseline_result.get("outcome") == "Complete",
+        f"baseline sync outcome {baseline_result.get('outcome')}: {baseline_result.get('unmet_criteria')}",
+    )
     before_ids = {
         str(d.get("id"))
         for d in (_control_get_raw(base_url, f"/drift?connector_id={connector_id}") or [])
@@ -1705,9 +1662,111 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
             int(usage.get("frontier_tokens", 0) or 0) > 0,
             f"live repair model usage: {usage}",
         )
+    # REQ-049 deck 5 → green: when the model escalated WITH a proposed
+    # change, the demo approves it as a business decision. The endpoint
+    # applies the proposal to the active release, verifier-gates r2,
+    # activates it and records the approval; the verifying sync must bring
+    # Harbor back to working. A proposal the gate refuses (fail-closed)
+    # leaves a plain escalation — the step then asserts red-with-question
+    # still stands and records the refusal.
+    bundle = repair_row.get("escalation_bundle")
+    model_proposal = (
+        bundle.get("proposal")
+        if isinstance(bundle, dict) and isinstance(bundle.get("proposal"), dict)
+        else None
+    )
+    approval_leg: dict[str, Any] = {"proposal_present": bool(model_proposal)}
+    if isinstance(model_proposal, dict) and model_proposal.get("patch"):
+        knowledge_before = _live_knowledge(base_url, calls)
+        entries_before = knowledge_before.get("entries")
+        n_before = len(entries_before) if isinstance(entries_before, list) else -1
+        approve_rec = _control_call(
+            base_url, "POST", f"/repairs/{repair_row.get('id')}/approve-proposal",
+            {"connector_id": connector_id},
+        )
+        calls.append(approve_rec)
+        if approve_rec.get("status") == 200:
+            approval_leg["approved"] = True
+            approval_body = approve_rec.get("body")
+            to_release_id = (
+                approval_body.get("to_release_id")
+                if isinstance(approval_body, dict) else None
+            )
+            approval_leg["to_release_id"] = to_release_id
+            _assert_live(
+                calls, "approve-proposal minted release r2",
+                isinstance(to_release_id, str) and bool(to_release_id),
+                f"approve-proposal: {approve_rec}",
+            )
+            if isinstance(to_release_id, str) and to_release_id:
+                r2 = _control_get_raw(base_url, f"/releases/{to_release_id}")
+                _assert_live(
+                    calls, "r2 descends from the deck-4 release (rollback to r1 stays available)",
+                    isinstance(r2, dict) and r2.get("parent_release_id") == built_release_id,
+                    f"r2: {r2}",
+                )
+                approval_leg["r2_parent_ok"] = (
+                    isinstance(r2, dict) and r2.get("parent_release_id") == built_release_id
+                )
+            rep_after: Any = _control_get_raw(base_url, f"/repairs/{repair_row.get('id')}")
+            rep_approval = (
+                rep_after.get("approval") if isinstance(rep_after, dict) else None
+            )
+            _assert_live(
+                calls, "repair records the business decision (escalate + approve, not a verified fix)",
+                isinstance(rep_after, dict)
+                and rep_after.get("decision") == "escalate"
+                and isinstance(rep_approval, dict)
+                and rep_approval.get("decision") == "approve",
+                f"repair after approve: {rep_after}",
+            )
+            verifying = _step_live_sync_terminal(base_url, connector_id, calls)
+            _assert_live(
+                calls, "verifying sync Complete after the business decision",
+                verifying.get("outcome") == "Complete",
+                f"verifying sync outcome {verifying.get('outcome')}: {verifying.get('unmet_criteria')}",
+            )
+            approval_leg["verifying_outcome"] = verifying.get("outcome")
+            drift_after: list[Any] = _control_get_raw(base_url, f"/drift?connector_id={connector_id}") or []
+            still_open = [
+                d for d in drift_after
+                if isinstance(d, dict) and d.get("status") == "open"
+            ]
+            _assert_live(
+                calls, "the accepted drift retired (no open drift)",
+                not still_open, f"open drift after verifying sync: {still_open}",
+            )
+            conn_after: Any = _control_get_raw(base_url, f"/connectors/{connector_id}")
+            _assert_live(
+                calls, "Harbor back to working after Approve",
+                isinstance(conn_after, dict) and conn_after.get("state") == "working",
+                f"connector after approve: {conn_after}",
+            )
+            knowledge_after = _live_knowledge(base_url, calls)
+            entries_after = knowledge_after.get("entries")
+            n_after = len(entries_after) if isinstance(entries_after, list) else -1
+            _assert_live(
+                calls, "business decision learned nothing (no new knowledge entry)",
+                n_after == n_before, f"knowledge entries before={n_before} after={n_after}",
+            )
+            approval_leg["knowledge_entries_before"] = n_before
+            approval_leg["knowledge_entries_after"] = n_after
+        else:
+            # The gate refused the model's change (fail-closed, 422): the
+            # repair stays a plain escalation — assert red-with-question.
+            approval_leg["approved"] = False
+            approval_leg["gate_refused"] = approve_rec.get("status")
+            rep_after_gate: Any = _control_get_raw(base_url, f"/repairs/{repair_row.get('id')}")
+            _assert_live(
+                calls, "gate-refused proposal leaves the escalation standing (red with the question)",
+                isinstance(rep_after_gate, dict)
+                and rep_after_gate.get("decision") == "escalate"
+                and bool(((rep_after_gate.get("escalation_bundle") or {}).get("question"))),
+                f"repair after refused approve: {rep_after_gate}",
+            )
     return {
         "connector_id": connector_id,
-        "reference_release_id": reference_id,
+        "built_release_id": built_release_id,
         "faulted_sync_outcome": faulted_result.get("outcome"),
         "faulted_sync_unmet": faulted_result.get("unmet_criteria"),
         "drift_id": drift_row.get("id"),
@@ -1717,21 +1776,8 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         "deduped_note": deduped_note,
         "l3_attempted": l3_attempted,
         "l3_skipped": l3_skipped,
+        "approval_leg": approval_leg,
     }
-
-
-def _money_fields_of_spec(spec: dict[str, Any]) -> dict[str, str]:
-    """Entity -> money field for every money_invariant check in the spec."""
-    out: dict[str, str] = {}
-    for entity, ent_spec in (spec.get("entities") or {}).items():
-        if not isinstance(ent_spec, dict):
-            continue
-        for check in ent_spec.get("checks") or []:
-            kind = check.get("kind") if isinstance(check, dict) else getattr(check, "kind", None)
-            field = check.get("field") if isinstance(check, dict) else getattr(check, "field", None)
-            if kind == "money_invariant" and isinstance(field, str) and entity not in out:
-                out[str(entity)] = field
-    return out
 
 
 def _semantic_climb_inputs() -> dict[str, Any]:

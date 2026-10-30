@@ -401,7 +401,11 @@ export default function RepairDetailPage({ params }: PageProps) {
 
   const decisionLine = repair.decision === "climbing"
     ? `Repairing at L${runningRung}: the engine is still climbing — no Approve or Reject until it decides`
-    : isEscalated
+    : isEscalated && repair.approval?.decision === "approve"
+      // REQ-049 item 6: an approved proposal is a business decision by
+      // the operator — never a "verified fix".
+      ? `Business decision by ${repair.approval.actor}`
+      : isEscalated
       ? "Needs your decision: the engine is not confident"
       : hasReport && hasPatch
         ? `Fix ready: verified, ${frontierTokens === 0 && smallTokens === 0 ? "0 model calls" : `${formatInt(frontierTokens + smallTokens)} tokens`}`
@@ -451,6 +455,20 @@ export default function RepairDetailPage({ params }: PageProps) {
   const escalationQuestion = (() => {
     const q = (repair.escalation_bundle as Record<string, unknown> | null)?.["question"];
     return typeof q === "string" && q.trim() ? q : null;
+  })();
+  // REQ-049 item 5: the model's proposed change rides the escalation
+  // bundle (label/effect/patch) — the Approve button and the diff read it.
+  const modelProposal = (() => {
+    const raw = (repair.escalation_bundle as Record<string, unknown> | null)?.["proposal"];
+    if (!raw || typeof raw !== "object") return null;
+    const rec = raw as Record<string, unknown>;
+    const patch = Array.isArray(rec["patch"]) ? (rec["patch"] as Array<{ op: string; path: string; value?: unknown; from?: string }>) : [];
+    if (patch.length === 0) return null;
+    return {
+      label: typeof rec["label"] === "string" && rec["label"].trim() ? rec["label"] : "Approve",
+      effect: typeof rec["effect"] === "string" ? rec["effect"] : "",
+      patch,
+    };
   })();
 
   // REQ-048 item 6: the frontier budget that applies to this repair — the
@@ -518,8 +536,21 @@ export default function RepairDetailPage({ params }: PageProps) {
                   </a>
                 </>
               ) : null}
-              , or Reject below to close this repair. Roll back stays available below.
+              {modelProposal ? null : (
+                <>, or Reject below to close this repair</>
+              )}
+              . Roll back stays available below.
             </p>
+            {modelProposal ? (
+              <div data-testid="escalation-proposal-top" className="mt-3 border border-rule bg-ground px-3 py-2.5 text-sm">
+                <p>
+                  The model&apos;s proposed change: <b>{modelProposal.effect || modelProposal.label}</b>
+                </p>
+                <div className="mt-2">
+                  <PatchDiff candidatePatch={modelProposal.patch as never} title="Proposed change" />
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
         <div id="repair-acts" className="mt-2">
@@ -529,6 +560,7 @@ export default function RepairDetailPage({ params }: PageProps) {
             candidatePatch={repair.candidate_patch as never}
             patchReady={hasReport && hasPatch}
             connectorId={primaryConnectorId}
+            proposal={modelProposal}
             onActionComplete={() => mutateRepair()}
           />
         </div>

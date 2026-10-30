@@ -607,3 +607,125 @@ def rollback_release(
         if prov_run is not None and prov_run.candidate_patch:
             cache.evict_patch(list(prov_run.candidate_patch))
     return new_release, approval
+
+
+def approve_business_decision(
+    session: Session,
+    *,
+    repair_run_id: str,
+    actor: str,
+    connector_id: str | None = None,
+    verifier_url: str | None = None,
+    knowledge_cache: Any | None = None,
+) -> tuple[ConnectorRelease, Approval]:
+    """Approve the model's proposed change on an escalated repair (REQ-049).
+
+    The repair must be ``decision == "escalate"`` with a proposal in its
+    escalation bundle (label/effect/patch, carried verbatim from the
+    model's answer — the engine never synthesises one). The proposal patch
+    is applied to the connector's ACTIVE release spec; the candidate is
+    verifier-gated in visible baseline mode: the verifier confirms the new
+    release syncs and its checks pass, but makes no claim that the new
+    meaning is correct — that is the operator's business decision. The
+    candidate then activates through :func:`approve_release` (which binds
+    the audit cover to this repair run); the next sync on the new release
+    is the verifying sync.
+
+    A business decision is NOT learned into L0 knowledge (the approve path
+    learns only ``propose`` runs): the next identical drift asks again.
+    Rollback to the previous release stays available (the new release's
+    parent is the release it supersedes).
+
+    Raises :class:`ReleaseError` when the repair is not an escalation with
+    a proposal, the connector has no active release, the patch does not
+    apply, or the verifier gate blocks the candidate.
+    """
+    import os as _os  # noqa: PLC0415
+
+    if not actor or not actor.strip():
+        raise ReleaseError("actor must be a non-empty string")
+    run = _ensure_repair_run(session, repair_run_id)
+    if run.decision != "escalate":
+        raise ReleaseError(
+            f"RepairRun {repair_run_id!r} decision is {run.decision!r}, not escalate: "
+            "a business decision approves only an escalated repair's proposal"
+        )
+    already = (
+        session.execute(
+            select(Approval).where(
+                Approval.repair_run_id == repair_run_id,
+                Approval.decision == "approve",
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if already is not None:
+        raise ReleaseError(
+            f"RepairRun {repair_run_id!r} was already approved by {already.actor}: "
+            "approving again would mint a duplicate release"
+        )
+    bundle = run.escalation_bundle if isinstance(run.escalation_bundle, dict) else None
+    raw_proposal = bundle.get("proposal") if bundle is not None else None
+    if not isinstance(raw_proposal, dict):
+        raise ReleaseError(
+            f"RepairRun {repair_run_id!r} carries no proposal: "
+            "a business decision approves only a model-proposed change"
+        )
+    label = raw_proposal.get("label")
+    effect = raw_proposal.get("effect")
+    patch = raw_proposal.get("patch")
+    if not isinstance(label, str) or not label.strip():
+        raise ReleaseError("escalation proposal has no label")
+    if not isinstance(effect, str) or not effect.strip():
+        raise ReleaseError("escalation proposal has no effect")
+    if not isinstance(patch, list) or not patch:
+        raise ReleaseError("escalation proposal has no patch ops")
+    for op in patch:
+        if not isinstance(op, dict) or not op.get("op") or not op.get("path"):
+            raise ReleaseError(f"escalation proposal op is not a patch op: {str(op)[:120]}")
+
+    inferred_connector_id = connector_id
+    if inferred_connector_id is None:
+        drift_ids = list(run.drift_event_ids or [])
+        if drift_ids:
+            from autobridge.control.models import DriftEvent  # noqa: PLC0415
+
+            drift = session.get(DriftEvent, drift_ids[0])
+            if drift is not None:
+                inferred_connector_id = drift.connector_id
+    if not inferred_connector_id:
+        raise ReleaseError("connector_id is required (no drift link on this repair run)")
+    conn = _ensure_connector(session, inferred_connector_id)
+    if conn.active_release_id is None:
+        raise ReleaseError("connector has no active release to apply the proposal to")
+
+    active_verifier = (
+        verifier_url if verifier_url is not None else _os.environ.get("VERIFIER_URL")
+    )
+    candidate = create_release_from_patch(
+        session,
+        connector_id=inferred_connector_id,
+        base_release_id=conn.active_release_id,
+        patch=[dict(op) for op in patch if isinstance(op, dict)],
+        provenance_repair_run_id=repair_run_id,
+        verifier_url=active_verifier or None,
+        scenario_id="baseline",
+    )
+    session.flush()
+    if candidate.verification_report_id:
+        # The verifier verdict lives on the repair row too (the candidate
+        # release carries the report id) — the repair page reads verdicts
+        # from here, never recomputed.
+        run.verifier_report_id = candidate.verification_report_id
+        session.flush()
+    approval = approve_release(
+        session,
+        repair_run_id=repair_run_id,
+        actor=actor.strip(),
+        from_release_id=conn.active_release_id,
+        to_release_id=candidate.id,
+        connector_id=inferred_connector_id,
+        knowledge_cache=knowledge_cache,
+    )
+    return candidate, approval

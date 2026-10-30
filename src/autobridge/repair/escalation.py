@@ -38,6 +38,12 @@ class EscalationBundle:
         evidence_ids: ids of evidence records that support the question.
         evidence_payloads: optional redacted payloads for the bundle.
         suggested_action: hint for the operator (e.g. "increase budget").
+        proposal: the model's proposed change for the human decision, if
+            the model offered one (REQ-049): ``{"label", "effect",
+            "patch"}`` — label is short button text, effect says what
+            approving does in one sentence, patch is RFC 6902 ops. The
+            engine never synthesises this; it only carries the model's own
+            proposal. ``None`` for a plain escalation.
     """
 
     reason: str
@@ -45,16 +51,20 @@ class EscalationBundle:
     evidence_ids: tuple[str, ...] = ()
     evidence_payloads: tuple[dict[str, Any], ...] = ()
     suggested_action: str = ""
+    proposal: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-safe dict for DB storage."""
-        return {
+        out: dict[str, Any] = {
             "reason": self.reason,
             "question": self.question,
             "evidence_ids": list(self.evidence_ids),
             "evidence_payloads": list(self.evidence_payloads),
             "suggested_action": self.suggested_action,
         }
+        if self.proposal is not None:
+            out["proposal"] = dict(self.proposal)
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EscalationBundle:
@@ -73,12 +83,35 @@ class EscalationBundle:
         evidence_ids = tuple(str(x) for x in (data.get("evidence_ids") or []))
         evidence_payloads = tuple(dict(x) for x in (data.get("evidence_payloads") or []))
         suggested_action = str(data.get("suggested_action", ""))
+        proposal: dict[str, Any] | None = None
+        raw_proposal = data.get("proposal")
+        if raw_proposal is not None:
+            # REQ-049: the model's proposed change rides the bundle. It is
+            # validated like the wire shape (label/effect/patch) and never
+            # synthesised here — from_dict only carries it.
+            if not isinstance(raw_proposal, dict):
+                raise ValueError("EscalationBundle proposal must be an object")
+            label = raw_proposal.get("label")
+            effect = raw_proposal.get("effect")
+            patch = raw_proposal.get("patch")
+            if not isinstance(label, str) or not label.strip():
+                raise ValueError("EscalationBundle proposal needs a label")
+            if not isinstance(effect, str) or not effect.strip():
+                raise ValueError("EscalationBundle proposal needs an effect")
+            if not isinstance(patch, list) or not patch:
+                raise ValueError("EscalationBundle proposal needs patch ops")
+            proposal = {
+                "label": " ".join(str(label).split())[:120],
+                "effect": " ".join(str(effect).split())[:300],
+                "patch": [dict(op) for op in patch if isinstance(op, dict)],
+            }
         return cls(
             reason=reason,
             question=question,
             evidence_ids=evidence_ids,
             evidence_payloads=evidence_payloads,
             suggested_action=suggested_action,
+            proposal=proposal,
         )
 
 
@@ -115,8 +148,14 @@ def escalation_for_no_fix(
     *,
     evidence_ids: list[str] | None = None,
     question: str | None = None,
+    proposal: dict[str, Any] | None = None,
 ) -> EscalationBundle:
-    """Build escalation when no L0/L1 fix exists (non-budget path)."""
+    """Build escalation when no L0/L1 fix exists (non-budget path).
+
+    *proposal* (REQ-049) is the model's own proposed change for the
+    human decision (``{"label", "effect", "patch"}``), carried verbatim —
+    the engine never synthesises one. ``None`` for a plain escalation.
+    """
     q = question or f"No deterministic repair for: {reason}. Human review required — which mapping or permission change is correct?"
     return EscalationBundle(
         reason=reason,
@@ -124,6 +163,7 @@ def escalation_for_no_fix(
         evidence_ids=tuple(evidence_ids or []),
         evidence_payloads=(),
         suggested_action="manual review",
+        proposal=dict(proposal) if proposal is not None else None,
     )
 
 

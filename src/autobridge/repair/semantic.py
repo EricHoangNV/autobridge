@@ -202,12 +202,20 @@ def raw_records_of_summary(
 
 
 def allowed_l3_pointers(spec: dict[str, Any], entity: str) -> list[str]:
-    """Exact JSON Pointers the L3 patch may touch (REQ-044).
+    """Exact JSON Pointers the L3 patch may touch (REQ-044, REQ-049).
 
     One entry per patchable member of the climbed entity's fields —
     e.g. ``/entities/Reservation/fields/total_amount/path`` — plus the
     field object itself (replacing the object is the same change). Empty
     when the entity has no fields in the spec.
+
+    REQ-049: also the ``compare_to`` member of every ``money_invariant``
+    check in the spec (any entity). A money check asserts a documented
+    external total; when the vendor's behaviour changes, accepting it
+    means retargeting that assertion — a change only a human can approve
+    (the semantic path never applies it on its own). The check object and
+    its ``compare_to`` are the only check members listed: kinds, fields
+    and thresholds are never patchable.
     """
     entities = spec.get("entities") or {}
     ent_spec = entities.get(entity) if isinstance(entities, dict) else None
@@ -222,6 +230,22 @@ def allowed_l3_pointers(spec: dict[str, Any], entity: str) -> list[str]:
         pointers.append(base)
         for member in PATCHABLE_FIELD_MEMBERS:
             pointers.append(f"{base}/{member}")
+    if isinstance(entities, dict):
+        for ent_name in sorted(entities):
+            ent = entities[ent_name]
+            if not isinstance(ent, dict):
+                continue
+            checks = ent.get("checks")
+            if not isinstance(checks, list):
+                continue
+            for idx, check in enumerate(checks):
+                if not isinstance(check, dict):
+                    continue
+                if check.get("kind") != "money_invariant":
+                    continue
+                base = f"/entities/{ent_name}/checks/{idx}"
+                pointers.append(base)
+                pointers.append(f"{base}/compare_to")
     return pointers
 
 

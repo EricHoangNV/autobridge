@@ -149,19 +149,64 @@ def _extract_json_candidates(stripped: str) -> list[str]:
     return candidates
 
 
+def _parse_escalation_proposal(value: Any) -> tuple[dict[str, Any] | None, str]:
+    """Validate an escalation's ``proposal`` member (REQ-049 item 4).
+
+    A well-formed proposal is a dict with a non-empty ``label`` (short
+    button text), a non-empty ``effect`` (what approving does, one
+    sentence) and a ``patch`` (a non-empty list of RFC 6902 op dicts with
+    ``op``/``path``). Anything else is malformed: the engine never
+    guesses a proposal — it drops it and says why.
+
+    Returns ``(proposal_dict | None, detail)`` where the dict holds
+    ``label``/``effect``/``patch`` when valid.
+    """
+    if value is None:
+        return None, "no proposal member"
+    if not isinstance(value, dict):
+        return None, "proposal is not an object (dropped)"
+    label = value.get("label")
+    effect = value.get("effect")
+    patch = value.get("patch")
+    if not isinstance(label, str) or not label.strip():
+        return None, "proposal has no label (dropped)"
+    if not isinstance(effect, str) or not effect.strip():
+        return None, "proposal has no effect (dropped)"
+    if not isinstance(patch, list) or not patch:
+        return None, "proposal has no patch ops (dropped)"
+    for op in patch:
+        if not isinstance(op, dict):
+            return None, "proposal patch op is not an object (dropped)"
+        if not isinstance(op.get("op"), str) or not op.get("op"):
+            return None, "proposal patch op has no op (dropped)"
+        if not isinstance(op.get("path"), str) or not op.get("path"):
+            return None, "proposal patch op has no path (dropped)"
+    return (
+        {
+            "label": " ".join(str(label).split())[:120],
+            "effect": " ".join(str(effect).split())[:300],
+            "patch": [dict(op) for op in patch if isinstance(op, dict)],
+        },
+        "parsed",
+    )
+
+
 def _parse_l3_response(text: str) -> dict[str, Any]:
     """Parse an L3 frontier reply (REQ-044).
 
     The well-posed answer is one JSON object — either
     ``{"patch": [...], "rationale": "<one sentence>"}`` or
-    ``{"escalate": "<the question for the human>", "rationale": "..."}`` —
+    ``{"escalate": "<the one question for the human>", "rationale": "..."}`` —
     tolerating a fenced block around it. A bare patch list (the pre-044
     shape) still parses as a patch with an empty rationale, so old
-    recordings and callers keep working.
+    recordings and callers keep working. REQ-049: an escalation may carry
+    a ``proposal`` (label/effect/patch) — the change the operator could
+    approve; a malformed proposal is dropped and labelled, never guessed.
 
-    Returns ``{"kind", "patch", "rationale", "question", "detail"}`` where
-    *kind* is ``"patch"``, ``"escalate"`` or ``"none"`` and *detail* is a
-    one-line, secret-free account of what the text contained.
+    Returns ``{"kind", "patch", "rationale", "question", "proposal",
+    "proposal_label", "proposal_effect", "detail"}`` where *kind* is
+    ``"patch"``, ``"escalate"`` or ``"none"`` and *detail* is a one-line,
+    secret-free account of what the text contained.
     """
     import json as _json  # noqa: PLC0415 - keep ladder import-light
 
@@ -200,13 +245,29 @@ def _parse_l3_response(text: str) -> dict[str, Any]:
                     "detail": "response patch member is not a patch list (no op/path operations)",
                 }
             if isinstance(escalate, str) and escalate.strip():
-                return {
+                # REQ-049: an escalation may carry the change the operator
+                # could approve. Validate the shape; a malformed proposal
+                # is dropped and labelled, the escalation stands alone.
+                proposal_dict, proposal_detail = _parse_escalation_proposal(
+                    parsed.get("proposal")
+                )
+                out: dict[str, Any] = {
                     "kind": "escalate",
                     "patch": None,
                     "rationale": str(rationale),
                     "question": escalate.strip(),
+                    "proposal": None,
+                    "proposal_label": "",
+                    "proposal_effect": "",
                     "detail": "parsed",
                 }
+                if proposal_dict is not None:
+                    out["proposal"] = list(proposal_dict["patch"])
+                    out["proposal_label"] = str(proposal_dict["label"])
+                    out["proposal_effect"] = str(proposal_dict["effect"])
+                elif "proposal" in parsed:
+                    out["detail"] = f"parsed ({proposal_detail})"
+                return out
             if "escalate" in parsed:
                 return {
                     "kind": "none",
@@ -1950,6 +2011,99 @@ def _l3_pointer_error(
     return None
 
 
+def _validate_escalation_proposal(
+    candidate: list[dict[str, Any]],
+    *,
+    validate_against: dict[str, Any] | None,
+    evidence: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """Apply + allowed-pointer check for an escalation's proposal (REQ-049).
+
+    Same gate as a direct L3 patch (:func:`_l3_pointer_error`): the
+    proposal must apply to the spec and touch only the allowed members.
+    Returns ``(proposal, "")`` when valid, else ``(None, error)`` — the
+    caller retries once, then drops the proposal and labels the rung. The
+    engine never invents or repairs a proposal itself.
+    """
+    error = _l3_pointer_error(
+        candidate, target_spec=validate_against, evidence=evidence
+    )
+    if error is None:
+        return [dict(op) for op in candidate], ""
+    return None, error
+
+
+def _retry_escalation_proposal(
+    apply_error: str,
+    *,
+    drift_class: str,
+    ranked_ids: list[str],
+    l3_blocks: dict[str, str],
+    effective: Any,
+    l3_cap: int,
+    ledger_kwargs: dict[str, Any],
+    l3_entry: dict[str, Any],
+    _accumulate: Any,
+    _stamp_outcome: Any,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """One retry for a rejected escalation proposal (REQ-049 item 4).
+
+    Renders ``config/prompts/l3_patch_retry.md`` with the apply error and
+    parses the answer (patch, escalation with or without a new proposal,
+    or unusable). Records the retry's usage preview on the rung. Returns
+    ``(usage_delta, parsed)`` or ``None`` when no retry ran (no retry
+    prompt file, missing replay recording, or a failed call) — the caller
+    then drops the proposal and labels the rung.
+    """
+    from autobridge.llm.prompts import get_prompt as _get_prompt  # noqa: PLC0415
+    from autobridge.llm.prompts import prompt_ref as _prompt_ref  # noqa: PLC0415
+    from autobridge.llm.prompts import render_prompt as _render_prompt  # noqa: PLC0415
+
+    try:
+        retry_template = _get_prompt("l3_patch_retry")
+        retry_ref = _prompt_ref("l3_patch_retry")
+    except KeyError:
+        l3_entry["retry_error"] = apply_error
+        return None
+    l3_entry["retry_error"] = apply_error
+    retry_messages = _render_prompt(
+        retry_template,
+        drift_class=drift_class,
+        ranked_ids=str(ranked_ids),
+        apply_error=str(apply_error),
+        **l3_blocks,
+    )
+    try:
+        retry_kwargs = dict(ledger_kwargs)
+        if ledger_kwargs:
+            retry_kwargs["prompt"] = retry_ref
+        retry_result = effective.complete(
+            retry_messages,
+            max_tokens=l3_cap,
+            tier="frontier",
+            purpose="l3-generate-patch-retry",
+            **retry_kwargs,
+        )
+    except ReplayMissing as exc:
+        l3_entry["retry_replay_missing"] = exc.prompt_hash
+        _stamp_outcome("proposal_rejected")
+        return None
+    except Exception as exc:
+        l3_entry["retry_error"] = f"retry call failed: {exc}"[:200]
+        _stamp_outcome("proposal_rejected")
+        return None
+    retry_delta = _accumulate(retry_result)
+    l3_entry["retry_reasoning_tokens"] = retry_result.usage.reasoning_tokens
+    retry_text = retry_result.text or ""
+    l3_entry["retry_text_preview"] = retry_text.strip()[:300]
+    retry_parsed = _parse_l3_response(retry_text)
+    if retry_parsed.get("rationale"):
+        l3_entry["retry_rationale"] = " ".join(
+            str(retry_parsed["rationale"]).split()
+        )[:300]
+    return retry_delta, retry_parsed
+
+
 def normalize_model_question(question: str, *, limit: int = 300) -> str:
     """One-question form of a model's escalation text (REQ-044).
 
@@ -2424,6 +2578,9 @@ def run_frontier_climb(
     l3_text = l3_result.text or ""
     parsed = _parse_l3_response(l3_text)
     proposal: list[dict[str, Any]] | None = None
+    proposal_label = ""
+    proposal_effect = ""
+    _proposal_error = ""
     model_rationale = str(parsed.get("rationale") or "")
     model_question = ""
     model_escalated = False
@@ -2433,8 +2590,7 @@ def run_frontier_climb(
         l3_entry["model_rationale"] = " ".join(model_rationale.split())[:300]
     if parsed["kind"] == "escalate":
         # An explicit escalation is a valid L3 outcome, not an error: the
-        # model names the business decision a human must make. No retry —
-        # the answer already says what L4 needs.
+        # model names the business decision a human must make.
         model_escalated = True
         model_question = normalize_model_question(str(parsed.get("question") or ""))
         l3_entry["action"] = "model_escalation"
@@ -2448,6 +2604,115 @@ def run_frontier_climb(
             )
         )
         _stamp_outcome("model_escalation")
+        # REQ-049 item 4: an escalation may carry the change the operator
+        # could approve. The proposal patch passes the same apply +
+        # allowed-pointer check as a direct patch (one retry on error, as
+        # REQ-044); a malformed or still-invalid proposal is dropped and
+        # labelled, and the repair stays a plain escalation. The engine
+        # never synthesises a proposal itself.
+        if parsed.get("proposal"):
+            _proposal_adopted, _proposal_error = _validate_escalation_proposal(
+                list(parsed["proposal"]),
+                validate_against=validate_against,
+                evidence=evidence,
+            )
+            if _proposal_adopted is not None:
+                proposal = _proposal_adopted
+                proposal_label = str(parsed.get("proposal_label") or "")
+                proposal_effect = str(parsed.get("proposal_effect") or "")
+                l3_entry["proposal"] = [dict(op) for op in proposal]
+                l3_entry["proposal_ops"] = len(proposal)
+                l3_entry["proposal_pointers"] = sorted(
+                    {str(op.get("path", "")) for op in proposal if isinstance(op, dict)}
+                )
+                l3_entry["proposal_label"] = proposal_label
+                l3_entry["proposal_effect"] = proposal_effect
+                l3_entry["proposal_validated"] = True
+            else:
+                l3_entry["proposal_dropped"] = (
+                    f"L3 escalation proposal dropped: {_proposal_error}; "
+                    "the escalation stands on the question alone"
+                )
+                _proposal_retry = _retry_escalation_proposal(
+                    _proposal_error,
+                    drift_class=str(drift_class),
+                    ranked_ids=list(ranked_ids),
+                    l3_blocks=dict(l3_blocks),
+                    effective=effective,
+                    l3_cap=l3_cap,
+                    ledger_kwargs=dict(ledger_kwargs),
+                    l3_entry=l3_entry,
+                    _accumulate=_accumulate,
+                    _stamp_outcome=_stamp_outcome,
+                )
+                if _proposal_retry is not None:
+                    _retry_delta, _retry_parsed = _proposal_retry
+                    usage = _merge_model_usage(usage, _retry_delta)
+                    l3_entry["retry_model_usage_delta"] = _retry_delta
+                    if _retry_parsed["kind"] == "patch" and _retry_parsed.get("patch"):
+                        # The retry answered with a plain patch: it
+                        # supersedes the escalation — a normal proposal.
+                        model_escalated = False
+                        model_question = ""
+                        proposal = list(_retry_parsed["patch"])
+                        l3_entry["action"] = "frontier_generate"
+                        l3_entry["proposal"] = [dict(op) for op in proposal]
+                        l3_entry["proposal_ops"] = len(proposal)
+                        l3_entry["proposal_pointers"] = sorted(
+                            {str(op.get("path", "")) for op in proposal if isinstance(op, dict)}
+                        )
+                        l3_entry["proposal_validated"] = True
+                        l3_entry["retried"] = True
+                    elif _retry_parsed["kind"] == "escalate":
+                        _retry_question = normalize_model_question(
+                            str(_retry_parsed.get("question") or "")
+                        )
+                        if _retry_question:
+                            model_question = _retry_question
+                            l3_entry["model_question"] = model_question
+                        if _retry_parsed.get("proposal"):
+                            _retry_adopted, _retry_error = _validate_escalation_proposal(
+                                list(_retry_parsed["proposal"]),
+                                validate_against=validate_against,
+                                evidence=evidence,
+                            )
+                            if _retry_adopted is not None:
+                                proposal = _retry_adopted
+                                proposal_label = str(_retry_parsed.get("proposal_label") or "")
+                                proposal_effect = str(_retry_parsed.get("proposal_effect") or "")
+                                l3_entry["proposal"] = [dict(op) for op in proposal]
+                                l3_entry["proposal_ops"] = len(proposal)
+                                l3_entry["proposal_pointers"] = sorted(
+                                    {str(op.get("path", "")) for op in proposal if isinstance(op, dict)}
+                                )
+                                l3_entry["proposal_label"] = proposal_label
+                                l3_entry["proposal_effect"] = proposal_effect
+                                l3_entry["proposal_validated"] = True
+                                l3_entry["retried"] = True
+                            else:
+                                l3_entry["proposal_dropped"] = (
+                                    f"L3 retry proposal dropped ({_retry_error}); "
+                                    "the escalation stands on the question alone"
+                                )
+                        elif _retry_parsed.get("proposal") is not None:
+                            # Malformed retry proposal: dropped and labelled.
+                            l3_entry["proposal_dropped"] = (
+                                "L3 retry proposal dropped "
+                                f"({_retry_parsed.get('detail', 'malformed proposal')}); "
+                                "the escalation stands on the question alone"
+                            )
+                    else:
+                        # No retry ran (no retry prompt file, missing replay
+                        # recording, or a failed call): the drop stands, named.
+                        _retry_note = str(
+                            l3_entry.get("retry_replay_missing")
+                            or l3_entry.get("retry_error")
+                            or "retry unavailable"
+                        )
+                        l3_entry["proposal_dropped"] = (
+                            f"L3 escalation proposal dropped: {_proposal_error}; "
+                            f"retry did not run ({_retry_note})"
+                        )
     elif parsed["kind"] == "patch":
         proposal = parsed["patch"]
         l3_entry["proposal_ops"] = len(proposal)
@@ -2603,6 +2868,11 @@ def run_frontier_climb(
         "l3_text": l3_text,
         "l3_messages": [dict(m) for m in l3_messages],
         "proposal": proposal,
+        # REQ-049: the model's proposed change for the human decision
+        # (label/effect/patch); empty unless an escalation carried a valid
+        # proposal. The engine never synthesises these itself.
+        "proposal_label": proposal_label,
+        "proposal_effect": proposal_effect,
         "model_rationale": model_rationale,
         "model_question": model_question,
         "model_escalated": model_escalated,

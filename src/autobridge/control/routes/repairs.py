@@ -145,6 +145,43 @@ def reject_repair(repair_id: str, body: RepairDecisionRequest, db: Session = Dep
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.post("/repairs/{repair_id}/approve-proposal", response_model=ApprovalOut, responses=AUTH_401)
+def approve_proposal(repair_id: str, body: RepairDecisionRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> ApprovalOut:
+    """Approve the model's proposed change on an escalated repair (REQ-049).
+
+    The repair must be ``decision == "escalate"`` with a proposal in its
+    escalation bundle. The server applies the proposal to the active
+    release, verifier-gates the candidate (visible baseline), activates it
+    and records the approval — a business decision by the operator, not a
+    verified fix, and never learned into L0 knowledge. Fail-closed: a
+    proposal that does not apply or fails the gate answers 422 and the
+    repair stays escalated.
+    """
+    import os as _os  # noqa: PLC0415
+
+    run = db.get(RepairRun, repair_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"RepairRun {repair_id!r} not found")
+
+    actor = get_operator_name()
+    try:
+        from autobridge.engine.releases import approve_business_decision  # noqa: PLC0415
+
+        _candidate, approval = approve_business_decision(
+            db,
+            repair_run_id=repair_id,
+            actor=actor,
+            connector_id=body.connector_id,
+            verifier_url=_os.environ.get("VERIFIER_URL") or None,
+        )
+        db.commit()
+        db.refresh(approval)
+        return _approval_to_out(approval)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/repairs/{repair_id}/approve-preview", response_model=ApprovePreviewOut)
 def approve_preview(repair_id: str, db: Session = Depends(get_db)) -> ApprovePreviewOut:
     """Preview of what Approve/Reject will do, from the real path (REQ-032 §4).
@@ -182,6 +219,120 @@ def approve_preview(repair_id: str, db: Session = Depends(get_db)) -> ApprovePre
         "rule_id": run.rule_id,
         "approval": approval.model_dump(mode="json") if approval is not None else None,
     }
+    if run.decision == "escalate":
+        # REQ-049 item 5: an escalation carrying the model's proposed
+        # change can be approved as a business decision (or denied to keep
+        # everything as-is). A plain escalation has nothing to approve.
+        bundle = run.escalation_bundle if isinstance(run.escalation_bundle, dict) else {}
+        proposal = bundle.get("proposal") if isinstance(bundle, dict) else None
+        if not isinstance(proposal, dict) or not proposal.get("patch"):
+            return ApprovePreviewOut(
+                repair_run_id=repair_id,
+                approvable=False,
+                reason=f"Repair decision is {run.decision!r}, not 'propose': nothing to approve.",
+                facts=base_facts,
+            )
+        from autobridge.control.models import Connector as _Conn
+        from autobridge.control.models import DependencyRegistration as _Dep
+        from autobridge.control.models import DriftEvent as _Drift
+
+        if approval is not None and approval.decision == "approve":
+            return ApprovePreviewOut(
+                repair_run_id=repair_id,
+                approvable=False,
+                reason=f"Already approved as a business decision by {approval.actor}: approving again would mint a duplicate release.",
+                facts=base_facts,
+            )
+        connector_id: str | None = None
+        for did in list(run.drift_event_ids or []):
+            drift = db.get(_Drift, did)
+            if drift is not None and drift.connector_id:
+                connector_id = drift.connector_id
+                break
+        conn = db.get(_Conn, connector_id) if connector_id else None
+        active_id = conn.active_release_id if conn is not None else None
+        active_rel = db.get(ConnectorRelease, active_id) if active_id else None
+        if conn is None or active_rel is None:
+            return ApprovePreviewOut(
+                repair_run_id=repair_id,
+                approvable=False,
+                reason="No active release to apply the proposal to: Approve would fail the same way.",
+                facts=base_facts,
+            )
+        from autobridge.engine.releases import next_version as _next_version  # noqa: PLC0415
+
+        to_version = _next_version(db, conn.id)
+        dependents = (
+            db.execute(
+                select(_Dep).where(
+                    _Dep.connector_id == conn.id,
+                    _Dep.policy == "pause_on_release_change",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        try:
+            from autobridge.config import sync_interval_seconds as _interval  # noqa: PLC0415
+
+            interval_s: float | None = _interval()
+        except Exception:
+            interval_s = None
+        label = str(proposal.get("label") or "Approve")
+        effect = str(proposal.get("effect") or "")
+        proposal_lines = ["Approve: " + label + (f" — {effect}" if effect else "")]
+        proposal_lines.append(
+            f"Creates release r{to_version} from r{active_rel.version} with the model's proposed change."
+        )
+        proposal_lines.append(f"Activates r{to_version}.")
+        if dependents:
+            n = len(dependents)
+            proposal_lines.append(f"Pauses {n} dependent consumer{'s' if n != 1 else ''} until the next sync.")
+        else:
+            proposal_lines.append("No dependent consumers to pause.")
+        if interval_s is not None:
+            proposal_lines.append(f"The next scheduled sync (in ~{interval_s:g} s) runs on r{to_version}.")
+        else:
+            proposal_lines.append(f"The next sync runs on r{to_version} (scheduler off).")
+        proposal_lines.append(
+            "Recorded as a business decision by the operator — not a verified fix: "
+            "the verifier confirms the new release syncs and its checks pass, "
+            "but makes no claim the new meaning is correct."
+        )
+        proposal_lines.append(
+            "This decision is not kept as learned knowledge: the same drift next time asks again."
+        )
+        proposal_lines.append(f"Rollback to r{active_rel.version} stays available.")
+        deny_lines = [
+            "Deny: keep everything as-is, contact the vendor.",
+            "No release is created or activated; the connector stays in error and the drift stays open.",
+        ]
+        return ApprovePreviewOut(
+            repair_run_id=repair_id,
+            approvable=True,
+            reason="",
+            approve_lines=proposal_lines,
+            reject_lines=deny_lines,
+            facts={
+                **base_facts,
+                "business_decision": True,
+                "proposal": {
+                    "label": label,
+                    "effect": effect,
+                    "patch": list(proposal.get("patch") or []),
+                },
+                "from_release_id": active_id,
+                "from_version": active_rel.version,
+                "to_version": to_version,
+                "active_release_id": active_id,
+                "connector_id": conn.id,
+                "connector_name": conn.name,
+                "dependent_pause_count": len(dependents),
+                "sync_interval_s": interval_s,
+                "learnable": False,
+                "learn_why": "business decisions are never learned",
+            },
+        )
     if run.decision != "propose":
         return ApprovePreviewOut(
             repair_run_id=repair_id,

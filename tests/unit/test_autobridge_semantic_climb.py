@@ -131,8 +131,19 @@ def test_allowed_l3_pointers_name_exact_members() -> None:
     assert "/entities/Reservation/fields/total_amount/path" in ptrs
     assert "/entities/Reservation/fields/total_amount/transform" in ptrs
     assert "/entities/Reservation/fields/reservation_id/path" in ptrs
-    # Nothing outside the entity's fields is patchable at L3.
-    assert all(p.startswith("/entities/Reservation/fields/") for p in ptrs)
+    # REQ-049: besides the climbed entity's fields, a money check's
+    # assertion may be retargeted (both entities' money checks are listed
+    # so an accepted behaviour change converges); kinds, fields and
+    # thresholds are never listed.
+    assert "/entities/Reservation/checks/0" in ptrs
+    assert "/entities/Reservation/checks/0/compare_to" in ptrs
+    assert "/entities/FolioCharge/checks/0/compare_to" in ptrs
+    assert all(
+        p.startswith("/entities/Reservation/fields/")
+        or ("/checks/" in p and p.endswith(("checks/0", "checks/0/compare_to")))
+        for p in ptrs
+    )
+    assert not any(p.endswith(("/kind", "/field")) for p in ptrs)
     assert sem.allowed_l3_pointers(_harbor_like_spec(), "Nope") == []
     assert sem.allowed_l3_pointers({}, "Reservation") == []
 

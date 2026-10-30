@@ -8648,6 +8648,118 @@
         ]
       }
     },
+    "/repairs/{repair_id}/approve-proposal": {
+      "post": {
+        "description": "Approve the model's proposed change on an escalated repair (REQ-049).\n\nThe repair must be ``decision == \"escalate\"`` with a proposal in its\nescalation bundle. The server applies the proposal to the active\nrelease, verifier-gates the candidate (visible baseline), activates it\nand records the approval \u2014 a business decision by the operator, not a\nverified fix, and never learned into L0 knowledge. Fail-closed: a\nproposal that does not apply or fails the gate answers 422 and the\nrepair stays escalated.",
+        "operationId": "approve_proposal_repairs__repair_id__approve_proposal_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "repair_id",
+            "required": true,
+            "schema": {
+              "title": "Repair Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepairDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Approve Proposal",
+        "tags": [
+          "repairs"
+        ]
+      }
+    },
     "/repairs/{repair_id}/ledger": {
       "get": {
         "description": "Rung-by-rung ledger for a repair (REQ-021 item 3).\n\nEvery rung the ladder tried with its one-line reason, each linked to\nthe run's ``ModelCall`` rows (tier, purpose, tokens, estimated cost).\nCosts are Decimal strings end to end; prompts and responses never leave\nthe ledger table.",

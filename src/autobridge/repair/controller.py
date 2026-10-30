@@ -497,12 +497,38 @@ class RepairController:
             # callers (matrix, demo) check the verifier/trap verdict on it.
             # It is never placed in candidate_patch: nothing here is released.
             l3_entry["proposal"] = list(climb["proposal"])
+            # REQ-049: an escalation-carried proposal also records the
+            # model's label/effect for the Approve button. Plain L3
+            # proposals (kind patch) have neither.
+            if climb.get("proposal_label"):
+                l3_entry["proposal_label"] = str(climb["proposal_label"])
+            if climb.get("proposal_effect"):
+                l3_entry["proposal_effect"] = str(climb["proposal_effect"])
         scenario_name = scenario or drift_class
         model_question = str(climb.get("model_question") or "")
         model_rationale = " ".join(str(climb.get("model_rationale") or "").split())[:300]
         model_escalated = bool(climb.get("model_escalated"))
         if model_escalated and not model_question:
             model_escalated = False
+        # REQ-049 item 4: an explicit escalation may carry the model's own
+        # proposed change (label/effect/patch, already apply-checked in the
+        # climb with one retry). It rides the escalation bundle for the
+        # human — the repair stays decision=escalate with no candidate
+        # patch, and the engine never synthesises one itself.
+        model_proposal: dict[str, Any] | None = None
+        if (
+            model_escalated
+            and model_question
+            and isinstance(climb.get("proposal"), list)
+            and climb.get("proposal")
+        ):
+            model_proposal = {
+                "label": str(climb.get("proposal_label") or ""),
+                "effect": str(climb.get("proposal_effect") or ""),
+                "patch": [dict(op) for op in climb["proposal"] if isinstance(op, dict)],
+            }
+            if not model_proposal["label"] or not model_proposal["effect"]:
+                model_proposal = None
         if l3_entry is not None and l3_entry.get("action") == "model_escalation" and model_question:
             # REQ-044 item 3: the model explicitly asked for a human
             # decision — its question resolves L4, labelled as the model's,
@@ -548,6 +574,7 @@ class RepairController:
                 if model_escalated and model_question
                 else f"{scenario_name}: no verified fix for this semantic drift — which mapping is correct?"
             ),
+            proposal=model_proposal,
         )
         model_usage = dict(climb.get("usage", {}))
         result = LadderResult(

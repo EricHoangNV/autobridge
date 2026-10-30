@@ -85,23 +85,19 @@ make demo-reset && make demo-seed
 ```
 
 Open `http://localhost:8107` and wait until every connector shows
-● Working ("last sync N s ago" ticking underneath). The seed leaves four
+● Working ("last sync N s ago" ticking underneath). The seed leaves three
 connectors `working`, 0 model tokens, nothing waiting
 (`make demo-seed` fails loud otherwise). Each block below is one
-command, then watch:
+command, then watch (deck order, `docs/demo.md`):
 
-- **What AutoBridge knows.** Open `/knowledge` (top bar): vocabulary
+- **Deck 1 — What AutoBridge knows.** Open `/knowledge` (top bar): vocabulary
   v1/v2/v3 with "used by" per version, and any learned fixes with
   "reused N×". Back on `/connectors`, AtlasPMS is the reusable
-  artifact: Working, 0 tokens. HarborPMS seeds from its reference
-  release too (money invariant included), so the semantic scenario
-  breaks live.
-- **Unfamiliar API — build Harbor from its docs in the UI.** Open
-  `/connectors/new`, pick the Harbor docs, watch docs read → draft →
-  probes → result → release. The refused v1 / working v2 pair for
-  Meridian is already on its connector page from the seed
-  (deck 3 in `docs/demo.md`).
-- **Zero-token fix.** `make demo-break SCENARIO=page_to_cursor` →
+  artifact: Working, 0 tokens.
+- **Deck 2 — Reusable artifact.** AtlasPMS stays Working through its
+  break-and-heal cycle without a rebuild (the ladder reuses the
+  reference release, then learned knowledge).
+- **Deck 3 — Zero-token fix.** `make demo-break SCENARIO=page_to_cursor` →
   AtlasPMS turns ▲ Degrading ("drift detected … · repairing at L1");
   a repair appears at the top of `/repairs` **without reloading** as
   "fix ready · 0 model calls". Open it: the page answers what happened,
@@ -110,25 +106,31 @@ command, then watch:
   (approval → release → verifying sync → Complete). Run the break again:
   the same drift now resolves at L0 and the Knowledge entry reads
   "reused 1×".
-- **Hard semantic failure.** `make demo-break SCENARIO=gross_to_net
-  TARGET=harbor` → the scheduled sync Degrades on `money_invariant`
-  (Harbor seeds from its reference release, which carries the check):
+- **Deck 4 — Build Harbor from its wiki.** Open
+  `/connectors/new`, pick the Harbor docs, watch docs read → draft →
+  probes → result → release — including the line "check added from the
+  docs: totals must match `meta.gross_sum`". The new connector's page
+  shows its spec (with the totals check), releases and sync runs,
+  ● Working. The refused v1 / working v2 pair for
+  Meridian is already on its connector page from the seed.
+- **Deck 5 — Break Harbor right after.** `make demo-break
+  SCENARIO=gross_to_net TARGET=harbor` → the scheduled sync Degrades on
+  `money_invariant` (the wiki-built release carries the check):
   HarborPMS turns ▲ Degrading, then ■ Error with "needs your decision".
   Open the new `/repairs` row (`SEMANTIC_VALUE_DRIFT`, escalate): the
-  four sections read from the break's own rows — decision line, the
-  funnel (generated → amount → wire-consistent → distinct, ending on the
-  single "net" reading), rung L3 with the one frontier attempt (live with
-  `FRONTIER_API_KEY`, labelled replay from a committed capture otherwise,
-  or the explicit skip naming the capture to run when neither exists),
-  and the escalation: the model saw the evidence and either asked for a
-  business decision (its question shown first, with its rationale) or
-  proposed a patch that the verifier judged. The instrumented step-4 climb in
+  top box leads with the model's question and its rationale, plus the
+  one proposed change when the model offered it. Click
+  **Approve: \<the model's label\>** ("accept net") and watch Harbor
+  return to ● Working (release r2 from the proposal, verifying sync,
+  recorded as a business decision — not a verified fix, and never
+  learned); or **Deny** ("keep everything as-is, contact the vendor")
+  and watch it stay ■ Error. The instrumented step-4 climb in
   `make demo` runs the same inputs for the printed derivation; it is
   recorded as a second row only when the break's L3 was skipped.
-- **New kind of API.** Meridian's page shows the refused v1 build with
+- **Deck 6 — New kind of API.** Meridian's page shows the refused v1 build with
   its reason and v2 in use. `make demo-break
   SCENARIO=meridian_cursor_renamed` → fix at L1 → **Approve** → Working.
-- **On-premise PABX.** Open the PABX edge connector page (link state,
+- **Deck 7 — On-premise PABX.** Open the PABX edge connector page (link state,
   postings arriving, layout v3). `make demo-break
   SCENARIO=fias_record_layout_change` → the link drops and re-handshakes
   on the new layout (TM, CX announced), postings resume, the connector
@@ -137,6 +139,10 @@ command, then watch:
   demo` step 8. `make demo-break SCENARIO=agent_restart_inflight` →
   after `make demo`, the panel's restart line reads
   "lost 0 · duplicated 0".
+- **Deck 8 — Proof.** `make demo` (terminal-only, 8 steps) approves through
+  the API and lands everything in the database exactly like the clicks
+  do; `experiments/scorecard.md` and the benchmark rehearsals carry the
+  numbers.
 
 Retakes: `make demo-heal` clears injected faults without a reset;
 `make demo-reset && make demo-seed` restores the opening frame.

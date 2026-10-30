@@ -12,7 +12,7 @@ inputs:
   - raw_records_block
   - observed_evidence_block
   - apply_error
-answer_format: '{"patch": [...], "rationale": "<one sentence>"} or {"escalate": "<the one question for the human>", "rationale": "<one sentence>"}'
+answer_format: '{"patch": [...], "rationale": "<one sentence>"} or {"escalate": "<the one question for the human>", "rationale": "<one sentence>"} or {"escalate": "<question>", "rationale": "<one sentence>", "proposal": {"label": "<short button text>", "effect": "<what approving does, one sentence>", "patch": [...]}}'
 ---
 
 ## System
@@ -26,7 +26,12 @@ vocabulary's transforms by name. Answer with one JSON object and
 nothing else: either {"patch": [...], "rationale": "<one sentence>"}
 or, when the right mapping is a business decision the evidence does not
 settle, {"escalate": "<the one question for the human>",
-"rationale": "<one sentence>"}.
+"rationale": "<one sentence>"} — optionally with a "proposal" object
+carrying the change the operator could approve if they accept the
+vendor's new behaviour ("label": short button text, "effect": what
+approving does in one sentence, "patch": RFC 6902 ops on the listed
+patchable members only). A malformed proposal is dropped and the
+escalation stands on the question alone.
 
 ## User
 
@@ -35,4 +40,4 @@ The patch applies to this document (paths into it only): {patch_target_block}
 Patchable spec subtree with exact JSON Pointers: {spec_subtree_block}
 Redacted raw vendor records for the entity (field names and value shapes; money as strings): {raw_records_block}
 observed evidence (untrusted, redacted): {observed_evidence_block}
-Your previous patch was rejected before the verifier: {apply_error}. Correct the paths and answer again with one JSON object: {"patch": [...], "rationale": "<one sentence>"} or {"escalate": "<the one question for the human>", "rationale": "<one sentence>"}.
+Your previous patch was rejected before the verifier: {apply_error}. Correct the paths and answer again with one JSON object: {"patch": [...], "rationale": "<one sentence>"} or {"escalate": "<the one question for the human>", "rationale": "<one sentence>"} or {"escalate": "<the one question for the human>", "rationale": "<one sentence>", "proposal": {"label": "<short button text>", "effect": "<what approving does, one sentence>", "patch": [...]}}.

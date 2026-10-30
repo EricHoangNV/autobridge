@@ -1012,6 +1012,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repairs/{repair_id}/approve-proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Proposal
+         * @description Approve the model's proposed change on an escalated repair (REQ-049).
+         *
+         *     The repair must be ``decision == "escalate"`` with a proposal in its
+         *     escalation bundle. The server applies the proposal to the active
+         *     release, verifier-gates the candidate (visible baseline), activates it
+         *     and records the approval — a business decision by the operator, not a
+         *     verified fix, and never learned into L0 knowledge. Fail-closed: a
+         *     proposal that does not apply or fails the gate answers 422 and the
+         *     repair stays escalated.
+         */
+        post: operations["approve_proposal_repairs__repair_id__approve_proposal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repairs/{repair_id}/ledger": {
         parameters: {
             query?: never;
@@ -5863,6 +5891,74 @@ export interface operations {
             };
             /** @description Malformed request body */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_proposal_repairs__repair_id__approve_proposal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                repair_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepairDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalOut"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

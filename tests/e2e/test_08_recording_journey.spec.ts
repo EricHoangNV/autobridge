@@ -53,7 +53,7 @@ const UI_BASE = process.env.E2E_UI_BASE || process.env.UI_BASE || "http://localh
 const CONTROL_BASE = process.env.E2E_CONTROL_BASE || "http://localhost:8101";
 const CONTROL_TOKEN = process.env.AUTOBRIDGE_CONTROL_TOKEN || "";
 
-const SEED_NAMES = ["atlaspms", "harborpms", "meridianpms", "PABX edge"] as const;
+const SEED_NAMES = ["atlaspms", "meridianpms", "PABX edge"] as const;
 
 type Connector = {
   id: string;
@@ -220,6 +220,60 @@ async function healFaults(target?: string | string[]): Promise<void> {
  *  reset+seed after the learning leg). */
 const AFTER_EACH_TARGETS = ["sim-harbor", "sim-legacystay", "sim-meridian", "sim-fias-pabx"];
 
+/** Deck 4 (REQ-049): Harbor is built from its wiki docs, not seeded.
+ *  Ensures the harborpms connector exists with a docs-built v1 release
+ *  carrying the money check, baseline-synced Complete. Idempotent: a
+ *  Working harborpms is returned as-is. */
+async function ensureHarborBuilt(): Promise<Connector> {
+  const list = await connectors();
+  const existing = (list ?? []).find((c) => c.name === "harborpms");
+  if (existing && existing.state === "working") return existing;
+  const ensured = await control<{ id?: string }>("POST", "/connectors", {
+    name: "harborpms",
+    vendor_docs_ref: "simulators/docs/harborpms.md",
+    base_url: "http://sim-harbor:8000",
+    credential_ref: "HARBOR_API_KEY",
+    target_entities: ["Reservation", "FolioCharge"],
+  });
+  const connectorId = ensured?.id ?? existing?.id;
+  if (!connectorId) throw new Error(`harborpms ensure failed: ${JSON.stringify(ensured)}`);
+  const { readFileSync } = await import("fs");
+  const { join, dirname } = await import("path");
+  const { fileURLToPath } = await import("url");
+  const here = dirname(fileURLToPath(import.meta.url));
+  const docsText = readFileSync(join(here, "..", "..", "simulators", "docs", "harborpms.md"), "utf-8");
+  const build = await control<{ build_run_id?: string; job_id?: string }>(
+    "POST",
+    `/connectors/${encodeURIComponent(connectorId)}/build`,
+    { docs_text: docsText, spec_vocabulary: "v1" },
+  );
+  if (!build?.job_id) throw new Error(`harborpms build not queued: ${JSON.stringify(build)}`);
+  const job = await poll(
+    () => control<{ state?: string; result?: { release_id?: string } }>("GET", `/jobs/${encodeURIComponent(build.job_id!)}`),
+    (j) => !!j && (j.state === "succeeded" || j.state === "failed"),
+    "harbor docs build terminal",
+    180_000,
+    2000,
+  );
+  const releaseId = job.result?.release_id;
+  if (!releaseId) throw new Error(`harborpms docs build produced no release: ${JSON.stringify(job)}`);
+  const sync = await control<{ job_id?: string }>("POST", `/connectors/${encodeURIComponent(connectorId)}/sync`, {});
+  if (sync?.job_id) {
+    await poll(
+      () => control<{ state?: string }>("GET", `/jobs/${encodeURIComponent(sync.job_id!)}`),
+      (j) => !!j && (j.state === "succeeded" || j.state === "failed"),
+      "harbor baseline sync terminal",
+      180_000,
+      2000,
+    );
+  }
+  const detail = await control<Connector>("GET", `/connectors/${encodeURIComponent(connectorId)}`);
+  if (!detail || detail.state !== "working") {
+    throw new Error(`harborpms not working after docs build: ${JSON.stringify(detail)}`);
+  }
+  return detail;
+}
+
 test.describe("REQ-033 recording journey — UI-first demo", () => {
   async function requireControl(): Promise<void> {
     if (!(await controlUp())) test.skip(true, "control plane unreachable — run after `make local-up`");
@@ -241,11 +295,11 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
     if (await controlUp()) await healFaults(AFTER_EACH_TARGETS);
   });
 
-  test("opening frame: four connectors Working, 0 model tokens, nothing waiting", async () => {
+  test("opening frame: three connectors Working, 0 model tokens, nothing waiting", async () => {
     const byName = await requireSeed();
     // Subset, not exact: other journey specs (test_06's live journey)
     // may have added their own connectors and repairs in the same
-    // `make e2e-ui` run. The seed contract itself — exactly four working
+    // `make e2e-ui` run. The seed contract itself — exactly three working
     // connectors, 0 tokens, nothing waiting — is asserted by
     // test_09_demo_seed_break_heal.py on a fresh seed; every leg below
     // scopes by connector and by time so leftovers cannot match.
@@ -446,12 +500,7 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       await requireControl();
       // Scope by connector: other legs' scars (e.g. a verifying sync that
       // raced release activation) must never match here.
-      const list = await connectors();
-      const harbor = (list ?? []).find((c) => c.name === "harborpms");
-      if (!harbor) {
-        test.skip(true, "harborpms connector absent — run `make demo-seed` first");
-        return;
-      }
+      const harbor = await ensureHarborBuilt();
       // The funnel + model call + rejected proposal + operator question
       // live on the recorded step-4 repair (POST /demo/record-climb).
       const rows = (await repairsFor(harbor.id)) ?? [];
@@ -529,12 +578,13 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
     { timeout: 420_000 },
     async ({ page }) => {
       test.setTimeout(420_000);
-      const byName = await requireSeed();
-      const harbor = byName.get("harborpms")!;
-      // Harbor seeds from its reference release (money invariant included),
-      // so gross_to_net breaks live: inject → scheduled sync → Degraded →
-      // engine drift + escalated repair → error. The assertions below read
-      // the engine-derived rows (source sync set), never record-climb rows.
+      await requireSeed();
+      // Deck 4 → deck 5 (REQ-049): Harbor from its wiki docs (money
+      // invariant included), so gross_to_net breaks live: inject →
+      // scheduled sync → Degraded → engine drift + escalated repair →
+      // error. The assertions below read the engine-derived rows (source
+      // sync set), never record-climb rows.
+      const harbor = await ensureHarborBuilt();
       // One fresh take per seed: a previous take's still-open drift would
       // dedupe this break (one fault keeps one drift), so the live half
       // skips then — reseed for a fresh live take, like every other leg.

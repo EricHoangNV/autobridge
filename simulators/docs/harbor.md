@@ -124,6 +124,33 @@ Fetch a single charge by id.
 
 ---
 
+## Page totals — `meta.gross_sum`
+
+Every list response (`GET /reservations`, `GET /folios`) carries a `meta`
+envelope next to `data` with a `gross_sum` field: the sum of the gross
+amounts of the records on this page (`total_amount` on reservations,
+`amount` on folios). It exists so partners can verify a page arrived
+complete without re-adding every row — sum the money field yourself and
+check it against `meta.gross_sum`.
+
+```json
+{
+  "data": [ "... page of records ..." ],
+  "meta": { "gross_sum": "1234.56" },
+  "total": 30,
+  "limit": 10,
+  "cursor": null,
+  "next_cursor": null
+}
+```
+
+> **Note (stale example above):** the v1 narrative guide showed page
+> responses without any `meta` envelope at all (see the `GET /reservations`
+> example). That example predates page totals — current responses always
+> include `meta.gross_sum` on both list endpoints.
+
+---
+
 ## Pagination — cursor with known quirk
 
 HarborPMS uses cursor pagination (`cursor` / `next_cursor`). The cursor is a

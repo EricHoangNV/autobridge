@@ -1,18 +1,20 @@
-"""`make demo-seed` driver (REQ-031 item 1).
+"""`make demo-seed` driver (REQ-031 item 1, REQ-049 item 3).
 
 From `make demo-reset`, creates the recording's connectors **through the
 control API only** (the calls the UI makes), each baseline-synced
 ``Complete``:
 
 - atlaspms — docs-built release, pinned vocabulary v1;
-- harborpms — the reusable reference release (money invariant included),
-  registered through the control API, pinned v1;
 - meridianpms — the refused v1 build recorded with its reason, v2 release
   in use;
 - PABX edge — the Grand Plaza PABX edge connector, docs-built v3 release,
   link up, postings flowing.
 
-End state: four connectors ``working``, 0 model tokens, nothing waiting.
+Harbor is NOT seeded (REQ-049): deck 4 builds it from its wiki in the UI
+(or `make demo` step 4 builds it from docs itself), so the totals check
+it carries comes from the docs, not from a reference release.
+
+End state: three connectors ``working``, 0 model tokens, nothing waiting.
 Clean names, real addresses, no leftover or example.com rows. Fails loud
 (exit non-zero naming the unmet step); the transcript records every
 control call, redacted like the demo's.
@@ -37,7 +39,6 @@ from bench.demo import (
     _connector_id_from_calls,
     _control_call,
     _control_get_raw,
-    _ensure_harbor_reference_release,
     _live_build_and_poll,
     _live_ensure_connector,
     _live_knowledge,
@@ -60,23 +61,6 @@ SEED_CONNECTORS: tuple[dict[str, Any], ...] = (
             "target_entities": ["Reservation", "FolioCharge"],
         },
         "docs_file": "simulators/docs/atlas-openapi.yaml",
-        "spec_vocabulary": "v1",
-    },
-    {
-        "name": "harborpms",
-        "connector": {
-            "name": "harborpms",
-            "vendor_docs_ref": "simulators/docs/harborpms.md",
-            "base_url": "http://sim-harbor:8000",
-            "credential_ref": "HARBOR_API_KEY",
-            "target_entities": ["Reservation", "FolioCharge"],
-        },
-        # REQ-031 owner check: Harbor seeds from its reusable reference
-        # release (money invariant included), not from docs (the docs
-        # build cannot infer the check, so gross_to_net never breaks
-        # live on it). Registered through the control API, verifier-gated
-        # like any release. Atlas stays docs-built.
-        "reference_spec": "harborpms",
         "spec_vocabulary": "v1",
     },
     {
@@ -162,22 +146,7 @@ def seed_connector(base_url: str, spec: dict[str, Any], calls: list[dict[str, An
     if isinstance(stored, str) and "example.com" in stored:
         _assert_live(calls, f"connector {name} real address", False, f"placeholder address stored: {stored!r}")
 
-    docs_text = ""
-    if spec.get("reference_spec"):
-        # REQ-031: Harbor registers its reference release (money check
-        # included) instead of compiling it from docs. No refused leg: the
-        # reference spec is already v1.
-        release_id = _ensure_harbor_reference_release(base_url, connector_id, calls)
-        _assert_live(
-            calls, f"{name} reference release active",
-            isinstance(release_id, str) and bool(release_id),
-            f"reference registration result: {release_id}",
-        )
-        detail_raw = _control_get_raw(base_url, f"/connectors/{connector_id}")
-        if isinstance(detail_raw, dict):
-            release_id = detail_raw.get("active_release_id") or release_id
-    else:
-        docs_text = (REPO_ROOT / str(spec["docs_file"])).read_text(encoding="utf-8")
+    docs_text = (REPO_ROOT / str(spec["docs_file"])).read_text(encoding="utf-8")
     refused_vocab = spec.get("refused_vocabulary")
     if refused_vocab:
         refused = _live_build_and_poll(
@@ -196,19 +165,17 @@ def seed_connector(base_url: str, spec: dict[str, Any], calls: list[dict[str, An
             "POST" in reason and "ConnectorSpec v1" in reason,
             f"{refused_vocab} degradation_reason: {reason!r}",
         )
-    build_result: dict[str, Any] = {}
-    if not spec.get("reference_spec"):
-        build_result = _live_build_and_poll(
-            base_url, connector_id,
-            {"docs_text": docs_text, "spec_vocabulary": str(spec["spec_vocabulary"])},
-            calls,
-        )
-        _assert_live(
-            calls, f"{name} docs build with {spec['spec_vocabulary']} succeeds",
-            build_result.get("success") is True,
-            f"build result: {build_result}",
-        )
-        release_id = build_result.get("release_id")
+    build_result: dict[str, Any] = _live_build_and_poll(
+        base_url, connector_id,
+        {"docs_text": docs_text, "spec_vocabulary": str(spec["spec_vocabulary"])},
+        calls,
+    )
+    _assert_live(
+        calls, f"{name} docs build with {spec['spec_vocabulary']} succeeds",
+        build_result.get("success") is True,
+        f"build result: {build_result}",
+    )
+    release_id = build_result.get("release_id")
     _assert_live(
         calls, f"{name} build persisted a release",
         isinstance(release_id, str) and bool(release_id),
@@ -255,7 +222,7 @@ def verify_end_state(base_url: str, calls: list[dict[str, Any]]) -> dict[str, An
     elif isinstance(body, dict) and isinstance(body.get("connectors"), list):
         rows = body["connectors"]
     names = sorted(str(r.get("name")) for r in rows if isinstance(r, dict))
-    _assert_live(calls, "seed connectors are exactly the four recording names",
+    _assert_live(calls, "seed connectors are exactly the three recording names",
                  names == sorted(SEED_NAMES), f"connectors: {names}")
     states = {str(r.get("name")): str(r.get("state")) for r in rows if isinstance(r, dict)}
     _assert_live(calls, "every seed connector working",
@@ -307,7 +274,7 @@ def verify_end_state(base_url: str, calls: list[dict[str, Any]]) -> dict[str, An
 
 
 def run_seed(base_url: str, seed: int) -> dict[str, Any]:
-    """Reset, seed the four connectors, verify the end state."""
+    """Reset, seed the three connectors, verify the end state."""
     calls: list[dict[str, Any]] = []
     # REQ-031 owner check: the scheduler pauses for the whole seed (an
     # explicit pause/resume the scheduler honours), not just inside reset
@@ -343,7 +310,7 @@ def run_seed(base_url: str, seed: int) -> dict[str, Any]:
 
 
 def _run_seed_paused(base_url: str, seed: int, calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """Reset, seed the four connectors, verify the end state (scheduler paused)."""
+    """Reset, seed the three connectors, verify the end state (scheduler paused)."""
     reset_rec = _control_call(base_url, "POST", "/demo/reset", {})
     calls.append(reset_rec)
     if not _call_ok(reset_rec):
@@ -402,7 +369,7 @@ def render_text(report: dict[str, Any]) -> str:
                     detail_text = str(detail)[:300]
                 lines.append(f"    FAILED {call.get('method')} {call.get('path')}: {detail_text}")
     else:
-        lines.append("demo-seed complete: four connectors working, 0 model tokens, nothing waiting")
+        lines.append("demo-seed complete: three connectors working, 0 model tokens, nothing waiting")
     return "\n".join(lines)
 
 

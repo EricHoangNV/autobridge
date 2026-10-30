@@ -5,6 +5,12 @@ import { useEffect, useState } from "react";
 // Same-origin /api base (REQ-018): the rewrite + middleware forward to control.
 import { apiBaseUrl as getBaseUrl } from "@/lib/api/base";
 
+type Proposal = {
+  label?: string;
+  effect?: string;
+  patch?: Array<{ op: string; path: string; value?: unknown; from?: string }>;
+} | null;
+
 type Props = {
   repairId: string;
   decision: string;
@@ -24,9 +30,15 @@ type Props = {
    * (REQ-002 slice 3). Defaults to true so existing callers are unaffected.
    */
   patchReady?: boolean;
+  /**
+   * The model's proposed change on an escalated repair (REQ-049): its
+   * label becomes the Approve button, its effect is shown beside it.
+   * Null for a plain escalation (no Approve button, per REQ-048).
+   */
+  proposal?: Proposal;
 };
 
-export function RepairActions({ repairId, decision, candidatePatch: _candidatePatch, onActionComplete, patchReady = true, connectorId = null }: Props) {
+export function RepairActions({ repairId, decision, candidatePatch: _candidatePatch, onActionComplete, patchReady = true, connectorId = null, proposal = null }: Props) {
   // Server-set operator (GET /operator); approvals are recorded under this name.
   const [operatorName, setOperatorName] = useState<string | null>(null);
   const [busy, setBusy] = useState<"approve" | "reject" | "rollback" | null>(null);
@@ -56,6 +68,13 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
   // REQ-048 item 1: an escalation has no patch to approve, but Reject
   // closes it (the server records a reject approval on any decision).
   const canReject = (decision === "propose" && patchReady) || decision === "escalate";
+  // REQ-049 item 5: an escalation carrying the model's proposed change
+  // offers Approve (the model's label) and Deny (generic, always present).
+  // A plain escalation keeps Reject only — never an Approve button.
+  const proposalPatch = Array.isArray(proposal?.patch) ? (proposal as Proposal & { patch: unknown[] }).patch : [];
+  const hasProposal = decision === "escalate" && proposalPatch.length > 0;
+  const proposalLabel = typeof proposal?.label === "string" && proposal.label.trim() ? proposal.label.trim() : "Approve";
+  const canApproveProposal = hasProposal;
   // The climb: no verdict and no action until a patch has passed.
   const awaitingPatch = decision === "propose" && !patchReady;
   // REQ-048 item 1: escalations lead with the question, never an Approve
@@ -111,6 +130,53 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
     }
   }
 
+  async function doApproveProposal() {
+    setBusy("approve");
+    setMsg(null);
+    try {
+      const base = getBaseUrl().replace(/\/$/, "");
+      const res = await fetch(`${base}/repairs/${encodeURIComponent(repairId)}/approve-proposal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(connectorId ? { connector_id: connectorId } : {}),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`Approve failed (${res.status}): ${body}`);
+      }
+      const data = await res.json();
+      setMsg({ type: "success", text: `Approved as a business decision — new active release ${String(data.to_release_id ?? data.id ?? "").slice(0, 8)}` });
+      onActionComplete?.();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doDeny() {
+    setBusy("reject");
+    setMsg(null);
+    try {
+      const base = getBaseUrl().replace(/\/$/, "");
+      const res = await fetch(`${base}/repairs/${encodeURIComponent(repairId)}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`Deny failed (${res.status}): ${body}`);
+      }
+      setMsg({ type: "success", text: "Denied — kept everything as-is; contact the vendor." });
+      onActionComplete?.();
+    } catch (err) {
+      setMsg({ type: "error", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function doRollback() {
     if (!rollbackTarget.trim()) {
       setMsg({ type: "error", text: "Rollback target release id is required." });
@@ -156,15 +222,36 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
           {busy === "approve" ? "Approving…" : awaitingPatch ? "No patch to approve yet" : "Approve release"}
         </button>
       )}
-      <div className="more">
+      {hasProposal ? (
         <button
-          data-testid="repair-reject-btn"
-          onClick={doReject}
-          disabled={!canReject || busy !== null}
-          className="link"
+          data-testid="repair-approve-proposal-btn"
+          onClick={doApproveProposal}
+          disabled={!canApproveProposal || busy !== null}
+          className="btn"
         >
-          {busy === "reject" ? "Rejecting…" : "Reject patch"}
+          {busy === "approve" ? "Approving…" : `Approve: ${proposalLabel}`}
         </button>
+      ) : null}
+      <div className="more">
+        {hasProposal ? (
+          <button
+            data-testid="repair-deny-btn"
+            onClick={doDeny}
+            disabled={busy !== null}
+            className="link"
+          >
+            {busy === "reject" ? "Denying…" : "Deny: keep everything as-is, contact the vendor"}
+          </button>
+        ) : (
+          <button
+            data-testid="repair-reject-btn"
+            onClick={doReject}
+            disabled={!canReject || busy !== null}
+            className="link"
+          >
+            {busy === "reject" ? "Rejecting…" : "Reject patch"}
+          </button>
+        )}
         <span className="link" aria-hidden="true" style={{ textDecoration: "none" }}>
           ·
         </span>

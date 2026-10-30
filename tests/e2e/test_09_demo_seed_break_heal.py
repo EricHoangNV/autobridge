@@ -1,7 +1,9 @@
-"""Demo seed / break / heal journeys (REQ-031 items 1-3) against the live stack.
+"""Demo seed / break / heal journeys (REQ-031 items 1-3, REQ-049 item 3) against the live stack.
 
-- seed: ``make demo-reset && make demo-seed`` leaves four baseline-synced
-  ``working`` connectors, 0 model tokens, nothing waiting.
+- seed: ``make demo-reset && make demo-seed`` leaves three baseline-synced
+  ``working`` connectors, 0 model tokens, nothing waiting (Harbor is not
+  seeded: deck 4 builds it from its wiki so the totals check comes from
+  the docs).
 - break: ``make demo-break SCENARIO=<id>`` injects exactly one fault (the
   single-call property is unit-tested; here the simulator shows the fault
   active and the break prints its one line).
@@ -51,7 +53,7 @@ def _active_scenario(sim_id: str) -> str | None:
 @pytest.mark.live
 @pytest.mark.timeout(600)
 def test_seed_end_state(e2e_stack: str) -> None:
-    """Seeded stack: four working connectors, 0 tokens, nothing waiting."""
+    """Seeded stack: three working connectors, 0 tokens, nothing waiting."""
     assert e2e_stack
     from bench.demo_seed import SEED_NAMES, run_seed  # noqa: PLC0415
     from tests.e2e.conftest import service_url  # noqa: PLC0415
@@ -167,10 +169,11 @@ def test_heal_clears_fias_link_faults(e2e_stack: str) -> None:
 @pytest.mark.live
 @pytest.mark.timeout(600)
 def test_break_semantic_opens_exactly_one_drift_and_repair(e2e_stack: str) -> None:
-    """REQ-031 owner check: one break → scheduled sync → exactly one drift + one repair.
+    """REQ-031 owner check, REQ-049 deck 4→5: one break → exactly one drift + one repair.
 
-    Harbor seeds from its reference release (money invariant included), so
-    ``gross_to_net`` breaks live: the scheduled sync Degrades on
+    Harbor is built from its wiki docs after the seed (deck 4: the totals
+    check comes from the documented ``meta.gross_sum``), baseline-synced
+    ``Complete``; then ``gross_to_net`` breaks live: the sync Degrades on
     money_invariant, the engine opens one ``SEMANTIC_VALUE_DRIFT`` and one
     escalated repair, and no second tick doubles them (dedupe). The heal in
     the finally clears the fault; the rows stay (retakes reset + reseed).
@@ -178,6 +181,12 @@ def test_break_semantic_opens_exactly_one_drift_and_repair(e2e_stack: str) -> No
     import time
 
     assert e2e_stack
+    from bench.demo import (  # noqa: PLC0415
+        _connector_id_from_calls,
+        _live_ensure_connector,
+        _step_live_ensure_active_release,
+        _step_live_sync_terminal,
+    )
     from bench.demo_break import run_break  # noqa: PLC0415
     from bench.demo_heal import run_heal  # noqa: PLC0415
     from bench.demo_seed import run_seed  # noqa: PLC0415
@@ -186,6 +195,28 @@ def test_break_semantic_opens_exactly_one_drift_and_repair(e2e_stack: str) -> No
     base_url = service_url("control", "")
     report = run_seed(base_url, 0)
     assert report["failed"] == 0, json.dumps(report["control_calls"][-3:], default=str)[:2000]
+    # Deck 4: Harbor from its wiki (docs build, not the reference release).
+    build_calls: list[dict[str, Any]] = []
+    ensure_calls = _live_ensure_connector(
+        base_url,
+        {
+            "name": "harborpms",
+            "vendor_docs_ref": "simulators/docs/harborpms.md",
+            "base_url": "http://sim-harbor:8000",
+            "credential_ref": "HARBOR_API_KEY",
+            "target_entities": ["Reservation", "FolioCharge"],
+        },
+    )
+    build_calls.extend(ensure_calls)
+    connector_id = _connector_id_from_calls(ensure_calls, "harborpms")
+    assert connector_id, "harborpms connector id from ensure calls"
+    release_id = _step_live_ensure_active_release(
+        base_url, connector_id, "simulators/docs/harborpms.md", build_calls,
+        spec_vocabulary="v1",
+    )
+    assert isinstance(release_id, str) and release_id, "harborpms docs build persisted a release"
+    baseline = _step_live_sync_terminal(base_url, connector_id, build_calls)
+    assert baseline.get("outcome") == "Complete", f"harborpms baseline sync: {baseline}"
     connectors = _control("GET", "/connectors")
     rows = connectors if isinstance(connectors, list) else connectors.get("connectors", [])
     harbor = next(r for r in rows if r["name"] == "harborpms")

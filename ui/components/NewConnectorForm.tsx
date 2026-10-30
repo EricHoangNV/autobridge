@@ -100,6 +100,14 @@ function BuildProgress({
   const success = result.success === true;
   const releaseId = typeof result.release_id === "string" ? result.release_id : null;
 
+  // REQ-049 item 2: when discovery added a money check from a total the
+  // docs describe, the build page names it (never invented silently).
+  const pageTotalDetail = trace
+    .filter((t) => String(t.stage ?? "") === "page_total_check" && typeof t.detail === "string")
+    .map((t) => String(t.detail))
+    .filter((d) => d.length > 0)
+    .join(" · ");
+
   const stages: Array<{ key: string; title: string; body: string }> = [
     {
       key: "docs",
@@ -114,11 +122,12 @@ function BuildProgress({
     {
       key: "draft",
       title: "Draft",
-      body: detail
-        ? draft
-          ? `spec v${String((draft.spec_version as string) ?? "?")} · ${Object.keys((draft.operations as object) ?? {}).length} operations`
-          : "no draft (refused)"
-        : `job ${jobState}…`,
+      body:
+        (detail
+          ? draft
+            ? `spec v${String((draft.spec_version as string) ?? "?")} · ${Object.keys((draft.operations as object) ?? {}).length} operations`
+            : "no draft (refused)"
+          : `job ${jobState}…`) + (pageTotalDetail ? ` — ${pageTotalDetail}` : ""),
     },
     {
       key: "probes",

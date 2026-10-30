@@ -435,4 +435,79 @@ describe("RepairDetailPage", () => {
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("model-usage-view")).toHaveTextContent("of a 131,072 budget");
   });
+
+  it("escalation with a model proposal shows the effect, the diff and Approve/Deny (REQ-049)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [
+        { level: 3, action: "model_escalation", reason: "L3 asked for a human decision", model_question: "Should the new behaviour stand?" },
+        { level: 4, action: "escalate", reason: "L3 asked for a human decision (gross_to_net)" },
+      ],
+      escalation_bundle: {
+        reason: "gross_to_net: semantic drift, no verified fix",
+        question: "Should the new behaviour stand?",
+        suggested_action: "manual review",
+        proposal: {
+          label: "Accept net",
+          effect: "Retarget the totals check to the page total.",
+          patch: [{ op: "replace", path: "/entities/Reservation/checks/2/compare_to", value: "$.total" }],
+        },
+      },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    // Question once, first, in the top box — plus the proposal's effect and diff.
+    expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("Should the new behaviour stand?");
+    expect(screen.getByTestId("escalation-proposal-top")).toHaveTextContent("Retarget the totals check");
+    expect(screen.getByTestId("escalation-proposal-top")).toHaveTextContent("/entities/Reservation/checks/2/compare_to");
+    // Two actions only: Approve with the model's label, and Deny.
+    expect(screen.getByTestId("repair-approve-proposal-btn")).toHaveTextContent("Approve: Accept net");
+    expect(screen.getByTestId("repair-deny-btn")).toHaveTextContent(/Deny: keep everything as-is/);
+    expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
+  });
+
+  it("escalation without a proposal keeps Reject and no Approve (REQ-049)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [{ level: 4, action: "escalate", reason: "no verified fix" }],
+      escalation_bundle: { reason: "no verified fix", question: "Which mapping is correct?", suggested_action: "pick one" },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.queryByTestId("repair-approve-proposal-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("repair-deny-btn")).not.toBeInTheDocument();
+    expect(screen.getByTestId("repair-reject-btn")).toBeInTheDocument();
+  });
+
+  it("approved escalation reads as a business decision, not a verified fix (REQ-049)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: "report-2",
+      candidate_patch: [],
+      ladder_trace: [
+        { level: 3, action: "model_escalation", reason: "L3 asked for a human decision", model_question: "Should the new behaviour stand?" },
+        { level: 4, action: "escalate", reason: "L3 asked for a human decision" },
+      ],
+      escalation_bundle: {
+        reason: "gross_to_net: semantic drift, no verified fix",
+        question: "Should the new behaviour stand?",
+        suggested_action: "manual review",
+        proposal: {
+          label: "Accept net",
+          effect: "Retarget the totals check.",
+          patch: [{ op: "replace", path: "/entities/Reservation/checks/2/compare_to", value: "$.total" }],
+        },
+      },
+      approval: { id: "ap-1", actor: "alice", decision: "approve", from_release_id: "r1", to_release_id: "r2", created_at: new Date().toISOString() },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Business decision by alice");
+    expect(screen.getByTestId("repair-decision-line")).not.toHaveTextContent("Fix ready: verified");
+  });
 });
