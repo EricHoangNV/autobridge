@@ -327,6 +327,8 @@ def _arm_facts(arm_result: Any) -> dict[str, Any]:
             "frontier_tokens": int(arm_result.get("frontier_tokens", 0) or 0),
             "cost_usd": arm_result.get("cost_usd"),
             "spec": arm_result.get("spec"),
+            "prompt": arm_result.get("prompt"),
+            "context_hash": arm_result.get("context_hash"),
         }
     return {
         "arm": str(getattr(arm_result, "arm", "unknown")),
@@ -337,6 +339,8 @@ def _arm_facts(arm_result: Any) -> dict[str, Any]:
         "frontier_tokens": int(getattr(arm_result, "frontier_tokens", 0) or 0),
         "cost_usd": getattr(arm_result, "cost_usd", None),
         "spec": getattr(arm_result, "spec", None),
+        "prompt": getattr(arm_result, "prompt", None),
+        "context_hash": getattr(arm_result, "context_hash", None),
     }
 
 
@@ -419,7 +423,12 @@ def score_trial(
             outcome=outcome,
             escalation_bundle=bundles.get(name),
         )
-        arm_scores[name] = scored.to_dict()
+        scored_dict = scored.to_dict()
+        # REQ-046: bench prompt provenance travels with the arm score.
+        prompt = facts.get("prompt")
+        scored_dict["prompt"] = dict(prompt) if isinstance(prompt, dict) else None
+        scored_dict["context_hash"] = facts.get("context_hash")
+        arm_scores[name] = scored_dict
 
     winner = _pick_winner(arm_scores)
     loss_notes: list[str] = []
@@ -561,6 +570,17 @@ def score_bench(
         scored_trials.append(score_trial(t, verify_fn, escalation_bundles=bundles.get(key)))
     agg = aggregate_scores(scored_trials)
     matched = sum(1 for t in scored_trials if t.get("matched"))
+    # REQ-046: bench prompt provenance — first-seen prompt ref per arm
+    # (id/version/content hash of the file prompt it rendered) plus the
+    # shared context hash the fair-context test asserted on.
+    prompts: dict[str, Any] = {}
+    context_hashes: dict[str, Any] = {}
+    for t in scored_trials:
+        for name, s in (t.get("arms") or {}).items():
+            if name not in prompts and isinstance(s, dict) and s.get("prompt") is not None:
+                prompts[name] = s.get("prompt")
+            if name not in context_hashes and isinstance(s, dict) and s.get("context_hash") is not None:
+                context_hashes[name] = s.get("context_hash")
     return {
         "generated_at": datetime.datetime.now(datetime.UTC).isoformat(),
         "seed": cfg_seed,
@@ -573,6 +593,8 @@ def score_bench(
         "heldout": heldout,
         "heldout_manifest_sha": heldout_manifest_sha,
         "leak_audit": leak_audit,
+        "prompts": prompts,
+        "context_hashes": context_hashes,
     }
 
 
@@ -617,6 +639,17 @@ def validate_scorecard_schema(scorecard: dict[str, Any]) -> None:
     # REQ-024 A1 optional leak-audit provenance (counts only, never secrets).
     if scorecard.get("leak_audit") is not None and not isinstance(scorecard["leak_audit"], dict):
         raise AssertionError("scorecard['leak_audit'] must be a dict")
+    # REQ-046 optional bench-prompt provenance (id/version/hash per arm).
+    if scorecard.get("prompts") is not None:
+        if not isinstance(scorecard["prompts"], dict):
+            raise AssertionError("scorecard['prompts'] must be a dict")
+        for arm_name, ref in scorecard["prompts"].items():
+            if not isinstance(ref, dict) or not all(
+                k in ref and isinstance(ref[k], str) for k in ("id", "version", "hash")
+            ):
+                raise AssertionError(f"scorecard prompts[{arm_name!r}] must carry id/version/hash strings")
+    if scorecard.get("context_hashes") is not None and not isinstance(scorecard["context_hashes"], dict):
+        raise AssertionError("scorecard['context_hashes'] must be a dict")
 
 
 def healthz() -> dict[str, str]:

@@ -361,16 +361,38 @@ def ablation_provider(prefer: str = "auto") -> Any:
 # ---------------------------------------------------------------------------
 
 
-def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None, docs_loader: Any | None = None) -> Any:
-    """Arm a (``frontier_oneshot``): the model alone, one prompt with docs.
+def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None, docs_loader: Any | None = None, case: AblationCase | None = None) -> Any:
+    """Arm a (``frontier_oneshot``): the model alone, one prompt with full context.
 
-    *docs_loader* scopes the prompt docs (default: the same single-vendor
-    docs file the engine arms read for the scenario — REQ-028). ``None``
-    keeps :func:`bench.one_shot.load_docs_text` fallback behavior.
+    REQ-046: the prompt is the file-based ``frontier_oneshot`` prompt
+    rendered over the shared context bundle (schema, capabilities,
+    different-vendor example, vendor docs, visible tests, answer format)
+    — exactly the context the engine has. *docs_loader* is kept for unit
+    tests that inject docs text; when given it takes the legacy path.
+    *case* overrides the scenario lookup (tests).
     """
+    from bench.context import build_bench_context  # noqa: PLC0415
     from bench.one_shot import run_one_shot_arm  # noqa: PLC0415
 
-    result = run_one_shot_arm(inputs, provider=provider or ablation_provider(), docs_loader=docs_loader)
+    if docs_loader is not None:
+        result = run_one_shot_arm(inputs, provider=provider or ablation_provider(), docs_loader=docs_loader)
+        return dataclasses.replace(result, arm="frontier_oneshot")
+    case_obj = case
+    if case_obj is None:
+        try:
+            case_obj = ablation_case_for_scenario(str(getattr(inputs, "scenario_id", "")))
+        except Exception:
+            case_obj = None
+    context = None
+    if case_obj is not None:
+        context = build_bench_context(
+            scenario_id=case_obj.scenario_id,
+            connector_id=case_obj.connector_id,
+            spec=case_obj.spec,
+            docs_ref=case_obj.docs_ref,
+            visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
+        )
+    result = run_one_shot_arm(inputs, provider=provider or ablation_provider(), context=context)
     # run_one_shot_arm labels arm="one_shot"; relabel to the ablation name.
     return dataclasses.replace(result, arm="frontier_oneshot")
 
@@ -404,11 +426,36 @@ def frontier_agent_driver() -> Any:
     return get_baseline_driver(kind)
 
 
-def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None) -> Any:
-    """Arm b (``frontier_agent``): the model as a coding agent with tools."""
+def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: AblationCase | None = None) -> Any:
+    """Arm b (``frontier_agent``): the model as a coding agent with tools.
+
+    REQ-046: the brief is the file-based ``frontier_agent`` prompt over
+    the shared context bundle, and the sandbox holds the same files the
+    engine has (schema, capabilities, different-vendor example, vendor
+    docs, visible tests); the brief names them. *case* overrides the
+    scenario lookup (tests).
+    """
+    from bench.context import build_bench_context  # noqa: PLC0415
     from bench.harness import run_baseline_arm  # noqa: PLC0415
 
-    return run_baseline_arm(inputs, driver=driver or frontier_agent_driver(), arm="frontier_agent")
+    case_obj = case
+    if case_obj is None:
+        try:
+            case_obj = ablation_case_for_scenario(str(getattr(inputs, "scenario_id", "")))
+        except Exception:
+            case_obj = None
+    context = None
+    if case_obj is not None:
+        context = build_bench_context(
+            scenario_id=case_obj.scenario_id,
+            connector_id=case_obj.connector_id,
+            spec=case_obj.spec,
+            docs_ref=case_obj.docs_ref,
+            visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
+        )
+    return run_baseline_arm(
+        inputs, driver=driver or frontier_agent_driver(), arm="frontier_agent", context=context
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -648,6 +695,25 @@ def run_engine_arm(
             except Exception:
                 cost = None
         patch = result.candidate_patch
+        # REQ-046: the engine arm holds the same shared context bundle the
+        # frontier arms render (schema, capabilities, different-vendor
+        # example, docs, visible tests) — record its hash so the
+        # fair-context test proves all arms agree. Engine arms render no
+        # bench prompt (deterministic ladder; model calls use the engine's
+        # own l2/l3 file prompts), so prompt stays None.
+        engine_context_hash: str | None = None
+        try:
+            from bench.context import build_bench_context as _build_ctx  # noqa: PLC0415
+
+            engine_context_hash = _build_ctx(
+                scenario_id=case.scenario_id,
+                connector_id=case.connector_id,
+                spec=case.spec,
+                docs_ref=case.docs_ref,
+                visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
+            ).content_hash()
+        except Exception:
+            engine_context_hash = None
         return ArmResult(
             arm=ablation,
             inputs=inputs,
@@ -670,6 +736,8 @@ def run_engine_arm(
                 "ladder_level_reached": result.ladder_level_reached,
                 "rule_id": result.rule_id,
             },
+            prompt=None,
+            context_hash=engine_context_hash,
         )
     except Exception as exc:
         elapsed_ms = (time.monotonic() - start) * 1000.0
@@ -762,13 +830,15 @@ def run_ablation_trial(
 
     case_obj = case if case is not None else ablation_case_for_scenario(scenario_id)
     prov = provider if provider is not None else ablation_provider()
-    from bench.one_shot import vendor_docs_loader  # noqa: PLC0415
+    # REQ-046: bench prompts load once at bench start (file edit + rerun
+    # to change); every arm renders the shared context from bench.context.
+    from bench.bench_prompts import ensure_bench_prompts_loaded  # noqa: PLC0415
+
+    ensure_bench_prompts_loaded()
 
     defaults: dict[str, Callable[[Any], Any]] = {
-        "frontier_oneshot": lambda inp: run_frontier_oneshot_arm(
-            inp, provider=prov, docs_loader=vendor_docs_loader(case_obj.docs_ref)
-        ),
-        "frontier_agent": lambda inp: run_frontier_agent_arm(inp),
+        "frontier_oneshot": lambda inp: run_frontier_oneshot_arm(inp, provider=prov, case=case_obj),
+        "frontier_agent": lambda inp: run_frontier_agent_arm(inp, case=case_obj),
         "engine_no_knowledge": lambda inp: run_engine_arm(inp, case_obj, ablation="engine_no_knowledge", provider=prov),
         "autobridge_cold": lambda inp: run_engine_arm(inp, case_obj, ablation="autobridge_cold", provider=prov),
         "autobridge_warm": lambda inp: run_engine_arm(
@@ -1172,6 +1242,19 @@ def run_ablation_harness(
     summary["trials"] = len(trials)
     summary["skipped_scenarios"] = sorted(skipped)
     summary["warm_provenance"] = warm_provenance(warm)
+    # REQ-046: bench prompt provenance on the summary too (id/version/hash
+    # per frontier arm, shared context hash agreement across all arms).
+    prompt_refs: dict[str, Any] = {}
+    context_by_arm: dict[str, Any] = {}
+    for trial in trials:
+        for name, res in trial.results.items():
+            if name not in prompt_refs and getattr(res, "prompt", None) is not None:
+                prompt_refs[name] = res.prompt
+            if name not in context_by_arm and getattr(res, "context_hash", None) is not None:
+                context_by_arm[name] = res.context_hash
+    summary["prompts"] = prompt_refs
+    summary["context_hashes"] = context_by_arm
+    summary["context_matched"] = len(set(context_by_arm.values())) <= 1
     return trials, grades, summary
 
 

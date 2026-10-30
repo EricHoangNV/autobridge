@@ -75,6 +75,26 @@ def render_scorecard_markdown(scorecard: dict[str, Any]) -> str:
     else:
         lines.append("Heldout seeds: n/a — dev run on public YAML seeds")
     lines.append(_leak_audit_line(scorecard.get("leak_audit")))
+    prompts = scorecard.get("prompts")
+    if isinstance(prompts, dict) and prompts:
+        lines.append("Bench prompts (file id/version/content-hash per arm):")
+        for arm_name in sorted(prompts):
+            ref = prompts[arm_name]
+            if isinstance(ref, dict):
+                lines.append(
+                    f"- {arm_name}: {ref.get('id')} v{ref.get('version')} ({ref.get('hash', '')[:12]})"
+                )
+            else:
+                lines.append(f"- {arm_name}: {ref}")
+    else:
+        lines.append("Bench prompts: not recorded (pre-REQ-046 scorecard)")
+    context_hashes = scorecard.get("context_hashes")
+    if isinstance(context_hashes, dict) and context_hashes:
+        hashes = {v for v in context_hashes.values() if isinstance(v, str)}
+        if len(hashes) == 1:
+            lines.append(f"Shared context hash: all arms {next(iter(hashes))[:16]} (matched)")
+        else:
+            lines.append("Shared context hash: MISMATCH across arms (see trials)")
     lines.append("")
     lines.append("## Aggregate metrics (per arm)")
     lines.append("")

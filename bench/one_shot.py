@@ -375,6 +375,7 @@ class OneShotGenerator:
         max_tokens: int = 4096,
         model: str | None = None,
         docs_loader: Any | None = None,
+        bench_context: Any | None = None,
     ) -> None:
         if provider is None:
             from autobridge.llm.provider import FakeProvider  # noqa: PLC0415
@@ -386,6 +387,9 @@ class OneShotGenerator:
         self.max_tokens = max_tokens
         self.model_name = model or getattr(provider, "frontier_model", None) or getattr(provider, "small_model", None) or "one-shot-fallback"
         self.docs_loader = docs_loader
+        #: REQ-046 shared context bundle; when given the prompt is the
+        #: file-based ``frontier_oneshot`` prompt rendered over it.
+        self.bench_context = bench_context
         self.calls: list[dict[str, Any]] = []
 
     def _resolve_model(self) -> str:
@@ -404,6 +408,18 @@ class OneShotGenerator:
             return None
 
     def _build_prompt(self, inputs: Any) -> str:
+        # REQ-046 full-context path: file-based prompt over the shared
+        # bundle (schema, capabilities, different-vendor example, docs,
+        # visible tests, answer format).
+        if self.bench_context is not None:
+            from bench.bench_prompts import ensure_bench_prompts_loaded  # noqa: PLC0415
+            from bench.context import (  # noqa: PLC0415
+                messages_to_text,
+                render_frontier_oneshot_prompt,
+            )
+
+            ensure_bench_prompts_loaded()
+            return messages_to_text(render_frontier_oneshot_prompt(inputs, self.bench_context))
         docs_text: str | None = None
         if self.docs_loader is not None:
             try:
@@ -516,6 +532,7 @@ def run_one_shot_arm(
     max_tokens: int = 4096,
     model: str | None = None,
     docs_loader: Any | None = None,
+    context: Any | None = None,
 ) -> Any:  # ArmResult
     """Run the one-shot arm for *inputs* via ``LLMProvider``.
 
@@ -529,6 +546,13 @@ def run_one_shot_arm(
     ``inputs.wall_clock_s`` when no explicit ``budget`` is given — this
     preserves the harness matched-budget contract (same ceilings for all
     arms).
+
+    REQ-046: when *context* (a :class:`bench.context.BenchContext`) is
+    given, the prompt is the file-based ``frontier_oneshot`` prompt
+    rendered over the shared bundle (schema, capabilities,
+    different-vendor example, docs, visible tests, answer format), and
+    the result records the bench prompt ref + context hash. Without it
+    the legacy inline prompt is used (unit tests / synthetic paths).
     """
     from bench.harness import ArmResult  # noqa: PLC0415
 
@@ -552,7 +576,24 @@ def run_one_shot_arm(
         max_tokens=max_tokens,
         model=model,
         docs_loader=docs_loader,
+        bench_context=context,
     )
+    if context is not None:
+        try:
+            from bench.bench_prompts import (  # noqa: PLC0415
+                bench_prompt_ref,
+                ensure_bench_prompts_loaded,
+            )
+
+            ensure_bench_prompts_loaded()
+            prompt_ref = bench_prompt_ref("frontier_oneshot")
+            context_hash = context.content_hash()
+        except Exception:
+            prompt_ref = None
+            context_hash = None
+    else:
+        prompt_ref = None
+        context_hash = None
     start = time.monotonic()
     try:
         result = gen.generate(inputs)
@@ -574,8 +615,10 @@ def run_one_shot_arm(
             model=result.model,
             spec=spec_payload,
             tool_calls=0,
-            model_calls=1,
-        )
+                model_calls=1,
+                prompt=prompt_ref,
+                context_hash=context_hash,
+            )
     except Exception as exc:
         elapsed = (time.monotonic() - start) * 1000.0
         # Unwrap to give user the budget reason when present
@@ -653,6 +696,29 @@ def run_trial_with_one_shot(
     if not scenario_id:
         raise ValueError("scenario_id must be non-empty")
 
+    # REQ-046: bench prompts load once at bench start (file edit + rerun).
+    # The default one-shot runner renders the shared context bundle when
+    # the scenario has an ablation case (all real bench scenarios do);
+    # synthetic ids keep the legacy path (unit tests).
+    from bench.bench_prompts import ensure_bench_prompts_loaded  # noqa: PLC0415
+
+    ensure_bench_prompts_loaded()
+    default_context: Any | None = None
+    try:
+        from bench.ablation import ablation_case_for_scenario  # noqa: PLC0415
+        from bench.context import build_bench_context  # noqa: PLC0415
+
+        _case = ablation_case_for_scenario(scenario_id)
+        default_context = build_bench_context(
+            scenario_id=scenario_id,
+            connector_id=_case.connector_id,
+            spec=_case.spec,
+            docs_ref=_case.docs_ref,
+            visible_tests=tuple(cfg.visible_tests),
+        )
+    except Exception:
+        default_context = None
+
     inputs = make_trial_inputs(cfg, scenario_id, trial)
     inputs_a = inputs
     inputs_b = make_trial_inputs(cfg, scenario_id, trial)
@@ -686,9 +752,9 @@ def run_trial_with_one_shot(
     else:
         # Provider override for harness wiring
         if one_shot_provider is not None:
-            os_result = run_one_shot_arm(inputs_c, provider=one_shot_provider)
+            os_result = run_one_shot_arm(inputs_c, provider=one_shot_provider, context=default_context)
         else:
-            os_result = run_one_shot_arm(inputs_c)
+            os_result = run_one_shot_arm(inputs_c, context=default_context)
 
     return TrialResult(
         scenario_id=scenario_id,

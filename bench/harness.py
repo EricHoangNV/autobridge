@@ -401,6 +401,11 @@ class ArmResult:
     model: str | None = None
     # Optional produced spec (baseline / one_shot)
     spec: dict[str, Any] | None = None
+    # REQ-046: bench prompt reference (id/version/hash of the file prompt
+    # the arm rendered) + content hash of the shared context bundle every
+    # arm received. None on legacy/synthetic paths (unit tests).
+    prompt: dict[str, str] | None = None
+    context_hash: str | None = None
 
     @property
     def total_tokens(self) -> int:
@@ -427,6 +432,8 @@ class ArmResult:
             "error": self.error,
             "model": self.model,
             "inputs_fingerprint": self.inputs.fingerprint(),
+            "prompt": dict(self.prompt) if self.prompt is not None else None,
+            "context_hash": self.context_hash,
         }
         # Include budget fields for audit
         d["budget"] = {
@@ -770,6 +777,8 @@ def run_baseline_arm(
     driver: Any | None = None,
     prompt_template: str | None = None,
     arm: str = "baseline",
+    context: Any | None = None,
+    sandbox_dir: str | None = None,
 ) -> ArmResult:
     """Run the baseline arm for *inputs* via the coding-agent CLI driver.
 
@@ -781,23 +790,66 @@ def run_baseline_arm(
     (as refs), visible tests and token/wall-clock ceiling as AutoBridge —
     the harness proves this via :func:`assert_inputs_equal` before calling
     either runner.
+
+    REQ-046: when *context* (a :class:`bench.context.BenchContext`) is
+    given, the prompt is the file-based agent brief
+    (``config/prompts/bench/frontier_agent.md``) rendered over the shared
+    context, and the sandbox holds the same files the engine has (written
+    by :func:`bench.context.write_agent_sandbox` to *sandbox_dir* or a
+    temp dir; the driver runs with ``cwd`` there). The result records the
+    bench prompt ref and the context hash. Without *context* the legacy
+    one-paragraph brief is used (unit tests / synthetic paths only).
     """
     start = time.monotonic()
-    # Build a prompt that references the same docs/sandbox as AutoBridge.
-    # The prompt itself is not part of the budget, but the token ceiling
-    # and wall-clock are enforced by the driver.
-    _ = prompt_template  # reserved for W8.2 prompt engineering
-    prompt = (
-        f"Build a ConnectorSpec YAML for scenario {inputs.scenario_id!r} "
-        f"using vendor docs at {inputs.docs_ref!r} (volume {inputs.docs_volume!r}). "
-        f"Target sandbox: {inputs.sandbox_url!r} image {inputs.sandbox_image!r}. "
-        f"Credential refs: {', '.join(inputs.credential_refs)}. "
-        f"Visible tests: {', '.join(inputs.visible_tests)}. "
-        f"Token ceiling: {inputs.token_ceiling}, wall-clock: {inputs.wall_clock_s}s."
-    )
+    # REQ-046 full-context path: file-based brief over the shared bundle,
+    # sandbox files on disk, driver runs with cwd there. prompt_template is
+    # honored as an override only on the legacy path below.
+    prompt_ref: dict[str, str] | None = None
+    context_hash: str | None = None
+    cwd: Any | None = None
+    _temp_dir: Any | None = None
+    if context is not None:
+        from bench.bench_prompts import bench_prompt_ref, ensure_bench_prompts_loaded  # noqa: PLC0415
+        from bench.context import (  # noqa: PLC0415
+            messages_to_text,
+            render_frontier_agent_brief,
+            write_agent_sandbox,
+        )
+
+        ensure_bench_prompts_loaded()
+        prompt = messages_to_text(render_frontier_agent_brief(inputs, context))
+        prompt_ref = bench_prompt_ref("frontier_agent")
+        context_hash = context.content_hash()
+        import tempfile  # noqa: PLC0415
+
+        if sandbox_dir is not None:
+            write_agent_sandbox(context, sandbox_dir)
+            cwd = sandbox_dir
+        else:
+            _temp_dir = tempfile.TemporaryDirectory(prefix="bench-agent-")  # noqa: SIM115
+            write_agent_sandbox(context, _temp_dir.name)
+            cwd = _temp_dir.name
+    else:
+        # Legacy one-paragraph brief (unit tests / synthetic paths only —
+        # real bench runs always pass a context; see bench.context).
+        _ = prompt_template  # reserved for W8.2 prompt engineering
+        prompt = (
+            f"Build a ConnectorSpec YAML for scenario {inputs.scenario_id!r} "
+            f"using vendor docs at {inputs.docs_ref!r} (volume {inputs.docs_volume!r}). "
+            f"Target sandbox: {inputs.sandbox_url!r} image {inputs.sandbox_image!r}. "
+            f"Credential refs: {', '.join(inputs.credential_refs)}. "
+            f"Visible tests: {', '.join(inputs.visible_tests)}. "
+            f"Token ceiling: {inputs.token_ceiling}, wall-clock: {inputs.wall_clock_s}s."
+        )
+        if prompt_template is not None:
+            prompt = prompt_template
     try:
         if driver is not None:
-            result = driver.run(prompt)
+            try:
+                result = driver.run(prompt, cwd=cwd)
+            except TypeError:
+                # Drivers whose run() takes no cwd (very old fakes).
+                result = driver.run(prompt)
             elapsed = (time.monotonic() - start) * 1000.0
             # Extract usage from ClaudeCliResult shape
             input_tokens = getattr(getattr(result, "usage", None), "input_tokens", 0) or 0
@@ -821,6 +873,8 @@ def run_baseline_arm(
                 model=getattr(result, "model", None) or "baseline-claude",
                 tool_calls=int(getattr(result, "tool_calls", 0) or 0),
                 model_calls=1,
+                prompt=prompt_ref,
+                context_hash=context_hash,
             )
         elapsed = (time.monotonic() - start) * 1000.0
         return ArmResult(
@@ -848,12 +902,24 @@ def run_baseline_via_llm_provider(
     inputs: HarnessInputs,
     *,
     provider: Any | None = None,
+    context: Any | None = None,
 ) -> ArmResult:
     """Fallback baseline: route through :class:`LLMProvider` directly.
 
     This is the documented fallback when the headless CLI is unavailable
     (plan §9).  It uses the same token/wall-clock ceiling via
     :class:`Budget` so the harness self-test still holds.
+
+    REQ-046: the model gets the full shared context, not a one-liner.
+    When *context* (a :class:`bench.context.BenchContext`) is given it is
+    rendered through the file-based one-shot prompt
+    (``config/prompts/bench/frontier_oneshot.md``). Otherwise the context
+    is resolved from the scenario's ablation case (all real bench
+    scenarios have one); only unknown/synthetic scenario ids with no
+    ablation case keep the legacy minimal prompt (unit tests). The
+    ablation never calls this function — it drives
+    :func:`run_baseline_arm` with the OpenCode/fake driver — but any
+    direct caller now gets the same fair context either way.
     """
     start = time.monotonic()
     if provider is None:
@@ -875,12 +941,52 @@ def run_baseline_via_llm_provider(
             max_wall=inputs.wall_clock_s,
         )
         budgeted = BudgetedProvider(provider, budget)
-        prompt = f"Build a ConnectorSpec for {inputs.scenario_id!r} from {inputs.docs_ref!r}"
+        prompt_ref: dict[str, str] | None = None
+        context_hash: str | None = None
+        resolved = context
+        if resolved is None:
+            try:
+                from bench.ablation import (  # noqa: PLC0415
+                    ablation_case_for_scenario,
+                )
+                from bench.context import build_bench_context  # noqa: PLC0415
+
+                case = ablation_case_for_scenario(inputs.scenario_id)
+                resolved = build_bench_context(
+                    scenario_id=inputs.scenario_id,
+                    connector_id=case.connector_id,
+                    spec=case.spec,
+                    docs_ref=inputs.docs_ref,
+                    visible_tests=tuple(inputs.visible_tests),
+                )
+            except Exception:
+                resolved = None
+        if resolved is not None:
+            from bench.bench_prompts import (  # noqa: PLC0415
+                bench_prompt_ref,
+                ensure_bench_prompts_loaded,
+            )
+            from bench.context import (  # noqa: PLC0415
+                messages_to_text,
+                render_frontier_oneshot_prompt,
+            )
+
+            ensure_bench_prompts_loaded()
+            messages = render_frontier_oneshot_prompt(inputs, resolved)
+            prompt = messages_to_text(messages)
+            prompt_ref = bench_prompt_ref("frontier_oneshot")
+            context_hash = resolved.content_hash()
+            purpose = "bench-baseline-full-context"
+        else:
+            # Unknown/synthetic scenario with no ablation case (unit tests):
+            # legacy minimal prompt, labelled as such.
+            prompt = f"Build a ConnectorSpec for {inputs.scenario_id!r} from {inputs.docs_ref!r}"
+            purpose = "bench-baseline"
         comp = budgeted.complete(
             [{"role": "user", "content": prompt}],
             max_tokens=min(inputs.token_ceiling, 4096),
             tier="frontier",
-            purpose="bench-baseline",
+            purpose=purpose,
         )
         elapsed = (time.monotonic() - start) * 1000.0
         return ArmResult(
@@ -894,6 +1000,8 @@ def run_baseline_via_llm_provider(
             model="baseline-llm-fallback",
             tool_calls=len(comp.tool_calls),
             model_calls=1,
+            prompt=prompt_ref,
+            context_hash=context_hash,
         )
     except Exception as exc:
         elapsed = (time.monotonic() - start) * 1000.0

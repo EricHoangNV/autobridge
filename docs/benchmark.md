@@ -99,7 +99,9 @@ driver = get_baseline_driver("one_shot")   # OneShotGenerator (secondary control
 
 Helpers:
 
-* `build_one_shot_prompt(inputs, docs_text)` — prompt contains scenario/trial/seed, docs Volume/ref, sandbox URL/image/runtime_target, credential refs (names only), visible tests, token/wall ceilings, plus loaded vendor docs text; no secret values (DIRECTIVES §6).
+* `build_one_shot_prompt(inputs, docs_text)` — legacy inline prompt (unit tests / synthetic paths): scenario/trial/seed, docs Volume/ref, sandbox URL/image/runtime_target, credential refs (names only), visible tests, token/wall ceilings, plus loaded vendor docs text; no secret values (DIRECTIVES §6).
+* `bench/context.py:build_bench_context(...)` — the shared fair-context bundle every real arm renders (REQ-046, below): the ConnectorSpec JSON Schema, the vocabulary version's capabilities, a complete example spec for a *different* vendor, the vendor docs, the visible tests and the answer format.
+* File prompts `config/prompts/bench/frontier_oneshot.md` + `frontier_agent.md` (same loader/front-matter as the engine prompts in `config/prompts/`; loaded once at bench start via `bench/bench_prompts.py`; edit + rerun to change) — the one-shot arm renders the first, the agent arm the second; the scorecard records each arm's prompt id/version/content-hash.
 * `extract_spec_yaml(text)` — normalizes fenced ```yaml ... ``` or bare YAML.
 * `try_parse_spec_yaml(text)` — returns dict when valid YAML, else None.
 * `load_docs_text(inputs)` — reads docs file/dir from mounted volume (max 120k chars).
@@ -216,6 +218,40 @@ propose/escalate, or a driver result), NOT a verifier pass. Whether a
 produced patch verifies is judged only by the verifier (`verified`,
 `correct_escalation` in the grades). A row with `ran: true` and
 `verified_completion: 0` is a loss, published as one.
+
+### Fair context — what each arm is given (REQ-046)
+
+A starved baseline is a strawman judges will spot, so both frontier arms
+receive **exactly the context the engine has** for the same case, and a
+unit test (`tests/unit/test_autobridge_bench_fair_context.py`) asserts
+all three agree by content hash. The shared bundle
+(`bench/context.py:BenchContext`) is:
+
+* the ConnectorSpec JSON Schema (the exact format answers validate against),
+* the vocabulary version's capabilities for the case's `spec_version`
+  (methods, auth, pagination, protocols, transforms, checks, stop
+  conditions, L1 rules — the same `capabilities_payload()` the
+  `/capabilities` endpoint serves, so the bundle can never drift from
+  what the engine reports it knows),
+* **one complete example spec for a different vendor** — never the
+  case's own vendor and never held-out material (`generated/`
+  reference specs only; anything under `verifier/` is refused),
+* the vendor docs for the case (full text in the hash; rendered prompts
+  truncate per the shared budget with a loud marker, never raising the
+  ceiling for one arm),
+* the visible tests, and a precise answer format
+  (`ConnectorSpec YAML only`).
+
+The agent arm's sandbox holds the same files
+(`schema.json`, `capabilities.json`, `example_spec.yaml`,
+`vendor_docs.md`, `visible_tests.json`, `task.md`, written by
+`write_agent_sandbox`), and its file-based brief names them. The
+`run_baseline_via_llm_provider` fallback (plan §9, not used by the
+ablation — it drives `run_baseline_arm`) renders the same full context
+for real scenarios; only unknown/synthetic scenario ids with no
+ablation case keep the legacy one-liner (unit tests). Nothing from
+`verifier/` or hidden cases enters any arm — the context test scans
+every dev scenario's bundle for it, and the leak audit still passes.
 
 The learning curve (`run_learning_curve`, `experiments/learning_curve.md`)
 injects the same drift five times: the agent pays every repair; the

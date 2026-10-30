@@ -69,3 +69,23 @@ Nothing after this commit except the round/seeds it names: scenario set,
 arm definitions, metric definitions and the hypothesis are frozen. If the
 pipeline breaks on Nov 3, the breakage is published with the numbers, not
 patched around.
+
+## Amendment (REQ-046, 2026-10-30): fair context for the frontier arms
+
+What changed and why (published, not hidden): the owner audit found the
+frontier arms were starved — the one-shot prompt never showed the
+ConnectorSpec format (no schema, no example) while being validated
+against it, and the agent brief never guaranteed the schema/example
+were reachable. A starved baseline is a strawman, so before any
+rehearsal or the pre-registered run both frontier arms receive exactly
+the context the engine has for the same case: the ConnectorSpec JSON
+Schema, the vocabulary version's capabilities, one complete example
+spec for a different vendor (never the case's own, never held-out
+material), the vendor docs, the visible tests and a precise answer
+format. Prompts live in files under `config/prompts/bench/` (same
+loader/front-matter as the engine prompts; loaded at bench start; the
+scorecard records each arm's prompt id/version/hash), and a unit test
+asserts engine + both frontier arms share one context hash per case.
+Scenario set, metrics, budgets, hypothesis and the no-reroll rule are
+unchanged; only the frontier arms' inputs are fixed from starved to
+fair, in the engine's favor to remove, not add, an excuse.
