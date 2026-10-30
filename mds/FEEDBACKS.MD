@@ -5,10 +5,10 @@
 ### Security: Cycle 0 — (no review yet)
 - (awaiting first security review)
 
-### Code Review: Cycle 5 — PASS (2026-10-29)
-- Daily Directives Audit (diff `2cea2072..d2d9c9d2`): Cycle 4's AR-4-1…AR-4-4 are resolved in code and verified live on Compose (FIAS admin sidecar + 4 acceptance e2e green, admin-token demo default + boundary smoke, derived L3 gate count, deterministic FIAS tests 5× green); REQ-030…REQ-033 and REQ-039 claims re-verified. The audit fixed 4 Compose/local mode-split residuals itself (compose `${*_BASE_URL}` placeholders unresolved, seed address check hardcoded to Atlas, smoke token default, state-dependent approve-preview locator) and filed REQ-040 (unscoped newest-RepairRun re-fetch) and REQ-041 (test_s6 chart orphaned by REQ-032) — neither blocks the PASS: no trust-boundary, verifier-gate or secret rule is broken by them.
-- test coverage: PASS (`make test`: 2673 autobridge 90.55% + 134 verifier 91.49% + 409 simulators 90.48% + 192 UI, all ≥90%; margins on autobridge/simulators stay thin)
-- type safety / lint: PASS (`make lint` incl. import-linter contracts, `make typecheck`, `make ui-typecheck`, `make openapi-check` all green; `make up` + `make smoke` + `make demo` 8/8 live on Compose)
+### Code Review: Cycle 6 — PASS (2026-10-30)
+- Daily Directives Audit (diff `d2d9c9d2..8f1b2dca`, 89 commits REQ-040…REQ-059): Cycle 5's REQ-040/041 re-verified resolved; §§1–8 and plan §1 checked (verifier-gated business decisions never learned, no model call in a request/held transaction, honest dry-run, fair bench context, deterministic capability request). One finding, fixed by the audit itself: `bench/stack_mode.py`'s readyz probe resolved `localhost` via DNS, so a stale `.local/ACTIVE` made `make test` fail with 5 teardown errors — probe now uses the literal `127.0.0.1`; affected files pass with the marker planted. No new REQ filed; remaining items are owner keyed/live steps already tracked.
+- test coverage: PASS with thin margin (`make test`: 2903 passed, autobridge 90.10% ≥90% gate, UI 295 passed; the 5 pre-fix errors were the stale-marker probe above)
+- type safety / lint: PASS (`make lint` incl. import-linter contracts, `make typecheck`, `make ui-typecheck`, `make openapi-check` all green; live smoke/e2e not runnable in this sandbox — no stack up, reported not faked)
 
 ### Product Review: Cycle 0 — (no review yet)
 - (awaiting first product review)

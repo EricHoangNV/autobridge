@@ -3955,3 +3955,11 @@ Blank-slate demo: seed builds nothing (0 connectors · ready to build, readiness
 ## 2026-10-30 21:30 UTC — REQ-052 DONE (sbx1)
 
 Agent: opencode meta/muse-spark-1.3 (escalation). Frontier benchmark arms now make real, complete, gradable attempts: L3-sized output room everywhere with truncation labelled, agent model recorded from the run and checked against FRONTIER_MODEL, shared 600 s wall-clock, every frontier attempt verifier-graded with verdict-or-label rows, per-arm quality counts + per-scenario frontier_detail, learning curve on the live agent (fake refused) with per-repeat verification, one-shot cost from the published Muse prices. Gates: lint + typecheck + 391 bench tests + test_07 e2e green; full make test 2903 pass / 90.13% (4 pre-existing stale-.local/ACTIVE teardown errors in demo tests, proven unrelated). Remaining: owner keyed `BENCH_TRIALS=1 make bench-ablation` run, then close.
+
+## 2026-10-30 — Daily Directives Audit Cycle 6 (sbx1)
+Agent: opencode meta/muse-wonder-1.0 (escalation)
+Scope: `d2d9c9d2..8f1b2dca` (89 commits, REQ-040…REQ-059) against DIRECTIVES §§1–8 and plan §1.
+- Sections validated §1–§8: PASS. One finding, fixed in the audit: `bench/stack_mode.py` readyz probe resolved `localhost` via DNS, breaking `make test` (5 teardown errors) whenever a stale `.local/ACTIVE` marker was present; probe now uses literal `127.0.0.1` (77 targeted tests pass with marker planted).
+- Gaps deferred: none new. Remaining items are owner keyed/live steps already tracked (REQ-021/024/025/027/028/052 verify, P1.W10.3, deferred REQ-051).
+- Loops: lint/typecheck/ui-typecheck/openapi-check green; UI 295 passed; coverage autobridge 90.10% (thin). Live smoke/e2e not runnable in this sandbox (no stack up) — reported, not faked.
+- Overall: Phase 1 exit gates remain met in code; readiness unchanged pending owner keyed benchmark/demo verification.

@@ -126,6 +126,11 @@ def probe_runtime_mode(
     None when nothing answers or the body is unexpected. Never raises.
     """
     base = (control_url or os.environ.get(CONTROL_URL_ENV_VAR, "") or DEFAULT_CONTROL_URL).rstrip("/")
+    # Probe via the literal loopback IP: resolving "localhost" performs a
+    # real DNS lookup, which unit tests forbid (tests/unit/conftest.py) and
+    # which made `make test` fail whenever a stale .local/ACTIVE marker
+    # sent a unit test through this probe.
+    base = base.replace("://localhost", "://127.0.0.1", 1)
     try:
         with urllib.request.urlopen(base + "/readyz", timeout=timeout_s) as response:
             body = json.loads(response.read().decode("utf-8"))
