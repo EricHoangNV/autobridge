@@ -42,7 +42,7 @@ totals check) → deck 5 `gross_to_net` → ■ Error, the model's question **an
    fix": the verifier confirms r2 syncs and its checks pass but makes no claim that the new meaning is correct, and
    the verifier's trap list (`verifier/invalid_patches.py`) still rejects the same change when the engine tries to
    apply it on its own. Business decisions are **not** learned into L0 knowledge (next time, it asks again); the
-   Knowledge page may list them as "decisions" separately. Rollback to r1 stays available.
+   Knowledge page **must** show them (see 9). Rollback to r1 stays available.
 7. **Tests:** docs with a documented total → built spec has the check; docs without → none; Harbor seed absent;
    prompt contains no scenario wording; parse escalate+proposal / escalate-only / malformed proposal; proposal patch
    apply-check + retry; Approve creates r2 labelled business decision, no knowledge entry; Deny keeps Error; UI tests for
@@ -51,7 +51,15 @@ totals check) → deck 5 `gross_to_net` → ■ Error, the model's question **an
    proposed a valid "accept the vendor's change" and the labels it chose (a real proposal can vary; if it proposes
    nothing, deck 5 ends Red with the question — no fallback option); then the Aside UI run Green → Red → Approve → Green
    with screenshots.
-
+9. **Every human decision is recorded and shown (owner: "we need to show that we record all decisions").** The
+   Knowledge page gets a **Decisions** section, separate from learned knowledge, listing every operator decision on
+   every connector, newest first: approve (fix → release, and whether it was learned), approve of a model proposal
+   (**business decision**, not learned), deny/reject (kept as-is, contact the vendor), rollback (from → to). Each row:
+   when, who, connector, what was decided in one line (e.g. "HarborPMS amounts are net from now on"), the repair and
+   release it touched (links). Source of truth is the existing approval/rejection/rollback rows (no second store); a
+   reset clears them like the rest. The demo ends by returning to `/knowledge`: learned fixes (Atlas `page_to_cursor`,
+   Meridian cursor rename) on one side, the decisions (including Harbor's) listed. Tests cover each decision kind and
+   that a business decision never appears as learned knowledge.
 
 ### REQ-048 — Deck 5 on screen: an escalation reads as a question, not a disabled Approve (2026-10-30)
 Status: DONE (sbx1 2026-10-30 -- escalate top box, single question, header count, in-flight calls, one-repair token cell, budget= L3 cap on row/ledger/page + BudgetExhausted label, funnel deriving, docs rewritten; full gates green unkeyed + make demo 8/8; owner check: Aside run + screenshots)
