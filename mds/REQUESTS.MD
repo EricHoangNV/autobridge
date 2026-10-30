@@ -2,7 +2,38 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 16:50): **REQ-049, then REQ-050.**
+Owner priority (2026-10-30 17:30): **REQ-049, then REQ-050, then REQ-051.**
+
+### REQ-051 — Deck 7: the PABX layout change is detected and repaired live (rename_field, Approve), not only in-process (2026-10-30)
+Status: OPEN
+Owner review (2026-10-30). The scenario definition (`simulators/scenarios/fias_record_layout_change.yaml`) says: "The
+connector detects the drift from the handshake LR and repairs the FolioCharge mapping with a JSON Patch through the
+ladder (L1 rule, 0 frontier tokens), then postings flow again." On the live stack that never happens:
+- the edge agent re-handshakes and stores the announced layouts (`edge/fias_host.py` ~600–614) and sends them in its
+  heartbeat (`edge/poller.py` ~265, "so the cloud can detect a firmware layout change");
+- the relay stores the heartbeat detail (`edge/relay.py` ~490) and **no live code reads the layouts**;
+- the detection exists (`drift/event_feeds.py` `detect_feed_field_rename`: mapped `TA` gone, `TM` new → rename) but
+  only `bench/demo.py` step 8 calls it, in-process.
+So after `make demo-break SCENARIO=fias_record_layout_change` the live connector keeps reading `TA` while the PABX
+sends `TM`, and `docs/demo.md`'s "the edge agent absorbs the firmware change, no repair needed" is wrong.
+Fix (wire what exists; no new detection logic, no model call):
+1. **Investigate first and report in BUILD-NOTES:** on today's live stack, what happens to the PABX postings' amounts
+   after the layout change (dropped silently with the sync still `Complete`, or the sync degrades)?
+2. **Live detection:** when the agent's announced layout reaches control, compare it against the connector's active
+   spec with `detect_feed_field_rename` (generic: any event-feed connector, not FIAS by name). A mapped wire id that
+   disappeared → a drift (`SCHEMA_RENAME`) recorded against the connector, with the before/after layout as evidence;
+   the connector goes ▲ Degrading ("the PABX layout changed: TA → TM").
+3. **Live repair through the normal ladder:** the drift queues the repair job (REQ-042 path): L0 → **L1
+   `rename_field`** → JSON Patch on the FolioCharge mapping (`$.TA` → `$.TM`), verified, **0 model calls**, "fix ready".
+   Same repair row, page, and Approve flow as deck 3 (REQ-043/048 views).
+4. **Approve** → release r2 → the cloud maps postings with `TM` → the connector is **● Working** again, amounts
+   present; the fix is learned like any approved fix (REQ-049 decisions list shows the approval).
+5. Docs: `README.md` / `docs/demo.md` deck 7 describe break → ▲ layout changed → repair at L1 → Approve → ●, and drop
+   "the agent absorbs it".
+Tests: heartbeat with a renamed layout → drift + repair queued; no drift when only fields are added; the L1 patch
+applies and postings after r2 carry the amount; e2e on the live stack (break → repair → approve → Working, amounts
+present). Gates unkeyed + `make demo` 8/8. Owner check after: the Aside UI rehearsal of deck 7.
+
 
 ### REQ-050 — Decks 6 and 7: build Meridian live (v1 refused, v2 connects) and the PABX live from its spec (2026-10-30)
 Status: OPEN
