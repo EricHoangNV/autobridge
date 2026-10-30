@@ -39,6 +39,48 @@ _VENDOR_TARGETS = {
 }
 
 
+#: What each break does, in words a viewer reads off the presenter's terminal
+#: (all caps, printed as a banner before the UI reacts). One entry per
+#: catalogue scenario; ``test_every_scenario_has_a_headline`` keeps it complete.
+HEADLINES: dict[str, str] = {
+    "rate_limit_429": "THE VENDOR STARTS THROTTLING: 429 TOO MANY REQUESTS",
+    "transient_503": "THE VENDOR GOES DOWN FOR A MOMENT: 503 SERVICE UNAVAILABLE",
+    "cloud_slow": "THE CLOUD LINK TURNS SLOW",
+    "token_expired": "THE API TOKEN EXPIRES",
+    "token_revoked": "THE VENDOR REVOKES OUR API TOKEN",
+    "endpoint_removed": "THE VENDOR REMOVES AN ENDPOINT WE USE",
+    "rename_guest_id": "THE VENDOR RENAMES A FIELD: GUEST ID",
+    "nested_path_shift": "THE VENDOR MOVES A FIELD DEEPER INTO THE RESPONSE",
+    "offset_to_cursor": "THE VENDOR CHANGES PAGINATION FROM OFFSETS TO CURSORS",
+    "page_to_cursor": "THE VENDOR CHANGES PAGINATION FROM PAGE NUMBERS TO CURSORS",
+    "cursor_repeat_token": "THE VENDOR'S CURSOR STARTS REPEATING ITSELF",
+    "fias_record_layout_change": "PABX FIRMWARE UPDATE: THE POSTING RECORD LAYOUT CHANGES (TA BECOMES TM)",
+    "gross_to_net": "AMOUNTS SWITCH FROM GROSS TO NET: SAME FIELDS, VALID NUMBERS, 10% LOWER",
+    "status_vocab_change": "THE VENDOR CHANGES ITS STATUS CODES",
+    "tz_boundary_shift": "THE VENDOR MOVES ITS BUSINESS-DAY CUTOFF FROM 04:00 TO 02:00",
+    "duplicate_late_records": "THE VENDOR RE-SENDS OLD RECORDS LATE, AS DUPLICATES",
+    "invalid_patch_trap": "AMOUNTS CHANGE MEANING, AND THE OBVIOUS FIX IS A TRAP",
+    "meridian_cursor_renamed": "THE VENDOR RENAMES ITS PAGING CURSOR FIELD",
+    "meridian_state_renamed": "THE VENDOR RENAMES ITS RESERVATION STATE FIELD",
+    "fias_link_resync": "THE PABX LINK DROPS AND MUST RE-SYNC",
+    "fias_ack_timeout": "THE PABX STOPS ACKNOWLEDGING OUR MESSAGES",
+    "agent_restart_inflight": "THE ON-PREMISE AGENT IS KILLED MID-FLIGHT AND RESTARTS",
+    "fias_duplicate_records": "THE PABX SENDS THE SAME POSTINGS TWICE",
+    "fias_oversize_frame": "THE PABX SENDS AN OVERSIZED FRAME",
+    "fias_record_flood": "THE PABX FLOODS US WITH POSTINGS",
+    "session_lost_with_command": "THE PABX SESSION DROPS WHILE A COMMAND IS IN FLIGHT",
+    "stale_command": "A STALE COMMAND ARRIVES AFTER THE FACT",
+}
+
+
+def render_banner(record: dict[str, Any]) -> str:
+    """The banner ``make demo-break`` prints first: who breaks, and how, in caps."""
+    headline = HEADLINES.get(str(record.get("scenario")), str(record.get("scenario", "")).upper())
+    who = str(record.get("display") or record.get("target") or "").upper()
+    rule = "=" * max(len(headline), len(who) + 7)
+    return "\n".join(["", rule, f"BREAK {who}:", headline, rule, ""])
+
+
 class BreakError(ValueError):
     """Unusable break request (unknown scenario or target)."""
 
@@ -157,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     record = run_break(args.control_url, args.scenario, resolved,
                        args.seed if args.seed is not None else None)
+    if record.get("ok"):
+        print(render_banner(record), flush=True)
     print(render_line(record), flush=True)
     return 0 if record.get("ok") else 1
 

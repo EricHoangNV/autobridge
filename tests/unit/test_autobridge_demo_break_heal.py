@@ -60,6 +60,22 @@ def test_break_supported_scenarios_equal_catalogue() -> None:
     assert len(supported_scenarios()) > 20
 
 
+def test_every_scenario_has_a_headline() -> None:
+    """Every break prints a plain-English, all-caps headline for the viewer."""
+    from bench.demo_break import HEADLINES, supported_scenarios
+
+    assert set(HEADLINES) == set(supported_scenarios())
+    assert all(h == h.upper() for h in HEADLINES.values())
+
+
+def test_break_banner_names_target_and_action() -> None:
+    from bench.demo_break import render_banner
+
+    banner = render_banner({"ok": True, "scenario": "page_to_cursor", "display": "AtlasPMS"})
+    assert "BREAK ATLASPMS:" in banner
+    assert "FROM PAGE NUMBERS TO CURSORS" in banner
+
+
 def test_break_defaults_per_vendor() -> None:
     from bench.demo_break import default_target_for
 
