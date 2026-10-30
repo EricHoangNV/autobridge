@@ -2,7 +2,42 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 19:40): **REQ-053, then REQ-054.** Do not start REQ-051 or REQ-052 until the owner says so.
+Owner priority (2026-10-30 21:30): **REQ-055 next.** Do not start REQ-051 or REQ-052 until the owner says so.
+
+### REQ-055 — Deck 5 keyed: Approve fails on the migrated DB; the dry-run passed for the wrong reason; repair-page contradictions (2026-10-30)
+Status: OPEN
+Owner keyed check (2026-10-30, host `make local-up`, origin/main 5955fcca, fresh reset+seed, Aside at 1440): deck 4
+(Harbor from the wiki, "check added from the docs") and deck 5 up to the decision work — repairing view live, first
+proposal failed the dry-run, one retry, second passed ("tested on the current records: the checks pass"), 2 calls,
+17,405 tokens, $0.064. Then:
+1. **Approve fails (blocker).** `POST /repairs/{id}/approve-proposal` → 422 `sqlite3.IntegrityError: CHECK constraint
+   failed: ck_repair_runs_ck_repair_runs_decision … SET decision='approved'`. Root cause: the live DB (`alembic_version
+   0014`) still has `CONSTRAINT ck_repair_runs_ck_repair_runs_decision CHECK (decision IN ('propose', 'escalate',
+   'reject', 'climbing', 'failed'))` — migration `0013_repair_terminal_decisions.py` drops/creates
+   `ck_repair_runs_decision`, but the naming convention stored it under the **doubled** name, so the real constraint was
+   never replaced. Fix the migration path so every existing DB (old name, doubled name) ends with the 0013 value set; add
+   a migration test that upgrades a DB created at each earlier revision and then approves a proposal and a fix; make
+   the unit/e2e tests that approve run against the **migrated** schema, not only `create_all`. Check every other
+   `CheckConstraint` touched by migrations for the same doubled-name problem.
+2. **The dry-run passed for the wrong reason.** The second proposal was `replace
+   /entities/Reservation/checks/3/compare_to "$.total"`, labelled "Repoints money invariant to net total". In Harbor,
+   `total` is the **record count** (the wiki: "The `total` field is always included"; 30 per page), not a net total.
+   It passed because `runtime/checks.py` ~427–440 silently ignores a `compare_to` value that looks like a count — so the
+   change actually switched the totals comparison **off** while claiming to repoint it. Fix: a check that is skipped
+   or cannot evaluate during the dry-run counts as **not passed** ("the patched check did not run: `$.total` is not a
+   money sum"); the retry message says so (generic wording). The proposal shows, next to the change, what the docs say
+   the target field means. If the honest outcome is "stop comparing against the gross total", the model must propose
+   that explicitly (e.g. `remove` the check) and the label must say so — the engine still never writes the proposal.
+3. **Repair-page contradictions (REQ-054 layout):** (a) while climbing, the headline subtitle says "Approve to ship it
+   as release r2" — no action wording until a decision exists; (b) chapter 3 says "No patch proposed — nothing
+   verified to apply" while the rail shows the tested proposal — chapter 3 must show the proposal (Now → Proposed) when
+   one exists; (c) the verifier tile says "not_verified · no patch to verify (the model escalated)" next to a tested
+   proposal — show the dry-run result there; (d) in the rail, **Deny** and **Roll back** render as a tall one-word-per-
+   line column (squeezed beside the release-id input) — lay them out readably at 1440 and 1280.
+Tests: migration upgrade from each revision then approve; dry-run marks a skipped check as failed; UI tests for (a)–(d).
+Gates unkeyed + `make demo` 8/8. **Owner check after (keyed, through the browser):** decks 4 → 5: break → tested
+proposal whose label matches what it does → Approve → verifying sync Complete → Harbor ● Working.
+
 
 ### REQ-054 — Repair page rearranged around the story (UI only, no new API) (2026-10-30)
 Status: DONE (sbx1 2026-10-30 -- story layout live: headline+storyline, 3 chapters, decision rail per state, Now-from-spec op tables, fact-once, reduced-motion; ui 244 pass, typecheck+lint clean, make demo 8/8 + test_06 8/8 live unkeyed; owner check: Aside screenshots at 1440 deck 3 + deck 5)
