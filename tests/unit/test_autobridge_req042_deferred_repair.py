@@ -257,7 +257,9 @@ def test_deferred_sync_returns_fast_while_model_call_runs_behind(
         worker.join(timeout=30.0)
     assert not worker.is_alive(), "background repair did not finish"
     assert not errors, errors
-    assert sleepy.calls == 1, "exactly one live model call"
+    # REQ-053 item 6: the decoy fails the dry-run, so the climb spends its
+    # one retry with the exact error, then drops to question-only.
+    assert sleepy.calls == 2, "initial L3 attempt plus the one dry-run retry"
 
     with factory() as s:
         runs = s.execute(select(RepairRun)).scalars().all()
@@ -268,7 +270,8 @@ def test_deferred_sync_returns_fast_while_model_call_runs_behind(
         l3 = next(t for t in run.ladder_trace if t["level"] == 3)
         assert l3["action"] in ("frontier_generate", "proposal_rejected")
         calls = s.execute(select(ModelCall)).scalars().all()
-        assert len(calls) == 1, "the sleep call is in the ledger"
+        # REQ-053 item 6: initial attempt + the one dry-run retry.
+        assert len(calls) == 2, "both sleep calls are in the ledger"
         assert int(run.model_usage.get("frontier_tokens", 0)) > 0
         job = s.get(Job, out["repair_job_id"])
         assert job is not None and job.state == "succeeded", job.state if job else None
@@ -317,7 +320,8 @@ def test_scheduler_pass_defers_live_climb_and_stays_responsive(
     finally:
         worker.join(timeout=30.0)
     assert not worker.is_alive()
-    assert sleepy.calls == 1
+    # REQ-053 item 6: initial attempt plus the one dry-run retry.
+    assert sleepy.calls == 2
     with factory() as s:
         runs = s.execute(select(RepairRun)).scalars().all()
         assert len(runs) == 1 and runs[0].decision == "escalate"
@@ -359,7 +363,8 @@ def test_two_deferred_repairs_finalize_on_their_own_rows(
     for t in threads:
         t.join(timeout=30.0)
     assert not any(t.is_alive() for t in threads)
-    assert sleepy.calls == 2
+    # REQ-053 item 6: each repair spends one retry on the dry-run failure.
+    assert sleepy.calls == 4
 
     with factory() as s:
         runs = {r.id: r for r in s.execute(select(RepairRun)).scalars().all()}

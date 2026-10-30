@@ -53,6 +53,13 @@ class DemoTarget:
     api_style: str = ""
     public_port: int = 0
     docs_source: str = ""
+    # REQ-053 items 8/9: what a UI build pre-fills when the operator starts
+    # from this simulator's docs — the same credential_ref and entities
+    # ``make demo`` sends, so the UI path stops leaving them at form
+    # defaults (wrong credential ⇒ Blocked before any vendor request).
+    # Env key NAMES only, never values (DIRECTIVES §6).
+    suggested_credential_ref: str = ""
+    suggested_target_entities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,6 +100,16 @@ def _optional_port(item: dict, key: str, where: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535:
         raise DemoTargetsError(f"{where}: {key!r} must be a TCP port number")
     return value
+
+
+def _optional_entities(item: dict, key: str, where: str) -> list[str]:
+    """Optional entity-name list: missing/blank is allowed, else non-empty strings."""
+    value = item.get(key, [])
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+        raise DemoTargetsError(f"{where}: {key!r} must be a list of non-empty strings")
+    return [v.strip() for v in value]
 
 
 def load_demo_targets(path: str | Path | None = None) -> DemoTargets:
@@ -157,6 +174,10 @@ def load_demo_targets(path: str | Path | None = None) -> DemoTargets:
                 api_style=_optional_text(item, "api_style", where),
                 public_port=_optional_port(item, "public_port", where),
                 docs_source=_optional_text(item, "docs_source", where),
+                suggested_credential_ref=_optional_text(item, "suggested_credential_ref", where),
+                suggested_target_entities=tuple(
+                    _optional_entities(item, "suggested_target_entities", where)
+                ),
             )
         )
     alias_map = {t.id.lower(): t.id for t in entries}

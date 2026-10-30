@@ -17,7 +17,7 @@ const fetcher = async <T,>(path: string): Promise<T> => {
   return (await res.json()) as T;
 };
 
-export type RepairStatus = "fix ready" | "needs your decision" | "approved" | "applied" | "rejected" | "repairing";
+export type RepairStatus = "fix ready" | "needs your decision" | "approved" | "applied" | "rejected" | "rolled back" | "repairing";
 
 /**
  * Highest ladder level in a (possibly partial) trace; 0 when empty.
@@ -69,10 +69,15 @@ export function inFlightCallsOf(repair: RepairRunOut): number {
 
 /**
  * Live repair status (REQ-032 §2), from persisted rows only:
- * rejected (decision or reject approval) · applied (approved release is
- * active) · approved (approved but superseded) · fix ready (verified patch
- * waiting) · repairing (the climb is still running, REQ-043) ·
- * needs your decision (escalated, failed, or still climbing without a row).
+ * rejected (decision or reject approval) · rolled back (decision) ·
+ * applied (approved release is active) · approved (approved but superseded) ·
+ * fix ready (verified patch waiting) · repairing (the climb is still
+ * running, REQ-043) · needs your decision (escalated, failed, or still
+ * climbing without a row).
+ *
+ * REQ-053 item 3: the decision is the source of truth — the server moves
+ * it terminal on every approval, so status reads the decision first and
+ * the approval row second (they agree; the decision wins).
  */
 export function repairStatus(
   repair: RepairRunOut,
@@ -80,10 +85,13 @@ export function repairStatus(
   connectorByDrift: Map<string, string>,
 ): RepairStatus {
   if (repair.decision === "reject") return "rejected";
+  if (repair.decision === "rolled_back") return "rolled back";
   const approval = repair.approval;
   if (approval?.decision === "reject") return "rejected";
-  if (approval?.decision === "approve" && approval.to_release_id) {
-    const applied = Object.values(activeReleaseByConnector).some((id) => id === approval.to_release_id);
+  if (repair.decision === "approved" || approval?.decision === "approve") {
+    const toRelease = approval?.to_release_id ?? null;
+    const applied =
+      toRelease !== null && Object.values(activeReleaseByConnector).some((id) => id === toRelease);
     return applied ? "applied" : "approved";
   }
   // REQ-043: a running repair is neither ready nor waiting — it is

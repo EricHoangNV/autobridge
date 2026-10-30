@@ -458,6 +458,8 @@ export default function RepairDetailPage({ params }: PageProps) {
   })();
   // REQ-049 item 5: the model's proposed change rides the escalation
   // bundle (label/effect/patch) — the Approve button and the diff read it.
+  // REQ-053 item 6: the dry-run result rides with it, shown beside the
+  // proposal ("tested on the current records: the checks pass").
   const modelProposal = (() => {
     const raw = (repair.escalation_bundle as Record<string, unknown> | null)?.["proposal"];
     if (!raw || typeof raw !== "object") return null;
@@ -468,9 +470,22 @@ export default function RepairDetailPage({ params }: PageProps) {
       label: typeof rec["label"] === "string" && rec["label"].trim() ? rec["label"] : "Approve",
       effect: typeof rec["effect"] === "string" ? rec["effect"] : "",
       patch,
+      dryRun: typeof rec["dry_run"] === "string" && rec["dry_run"].trim() ? rec["dry_run"] : null,
     };
   })();
 
+  // REQ-053 item 6: the dry-run pass rides the proposing rung (written
+  // by the detect-layer gate), shown with the offered candidate patch.
+  const candidateDryRun = (() => {
+    const entries = (repair.ladder_trace ?? []).filter(
+      (e) => typeof e["level"] === "number" && (e["level"] as number) === repair.ladder_level_reached,
+    );
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const note = entries[i]["dry_run"];
+      if (typeof note === "string" && note.trim()) return note;
+    }
+    return null;
+  })();
   // REQ-048 item 6: the frontier budget that applies to this repair — the
   // row stamps it at write time; the ledger repeats it.
   const frontierBudget = (() => {
@@ -546,6 +561,11 @@ export default function RepairDetailPage({ params }: PageProps) {
                 <p>
                   The model&apos;s proposed change: <b>{modelProposal.effect || modelProposal.label}</b>
                 </p>
+                {modelProposal.dryRun ? (
+                  <p data-testid="proposal-dry-run" className="mt-1 text-xs text-ink-2">
+                    {modelProposal.dryRun}
+                  </p>
+                ) : null}
                 <div className="mt-2">
                   <PatchDiff candidatePatch={modelProposal.patch as never} title="Proposed change" />
                 </div>
@@ -785,6 +805,11 @@ export default function RepairDetailPage({ params }: PageProps) {
             <p data-testid="patch-touches" className="mb-2 font-mono text-xs text-ink-2">
               touches: {touchedSections.join(", ") || "—"} · everything else in the spec stays unchanged
             </p>
+            {repair.decision === "propose" && candidateDryRun ? (
+              <p data-testid="patch-dry-run" className="mb-2 font-mono text-xs text-ink-2">
+                {candidateDryRun}
+              </p>
+            ) : null}
             <PatchDiff candidatePatch={repair.candidate_patch as never} />
             <details className="mt-2">
               <summary className="cursor-pointer text-xs text-ink-2 hover:text-ink hover:underline">

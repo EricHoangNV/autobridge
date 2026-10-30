@@ -3389,6 +3389,24 @@
           "public_port": {
             "title": "Public Port",
             "type": "integer"
+          },
+          "suggested_credential_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Credential Ref"
+          },
+          "suggested_target_entities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suggested Target Entities",
+            "type": "array"
           }
         },
         "required": [
@@ -3718,6 +3736,117 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VocabularyCheckRequest": {
+        "description": "Pre-creation vocabulary gate (REQ-053 item 7): the check runs before\nany connector is created. A refused build creates no connector; the\nattempt is recorded by name so the later connector shows it as history.",
+        "properties": {
+          "docs_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Provenance label only; a check with only docs_path is 422 \u2014 send docs_text (or docs_url)",
+            "title": "Docs Path"
+          },
+          "docs_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Inline docs content",
+            "title": "Docs Text"
+          },
+          "docs_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "URL to fetch docs from",
+            "title": "Docs Url"
+          },
+          "name": {
+            "description": "Intended connector name (history key)",
+            "title": "Name",
+            "type": "string"
+          },
+          "spec_vocabulary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "v1",
+                  "v2",
+                  "v3"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spec Vocabulary"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "VocabularyCheckRequest",
+        "type": "object"
+      },
+      "VocabularyCheckResponse": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Refusal reason (deterministic, 0 model calls)",
+            "title": "Reason"
+          },
+          "refused": {
+            "description": "True when the vocabulary cannot express the docs: no connector was created",
+            "title": "Refused",
+            "type": "boolean"
+          },
+          "suggested_vocabulary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Vocabulary to build with instead, when refused",
+            "title": "Suggested Vocabulary"
+          },
+          "vocabulary": {
+            "description": "Vocabulary that was checked",
+            "title": "Vocabulary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refused",
+          "vocabulary"
+        ],
+        "title": "VocabularyCheckResponse",
         "type": "object"
       }
     },
@@ -4181,6 +4310,107 @@
         "summary": "Create Connector",
         "tags": [
           "connectors"
+        ]
+      }
+    },
+    "/connectors/vocabulary-check": {
+      "post": {
+        "description": "Pre-creation vocabulary gate (REQ-053 item 7).\n\nRuns the same deterministic docs \u2192 classify \u2192 vocabulary-guard path\nthe build runs (0 model calls, no network beyond an optional docs_url\nfetch), before any connector is created. A refused vocabulary creates\nno connector and no build: the attempt (name, vocabulary, reason) is\nrecorded by name so the later connector built under the same name\nshows the earlier refusal as history. Anything else (docs that parse\nbut fail later, or docs that compile) is not a refusal \u2014 the build\nitself reports those, on its own connector.",
+        "operationId": "vocabulary_check_connectors_vocabulary_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VocabularyCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VocabularyCheckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Malformed request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Missing or invalid control token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Vocabulary Check",
+        "tags": [
+          "jobs"
         ]
       }
     },

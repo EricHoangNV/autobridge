@@ -331,6 +331,25 @@ class BuildRequest(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class VocabularyCheckRequest(BaseModel):
+    """Pre-creation vocabulary gate (REQ-053 item 7): the check runs before
+    any connector is created. A refused build creates no connector; the
+    attempt is recorded by name so the later connector shows it as history."""
+
+    name: str = Field(description="Intended connector name (history key)")
+    docs_text: str | None = Field(default=None, description="Inline docs content")
+    docs_url: str | None = Field(default=None, description="URL to fetch docs from")
+    docs_path: str | None = Field(default=None, description="Provenance label only; a check with only docs_path is 422 — send docs_text (or docs_url)")
+    spec_vocabulary: Literal["v1", "v2", "v3"] | None = Field(default=None)
+
+
+class VocabularyCheckResponse(BaseModel):
+    refused: bool = Field(description="True when the vocabulary cannot express the docs: no connector was created")
+    reason: str | None = Field(default=None, description="Refusal reason (deterministic, 0 model calls)")
+    vocabulary: str = Field(description="Vocabulary that was checked")
+    suggested_vocabulary: str | None = Field(default=None, description="Vocabulary to build with instead, when refused")
+
+
 class BuildResponse(BaseModel):
     job_id: str
     build_run_id: str
@@ -518,6 +537,10 @@ class SimulatorInfo(BaseModel):
     live: bool
     active_scenario: str | None = None
     connectors: list[SimulatorConnectorRef] = Field(default_factory=list)
+    # REQ-053 items 8/9: what a UI build pre-fills when the operator starts
+    # from this simulator's docs (env key name only, never a value — §6).
+    suggested_credential_ref: str | None = None
+    suggested_target_entities: list[str] = Field(default_factory=list)
 
 
 class SimulatorsOut(BaseModel):

@@ -188,7 +188,13 @@ def _hypothesis_evidence(session: Any, run_id: str) -> dict[str, Any]:
 
 
 def test_live_semantic_break_climbs_with_funnel_and_l3_attempt(monkeypatch: Any) -> None:
-    """Break -> Degraded -> the repair carries the funnel + 1 L3 attempt."""
+    """Break -> Degraded -> the repair carries the funnel + L3 attempt(s).
+
+    REQ-053 item 6: the live model's hallucinated wire field
+    (``$.net_amount`` is not in the response) fails the dry-run on the
+    break's records: one retry with the exact error, then the proposal is
+    dropped and the repair stands on the question alone — never offered.
+    """
     import autobridge.llm.provider as provider_mod
     from autobridge.engine.detect_repair import detect_and_repair_after_sync
     from autobridge.repair.knowledge import KnowledgeCache
@@ -222,14 +228,12 @@ def test_live_semantic_break_climbs_with_funnel_and_l3_attempt(monkeypatch: Any)
         by_level = {t["level"]: t for t in run.ladder_trace}
         assert by_level[2]["action"] == "l3_skipped" or by_level[2]["action"] == "l2_skipped"
         l3 = by_level[3]
-        assert l3["action"] in ("frontier_generate", "proposal_rejected")
-        assert l3.get("proposal") == [
-            {
-                "op": "replace",
-                "path": "/entities/Reservation/fields/total_amount/path",
-                "value": "$.net_amount",
-            }
-        ]
+        assert l3["action"] == "proposal_rejected"
+        assert l3.get("proposal") is None
+        # The hallucinated wire field makes the re-mapped records fail the
+        # money check: dropped after the one retry, never offered.
+        assert "dry-run" in ((l3.get("proposal_dropped") or "") + (l3.get("reason") or ""))
+        assert "money_invariant" in ((l3.get("proposal_dropped") or "") + (l3.get("reason") or ""))
         # The exact prompt rides on the rung: make record-frontier replays
         # these messages live to capture the recording replay mode needs.
         assert isinstance(l3.get("messages"), list) and len(l3["messages"]) == 2
@@ -244,18 +248,19 @@ def test_live_semantic_break_climbs_with_funnel_and_l3_attempt(monkeypatch: Any)
         assert stages[0]["count"] == 6
         assert stages[2]["ids"] == ["amount:amount:net", "amount:total_amount:net"]
         assert stages[3]["ids"] == ["amount:total_amount:net"]
-        # The L3 call lands in the ModelCall ledger (live, proposal outcome).
+        # Both L3 calls land in the ModelCall ledger (initial + one retry).
         calls = (
             s.execute(select(ModelCall).where(ModelCall.run_id == run.id))
             .scalars()
             .all()
         )
-        assert len(calls) == 1
-        assert calls[0].tier == "frontier"
-        assert calls[0].mode == "live"
-        assert calls[0].outcome == "proposal"
-        # The unreachable verifier is recorded as evidence, never raised —
-        # the escalation stands with its operator question.
+        assert len(calls) == 2
+        assert {c.tier for c in calls} == {"frontier"}
+        assert {c.mode for c in calls} == {"live"}
+        # Initial attempt and retry both ended rejected (dry-run).
+        assert {c.outcome for c in calls} == {"proposal_rejected"}
+        # The dry-run drop is recorded as evidence, never raised — the
+        # escalation stands with its operator question.
         verifs = [
             r
             for r in s.execute(
@@ -268,7 +273,7 @@ def test_live_semantic_break_climbs_with_funnel_and_l3_attempt(monkeypatch: Any)
             if r.kind == "verification"
         ]
         assert len(verifs) == 1
-        assert "unreachable" in str(verifs[0].payload["verdict"]["reason"])
+        assert "dry-run" in str(verifs[0].payload["verdict"]["reason"])
         assert run.escalation_bundle is not None
         s.commit()
 

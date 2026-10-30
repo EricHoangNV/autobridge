@@ -112,16 +112,23 @@ def _find_undecided_open_drift(
         return None, None
     decided = (
         session.execute(
-            _select(Approval).where(Approval.repair_run_id == repair.id)
+            _select(Approval)
+            .where(Approval.repair_run_id == repair.id)
+            .order_by(Approval.created_at.desc())
         )
         .scalars()
         .first()
     )
-    if decided is not None:
-        # Approved/rejected/rolled back: the operator decided, so a new
-        # detection is a new incident (e.g. the inject-again leg after an
-        # approval) — never dedupe onto a decided repair.
+    if decided is not None and decided.decision != "rollback":
+        # Approved/rejected: the operator decided, so a new detection is
+        # a new incident (e.g. the inject-again leg after an approval) —
+        # never dedupe onto a decided repair.
         return None, None
+    # No approval yet, or the latest approval is a rollback (manual or the
+    # automatic one after a failed verifying sync, REQ-053 item 6): the fix
+    # was reverted, so a re-detection of the same open drift re-uses the
+    # original drift + repair instead of opening a second escalation.
+    return drift, repair
     return drift, repair
 
 
@@ -327,6 +334,7 @@ def _submit_deferred_semantic_repair(
     prepared: dict[str, Any],
     signals: list[Any],
     delta: Any | None,
+    dry_run_fault: dict[str, Any] | None = None,
 ) -> str:
     """Queue the semantic climb as a background repair job (REQ-042).
 
@@ -355,6 +363,9 @@ def _submit_deferred_semantic_repair(
             "hypotheses_json": hyps_json,
             "hypothesis_stages": list(prepared.get("stages") or []),
             "l3_evidence": dict(prepared.get("evidence") or {}),
+            # REQ-053 item 6: the background climb judges L3 proposals on
+            # the break's records — no new vendor call from the job.
+            "dry_run_fault": dry_run_fault,
         },
     )
 
@@ -463,6 +474,14 @@ def detect_and_repair_after_sync(
         verifier_url=verifier_url,
         knowledge_cache=knowledge_cache,
     )
+    # REQ-053 item 6: judge a deterministic proposal on the break's
+    # records before offering it — a failing patch never reaches Approve.
+    result, dry_error = _gate_proposal_on_fault_records(
+        session,
+        spec_dict=spec_dict,
+        summary=summary,
+        result=result,
+    )
     candidate_release_id, gate_error = _finalize_proposal(
         session,
         connector_id=connector_id,
@@ -471,6 +490,8 @@ def detect_and_repair_after_sync(
         result=result,
         verifier_url=verifier_url,
     )
+    if gate_error is None and dry_error is not None:
+        gate_error = dry_error
     out: dict[str, Any] = {
         "drift_found": True,
         "outcome": opened["outcome"],
@@ -571,6 +592,9 @@ def _detect_open(
     * ``pending`` — an open drift with a queued/running repair job but no
       repair row yet (REQ-042 deferred repair in flight); ``out`` names
       the drift and the job.
+    * ``rolled_back`` — the sync was the verifying sync for an approval and
+      still failed: automatic rollback ran (REQ-053 item 6); ``out`` names
+      the rollback, and the original repair stays the one open item.
     * ``open`` — ``signals``, ``classification``, ``delta`` and ``outcome``
       for the caller to persist a drift and repair (inline or queued).
     """
@@ -578,6 +602,32 @@ def _detect_open(
     from autobridge.drift.signals import signals_from_sync
 
     outcome = summary.get("outcome") if isinstance(summary, dict) else None
+    # REQ-053 item 6: a still-failing verifying sync rolls back first —
+    # the approved change did not fix the drift, so no new drift/repair
+    # is opened for this sync; the original repair stays the open item.
+    rolled = _maybe_rollback_verifying_sync(
+        session,
+        connector_id=connector_id,
+        release_id=release_id,
+        summary=summary if isinstance(summary, dict) else None,
+    )
+    if rolled is not None:
+        return {
+            "status": "rolled_back",
+            "out": {
+                "drift_found": False,
+                "outcome": outcome,
+                "rolled_back": rolled,
+                "reason": rolled["reason"],
+                "repair_run_id": rolled["repair_run_id"],
+                "decision": "escalate",
+                "rule_id": None,
+                "ladder_level_reached": None,
+                "model_usage": {},
+                "candidate_release_id": None,
+                "gate_error": None,
+            },
+        }
     if not _summary_has_responses(summary if isinstance(summary, dict) else {}):
         # No vendor response, no drift evidence: a Blocked connectivity
         # failure stays the sync's own outcome (recorded on the SyncRun),
@@ -698,6 +748,185 @@ def _detect_open(
         "classification": classification,
         "delta": delta,
     }
+
+
+def _maybe_rollback_verifying_sync(
+    session: Any,
+    *,
+    connector_id: str,
+    release_id: str,
+    summary: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Automatic rollback when a verifying sync still fails (REQ-053 item 6).
+
+    A sync that lands ``Degraded``/``Blocked`` *on a release created by an
+    approved repair* is the verifying sync for that approval — the approved
+    change did not fix the drift (e.g. the model proposed a wire field the
+    vendor never sends). The engine rolls back to the pre-approval release
+    at once, re-opens the original repair as the one open escalation (never
+    a second repair for the same open drift), and reports the rollback so
+    the caller skips drift/repair creation for this sync.
+
+    The rollback is labelled on the repair row (bundle note, no proposal
+    offered) and as a ``rollback`` approval (Decisions page). Fail-closed
+    guards: no approval, no pre-approval release, or a sync that never
+    reached the vendor (nothing judges the patch) all return ``None`` and
+    detection proceeds normally.
+    """
+    from autobridge.control.models import Approval, ConnectorRelease, RepairRun  # noqa: PLC0415
+
+    if not isinstance(summary, dict) or summary.get("outcome") == "Complete":
+        return None
+    if not _summary_has_responses(summary):
+        return None
+    release = session.get(ConnectorRelease, release_id)
+    if release is None:
+        return None
+    provenance_id = getattr(release, "provenance_repair_run_id", None)
+    if not provenance_id:
+        return None
+    latest = (
+        session.execute(
+            _select(Approval)
+            .where(Approval.repair_run_id == provenance_id)
+            .order_by(Approval.created_at.desc())
+        )
+        .scalars()
+        .first()
+    )
+    if latest is None or latest.decision != "approve" or not latest.from_release_id:
+        return None
+    target = session.get(ConnectorRelease, latest.from_release_id)
+    if target is None or target.connector_id != connector_id:
+        return None
+    from autobridge.engine.releases import rollback_release  # noqa: PLC0415
+
+    outcome = str(summary.get("outcome"))
+    unmet = summary.get("unmet_criteria")
+    criteria = ", ".join(str(c) for c in unmet) if isinstance(unmet, list) and unmet else outcome
+    try:
+        new_release, approval = rollback_release(
+            session,
+            connector_id=connector_id,
+            target_release_id=latest.from_release_id,
+            actor="engine",
+            repair_run_id=provenance_id,
+            # The original escalation stays the one open item — never a
+            # second escalation for the same open drift.
+            reopen_as="escalate",
+        )
+        session.flush()
+    except Exception:
+        return None
+    run = session.get(RepairRun, provenance_id)
+    note = (
+        f"verifying sync on r{getattr(release, 'version', '?')} {outcome} ({criteria}); "
+        f"automatic rollback to r{getattr(target, 'version', '?')} — the question stands, no patch offered"
+    )
+    if run is not None:
+        bundle = run.escalation_bundle if isinstance(run.escalation_bundle, dict) else {}
+        question = bundle.get("question") if isinstance(bundle.get("question"), str) else None
+        run.escalation_bundle = {
+            **bundle,
+            "reason": note,
+            "question": question or "The approved fix failed its verifying sync — which change is correct?",
+            "proposal": None,
+            "verifying_sync_failed": {
+                "release_version": getattr(release, "version", None),
+                "outcome": outcome,
+                "unmet_criteria": list(unmet) if isinstance(unmet, list) else [],
+                "rolled_back_to_version": getattr(target, "version", None),
+                "rollback_release_id": new_release.id,
+                "rollback_approval_id": approval.id,
+            },
+        }
+        run.candidate_patch = None
+        session.flush()
+    return {
+        "rolled_back": True,
+        "repair_run_id": provenance_id,
+        "from_release_id": release_id,
+        "to_release_id": new_release.id,
+        "rollback_approval_id": approval.id,
+        "outcome": outcome,
+        "unmet_criteria": list(unmet) if isinstance(unmet, list) else [],
+        "reason": note,
+    }
+
+
+def _gate_proposal_on_fault_records(
+    session: Any,
+    *,
+    spec_dict: dict[str, Any],
+    summary: dict[str, Any] | None,
+    result: Any,
+) -> tuple[Any, str | None]:
+    """Dry-run a deterministic proposal on the faulted records (REQ-053 item 6).
+
+    The semantic climb judges model proposals inside the ladder; the
+    deterministic path proposes here, so the same judgement runs at the
+    detect layer, on the break's sync summary (no new vendor call). A
+    passing proposal is offered unchanged. A failing one is dropped and
+    the repair becomes a question-only escalation — the persisted row is
+    rewritten the same way, so the repair page never offers the bad patch.
+    Returns ``(result, dry_run_error_or_None)``.
+    """
+    from dataclasses import replace as _replace  # noqa: PLC0415
+
+    from autobridge.repair.escalation import escalation_for_no_fix  # noqa: PLC0415
+
+    if result.decision != "propose" or not result.candidate_patch or not result.repair_run_id:
+        return result, None
+    from autobridge.control.models import RepairRun  # noqa: PLC0415
+    from autobridge.repair.dryrun import build_dry_run_fault, dry_run_proposal  # noqa: PLC0415
+
+    try:
+        fault = build_dry_run_fault(summary if isinstance(summary, dict) else None)
+        ok, detail = dry_run_proposal(spec_dict, list(result.candidate_patch), fault)
+    except Exception as exc:  # noqa: BLE001 — judgement failure is row data
+        ok, detail = False, f"dry-run errored: {exc}"
+    if ok:
+        # Record the pass on the proposing rung: the repair page shows it
+        # with the offered patch ("tested on the current records: ...").
+        # Deep-copy first: the loaded JSON shares dict objects with the
+        # attribute state, so an in-place edit would compare equal and
+        # never mark the row dirty.
+        import copy as _copy  # noqa: PLC0415
+
+        row = session.get(RepairRun, result.repair_run_id)
+        if row is not None:
+            trace = _copy.deepcopy(row.ladder_trace or [])
+            for entry in reversed(trace):
+                if isinstance(entry, dict) and entry.get("level") == result.ladder_level_reached:
+                    entry["dry_run"] = "tested on the current records: the checks pass"
+                    break
+            row.ladder_trace = trace
+            session.flush()
+        return result, None
+    reason = f"proposal failed dry-run on the current records: {detail} — no patch offered"
+    bundle = escalation_for_no_fix(
+        reason,
+        evidence_ids=list(result.evidence_ids or []),
+        question="The proposed fix failed its dry-run on the current records — which change is correct?",
+    )
+    row = session.get(RepairRun, result.repair_run_id)
+    if row is not None:
+        row.decision = "escalate"
+        row.candidate_patch = None
+        row.escalation_reason = reason
+        row.escalation_bundle = bundle.to_dict()
+        session.flush()
+    return (
+        _replace(
+            result,
+            decision="escalate",
+            candidate_patch=None,
+            rule_id=None,
+            escalation_reason=reason,
+            escalation_bundle=bundle,
+        ),
+        detail,
+    )
 
 
 def _persist_drift(
@@ -841,6 +1070,7 @@ def detect_after_sync(
         import json as _json  # noqa: PLC0415
 
         from autobridge.repair.controller import prepare_semantic_inputs  # noqa: PLC0415
+        from autobridge.repair.dryrun import build_dry_run_fault  # noqa: PLC0415
 
         prepared = prepare_semantic_inputs(
             spec=spec_dict,
@@ -848,6 +1078,10 @@ def detect_after_sync(
             summary=summary if isinstance(summary, dict) else None,
             sync_run_id=sync_run_id,
         )
+        try:
+            dry_fault = build_dry_run_fault(summary if isinstance(summary, dict) else None)
+        except Exception:
+            dry_fault = None
         job_id = _submit_deferred_semantic_repair(
             session,
             drift_id=drift.id,
@@ -858,6 +1092,7 @@ def detect_after_sync(
             delta=_json.loads(_json.dumps(delta, sort_keys=True, default=str))
             if delta is not None
             else None,
+            dry_run_fault=dry_fault,
         )
         return {
             "drift_found": True,
@@ -889,6 +1124,14 @@ def detect_after_sync(
         verifier_url=verifier_url,
         knowledge_cache=knowledge_cache,
     )
+    # REQ-053 item 6: judge a deterministic proposal on the break's
+    # records before offering it (same gate as the bench path above).
+    result, dry_error = _gate_proposal_on_fault_records(
+        session,
+        spec_dict=spec_dict,
+        summary=summary,
+        result=result,
+    )
     candidate_release_id, gate_error = _finalize_proposal(
         session,
         connector_id=connector_id,
@@ -897,6 +1140,8 @@ def detect_after_sync(
         result=result,
         verifier_url=verifier_url,
     )
+    if gate_error is None and dry_error is not None:
+        gate_error = dry_error
     out: dict[str, Any] = {
         "drift_found": True,
         "outcome": opened["outcome"],

@@ -570,3 +570,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Stay postings are queued once per process at link start; a quiet link resends nothing new. Fresh PABX activity (new P#) is the only thing that grows the log.
 - Fix: snapshot the key set before the break, and after one settle tick assert every pre-break key is still logged exactly once (nothing lost: no missing keys; nothing duplicated: unique count == total count), plus link back up, post-resync sync `Complete`, connector Working, no drift/repair.
 - **Rule:** when a store deduplicates by key, assert on the key set (superset + uniqueness), never on a rising count; a count that must not move is the passing signal.
+---
+
+## 63. In-place edits to a loaded JSON column never mark the row dirty — deep-copy before mutating
+
+**Context:** REQ-053 item 6 (auto-rollback annotation + dry-run pass stamp on `RepairRun` rows, SQLite via SQLAlchemy 2.x).
+
+- `row.ladder_trace = list(row.ladder_trace or [])` followed by mutating an entry dict and reassigning the list silently persisted nothing: the loaded JSON shares dict objects with the attribute state, so old and new compare equal and the attribute is never marked dirty — `flush()` emits no UPDATE.
+- The sibling code (`controller._progress`) works because it builds fresh dicts via `trace_from_attempts`; only the in-place pattern is broken.
+- Fixed by `copy.deepcopy` before mutating, then assigning the new list.
+
+**Rule:** When updating a JSON column, always assign a deep-copied structure — never mutate the loaded objects in place.

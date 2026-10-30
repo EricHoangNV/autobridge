@@ -95,7 +95,7 @@ export function TopBar() {
                 : "border-b-2 border-transparent pb-4 pt-[18px] text-ink-2 no-underline"
             }
           >
-            What AutoBridge knows
+            Knowledge
           </a>
         </nav>
         <div className="ml-auto flex min-w-0 shrink-0 items-center gap-[18px]">

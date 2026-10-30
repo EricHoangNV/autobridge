@@ -212,20 +212,24 @@ def connector_busy_reason(session: Any, connector_id: str) -> str | None:
             return f"{job.kind} {job.state}"
 
     # -- repairs awaiting an operator decision --------------------------
+    # REQ-053 item 6: latest-approval-is-rollback counts as awaiting (the
+    # fix was reverted) — same rule as connector_state.awaiting.
     if drift_ids:
         for run in session.execute(select(RepairRun)).scalars().all():
             if not set(run.drift_event_ids or []) & drift_ids:
                 continue
             if run.decision not in ("propose", "escalate"):
                 continue
-            decided = (
+            latest = (
                 session.execute(
-                    select(Approval).where(Approval.repair_run_id == run.id)
+                    select(Approval)
+                    .where(Approval.repair_run_id == run.id)
+                    .order_by(Approval.created_at.desc())
                 )
                 .scalars()
                 .first()
             )
-            if decided is None:
+            if latest is None or latest.decision == "rollback":
                 return f"repair {run.decision} awaiting decision"
     return None
 

@@ -34,6 +34,22 @@ describe("RepairActions", () => {
     expect(await screen.findByTestId("approving-as")).toHaveTextContent("Approving as operator");
   });
 
+  it("decided repairs show the outcome with actions disabled (REQ-053 item 4)", () => {
+    mockOperator("alice");
+    const { rerender } = render(<RepairActions repairId="rep-1" decision="approved" />);
+    const approved = screen.getByTestId("repair-approve-btn");
+    expect(approved).toBeDisabled();
+    expect(approved).toHaveTextContent("Approved ✓");
+    rerender(<RepairActions repairId="rep-1" decision="reject" />);
+    const rejected = screen.getByTestId("repair-approve-btn");
+    expect(rejected).toBeDisabled();
+    expect(rejected).toHaveTextContent("Rejected");
+    rerender(<RepairActions repairId="rep-1" decision="rolled_back" />);
+    const rolledBack = screen.getByTestId("repair-approve-btn");
+    expect(rolledBack).toBeDisabled();
+    expect(rolledBack).toHaveTextContent("Rolled back");
+  });
+
   it("escalations show no Approve button and an enabled Reject (REQ-048)", () => {
     mockOperator("alice");
     render(<RepairActions repairId="rep-1" decision="escalate" />);

@@ -117,6 +117,9 @@ def connector_state(session: Any, connector_id: str) -> dict[str, Any]:
     )
 
     # Repairs awaiting an operator decision (propose/escalate, no approval).
+    # REQ-053 item 6: a repair whose latest approval is a rollback counts
+    # as awaiting again — the fix was reverted, so the re-opened repair
+    # still needs a decision.
     awaiting: list[Any] = []
     drift_ids = set(
         session.execute(
@@ -129,14 +132,16 @@ def connector_state(session: Any, connector_id: str) -> dict[str, Any]:
                 continue
             if run.decision not in ("propose", "escalate"):
                 continue
-            decided = (
+            latest = (
                 session.execute(
-                    select(Approval).where(Approval.repair_run_id == run.id)
+                    select(Approval)
+                    .where(Approval.repair_run_id == run.id)
+                    .order_by(Approval.created_at.desc())
                 )
                 .scalars()
                 .first()
             )
-            if decided is None:
+            if latest is None or latest.decision == "rollback":
                 awaiting.append(run)
     awaiting.sort(key=lambda r: str(getattr(r, "created_at", "")))
 

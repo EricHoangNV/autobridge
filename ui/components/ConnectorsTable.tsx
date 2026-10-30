@@ -43,12 +43,28 @@ function activeReleaseVersion(connector: ConnectorOut, detail: ConnectorDetail |
   return null;
 }
 
-/** Newest release that is not the active one: the candidate waiting for approval. */
-function candidateVersion(connector: ConnectorOut, detail: ConnectorDetail | null | undefined): number | null {
-  if (!detail?.releases?.length) return null;
+/** Newest release that is the candidate of a still-waiting repair.
+ *
+ * REQ-053 item 3: the phantom "rN waiting" came from here — any non-active
+ * release (including a superseded former active) read as a candidate.
+ * The candidate is now derived from the same source as every other
+ * "waiting": a release whose provenance repair still waits (no approval,
+ * or the latest approval is a rollback). Otherwise null.
+ */
+function candidateVersion(
+  connector: ConnectorOut,
+  detail: ConnectorDetail | null | undefined,
+  waitingIds: Set<string>,
+): number | null {
+  if (!detail?.releases?.length || waitingIds.size === 0) return null;
   const activeId = connector.active_release_id ?? detail.active_release_id;
   const others = detail.releases
-    .filter((r) => r.id !== activeId)
+    .filter(
+      (r) =>
+        r.id !== activeId &&
+        typeof r.provenance_repair_run_id === "string" &&
+        waitingIds.has(r.provenance_repair_run_id),
+    )
     .sort((a, b) => b.version - a.version);
   return others.length ? others[0].version : null;
 }
@@ -59,10 +75,22 @@ export function frontierTokensOf(repair: RepairRunOut): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-/** Repairs still waiting for a human (decision == "propose"), newest first. */
+/** Repairs still waiting for a human (decision == "propose"), newest first.
+ *
+ * REQ-053 item 3: one source of truth — the decision, which the server
+ * moves terminal on every approval (an approval row exists ⇒ not
+ * waiting). A repair whose latest approval is a rollback waits again
+ * (the fix was reverted, REQ-053 item 6); anything else with an approval
+ * never waits.
+ */
 export function waitingRepairs(repairs: RepairRunOut[]): RepairRunOut[] {
   return repairs
-    .filter((r) => r.decision === "propose")
+    .filter((r) => {
+      if (r.decision !== "propose") return false;
+      const approval = r.approval;
+      if (!approval) return true;
+      return approval.decision === "rollback";
+    })
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 }
 
@@ -147,7 +175,7 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage: _modelUsa
         const drift = detail?.open_drift ?? [];
         const repairs = repairsByConnector?.[c.id] ?? [];
         const waiting = waitingRepairs(repairs);
-        const candidate = candidateVersion(c, detail);
+        const candidate = candidateVersion(c, detail, new Set(waiting.map((r) => r.id)));
         const needs = drift.length > 0;
         const tokenSeries = repairs.slice(-20).map(frontierTokensOf);
         const tokenTotal = tokenSeries.reduce((a, b) => a + b, 0);

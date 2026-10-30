@@ -302,6 +302,9 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
     # (the poll loop watches it come back) and redelivers postings.
     fias_link = {"down_reads": 0}
     pabx_postings = {"n": 3}
+    # REQ-053 item 7: refused vocabulary checks recorded by name; the
+    # later connector seeds its build history from them.
+    refused_checks: dict[str, list[dict[str, Any]]] = {}
 
     def _connector_id(name: str) -> str:
         return f"c-{name.lower().replace(' ', '-')}"
@@ -330,9 +333,27 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
                     # engine decides from the docs (stub: framed v3 →
                     # edge on the build below, HTTP stays cloud).
                     "runtime_target": {"kind": "local_process"},
-                    "releases": [], "builds": []}
+                    # REQ-053 item 7: earlier refusals join by name.
+                    "releases": [], "builds": list(refused_checks.get(str(payload.get("name", "x")), []))}
             connectors[conn["name"]] = conn
             return {"method": method, "path": path, "status": 201, "body": {"id": conn["id"], "name": conn["name"]}}
+        if path == "/connectors/vocabulary-check" and method == "POST":
+            # REQ-053 item 7: the pre-creation check — refused without a
+            # connector row, recorded by name in the stub.
+            payload = _payload or {}
+            vocab = str(payload.get("spec_vocabulary") or "")
+            if vocab == "v1":
+                refused_checks.setdefault(str(payload.get("name", "x")), []).append(
+                    {"id": f"b-ref-{len(refused_checks)}", "spec_vocabulary": "v1",
+                     "success": False, "release_id": None,
+                     "degradation_reason": "operations need POST with a JSON body and body-field auth; not expressible in ConnectorSpec v1"})
+                return {"method": method, "path": path, "status": 200,
+                        "body": {"refused": True,
+                                 "reason": "operations need POST with a JSON body and body-field auth; not expressible in ConnectorSpec v1",
+                                 "vocabulary": "v1", "suggested_vocabulary": "v2"}}
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"refused": False, "reason": None,
+                             "vocabulary": vocab or "v2", "suggested_vocabulary": None}}
         if path.endswith("/build") and method == "POST":
             cid = path.split("/")[2]
             conn = next((c for c in connectors.values() if c["id"] == cid), None)

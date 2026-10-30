@@ -147,6 +147,13 @@ describe("repairStatus", () => {
     ).toBe("rejected");
   });
 
+  it("maps terminal approved and rolled-back decisions (REQ-053 item 3)", () => {
+    // The server moves the decision terminal on every approval; the
+    // status follows the decision even without the approval row.
+    expect(repairStatus({ ...base, decision: "approved" }, {}, drifts)).toBe("approved");
+    expect(repairStatus({ ...base, decision: "rolled_back" }, {}, drifts)).toBe("rolled back");
+  });
+
   it("maps applied vs approved via the active release", () => {
     const approved = {
       ...base,

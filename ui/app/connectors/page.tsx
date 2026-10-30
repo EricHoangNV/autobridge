@@ -6,6 +6,7 @@ import {
   ConnectorsTable,
   frontierTokensOf,
   groupRepairsByConnector,
+  waitingRepairs,
 } from "@/components/ConnectorsTable";
 import type {
   ConnectorOut,
@@ -92,6 +93,9 @@ export default function ConnectorsPage() {
   const recentRepairs = [...(repairs ?? [])]
     .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))
     .slice(0, 5);
+  // REQ-053 item 3: the "Waiting for you" line reads the same waiting set
+  // as the header and the rows (an approval moves the repair out).
+  const waitingIds = new Set(waitingRepairs(repairs ?? []).map((r) => r.id));
 
   const headline = (() => {
     const n = connectors?.length ?? 0;
@@ -195,7 +199,7 @@ export default function ConnectorsPage() {
                       {who} · {r.rule_id ?? r.drift_event_ids[0]?.slice(0, 8) ?? "repair"}
                     </Link>
                     <span>
-                      {r.decision === "propose" ? "Waiting for you. " : ""}
+                      {waitingIds.has(r.id) ? "Waiting for you. " : ""}
                       {r.rule_id ? `Rule ${r.rule_id}. ` : ""}
                       {r.decision}
                     </span>

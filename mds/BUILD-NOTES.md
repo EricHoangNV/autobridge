@@ -2534,3 +2534,100 @@ Owner check after: keyed deck 4→5 three times (report valid-proposal rate + la
 
 ### REQ-050 — Decks 6 and 7 live (sbx1 2026-10-30; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Seed is AtlasPMS only (`bench/demo_seed.py` SEED_CONNECTORS trimmed; `make demo` steps ensure Meridian/PABX themselves, so stand-alone still works). Build page (`ui/components/NewConnectorForm.tsx`): per-version `VOCABULARY_NOTES` shared with Knowledge `RELEASE_NOTE`, no `runtime_target` sent (type + payload), PABX picker auto-fills `edge-relay://queue/fias-commands`, hides base URL (`edge-runtime-note`), auto-suggests v3 + FolioCharge-only, `EDGE_TOKEN` added to credential refs; `BuildProgress` shows `build-runtime-decision` via `runtimeDecisionForDraft` (edge iff spec `connector.runtime_target == "edge"` or non-HTTP protocol). Engine (`src/autobridge/engine/build_run.py`): after a persisted release, framed spec → record `{"kind":"edge"}`, else keep explicit kind (HTTP untouched) — the page's PABX panel and link snapshots work on UI-built edge connectors. Connector detail gains `builds: BuildAttemptOut[]` (`schemas.py` + `routes/connectors.py` query; openapi.json + schema.d.ts regen committed) and the connector page renders a Builds section (v1 refused with reason, v2 in use). Demo step 8 rewritten: in-process v3 build + postings + restart idempotency; live ensures PABX without runtime choice, asserts engine edge runtime, baseline sync, then `fias_link_resync` → link flap, key-set proof (superset + unique after settle), post-resync sync, Working, no drift/repair. Catalogue: `fias_link_resync.main_step = 8`, layout change + restart to None. Docs: README + docs/demo.md decks 6/7 + seed frame (AtlasPMS only). Gotchas: (1) relay `INSERT OR IGNORE` folds resends — first count-rises assertion failed live 138→138; fixed to key-set proof (see LEARNINGS 62). (2) `make openapi-check` diffs regen vs HEAD, so it fails until committed — expected, green after. (3) Playwright e2e-ui cannot load specs in this sandbox (`import.meta` module error, pre-existing on pristine tree) — UI covered by vitest (231) + live demo instead. (4) `make test` shows a roving single-ERROR flake across runs (releases, then drift_fingerprint; both pass in isolation) — pre-existing, unrelated. Gates: make test all green incl. 90% gates; ui 231; lint/typecheck/ui-typecheck/openapi-check green; `make demo` 8/8 unkeyed + STEP=7/8 alone; tests/e2e/test_09 5/5 live. Owner check after: Aside run of decks 6 and 7.
+
+### REQ-053 — First owner demo run fixes (UI build path, approve-to-green, waiting state)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+**Root causes found live.** UI-built Meridian was Blocked with zero sim
+calls for two compounding reasons, both "what the UI path leaves unset vs
+`make demo`": (1) the form defaulted `credential_ref` to `ATLAS_API_KEY`,
+so body-auth derived `ATLAS_CLIENT_TOKEN/ATLAS_ACCESS_TOKEN` (unset) and
+auth raised before any request; the demo sends `MERIDIAN_API_KEY` /
+`EDGE_TOKEN`. (2) the form never sent `probe_wire_shape`, so detection
+ran without `observed_wire_keys` and a healthy baseline false-fired
+SCHEMA_RENAME. Same pair broke the PABX (`feed_unavailable`).
+
+**What changed (backend).**
+- Repair decisions are terminal now (`approved` / `rolled_back` added to
+  `REPAIR_DECISIONS` + migration 0013 incl. backfill from latest
+  approval): approve/reject/rollback move the row out of the waiting
+  states. "Waiting" derives from the decision everywhere — the approved
+  repair that still showed "r1 waiting / Review repair / Waiting for you"
+  is gone at the source.
+- `POST /connectors/vocabulary-check` (item 7): deterministic
+  docs→classify→vocabulary-guard, 0 model calls, before any connector is
+  created. Refusals persist by name (`refused_build_attempts`, migration
+  0014); the connector page merges them into build history and the
+  knowledge profile lists them under refused vocabularies. Suggested
+  vocabulary returned (v2 for POST, v3 for framed).
+- Dry-run every proposal (item 6, `repair/dryrun.py`): apply to a copy of
+  the active spec, re-map the break's wire records when the mapping is
+  touched, evaluate the patched checks against the faulted records (no
+  vendor call). New compare_to that resolves to nothing fails with
+  "`$.net_sum` is not a field in the response; available: …" (deck-5's
+  exact error). Wired into the L3 climb (one retry with the exact error,
+  then dropped to question-only), the deferred job parcel, and the
+  deterministic detect path (dropped proposals rewrite the row to
+  question-only escalation). Passes stamp the proposing rung / bundle
+  proposal with "tested on the current records: the checks pass".
+- Auto-rollback (item 6): a non-Complete verifying sync on an
+  approved-provenance release rolls back to the pre-approval release
+  (`reopen_as="escalate"`), labels the row (bundle note, proposal
+  removed) and Decisions (rollback approval); no new drift/repair —
+  `_find_undecided_open_drift` and both `awaiting` readers treat
+  latest-approval-is-rollback as undecided, so the next sync dedupes
+  onto the original repair.
+- `/demo/simulators` carries `suggested_credential_ref` +
+  `suggested_target_entities` from `config/demo_targets.yaml` (same
+  values `make demo` sends); `/demo/reset` clears refused attempts.
+
+**What changed (UI).**
+- Menu "What AutoBridge knows" → "Knowledge" (page title stays).
+- Connector masthead explicit grid rows (facts no longer overlap the
+  state line); Sync runs fixed-height scroll.
+- `waitingRepairs` = propose + (no approval or latest approval is a
+  rollback); candidate release derived from waiting repairs (phantom
+  "r1 waiting" gone); Recent-repairs "Waiting for you" uses the same set.
+- RepairActions: terminal decisions render "Approved ✓" / "Rejected" /
+  "Rolled back" disabled; the clicked button stays decided before the
+  refetch lands.
+- Repairs list status += "rolled back"; decision is read first.
+- Build form: vocabulary check before create (refused headline "Refused
+  by vocabulary v1: … Build with v2" + one-click rebuild, no connector
+  created); simulator picker applies suggested credential + entities;
+  always sends `probe_wire_shape`; docs-check promoted to its own
+  "Docs check" stage ("check added from the docs: …").
+- Repair page: escalation proposal shows the dry-run line; offered
+  candidates show the rung's dry-run line.
+
+**Tests.** New: `test_autobridge_req053_dryrun.py` (10: exact dry-run
+error, retry-then-offer, retry-then-drop, gate rewrite, pass stamp,
+rollback + re-open + dedupe, no-rollback guards),
+`test_autobridge_req053_vocab.py` (8: check refused/passing, history +
+knowledge merge, transitions, suggestions). Updated: req049 (terminal
+decisions), live_semantic_climb (decoy now dry-run-dropped + drop
+evidence), req042 deferred (one retry each), meridian e2e (approve to
+learn before L0 re-inject — pre-existing stale expectation from before
+learn-on-approve), knowledge e2e (decisions key pre-existed),
+NewConnectorForm/ConnectorsTable/RepairActions/repairs-page vitest.
+Full gates: `make test` all green (autobridge/verifier/simulators 90%+,
+ui 237), lint + typecheck + ui-typecheck + openapi-check green,
+`make demo` 8/8 unkeyed, `BENCH_TRIALS=1 make bench-ablation` engine
+arms unchanged (cold/warm 6/6 fixed + 6/6 held, 0 wrong, warm == cold;
+frontier arms unkeyed as before: one-shot truncated-missing-recording,
+agent fake driver — REQ-052's scope, not re-graded here).
+Rehearsal table (unkeyed, 12/12 matched): cold verified 0.500 /
+escalation 1.000 / 0 tokens / 0 wrong; warm identical; learning curve
+page_to_cursor x5 cold rung 1 x5 (re-derives at L1 per REQ-030 2b).
+
+**Live acceptance (unkeyed, UI-identical requests, fresh demo-reset+seed).**
+Deck 4 Harbor build → Complete, docs-check line present. Deck 5 break →
+Degraded → escalate, question-only, no proposal (labelled L3 skip).
+Deck 6: v1 check refused (no connector) → v2 build verified → sync
+Complete → Working, builds show [v1 refused, v2]. Deck 7: v1/v2
+refused, v3 passes → PABX build verified → Complete → Working → link
+drop → resync Working. Atlas break → approve → verifying Complete →
+repair approved, connector Working, nothing waiting.
+**Owner keyed steps left:** deck-5 Approve-to-green with
+FRONTIER_API_KEY (model proposal → dry-run → Approve → Green), Aside
+screenshots.

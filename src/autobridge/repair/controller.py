@@ -251,6 +251,8 @@ class RepairController:
         # between rungs — never across a model call.
         on_rung: Any | None = None,
         existing_repair_run_id: str | None = None,
+        # REQ-053 item 6: faulted-records judgement for model proposals.
+        dry_run_fault: dict[str, Any] | None = None,
     ) -> LadderResult:
         """Run ladder for given drift context and optionally persist RepairRun.
 
@@ -290,6 +292,7 @@ class RepairController:
                 enable_rules=enable_rules,
                 on_rung=on_rung,
                 existing_repair_run_id=existing_repair_run_id,
+                dry_run_fault=dry_run_fault,
             )
 
         result = run_ladder(
@@ -422,6 +425,7 @@ class RepairController:
         enable_rules: bool = True,
         on_rung: Any | None = None,
         existing_repair_run_id: str | None = None,
+        dry_run_fault: dict[str, Any] | None = None,
     ) -> LadderResult:
         """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then escalate.
 
@@ -469,6 +473,7 @@ class RepairController:
             enable_knowledge=enable_knowledge,
             enable_rules=enable_rules,
             on_rung=on_rung,
+            dry_run_fault=dry_run_fault,
         )
         if climb.get("resolved_rung") == 0:
             # L0 knew this drift: fall back to the deterministic path, which
@@ -486,6 +491,7 @@ class RepairController:
                 enable_rules=enable_rules,
                 on_rung=on_rung,
                 existing_repair_run_id=existing_repair_run_id,
+                dry_run_fault=dry_run_fault,
             )
 
         # Normalize rung-keyed climb attempts to level-keyed ladder trace
@@ -526,6 +532,8 @@ class RepairController:
                 "label": str(climb.get("proposal_label") or ""),
                 "effect": str(climb.get("proposal_effect") or ""),
                 "patch": [dict(op) for op in climb["proposal"] if isinstance(op, dict)],
+                # REQ-053 item 6: shown with the proposal on the repair page.
+                "dry_run": str(climb.get("dry_run") or ""),
             }
             if not model_proposal["label"] or not model_proposal["effect"]:
                 model_proposal = None
@@ -808,6 +816,9 @@ def run_semantic_repair(
     # stream to it while the climb runs.
     on_rung: Any | None = None,
     existing_repair_run_id: str | None = None,
+    # REQ-053 item 6: explicit fault parcel override (the deferred repair
+    # job carries it; otherwise it is derived from *summary* below).
+    dry_run_fault: dict[str, Any] | None = None,
 ) -> tuple[LadderResult, dict[str, Any]]:
     """Climb a semantic drift the way the live repair path does (REQ-039).
 
@@ -854,6 +865,14 @@ def run_semantic_repair(
         # must never lose the drift: climb with no provider so every rung
         # records its reason and the run still escalates.
         provider, mode = None, "off"
+    if dry_run_fault is None and summary is not None:
+        # REQ-053 item 6: judge model proposals on the break's records.
+        try:
+            from autobridge.repair.dryrun import build_dry_run_fault  # noqa: PLC0415
+
+            dry_run_fault = build_dry_run_fault(summary)
+        except Exception:
+            dry_run_fault = None
     result = controller.handle(
         spec=spec,
         drift_class=drift_class,
@@ -874,6 +893,7 @@ def run_semantic_repair(
         hypothesis_stages=stages,
         on_rung=on_rung,
         existing_repair_run_id=existing_repair_run_id,
+        dry_run_fault=dry_run_fault,
     )
     info: dict[str, Any] = {"provider_mode": mode, "stages": stages}
     l3_entry = next(
@@ -894,12 +914,20 @@ def run_semantic_repair(
     if isinstance(l3_entry, dict):
         proposal = l3_entry.get("proposal") or None
     info["proposal"] = proposal
+    # REQ-053 item 6: a dropped proposal still leaves an audit trail — the
+    # drop reason (e.g. the dry-run rejection) is recorded as evidence.
+    drop_reason = None
+    if proposal is None and isinstance(l3_entry, dict):
+        drop_reason = str(
+            l3_entry.get("proposal_dropped") or l3_entry.get("retry_error") or ""
+        )[:500] or None
     info["verdict"] = _judge_semantic_proposal(
         session=session,
         spec=spec,
         proposal=proposal,
         verifier_url=verifier_url,
         repair_run_id=result.repair_run_id,
+        drop_reason=drop_reason,
     )
     return result, info
 
@@ -911,6 +939,9 @@ def _judge_semantic_proposal(
     proposal: list[dict[str, Any]] | None,
     verifier_url: str | None,
     repair_run_id: str | None = None,
+    # REQ-053 item 6: when the climb dropped the proposal (dry-run), the
+    # drop reason is recorded as evidence instead of judging nothing.
+    drop_reason: str | None = None,
 ) -> dict[str, Any]:
     """Judge an L3 proposal against the verifier; record it, never release it.
 
@@ -935,7 +966,29 @@ def _judge_semantic_proposal(
     if newest is None:
         return {"judged": False, "reason": "no repair row to attach the verdict to"}
     if not proposal:
-        return {"judged": False, "reason": "no L3 proposal to judge"}
+        if not drop_reason:
+            return {"judged": False, "reason": "no L3 proposal to judge"}
+        drop_summary = {"judged": False, "reason": f"no L3 proposal to judge ({drop_reason})"}
+        try:
+            from autobridge.evidence.store import EvidenceStore  # noqa: PLC0415
+
+            store = EvidenceStore(session)
+            store.append(
+                kind="verification",
+                payload={
+                    "scenario": None,
+                    "verdict": drop_summary,
+                    "proposal": [],
+                    "checks": [],
+                    "recorded_via": "live semantic climb (engine-derived, never released)",
+                },
+                run_id=f"repair_runs:{newest.id}",
+                parent_ids=[],
+            )
+            session.flush()
+        except Exception:
+            pass
+        return drop_summary
     if verifier_url is None:
         import os as _os  # noqa: PLC0415
 
@@ -1346,6 +1399,9 @@ def _run_repair_climb(
                 hypothesis_stages=payload.get("hypothesis_stages"),
                 on_rung=on_rung,
                 existing_repair_run_id=running_row_id,
+                # REQ-053 item 6: judge L3 proposals on the break's
+                # records (parcelled by the sync; no vendor call here).
+                dry_run_fault=payload.get("dry_run_fault") or None,
             )
             info: dict[str, Any] = {"provider_mode": mode}
             l3_entry = next(
@@ -1364,13 +1420,19 @@ def _run_repair_climb(
                 info["l3_status"] = f"skip: {l3_entry.get('reason', 'L3 skipped')}"
             proposal = l3_entry.get("proposal") if isinstance(l3_entry, dict) else None
             info["proposal"] = proposal
-            assert spec is not None  # noqa: S101 — fallback above guarantees a spec
+            assert spec is not None  # noqa: S101 — the fallback above guarantees a spec
+            drop_reason = None
+            if proposal is None and isinstance(l3_entry, dict):
+                drop_reason = str(
+                    l3_entry.get("proposal_dropped") or l3_entry.get("retry_error") or ""
+                )[:500] or None
             info["verdict"] = _judge_semantic_proposal(
                 session=ctx.session,
                 spec=spec,
                 proposal=proposal if isinstance(proposal, list) else None,
                 verifier_url=None,
                 repair_run_id=result.repair_run_id,
+                drop_reason=drop_reason,
             )
         else:
             result, info = run_semantic_repair(

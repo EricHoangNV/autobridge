@@ -394,11 +394,19 @@ def approve_release(
     )
     session.add(approval)
     session.flush()
+    # REQ-053 item 3: the decision is terminal now — an approval row exists
+    # ⇒ the repair no longer waits. Every "waiting" in the UI derives from
+    # the decision, one source of truth, so the row must leave the waiting
+    # states here (it stayed "propose" forever before, and the UI kept
+    # offering Review/Approve on an approved repair).
+    was_propose = run.decision == "propose"
+    run.decision = "approved"
+    session.flush()
     # REQ-030 2b: a fix is learned only once it is approved, after the
     # release is activated. A proposal that is still waiting can never be
     # reused at L0, by any connector. Learning is best-effort: cache
     # failure must not break the approval.
-    if run.decision == "propose" and run.candidate_patch:
+    if was_propose and run.candidate_patch:
         with contextlib.suppress(Exception):
             from autobridge.repair.knowledge import (  # noqa: PLC0415
                 NO_LEARN_CLASSES,
@@ -522,6 +530,10 @@ def reject_release(
     )
     session.add(approval)
     session.flush()
+    # REQ-053 item 3: a rejected repair no longer waits (same source of
+    # truth as the approve path above).
+    run.decision = "reject"
+    session.flush()
     # AR-2-3: a human-rejected patch must never be re-proposed at L0.
     # Evict every cache entry holding this run's candidate patch. The
     # eviction is best-effort: cache failure must not break the decision.
@@ -542,6 +554,7 @@ def rollback_release(
     actor: str,
     repair_run_id: str,
     knowledge_cache: Any | None = None,
+    reopen_as: str | None = None,
 ) -> tuple[ConnectorRelease, Approval]:
     """Rollback *connector_id* to *target_release_id*'s spec.
 
@@ -553,6 +566,13 @@ def rollback_release(
     release.
 
     Returns ``(new_release, approval)``.
+
+    *reopen_as* (REQ-053 item 6): the repair decision to write instead of
+    the terminal ``"rolled_back"``. An automatic rollback after a failed
+    verifying sync passes ``"escalate"`` so the original escalation stays
+    the one open item (annotated by the caller); a manual rollback leaves
+    it ``None`` and the repair ends ``"rolled_back"`` (actions disabled,
+    REQ-054).
 
     Preconditions:
       * connector exists and has an active release (cannot rollback from nothing)
@@ -594,6 +614,12 @@ def rollback_release(
         rollback_of_release_id=current.id,
     )
     session.add(approval)
+    session.flush()
+    # REQ-053 item 3: a rolled-back repair no longer waits — unless the
+    # caller re-opens it (automatic rollback after a failed verifying sync
+    # re-opens the original escalation, REQ-053 item 6).
+    run = _ensure_repair_run(session, repair_run_id)
+    run.decision = reopen_as if reopen_as is not None else "rolled_back"
     session.flush()
     # AR-2-3: the superseded release regressed, so the patch that produced
     # it (its provenance repair run's candidate) must not be re-proposed

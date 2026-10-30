@@ -538,7 +538,10 @@ def test_approve_business_decision_twice_is_rejected(tmp_path: pathlib.Path) -> 
     with factory() as s:
         approve_business_decision(s, repair_run_id=run_id, actor="operator")
         s.commit()
-        with pytest.raises(ReleaseError, match="already approved"):
+        # REQ-053 item 3: the first approval moved the repair terminal, so
+        # the second fails on the escalate guard (the explicit
+        # already-approved guard stays as defense-in-depth).
+        with pytest.raises(ReleaseError, match="not escalate|already approved"):
             approve_business_decision(s, repair_run_id=run_id, actor="operator")
 
 
@@ -771,9 +774,10 @@ def test_approve_proposal_route_mints_r2(route_client: Any) -> None:
     assert r2["parent_release_id"] == ids["release_id"]
     detail = client.get(f"/connectors/{ids['connector_id']}").json()
     assert detail["active_release_id"] == r2_id
-    # The repair row records escalate + approve: a business decision.
+    # The repair row records approved + approve: a decided business
+    # decision (REQ-053 item 3: terminal, so the UI stops offering it).
     rep = client.get(f"/repairs/{ids['repair_id']}").json()
-    assert rep["decision"] == "escalate"
+    assert rep["decision"] == "approved"
     assert rep["approval"] is not None and rep["approval"]["decision"] == "approve"
     # Approving again would mint a duplicate: rejected.
     again = client.post(

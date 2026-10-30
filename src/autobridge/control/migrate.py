@@ -140,6 +140,12 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, list[str]]], ...] = (
             ],
         },
     ),
+    # 0013 only widened a CHECK constraint (no schema objects to detect).
+    ("0013_repair_terminal_decisions", {"tables": [], "columns": []}),
+    (
+        "0014_refused_build_attempts",
+        {"tables": ["refused_build_attempts"], "columns": []},
+    ),
 )
 
 

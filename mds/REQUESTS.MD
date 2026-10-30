@@ -43,55 +43,6 @@ Owner check after: Aside screenshots at 1440 of deck 3 (propose → approved) an
 proposal → approved).
 
 
-### REQ-053 — First owner demo run (UI, keyed, 2026-10-30): fix what broke (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 12:09)
-Owner ran decks 1–7 in the browser on `make local-up` (origin/main f8554ecc), after `make demo-reset && make
-demo-seed`. REQ-050's gates passed because `make demo` builds Meridian/PABX through the API; **the build page path
-broke**. Every acceptance check below runs **through the UI build page's own requests** (Playwright, or API calls
-byte-identical to what `NewConnectorForm` sends), keyed and unkeyed.
-1. **Menu label:** top bar "What AutoBridge knows" → **"Knowledge"**. The page title stays.
-2. **Connector page layout:** the header facts row overlaps the state line (the "Entities Reservation, FolioCharge ·
-   Open drift 0 open" line sits on top of "● Working · in sync · Complete …"). Fix the overlap; give **Sync runs** a
-   fixed height with its own scroll.
-3. **An approved repair still shows as waiting.** Repair 791a6308 (Atlas `page_to_cursor`) was approved (approval
-   eb15e2e6 by Eric, r2 da31da08 active), yet `/connectors` shows "r1 waiting", a "Review repair 791a6308 · needs your
-   approval" button, and "Waiting for you" under Recent repairs, while the header says "nothing waiting for you". Every
-   "waiting" in the UI must come from the same source as the header (connector state / an approval row exists ⇒ not
-   waiting).
-4. **After Approve, the button is still live.** Once the approval is recorded it becomes "Approved ✓" (disabled); same
-   for Reject/Deny.
-5. **Harbor built from the wiki:** the build page must say the check came from the docs ("check added from the docs:
-   totals must match `meta.gross_sum`", REQ-049 item 2). The spec has the check; the page never says so.
-6. **Deck 5: Approve must turn Harbor green.** The model proposed `replace /entities/Reservation/checks/3/compare_to
-   "$.net_sum"` — a field Harbor never sends. It applied, r2 went live, the verifying sync was Degraded
-   (`money_invariant`), Harbor stayed "needs your decision", and a second escalation (ddbf32c3, no proposal) followed.
-   - **Dry-run every proposal before offering Approve:** apply it to the active spec and evaluate the failing check(s)
-     against the **current faulted records** (from the break's sync run, no new vendor call needed); the checks must
-     pass. If not, **one retry** to the model with the exact error (e.g. "`$.net_sum` is not a field in the response;
-     available: …") — generic wording, no scenario names. Still failing → no proposal is offered (question only). The
-     dry-run result is shown with the proposal ("tested on the current records: the check passes").
-   - The engine never synthesises the answer; the dry-run only judges the model's proposal.
-   - If a verifying sync after an approved proposal still fails: **automatic rollback** to the previous release,
-     labelled on the repair page and in Decisions; the original escalation stays the one open item — **never a second
-     escalation for the same open drift**.
-   - Test: keyed and with a fake model that first proposes a non-existent field, then a valid change → Approve →
-     verifying sync Complete → Harbor ● Working.
-7. **Meridian v1 → v2:** the vocabulary check runs **before any connector is created**. A refused build creates no
-   connector; the build page shows a clear headline: "Refused by vocabulary v1: this API needs request bodies (POST).
-   Build with v2." (reason underneath, as today). The v2 build then creates the **one** Meridian connector, whose page
-   shows the earlier v1 refusal as history. Same for the PABX on v1/v2.
-8. **Meridian built from the UI on v2 is Blocked: `http_error`** — its requests never reach `sim-meridian` (no sync
-   calls in `.local/logs/sim-meridian.log`). Find what the UI build path leaves unset (base URL / credential ref /
-   auth) compared with how `make demo` builds it, and fix the UI path. Acceptance: UI-built Meridian syncs `Complete`.
-9. **PABX built from the UI on v3 is Blocked: `feed_unavailable`** while the edge agent is heartbeating to the relay.
-   Same: find what the UI path leaves unwired versus `make demo`, fix it. Acceptance: UI-built PABX ● Working with
-   postings flowing; then `fias_link_resync` → reconnects, nothing lost or duplicated (deck 7).
-10. **Acceptance run:** one continuous take from `make demo-reset && make demo-seed`, decks 1–7 through the UI (deck 4
-   build Harbor, deck 5 break → Approve the model's tested proposal → **Green**, deck 6 Meridian v1 refused (no
-   connector) → v2 Working, deck 7 PABX v3 Working → link drop), keyed and unkeyed (unkeyed: deck 5 shows the labelled
-   replay/skip path). Report it in BUILD-NOTES with what the screen showed per deck.
-
-
 ### REQ-052 — Benchmark quality: the frontier arms must make real, complete, gradable attempts (2026-10-30)
 Status: OPEN (owner will start it)
 Owner keyed run (2026-10-30, sandbox, `origin/main` 6cf0511b, `BENCH_TRIALS=1 make bench-ablation`, 16 min): engine
@@ -912,6 +863,56 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-053 — First owner demo run (UI, keyed, 2026-10-30): fix what broke (2026-10-30)
+Status: DONE (sbx1 2026-10-30)
+Owner ran decks 1–7 in the browser on `make local-up` (origin/main f8554ecc), after `make demo-reset && make
+demo-seed`. REQ-050's gates passed because `make demo` builds Meridian/PABX through the API; **the build page path
+broke**. Every acceptance check below runs **through the UI build page's own requests** (Playwright, or API calls
+byte-identical to what `NewConnectorForm` sends), keyed and unkeyed.
+1. **Menu label:** top bar "What AutoBridge knows" → **"Knowledge"**. The page title stays.
+2. **Connector page layout:** the header facts row overlaps the state line (the "Entities Reservation, FolioCharge ·
+   Open drift 0 open" line sits on top of "● Working · in sync · Complete …"). Fix the overlap; give **Sync runs** a
+   fixed height with its own scroll.
+3. **An approved repair still shows as waiting.** Repair 791a6308 (Atlas `page_to_cursor`) was approved (approval
+   eb15e2e6 by Eric, r2 da31da08 active), yet `/connectors` shows "r1 waiting", a "Review repair 791a6308 · needs your
+   approval" button, and "Waiting for you" under Recent repairs, while the header says "nothing waiting for you". Every
+   "waiting" in the UI must come from the same source as the header (connector state / an approval row exists ⇒ not
+   waiting).
+4. **After Approve, the button is still live.** Once the approval is recorded it becomes "Approved ✓" (disabled); same
+   for Reject/Deny.
+5. **Harbor built from the wiki:** the build page must say the check came from the docs ("check added from the docs:
+   totals must match `meta.gross_sum`", REQ-049 item 2). The spec has the check; the page never says so.
+6. **Deck 5: Approve must turn Harbor green.** The model proposed `replace /entities/Reservation/checks/3/compare_to
+   "$.net_sum"` — a field Harbor never sends. It applied, r2 went live, the verifying sync was Degraded
+   (`money_invariant`), Harbor stayed "needs your decision", and a second escalation (ddbf32c3, no proposal) followed.
+   - **Dry-run every proposal before offering Approve:** apply it to the active spec and evaluate the failing check(s)
+     against the **current faulted records** (from the break's sync run, no new vendor call needed); the checks must
+     pass. If not, **one retry** to the model with the exact error (e.g. "`$.net_sum` is not a field in the response;
+     available: …") — generic wording, no scenario names. Still failing → no proposal is offered (question only). The
+     dry-run result is shown with the proposal ("tested on the current records: the check passes").
+   - The engine never synthesises the answer; the dry-run only judges the model's proposal.
+   - If a verifying sync after an approved proposal still fails: **automatic rollback** to the previous release,
+     labelled on the repair page and in Decisions; the original escalation stays the one open item — **never a second
+     escalation for the same open drift**.
+   - Test: keyed and with a fake model that first proposes a non-existent field, then a valid change → Approve →
+     verifying sync Complete → Harbor ● Working.
+7. **Meridian v1 → v2:** the vocabulary check runs **before any connector is created**. A refused build creates no
+   connector; the build page shows a clear headline: "Refused by vocabulary v1: this API needs request bodies (POST).
+   Build with v2." (reason underneath, as today). The v2 build then creates the **one** Meridian connector, whose page
+   shows the earlier v1 refusal as history. Same for the PABX on v1/v2.
+8. **Meridian built from the UI on v2 is Blocked: `http_error`** — its requests never reach `sim-meridian` (no sync
+   calls in `.local/logs/sim-meridian.log`). Find what the UI build path leaves unset (base URL / credential ref /
+   auth) compared with how `make demo` builds it, and fix the UI path. Acceptance: UI-built Meridian syncs `Complete`.
+9. **PABX built from the UI on v3 is Blocked: `feed_unavailable`** while the edge agent is heartbeating to the relay.
+   Same: find what the UI path leaves unwired versus `make demo`, fix it. Acceptance: UI-built PABX ● Working with
+   postings flowing; then `fias_link_resync` → reconnects, nothing lost or duplicated (deck 7).
+10. **Acceptance run:** one continuous take from `make demo-reset && make demo-seed`, decks 1–7 through the UI (deck 4
+   build Harbor, deck 5 break → Approve the model's tested proposal → **Green**, deck 6 Meridian v1 refused (no
+   connector) → v2 Working, deck 7 PABX v3 Working → link drop), keyed and unkeyed (unkeyed: deck 5 shows the labelled
+   replay/skip path). Report it in BUILD-NOTES with what the screen showed per deck.
+
+Resolution: all 10 items code-complete — UI build path fixed (vocabulary check-first, simulator credential/entities suggestions, probe_wire_shape), approved repairs terminal (waiting derives from decision), dry-run every proposal with one retry then question-only, auto-rollback on failed verifying sync with no second escalation, docs updated; full gates green unkeyed + make demo 8/8 + live UI-path acceptance decks 4-7. Owner keyed steps outstanding: deck-5 Approve-to-green with FRONTIER_API_KEY, Aside screenshots.
 
 ### REQ-050 — Decks 6 and 7: build Meridian live (v1 refused, v2 connects) and the PABX live from its spec (2026-10-30)
 Status: DONE (sbx1 2026-10-30)

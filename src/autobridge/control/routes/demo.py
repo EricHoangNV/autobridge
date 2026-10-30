@@ -28,6 +28,7 @@ from autobridge.control.models import (
 	ModelCall,
 	ModelCallArchive,
 	PabxLinkEvent,
+	RefusedBuildAttempt,
 	RepairRun,
 	SyncRun,
 )
@@ -385,6 +386,7 @@ def demo_reset(
         DriftEvent,
         BuildRun,
         ConnectorRelease,
+        RefusedBuildAttempt,
         DependencyRegistration,
         DiscoveryRecord,
         Job,
@@ -478,6 +480,8 @@ def list_simulators(db: Session = Depends(get_db)) -> SimulatorsOut:
                 live=probed is not None and isinstance(scenario_id, str),
                 active_scenario=scenario_id if isinstance(scenario_id, str) and scenario_id != _BASELINE_SCENARIO else None,
                 connectors=used_by,
+                suggested_credential_ref=target.suggested_credential_ref or None,
+                suggested_target_entities=list(target.suggested_target_entities),
             )
         )
     return SimulatorsOut(simulators=rows)

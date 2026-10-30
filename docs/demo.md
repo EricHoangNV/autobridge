@@ -108,6 +108,14 @@ approval — nothing auto-applies, so every transition stays on screen.
   JSON Pointer of every patchable member, shows redacted raw vendor
   records, and lets the model answer `{"escalate": ...}` — a
   non-applying patch gets one retry with the error, then escalates.
+  Every proposal is also dry-run against the break's own records before
+  it is offered: a patch that references a wire field the vendor never
+  sends, or that leaves the failing checks failing, gets one retry with
+  the exact error, then is dropped to question-only — never offered for
+  Approve. A proposal that passes shows "tested on the current records:
+  the checks pass". If a verifying sync after an approval still fails,
+  the engine rolls back automatically and the original escalation stays
+  the one open item (never a second escalation for the same drift).
   The L3 answer may also carry the change the operator could approve
   (`{"escalate": ..., "proposal": {"label", "effect", "patch"}}`) — a
   malformed proposal is dropped and labelled, never guessed. When the
@@ -116,11 +124,12 @@ approval — nothing auto-applies, so every transition stays on screen.
   the break attempted L3, no second row is written.
 - **Deck 6 — New kind of API.** Build Meridian live, twice, from the same
   docs: on `/connectors/new` pick the Meridian docs, keep vocabulary v1
-  and Build — the build is refused on screen with the engine's named
-  reason (no POST with a body in ConnectorSpec v1), no release, 0 model
-  calls, the attempt recorded. Build the same docs with v2: release r1,
-  first sync Complete, MeridianPMS ● Working. The connector page shows
-  both attempts (v1 refused with its reason, v2 in use), `/knowledge`
+  and Build — the vocabulary check refuses on screen with the engine's
+  named reason (no POST with a body in ConnectorSpec v1) and creates no
+  connector; 0 model calls, the attempt recorded by name. Switch to v2
+  (one click): the one Meridian connector is created, release r1, first
+  sync Complete, MeridianPMS ● Working. The connector page shows both
+  attempts (v1 refused with its reason, v2 in use), `/knowledge`
   lists Meridian under v2 with v1 refused, and the result carries the
   engine's runtime decision ("runs: cloud"). Deck 6 has no break.
 - **Deck 7 — On-premise PABX.** Build the PABX live from its spec: on
@@ -384,9 +393,11 @@ Renders wherever builds surface, with the vocabulary each half used (`v1` /
 POST with body auth" costs nothing — so the demo never pretends the v2
 vocabulary does not exist: the before half stays repeatable forever after v2
 ships (REQ-021 item 2). Live, step 7 drives both halves through the control
-API on one `meridianpms` connector (the v1 attempt is a refused build, the v2
-build becomes the release in use), so `/knowledge` lists it under v2 with v1
-refused.
+API: the v1 vocabulary check refuses before any connector exists (recorded
+by name), then the v2 build creates the one `meridianpms` connector and
+becomes the release in use, so `/knowledge` lists it under v2 with v1
+refused. The build page runs the same check first, so a refused build
+never leaves an empty connector behind (REQ-053 item 7).
 
 ## Fault-scenario catalogue (REQ-023)
 

@@ -976,6 +976,21 @@ h2.sec {
   gap: 48px;
   padding: 36px 40px;
 }
+/* REQ-053 item 2: the masthead stacks in explicit rows on desktop — the
+   facts row no longer shares a row with the state line. */
+@media (min-width: 1101px) {
+  .mast > .crumb { grid-column: 1 / -1; grid-row: 1; }
+  .mast > div:has(> h1) { grid-column: 1; grid-row: 2; }
+  .mast [data-testid="connector-state-line"] { grid-column: 1; grid-row: 3; margin-top: 0; margin-bottom: 0; }
+  .mast .facts { grid-column: 1; grid-row: 4; }
+  .mast .relbig { grid-column: 2; grid-row: 2 / 5; align-self: start; }
+}
+/* REQ-053 item 2: Sync runs keeps a fixed height with its own scroll so a
+   long history never pushes Releases down the page. */
+.syncruns-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+}
 table.ctab {
   width: 100%;
   border-collapse: collapse;

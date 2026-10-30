@@ -266,7 +266,12 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
 
     groups: dict[tuple[str, str, str], list[RepairRun]] = {}
     for run in runs:
-        if run.decision != "propose" or not run.candidate_patch or not run.rule_id:
+        # REQ-053 item 3: approved repairs leave "propose" for the terminal
+        # "approved" decision — learned entries must follow them there, or
+        # the Knowledge page would empty itself on every approval.
+        if run.decision not in ("propose", "approved", "rolled_back"):
+            continue
+        if not run.candidate_patch or not run.rule_id:
             continue
         key = ((run.vendor or "unknown"), run.rule_id, _canonical_patch(run.candidate_patch))
         groups.setdefault(key, []).append(run)
@@ -390,16 +395,31 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
         conn = conn_by_id.get(connector_id)
         connector_name = conn.name if conn is not None else ""
         kind = str(approval.decision or "")
-        business = kind == "approve" and dec_run is not None and dec_run.decision == "escalate"
+        # REQ-053 item 3: an approved repair leaves "escalate" for the
+        # terminal "approved" decision, so "was this an escalation" can no
+        # longer be read from the decision — the escalation bundle (which
+        # persists) is the signal. A business decision approved a
+        # model-proposed change (bundle carries the proposal); a deny
+        # rejected an escalation (bundle carries the question).
+        bundle_any: dict[str, Any] = (
+            dec_run.escalation_bundle
+            if dec_run is not None and isinstance(dec_run.escalation_bundle, dict)
+            else {}
+        )
+        raw_proposal_any = bundle_any.get("proposal") if isinstance(bundle_any, dict) else None
+        business = (
+            kind == "approve"
+            and isinstance(raw_proposal_any, dict)
+            and bool(str(raw_proposal_any.get("label") or raw_proposal_any.get("effect") or "").strip())
+        )
+        was_escalation = bool(bundle_any.get("question"))
         learned = approval.id in learned_approval_ids
         if kind == "approve" and business:
             effect = ""
             label = ""
-            bundle = dec_run.escalation_bundle if dec_run is not None and isinstance(dec_run.escalation_bundle, dict) else {}
-            raw_proposal = bundle.get("proposal") if isinstance(bundle, dict) else None
-            if isinstance(raw_proposal, dict):
-                effect = str(raw_proposal.get("effect") or "")
-                label = str(raw_proposal.get("label") or "")
+            if isinstance(raw_proposal_any, dict):
+                effect = str(raw_proposal_any.get("effect") or "")
+                label = str(raw_proposal_any.get("label") or "")
             summary = f"Business decision: {effect or label or 'accepted the proposed change'}"
         elif kind == "approve":
             rule = (dec_run.rule_id if dec_run is not None and dec_run.rule_id else "") or (
@@ -409,7 +429,7 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
             if learned:
                 summary += " (learned)"
         elif kind == "reject":
-            if dec_run is not None and dec_run.decision == "escalate":
+            if was_escalation:
                 summary = "Denied: kept everything as-is, contact the vendor"
             else:
                 summary = "Rejected the proposed patch"
@@ -467,6 +487,27 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
                 refused = str((b.inputs or {}).get("spec_vocabulary", "") or "")
                 if refused and refused not in refused_vocabularies and refused != vocabulary:
                     refused_vocabularies.append(refused)
+        # REQ-053 item 7: vocabulary refusals recorded before this
+        # connector existed join by name, so the profile lists the earlier
+        # refusal (e.g. Meridian v1) beside the vocabulary in use.
+        try:
+            from autobridge.control.models import RefusedBuildAttempt as _Refused  # noqa: PLC0415
+
+            pre_attempts = (
+                db.execute(
+                    select(_Refused)
+                    .where(_Refused.connector_name == conn.name)
+                    .order_by(_Refused.created_at)
+                )
+                .scalars()
+                .all()
+            )
+        except Exception:
+            pre_attempts = []
+        for pre in pre_attempts:
+            vocab = str(pre.spec_vocabulary or "")
+            if vocab and vocab not in refused_vocabularies and vocab != vocabulary:
+                refused_vocabularies.append(vocab)
         if not last_built_at and builds:
             last_built_at = builds[-1].created_at
         if not vocabulary:

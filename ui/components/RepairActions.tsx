@@ -44,6 +44,10 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
   const [busy, setBusy] = useState<"approve" | "reject" | "rollback" | null>(null);
   const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [rollbackTarget, setRollbackTarget] = useState("");
+  // REQ-053 item 4: the button the operator just clicked stays visibly
+  // decided even before the parent refetch lands the terminal decision.
+  // "deny" is the reject of an escalation (REQ-049 item 5).
+  const [done, setDone] = useState<"approve" | "reject" | "deny" | "rollback" | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,24 +68,37 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
     };
   }, []);
 
-  const canApprove = decision === "propose" && patchReady;
+  const canApprove = decision === "propose" && patchReady && done === null;
   // REQ-048 item 1: an escalation has no patch to approve, but Reject
   // closes it (the server records a reject approval on any decision).
-  const canReject = (decision === "propose" && patchReady) || decision === "escalate";
+  // REQ-053 item 4: a decided repair offers no action twice.
+  const isDecided = decision === "approved" || decision === "reject" || decision === "rolled_back" || done !== null;
+  const canReject = ((decision === "propose" && patchReady) || decision === "escalate") && !isDecided;
   // REQ-049 item 5: an escalation carrying the model's proposed change
   // offers Approve (the model's label) and Deny (generic, always present).
   // A plain escalation keeps Reject only — never an Approve button.
   const proposalPatch = Array.isArray(proposal?.patch) ? (proposal as Proposal & { patch: unknown[] }).patch : [];
   const hasProposal = decision === "escalate" && proposalPatch.length > 0;
   const proposalLabel = typeof proposal?.label === "string" && proposal.label.trim() ? proposal.label.trim() : "Approve";
-  const canApproveProposal = hasProposal;
+  const canApproveProposal = hasProposal && !isDecided;
   // The climb: no verdict and no action until a patch has passed.
   const awaitingPatch = decision === "propose" && !patchReady;
   // REQ-048 item 1: escalations lead with the question, never an Approve
   // button — not even a disabled one.
   const isEscalated = decision === "escalate";
-  // Rollback is available when there was a prior release (we allow it always; backend validates)
-  const canRollback = true;
+  // Rollback is available when there was a prior release (we allow it always; backend validates).
+  // REQ-053 item 4: after a decision the rail shows the outcome with
+  // actions disabled (REQ-054 keeps this) — except rollback, which stays
+  // available on an approved repair (the fix can still be reverted).
+  const canRollback = !isDecided || decision === "approved";
+  const terminalLabel =
+    decision === "approved" || done === "approve"
+      ? "Approved ✓"
+      : decision === "rolled_back" || done === "rollback"
+        ? "Rolled back"
+        : decision === "reject" || done === "reject" || done === "deny"
+          ? "Rejected"
+          : null;
 
   async function doApprove() {
     setBusy("approve");
@@ -99,6 +116,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       }
       const data = await res.json();
       setMsg({ type: "success", text: `Approved — new active release ${String(data.to_release_id ?? data.id ?? "").slice(0, 8)}` });
+      setDone("approve");
       onActionComplete?.();
     } catch (err) {
       setMsg({ type: "error", text: err instanceof Error ? err.message : String(err) });
@@ -122,6 +140,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
         throw new Error(`Reject failed (${res.status}): ${body}`);
       }
       setMsg({ type: "success", text: "Rejected — repair dismissed." });
+      setDone("reject");
       onActionComplete?.();
     } catch (err) {
       setMsg({ type: "error", text: err instanceof Error ? err.message : String(err) });
@@ -146,6 +165,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       }
       const data = await res.json();
       setMsg({ type: "success", text: `Approved as a business decision — new active release ${String(data.to_release_id ?? data.id ?? "").slice(0, 8)}` });
+      setDone("approve");
       onActionComplete?.();
     } catch (err) {
       setMsg({ type: "error", text: err instanceof Error ? err.message : String(err) });
@@ -169,6 +189,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
         throw new Error(`Deny failed (${res.status}): ${body}`);
       }
       setMsg({ type: "success", text: "Denied — kept everything as-is; contact the vendor." });
+      setDone("deny");
       onActionComplete?.();
     } catch (err) {
       setMsg({ type: "error", text: err instanceof Error ? err.message : String(err) });
@@ -202,6 +223,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       const data = await res.json();
       const newId = data.new_release?.id ?? data.id ?? "";
       setMsg({ type: "success", text: `Rolled back — new release ${String(newId).slice(0, 8)}` });
+      setDone("rollback");
       onActionComplete?.();
     } catch (err) {
       setMsg({ type: "error", text: err instanceof Error ? err.message : String(err) });
@@ -212,7 +234,11 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
 
   return (
     <div data-testid="repair-actions" className="repair-acts repair-past">
-      {isEscalated ? null : (
+      {terminalLabel ? (
+        <button data-testid="repair-approve-btn" disabled className="btn">
+          {terminalLabel}
+        </button>
+      ) : isEscalated ? null : (
         <button
           data-testid="repair-approve-btn"
           onClick={doApprove}
@@ -222,7 +248,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
           {busy === "approve" ? "Approving…" : awaitingPatch ? "No patch to approve yet" : "Approve release"}
         </button>
       )}
-      {hasProposal ? (
+      {hasProposal && !terminalLabel ? (
         <button
           data-testid="repair-approve-proposal-btn"
           onClick={doApproveProposal}

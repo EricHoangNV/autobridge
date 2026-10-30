@@ -68,13 +68,20 @@ HEALTH_STATUSES = frozenset(
 )
 SYNC_OUTCOMES = frozenset({"Complete", "Degraded", "Blocked"})
 DRIFT_STATUSES = frozenset({"open", "investigating", "repaired", "escalated", "dismissed"})
-REPAIR_DECISIONS = frozenset({"propose", "escalate", "reject", "climbing", "failed"})
+REPAIR_DECISIONS = frozenset({"propose", "escalate", "reject", "climbing", "failed", "approved", "rolled_back"})
 #: ``climbing`` — the repair job started and the ladder is running (the row
 #: is created at job start so the Repairs list and the repair page are
 #: reachable while the climb runs, REQ-043); ``failed`` — the job crashed,
 #: timed out or was orphaned by a restart before reaching a decision, with
 #: the reason recorded on the trace. Both are terminal for polling except
 #: ``climbing``; approvals only act on ``propose``.
+#: ``approved`` / ``reject`` / ``rolled_back`` are terminal operator
+#: decisions written by the approve/reject/rollback paths (REQ-053 item 3:
+#: an approval row exists ⇒ the repair no longer waits, and every
+#: "waiting" in the UI derives from the decision, one source of truth).
+#: ``rolled_back`` is terminal for a manual rollback; an automatic
+#: rollback after a failed verifying sync re-opens the repair as
+#: ``escalate`` instead (REQ-053 item 6).
 APPROVAL_DECISIONS = frozenset({"approve", "reject", "rollback"})
 EVIDENCE_KINDS = frozenset(
     {
@@ -380,6 +387,29 @@ class BuildRun(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+class RefusedBuildAttempt(Base):
+    """A vocabulary-gate refusal recorded without a connector (REQ-053 item 7).
+
+    The vocabulary check runs before any connector is created: a refused
+    build creates no connector row, but the attempt (name, vocabulary,
+    reason) persists here so the later connector built under the same name
+    shows the earlier refusal as history, and the knowledge profile lists
+    it under refused vocabularies. One row per (name, vocabulary): a new
+    refusal for the same pair replaces the old one.
+    """
+
+    __tablename__ = "refused_build_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    connector_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    spec_vocabulary: Mapped[str] = mapped_column(String(8), nullable=False, default="")
+    reason: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    docs_source: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
     )
 
 

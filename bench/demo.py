@@ -2491,10 +2491,48 @@ def step7_new_api_style(seed: int, live: bool, base_url: str) -> dict[str, Any]:
 def _step7_live(docs_text: str, base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
     """Live half of step 7: the same v1-refuses/v2-connects pair through the API.
 
-    The v1 attempt is a refused build (recorded on the connector profile as
-    refused); the v2 build succeeds and becomes the release in use, so the
-    knowledge page lists the Meridian connector under v2 with v1 refused.
+    REQ-053 item 7: the vocabulary check runs before any connector is
+    created — the v1 refusal creates no connector (the attempt is recorded
+    by name); the v2 build then creates the one Meridian connector, whose
+    page shows the earlier v1 refusal as history. The knowledge page lists
+    the Meridian connector under v2 with v1 refused.
     """
+    # Step 0: the v1 vocabulary check — refused, and no connector exists.
+    check_rec = _control_call(
+        base_url, "POST", "/connectors/vocabulary-check",
+        {"name": "meridianpms", "docs_text": docs_text, "spec_vocabulary": "v1"},
+    )
+    calls.append(check_rec)
+    check_raw = check_rec.get("body")
+    check_body: dict[str, Any] = check_raw if isinstance(check_raw, dict) else {}
+    _assert_live(
+        calls, "v1 vocabulary check refused (no connector, named reason)",
+        check_body.get("refused") is True,
+        f"v1 check result: {check_body}",
+    )
+    reason = str(check_body.get("reason") or "")
+    _assert_live(
+        calls, "v1 refusal names POST and ConnectorSpec v1",
+        "POST" in reason and "ConnectorSpec v1" in reason,
+        f"v1 check reason: {reason!r}",
+    )
+    _assert_live(
+        calls, "v1 check suggests v2",
+        check_body.get("suggested_vocabulary") == "v2",
+        f"v1 check result: {check_body}",
+    )
+    list_rec = _control_call(base_url, "GET", "/connectors")
+    calls.append(list_rec)
+    list_raw = list_rec.get("body")
+    list_body: dict[str, Any] = list_raw if isinstance(list_raw, dict) else {}
+    existing = list_body.get("connectors") if isinstance(list_body, dict) else []
+    names = [c.get("name") for c in existing] if isinstance(existing, list) else []
+    _assert_live(
+        calls, "refused v1 build created no connector",
+        "meridianpms" not in names,
+        f"connectors after refused check: {names}",
+    )
+    # The v2 build creates the one Meridian connector.
     ensure_calls = _live_ensure_connector(
         base_url,
         {
@@ -2511,37 +2549,13 @@ def _step7_live(docs_text: str, base_url: str, calls: list[dict[str, Any]]) -> d
         _assert_live(calls, "connector meridianpms id", False, "no connector id from ensure calls")
         return {"connector_id": None}
     calls.append(_control_call(base_url, "GET", "/capabilities"))
-
-    def _release_ids() -> list[str]:
-        detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
-        calls.append(detail)
-        body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
-        releases = body.get("releases") if isinstance(body, dict) else []
-        if not isinstance(releases, list):
-            return []
-        return [str(r.get("id")) for r in releases if isinstance(r, dict) and r.get("id")]
-
-    releases_before = _release_ids()
-    refused = _live_build_and_poll(
-        base_url, connector_id,
-        {"docs_text": docs_text, "spec_vocabulary": "v1"},
-        calls,
-    )
+    refused = {"success": False, "release_id": None, "degradation_reason": reason}
+    # REQ-053 item 7: the v1 refusal above created no connector and no
+    # release — the check recorded the attempt by name instead.
     _assert_live(
-        calls, "v1 docs build refused (no release, named reason)",
+        calls, "v1 docs check refused (no release, named reason)",
         refused.get("success") is False and not refused.get("release_id"),
-        f"v1 build result: {refused}",
-    )
-    reason = str(refused.get("degradation_reason") or "")
-    _assert_live(
-        calls, "v1 refusal names POST and ConnectorSpec v1",
-        "POST" in reason and "ConnectorSpec v1" in reason,
-        f"v1 degradation_reason: {reason!r}",
-    )
-    _assert_live(
-        calls, "refused v1 build persisted no release",
-        _release_ids() == releases_before,
-        "a refused build must not persist a release",
+        f"v1 check result: {refused}",
     )
     granted = _live_build_and_poll(
         base_url, connector_id,

@@ -37,7 +37,7 @@ export function SyncRunsTable({ syncRuns }: Props) {
   }
 
   return (
-    <div data-testid="sync-runs-table-wrap">
+    <div data-testid="sync-runs-table-wrap" className="syncruns-scroll">
       <table data-testid="sync-runs-table" className="ctab num">
         <thead>
           <tr>

@@ -242,11 +242,21 @@ def _run_meridian_repair(
 
     # --- 5. Verified release ---
     session3 = SessionLocal()
-    from autobridge.engine.releases import create_release_from_patch
+    from autobridge.engine.releases import approve_release, create_release_from_patch
 
     new_release = create_release_from_patch(session3, connector_id=connector_db_id, base_release_id=release_id, patch=result.candidate_patch, provenance_repair_run_id=repair_run_id)
     session3.commit()
     assert new_release.parent_release_id == release_id
+    # REQ-030 2b: a fix is learned only once it is approved — approve the
+    # verified candidate into the shared cache, or the repeat below can
+    # never hit L0 (pre-existing gap: the test re-injected without ever
+    # approving).
+    approve_release(
+        session3, repair_run_id=repair_run_id, actor="e2e-approve",
+        from_release_id=release_id, to_release_id=new_release.id,
+        connector_id=connector_db_id, knowledge_cache=cache,
+    )
+    session3.commit()
     session3.close()
 
     # --- 6. Oracle: old fails, new passes, baseline still passes ---

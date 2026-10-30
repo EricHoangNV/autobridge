@@ -164,6 +164,6 @@ def test_knowledge_endpoints_live_shape(e2e_stack: str) -> None:
     assert "EVENT" not in capabilities["versions"]["v2"]["methods"]
     assert any(t["name"] == "reset_demo" for t in capabilities["tools"])
     knowledge = _get("/knowledge")
-    assert set(knowledge) == {"entries", "connectors", "counts"}
+    assert set(knowledge) == {"entries", "connectors", "counts", "decisions"}
     assert set(knowledge["counts"]) == {"entries", "reuses", "tokens_saved"}
     _ = os.environ.get("AUTOBRIDGE_CONTROL_TOKEN", "")

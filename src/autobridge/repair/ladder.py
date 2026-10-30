@@ -2157,10 +2157,15 @@ def run_frontier_climb(
     # model call starts, stamped with the model id and call start time) and
     # after each rung's post-call update, with snapshots of the attempts so
     # far and the usage so far. The repair job handler uses it to update the
-    # running RepairRun row (committing between rungs, never holding a
-    # transaction across a model call). Never raises: emission failures are
-    # swallowed so progress can never break the climb.
+    # running RepairRun row (REQ-043).
     on_rung: Any | None = None,
+    # REQ-053 item 6: faulted-records judgement for model proposals. When
+    # given (the break's sync records, raw first pages and unmet criteria),
+    # an apply-valid proposal is dry-run against them before it is offered:
+    # one retry with the exact error, then dropped to question-only. None
+    # skips the judgement (bench paths without a sync) — the verifier gate
+    # still applies.
+    dry_run_fault: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then stop (REQ-021).
 
@@ -2211,6 +2216,33 @@ def run_frontier_climb(
             return
         with contextlib.suppress(Exception):
             on_rung([dict(a) for a in attempts], dict(usage))
+
+    # REQ-053 item 6: the last dry-run outcome, shown with the proposal
+    # ("tested on the current records: the checks pass"). Judges nothing
+    # when no fault context rides the climb.
+    dry_run_note = ""
+
+    def _dry_judge(candidate: list[dict[str, Any]] | None) -> str | None:
+        """Judge an apply-valid proposal on the faulted records.
+
+        Returns ``None`` when it passes (or no fault context rides the
+        climb), else the one-line error for the single retry. Never
+        raises: a dry-run failure is row data, never a climb error — the
+        caller routes it into the existing retry, then drops the proposal.
+        """
+        nonlocal dry_run_note
+        if not candidate or dry_run_fault is None or validate_against is None:
+            return None
+        try:
+            from autobridge.repair.dryrun import dry_run_proposal  # noqa: PLC0415
+
+            ok, detail = dry_run_proposal(validate_against, list(candidate), dry_run_fault)
+        except Exception as exc:  # noqa: BLE001 — judgement is best-effort
+            return f"dry-run errored: {exc}"
+        if ok:
+            dry_run_note = "tested on the current records: the checks pass"
+            return None
+        return f"proposal failed dry-run on the current records: {detail}"
 
     # --- L0: learned knowledge ---
     if not enable_knowledge:
@@ -2617,6 +2649,14 @@ def run_frontier_climb(
                 evidence=evidence,
             )
             if _proposal_adopted is not None:
+                # REQ-053 item 6: an apply-valid proposal is judged on the
+                # faulted records before it is offered — one retry with the
+                # exact error, then dropped to question-only.
+                _dry_error = _dry_judge(_proposal_adopted)
+                if _dry_error is not None:
+                    _proposal_adopted = None
+                    _proposal_error = _dry_error
+            if _proposal_adopted is not None:
                 proposal = _proposal_adopted
                 proposal_label = str(parsed.get("proposal_label") or "")
                 proposal_effect = str(parsed.get("proposal_effect") or "")
@@ -2628,6 +2668,8 @@ def run_frontier_climb(
                 l3_entry["proposal_label"] = proposal_label
                 l3_entry["proposal_effect"] = proposal_effect
                 l3_entry["proposal_validated"] = True
+                if dry_run_note:
+                    l3_entry["dry_run"] = dry_run_note
             else:
                 l3_entry["proposal_dropped"] = (
                     f"L3 escalation proposal dropped: {_proposal_error}; "
@@ -2655,14 +2697,26 @@ def run_frontier_climb(
                         model_escalated = False
                         model_question = ""
                         proposal = list(_retry_parsed["patch"])
-                        l3_entry["action"] = "frontier_generate"
-                        l3_entry["proposal"] = [dict(op) for op in proposal]
-                        l3_entry["proposal_ops"] = len(proposal)
-                        l3_entry["proposal_pointers"] = sorted(
-                            {str(op.get("path", "")) for op in proposal if isinstance(op, dict)}
-                        )
-                        l3_entry["proposal_validated"] = True
-                        l3_entry["retried"] = True
+                        _retry_dry = _dry_judge(proposal)
+                        if _retry_dry is not None:
+                            # The one retry is spent: drop, question-only.
+                            proposal = None
+                            l3_entry["proposal_dropped"] = (
+                                f"L3 retry proposal dropped ({_retry_dry}); "
+                                "the escalation stands on the question alone"
+                            )
+                            _stamp_outcome("proposal_rejected")
+                        else:
+                            l3_entry["action"] = "frontier_generate"
+                            l3_entry["proposal"] = [dict(op) for op in proposal]
+                            l3_entry["proposal_ops"] = len(proposal)
+                            l3_entry["proposal_pointers"] = sorted(
+                                {str(op.get("path", "")) for op in proposal if isinstance(op, dict)}
+                            )
+                            l3_entry["proposal_validated"] = True
+                            l3_entry["retried"] = True
+                            if dry_run_note:
+                                l3_entry["dry_run"] = dry_run_note
                     elif _retry_parsed["kind"] == "escalate":
                         _retry_question = normalize_model_question(
                             str(_retry_parsed.get("question") or "")
@@ -2677,6 +2731,11 @@ def run_frontier_climb(
                                 evidence=evidence,
                             )
                             if _retry_adopted is not None:
+                                _retry_dry = _dry_judge(_retry_adopted)
+                                if _retry_dry is not None:
+                                    _retry_adopted = None
+                                    _retry_error = _retry_dry
+                            if _retry_adopted is not None:
                                 proposal = _retry_adopted
                                 proposal_label = str(_retry_parsed.get("proposal_label") or "")
                                 proposal_effect = str(_retry_parsed.get("proposal_effect") or "")
@@ -2689,6 +2748,8 @@ def run_frontier_climb(
                                 l3_entry["proposal_effect"] = proposal_effect
                                 l3_entry["proposal_validated"] = True
                                 l3_entry["retried"] = True
+                                if dry_run_note:
+                                    l3_entry["dry_run"] = dry_run_note
                             else:
                                 l3_entry["proposal_dropped"] = (
                                     f"L3 retry proposal dropped ({_retry_error}); "
@@ -2729,7 +2790,16 @@ def run_frontier_climb(
             )
         apply_error = _l3_pointer_error(proposal, target_spec=validate_against, evidence=evidence)
         if apply_error is None:
+            # REQ-053 item 6: judge the apply-valid proposal on the faulted
+            # records before offering it — the retry below gets the exact
+            # error when it fails.
+            _dry_error = _dry_judge(proposal if isinstance(proposal, list) else None)
+            if _dry_error is not None:
+                apply_error = _dry_error
+        if apply_error is None:
             l3_entry["proposal_validated"] = True
+            if dry_run_note:
+                l3_entry["dry_run"] = dry_run_note
             _stamp_outcome("proposal")
         else:
             # REQ-044 item 4: one retry with the apply error, then escalate.
@@ -2808,6 +2878,12 @@ def run_frontier_climb(
                             candidate, target_spec=validate_against, evidence=evidence
                         )
                         if retry_error is None:
+                            # REQ-053 item 6: the retry is the one retry —
+                            # judge it on the faulted records too.
+                            _retry_dry = _dry_judge(candidate if isinstance(candidate, list) else None)
+                            if _retry_dry is not None:
+                                retry_error = _retry_dry
+                        if retry_error is None:
                             proposal = candidate
                             l3_entry["proposal_ops"] = len(proposal)
                             l3_entry["proposal_pointers"] = sorted(
@@ -2815,6 +2891,8 @@ def run_frontier_climb(
                             )
                             l3_entry["proposal_validated"] = True
                             l3_entry["retried"] = True
+                            if dry_run_note:
+                                l3_entry["dry_run"] = dry_run_note
                             l3_entry["reason"] = (
                                 f"L3 retry proposed a patch after {apply_error} "
                                 f"({len(proposal)} ops: {', '.join(l3_entry['proposal_pointers'])})"
@@ -2873,6 +2951,9 @@ def run_frontier_climb(
         # proposal. The engine never synthesises these itself.
         "proposal_label": proposal_label,
         "proposal_effect": proposal_effect,
+        # REQ-053 item 6: the last dry-run outcome, shown with the offered
+        # proposal ("tested on the current records: the checks pass").
+        "dry_run": dry_run_note,
         "model_rationale": model_rationale,
         "model_question": model_question,
         "model_escalated": model_escalated,

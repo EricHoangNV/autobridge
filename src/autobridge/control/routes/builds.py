@@ -20,7 +20,15 @@ from autobridge.control.models import Connector
 
 if TYPE_CHECKING:
     from autobridge.control.jobs import JobRunner
-from autobridge.control.schemas import AUTH_401, BuildRequest, BuildResponse, SyncRequest, SyncResponse
+from autobridge.control.schemas import (
+    AUTH_401,
+    BuildRequest,
+    BuildResponse,
+    SyncRequest,
+    SyncResponse,
+    VocabularyCheckRequest,
+    VocabularyCheckResponse,
+)
 
 router = APIRouter(tags=["jobs"])
 
@@ -123,6 +131,93 @@ def _get_runner(db: Session | None = None) -> JobRunner:
     from autobridge.control.runner import get_runner  # noqa: PLC0415
 
     return get_runner(db)
+
+
+@router.post("/connectors/vocabulary-check", response_model=VocabularyCheckResponse, responses=AUTH_401)
+def vocabulary_check(body: VocabularyCheckRequest, db: Session = Depends(get_db), _: None = Security(require_control_token)) -> VocabularyCheckResponse:
+    """Pre-creation vocabulary gate (REQ-053 item 7).
+
+    Runs the same deterministic docs → classify → vocabulary-guard path
+    the build runs (0 model calls, no network beyond an optional docs_url
+    fetch), before any connector is created. A refused vocabulary creates
+    no connector and no build: the attempt (name, vocabulary, reason) is
+    recorded by name so the later connector built under the same name
+    shows the earlier refusal as history. Anything else (docs that parse
+    but fail later, or docs that compile) is not a refusal — the build
+    itself reports those, on its own connector.
+    """
+    from autobridge.control.models import RefusedBuildAttempt  # noqa: PLC0415
+
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required (history key for a refused build)")
+    docs_text: str | None = body.docs_text
+    if not docs_text and body.docs_url:
+        validate_docs_url(body.docs_url)
+        try:
+            with httpx.Client(timeout=5) as client:
+                r = client.get(body.docs_url)
+                r.raise_for_status()
+                docs_text = r.text
+        except Exception as exc:
+            safe_url = _redact_url(body.docs_url)
+            safe_err = str(exc).replace(body.docs_url, safe_url)
+            raise HTTPException(status_code=422, detail=f"cannot fetch docs_url {safe_url}: {safe_err}") from exc
+    if not docs_text and body.docs_path:
+        if "generated/connectors" in body.docs_path:
+            raise HTTPException(status_code=422, detail="build must not read reference specs")
+        raise HTTPException(
+            status_code=422,
+            detail="docs_path is an identifier only; send docs_text (or docs_url)",
+        )
+    if not docs_text:
+        raise HTTPException(status_code=422, detail="vocabulary check requires docs_text (or docs_url)")
+
+    from autobridge.config import spec_vocabulary_default  # noqa: PLC0415
+
+    spec_vocabulary = body.spec_vocabulary or spec_vocabulary_default()
+    docs_source = body.docs_path or body.docs_url or "inline"
+
+    from autobridge.discovery.bootstrap import build_draft_spec  # noqa: PLC0415
+
+    try:
+        result = build_draft_spec(
+            docs_text,
+            source=docs_source,
+            connector_id="vocabulary-check",
+            vendor=name,
+            spec_vocabulary=spec_vocabulary,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"vocabulary check failed: {exc}") from exc
+    trace = result.trace if isinstance(result.trace, list) else []
+    guard = next(
+        (t for t in trace if isinstance(t, dict) and t.get("stage") == "vocabulary_guard"),
+        None,
+    )
+    if guard is None:
+        return VocabularyCheckResponse(
+            refused=False, reason=None, vocabulary=spec_vocabulary, suggested_vocabulary=None
+        )
+    reason = str(result.degradation_reason or guard.get("reason") or "vocabulary cannot express these docs")
+    suggested = "v3" if guard.get("protocol") else "v2"
+    # One row per (name, vocabulary): a repeated refusal replaces the old one.
+    db.query(RefusedBuildAttempt).filter(
+        RefusedBuildAttempt.connector_name == name,
+        RefusedBuildAttempt.spec_vocabulary == spec_vocabulary,
+    ).delete()
+    db.add(
+        RefusedBuildAttempt(
+            connector_name=name,
+            spec_vocabulary=spec_vocabulary,
+            reason=reason,
+            docs_source=docs_source,
+        )
+    )
+    db.commit()
+    return VocabularyCheckResponse(
+        refused=True, reason=reason, vocabulary=spec_vocabulary, suggested_vocabulary=suggested,
+    )
 
 
 @router.post("/connectors/{connector_id}/build", response_model=BuildResponse, responses=AUTH_401)

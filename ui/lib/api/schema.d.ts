@@ -93,6 +93,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connectors/vocabulary-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Vocabulary Check
+         * @description Pre-creation vocabulary gate (REQ-053 item 7).
+         *
+         *     Runs the same deterministic docs → classify → vocabulary-guard path
+         *     the build runs (0 model calls, no network beyond an optional docs_url
+         *     fetch), before any connector is created. A refused vocabulary creates
+         *     no connector and no build: the attempt (name, vocabulary, reason) is
+         *     recorded by name so the later connector built under the same name
+         *     shows the earlier refusal as history. Anything else (docs that parse
+         *     but fail later, or docs that compile) is not a refusal — the build
+         *     itself reports those, on its own connector.
+         */
+        post: operations["vocabulary_check_connectors_vocabulary_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connectors/{connector_id}": {
         parameters: {
             query?: never;
@@ -2764,6 +2793,10 @@ export interface components {
             live: boolean;
             /** Public Port */
             public_port: number;
+            /** Suggested Credential Ref */
+            suggested_credential_ref?: string | null;
+            /** Suggested Target Entities */
+            suggested_target_entities?: string[];
         };
         /** SimulatorsOut */
         SimulatorsOut: {
@@ -2870,6 +2903,59 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * VocabularyCheckRequest
+         * @description Pre-creation vocabulary gate (REQ-053 item 7): the check runs before
+         *     any connector is created. A refused build creates no connector; the
+         *     attempt is recorded by name so the later connector shows it as history.
+         */
+        VocabularyCheckRequest: {
+            /**
+             * Docs Path
+             * @description Provenance label only; a check with only docs_path is 422 — send docs_text (or docs_url)
+             */
+            docs_path?: string | null;
+            /**
+             * Docs Text
+             * @description Inline docs content
+             */
+            docs_text?: string | null;
+            /**
+             * Docs Url
+             * @description URL to fetch docs from
+             */
+            docs_url?: string | null;
+            /**
+             * Name
+             * @description Intended connector name (history key)
+             */
+            name: string;
+            /** Spec Vocabulary */
+            spec_vocabulary?: ("v1" | "v2" | "v3") | null;
+        };
+        /** VocabularyCheckResponse */
+        VocabularyCheckResponse: {
+            /**
+             * Reason
+             * @description Refusal reason (deterministic, 0 model calls)
+             */
+            reason?: string | null;
+            /**
+             * Refused
+             * @description True when the vocabulary cannot express the docs: no connector was created
+             */
+            refused: boolean;
+            /**
+             * Suggested Vocabulary
+             * @description Vocabulary to build with instead, when refused
+             */
+            suggested_vocabulary?: string | null;
+            /**
+             * Vocabulary
+             * @description Vocabulary that was checked
+             */
+            vocabulary: string;
         };
     };
     responses: never;
@@ -3171,6 +3257,72 @@ export interface operations {
                     } | {
                         detail: string;
                     };
+                };
+            };
+        };
+    };
+    vocabulary_check_connectors_vocabulary_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VocabularyCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VocabularyCheckResponse"];
+                };
+            };
+            /** @description Malformed request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Missing or invalid control token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

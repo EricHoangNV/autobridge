@@ -27,6 +27,8 @@ targets:
     api_style: "Cloudbeds-style method REST"
     public_port: 8105
     docs_source: simulators/docs/atlas-openapi.yaml
+    suggested_credential_ref: ATLAS_API_KEY
+    suggested_target_entities: [Reservation, FolioCharge]
   - id: sim-harbor
     aliases: [harbor, harborpms, harbor-pms]
     host_admin_port: 8110
@@ -35,6 +37,8 @@ targets:
     api_style: "messy wiki docs over REST"
     public_port: 8106
     docs_source: simulators/docs/harbor.md
+    suggested_credential_ref: HARBOR_API_KEY
+    suggested_target_entities: [Reservation, FolioCharge]
   - id: sim-legacystay
     aliases: [legacystay, legacy]
     host_admin_port: 8112
@@ -43,6 +47,8 @@ targets:
     api_style: "offset-paged REST"
     public_port: 8111
     docs_source: simulators/docs/legacystay.md
+    suggested_credential_ref: LEGACYSTAY_API_KEY
+    suggested_target_entities: [Reservation]
   - id: sim-meridian
     aliases: [meridian, meridianpms, meridian-pms]
     host_admin_port: 8117
@@ -51,6 +57,8 @@ targets:
     api_style: "Mews-style POST/JSON"
     public_port: 8116
     docs_source: simulators/docs/meridian-openapi.yaml
+    suggested_credential_ref: MERIDIAN_API_KEY
+    suggested_target_entities: [Reservation, FolioCharge]
   - id: sim-fias-pabx
     # The FIAS link engine keeps its fault state (faults, P# counter,
     # reseeded rooms) outside the shared scenario slot, so the generic
@@ -64,3 +72,5 @@ targets:
     api_style: "FIAS over TCP"
     public_port: 8118
     docs_source: simulators/docs/fias-pabx.md
+    suggested_credential_ref: EDGE_TOKEN
+    suggested_target_entities: [FolioCharge]

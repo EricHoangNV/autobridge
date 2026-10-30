@@ -3818,3 +3818,35 @@ Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process
 - Owner check outstanding: Aside run of decks 6 and 7 (live build flows + link-drop break) on a keyed stack.
 - e2e-ui (Playwright) cannot load specs in this sandbox (pre-existing `import.meta` module error, reproduces on the pristine tree); UI covered by vitest + the live demo. Owner runs `make e2e-ui` keyed.
 - `make test` shows a roving single-ERROR flake between full runs (unrelated files, pass in isolation); final run here was fully green.
+
+## REQ-053 — First owner demo run: fix what broke
+**Date:** 2026-10-30
+**Ref:** REQUESTS.MD REQ-053 (owner priority 2026-10-30 19:40)
+
+**What was done:**
+- Items 1-5 (UI): menu label Knowledge; masthead grid rows + sync-runs scroll; waiting derived from terminal decisions (models + migration 0013 with backfill); candidate from waiting repairs; approve/reject/rollback buttons terminal with Approved ✓; repairs list "rolled back"; docs-check own stage.
+- Items 8/9 (UI build path): simulator suggestions (credential_ref + entities) in registry/endpoint/UI picker; form always sends probe_wire_shape; meridian/pabx base-URL suggestions. Live-verified root cause (wrong credential + missing probe).
+- Item 7: POST /connectors/vocabulary-check + refused_build_attempts (migration 0014) + history/knowledge merge + form check-first flow with rebuild; demo step 7 rewritten to the check-first flow.
+- Item 6: repair/dryrun.py + ladder/detect wiring (retry once, drop to question-only, pass stamps shown on page); auto-rollback on failed verifying sync with re-open + no second escalation (dedupe via latest-approval-is-rollback).
+- Item 10: live acceptance decks 4-7 through UI-identical requests (all green unkeyed; keyed deck-5 left to owner).
+- Tests + docs: 2 new test files (18 tests), 6 existing suites updated (incl. 2 pre-existing failures fixed: meridian L0-learn expectation, knowledge shape), docs/demo.md deck 5/6/7 wording.
+
+**Key decisions:**
+- Terminal decisions (not approval-joined UI logic) as the single source of truth — matches REQ-054's approved/rejected/rolled-back rail.
+- Dry-run judges but never synthesizes; strict (all touched-entity checks must pass), fail-closed on dry-run errors.
+- Re-open as escalate (not propose) after auto-rollback — the approved patch proved bad, so nothing is offered.
+- Latest-approval-wins for undecidedness (approve/reject decided; rollback re-opens), shared by detect dedupe + both awaiting readers + UI waiting filter.
+
+**Files changed:**
+- `src/autobridge/control/models.py`, `alembic/versions/0013_*`, `0014_*`, `src/autobridge/control/migrate.py`
+- `src/autobridge/engine/releases.py` (transitions + reopen_as), `src/autobridge/engine/detect_repair.py` (gate + auto-rollback + parcel fault)
+- `src/autobridge/repair/dryrun.py` (new), `ladder.py` (dry-run judgement + return), `controller.py` (threading + drop evidence)
+- `src/autobridge/control/routes/builds.py` (vocabulary-check), `connectors.py` (refused merge), `capabilities.py` (groups/business/deny + refused merge), `demo.py` (reset), `schemas.py`, `demo_targets.py`, `config/demo_targets.yaml`, `connector_state.py`, `scheduler.py`
+- `bench/demo.py` (step 7 check-first), `tests/unit/test_autobridge_demo.py` (stub)
+- UI: TopBar, globals.css, SyncRunsTable, ConnectorsTable, connectors pages, RepairActions, repairs pages, NewConnectorForm + tests, schema regen
+- `docs/demo.md`, `mds/REQUESTS.MD`, `tests/e2e/test_meridian_faults.py`, `tests/e2e/test_knowledge_flow.py`
+
+**Notes for next iteration:**
+- REQ-054 is next (owner order). It rearranges the repair page — the dry-run lines (`patch-dry-run`, `proposal-dry-run`, `repair-section-approve` moving into the rail) and `data-testid`s will move; coordinate.
+- Keyed owner runs outstanding: deck-5 Approve-to-green (FRONTIER_API_KEY), Aside screenshots, keyed bench-ablation (REQ-028/046), other VERIFY items in progress-state.
+- e2e-ui (Playwright) still unrunnable in sandbox (pre-existing ESM loader failure); UI covered by vitest (237) + live verification.

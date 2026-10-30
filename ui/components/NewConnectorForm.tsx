@@ -13,6 +13,11 @@ const BASE_URL_SUGGESTIONS = [
   "http://sim-harbor:8000",
   "http://localhost:8102",
   "http://localhost:8103",
+  "http://localhost:8105",
+  "http://localhost:8106",
+  "http://localhost:8111",
+  "http://localhost:8116",
+  "http://localhost:8118",
 ];
 
 // Same-origin /api base (REQ-018): the rewrite + middleware forward to control.
@@ -36,6 +41,11 @@ type SimRow = {
   display_name: string;
   docs_source: string;
   developers_url: string;
+  // REQ-053 items 8/9: the same credential_ref and entities make demo
+  // sends for this simulator — applied when the operator picks its docs,
+  // so the UI path stops building with the form defaults.
+  suggested_credential_ref?: string | null;
+  suggested_target_entities?: string[] | null;
 };
 
 /** Build progress (REQ-031 item 4): docs read → draft → probes → result → release.
@@ -128,15 +138,23 @@ function BuildProgress({
             ? "starting…"
             : `${docsChars ?? "?"} chars sent`,
     },
+    // REQ-053 item 5: the doc-derived check gets its own stage — the
+    // build page must say the check came from the docs, not bury it in
+    // the draft line.
+    {
+      key: "docscheck",
+      title: "Docs check",
+      body: pageTotalDetail || "no doc-derived checks",
+    },
     {
       key: "draft",
       title: "Draft",
       body:
-        (detail
+        detail
           ? draft
             ? `spec v${String((draft.spec_version as string) ?? "?")} · ${Object.keys((draft.operations as object) ?? {}).length} operations`
             : "no draft (refused)"
-          : `job ${jobState}…`) + (pageTotalDetail ? ` — ${pageTotalDetail}` : ""),
+          : `job ${jobState}…`,
     },
     {
       key: "probes",
@@ -331,6 +349,19 @@ export function NewConnectorForm() {
         docs_source: body.docs_source || row?.docs_source || "",
         characters: body.characters ?? text.length,
       });
+      // REQ-053 items 8/9: starting from a simulator's docs fills in what
+      // make demo sends for it — base URL, credential ref and entities —
+      // so a UI build connects like the demo build instead of Blocked.
+      const suggestedCred = row?.suggested_credential_ref;
+      if (typeof suggestedCred === "string" && suggestedCred.trim()) {
+        setUseCustomCredential(false);
+        setCredentialRef(suggestedCred.trim());
+      }
+      const suggestedEntities = row?.suggested_target_entities;
+      if (Array.isArray(suggestedEntities) && suggestedEntities.length) {
+        const known = suggestedEntities.filter((e) => (ENTITY_OPTIONS as readonly string[]).includes(e));
+        if (known.length) setTargetEntities(known);
+      }
       const docsSource = body.docs_source || row?.docs_source || "";
       const pickedFias =
         id.toLowerCase().includes("fias") || docsSource.toLowerCase().includes("fias-pabx");
@@ -363,6 +394,14 @@ export function NewConnectorForm() {
   // UI state
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // REQ-053 item 7: the vocabulary gate runs before any connector is
+  // created — a refused build creates no connector, and the page shows
+  // the headline with a one-click rebuild on the suggested vocabulary.
+  const [refused, setRefused] = useState<{
+    vocabulary: string;
+    reason: string;
+    suggested: string;
+  } | null>(null);
   const [result, setResult] = useState<{
     connectorId: string;
     buildRunId?: string;
@@ -420,26 +459,67 @@ export function NewConnectorForm() {
     setTargetEntities((prev) => (prev.includes(entity) ? prev.filter((e) => e !== entity) : [...prev, entity]));
   }
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent, forcedVocabulary?: "v1" | "v2" | "v3") {
     e.preventDefault();
     setErrorMsg(null);
     setResult(null);
+    setRefused(null);
     if (!validate()) return;
 
-    const connectorPayload: CreateConnectorPayload = {
-      name: name.trim(),
-      base_url: isFiasDocs ? EDGE_RELAY_BASE_URL : baseUrl.trim(),
-      credential_ref: effectiveCredentialRef,
-      vendor_docs_ref: docsUrl.trim() || simDocsInfo?.docs_source || (fileName ? `file:${fileName}` : null),
-      target_entities: [...targetEntities],
-    };
-
-    setSubmitState("creating");
-
+    const vocab = forcedVocabulary ?? vocabulary;
     const base = getBaseUrl().replace(/\/$/, "");
 
+    // Docs payload priority: fileContent > docsText > docsUrl
+    const docsPayload: Record<string, unknown> = {};
+    if (fileContent) {
+      docsPayload.docs_text = fileContent;
+      docsPayload.docs_path = fileName ?? undefined;
+    } else if (docsText.trim()) {
+      docsPayload.docs_text = docsText.trim();
+    } else if (docsUrl.trim()) {
+      docsPayload.docs_url = docsUrl.trim();
+    }
+
     try {
-      // Step 1: Create connector
+      // Step 0 (REQ-053 item 7): the vocabulary check runs before any
+      // connector is created. A refused build creates no connector — the
+      // page shows the headline with a one-click rebuild instead.
+      setSubmitState("creating");
+      const checkRes = await fetch(`${base}/connectors/vocabulary-check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), spec_vocabulary: vocab, ...docsPayload }),
+      });
+      if (!checkRes.ok) {
+        const body = await checkRes.text();
+        throw new Error(`Vocabulary check failed (${checkRes.status}): ${body}`);
+      }
+      const check = (await checkRes.json()) as {
+        refused?: boolean;
+        reason?: string;
+        vocabulary?: string;
+        suggested_vocabulary?: string | null;
+      };
+      if (check.refused) {
+        const suggested = typeof check.suggested_vocabulary === "string" && check.suggested_vocabulary
+          ? check.suggested_vocabulary
+          : "v2";
+        setRefused({
+          vocabulary: String(check.vocabulary ?? vocab),
+          reason: String(check.reason ?? "the vocabulary cannot express these docs"),
+          suggested,
+        });
+        setSubmitState("idle");
+        return;
+      }
+
+      const connectorPayload: CreateConnectorPayload = {
+        name: name.trim(),
+        base_url: isFiasDocs ? EDGE_RELAY_BASE_URL : baseUrl.trim(),
+        credential_ref: effectiveCredentialRef,
+        vendor_docs_ref: docsUrl.trim() || simDocsInfo?.docs_source || (fileName ? `file:${fileName}` : null),
+        target_entities: [...targetEntities],
+      };
       const createRes = await fetch(`${base}/connectors`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -459,7 +539,11 @@ export function NewConnectorForm() {
       // Docs payload priority: fileContent > docsText > docsUrl
       const buildBody: Record<string, unknown> = {
         scenario_id: "baseline",
-        spec_vocabulary: vocabulary,
+        spec_vocabulary: vocab,
+        // REQ-053 items 8/9: same as make demo — the build probes the
+        // served wire keys (fail-soft) so detection is scoped to keys the
+        // vendor actually served instead of false-firing renames.
+        probe_wire_shape: true,
       };
       if (fileContent) {
         buildBody.docs_text = fileContent;
@@ -479,7 +563,7 @@ export function NewConnectorForm() {
       if (!buildRes.ok) {
         const body = await buildRes.text();
         // Connector was created; surface as partial success with error
-        setResult({ connectorId: created.id, vocabulary });
+        setResult({ connectorId: created.id, vocabulary: vocab });
         throw new Error(`Build start failed (${buildRes.status}): ${body} — connector ${created.id} was created`);
       }
 
@@ -488,7 +572,7 @@ export function NewConnectorForm() {
       connectorId: created.id,
       buildRunId: buildResult.build_run_id,
       jobId: buildResult.job_id,
-      vocabulary,
+      vocabulary: vocab,
       docsChars: (buildBody.docs_text as string | undefined)?.length ?? docsText.trim().length,
     });
       setSubmitState("done");
@@ -840,6 +924,42 @@ export function NewConnectorForm() {
               </a>
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* REQ-053 item 7: refused by the vocabulary — no connector was
+          created. The headline names the vocabulary and the rebuild;
+          the reason reads underneath, as today. */}
+      {refused && submitState === "idle" ? (
+        <div data-testid="vocabulary-refused" className="mt-6 border border-stop bg-band px-5 py-4 text-[15px] text-ink">
+          <p className="font-bold">
+            Refused by vocabulary {refused.vocabulary}:{" "}
+            {refused.suggested === "v3"
+              ? "this API is event-driven (framed records over TCP)."
+              : "this API needs request bodies (POST)."}{" "}
+            Build with {refused.suggested}.
+          </p>
+          <p data-testid="vocabulary-refused-reason" className="mt-1 font-mono text-[13px] text-ink-2">
+            {refused.reason}
+          </p>
+          <p className="mt-1 text-sm text-ink-2">No connector was created.</p>
+          <div className="mt-3">
+            <button
+              type="button"
+              data-testid="build-with-suggested"
+              onClick={(e) => {
+                const next = (["v1", "v2", "v3"] as const).includes(refused.suggested as "v1" | "v2" | "v3")
+                  ? (refused.suggested as "v1" | "v2" | "v3")
+                  : "v2";
+                setVocabulary(next);
+                setRefused(null);
+                void handleSubmit(e as unknown as FormEvent, next);
+              }}
+              className="btn !px-4 !py-2.5 !text-[15px]"
+            >
+              Build with {refused.suggested}
+            </button>
+          </div>
         </div>
       ) : null}
 

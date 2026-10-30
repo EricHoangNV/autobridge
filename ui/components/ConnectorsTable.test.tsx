@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ConnectorsTable } from "./ConnectorsTable";
+import { ConnectorsTable, waitingRepairs } from "./ConnectorsTable";
 import type { ConnectorOut, ConnectorDetail, ModelUsageResponse } from "@/lib/api/client";
 
 const baseConnector = (overrides: Partial<ConnectorOut> = {}): ConnectorOut => ({
@@ -186,5 +186,78 @@ describe("ConnectorsTable", () => {
     const c = baseConnector();
     render(<ConnectorsTable connectors={[c]} repairsByConnector={{}} />);
     expect(screen.queryByTestId(`connector-repair-link-${c.id}`)).not.toBeInTheDocument();
+  });
+
+  it("approved repairs never wait; rollbacks wait again (REQ-053 item 3)", () => {
+    const waiting = {
+      id: "repair-wait",
+      drift_event_ids: ["drift-1"],
+      ladder_level_reached: 1,
+      vendor: "atlas",
+      drift_signature: null,
+      drift_class: "PAGINATION_CHANGE",
+      approval: null,
+      fingerprint_delta: null,
+      candidate_patch: [{ op: "replace" }],
+      rule_id: "page_to_cursor",
+      hypothesis_ids: [],
+      visible_test_results: [],
+      verifier_report_id: null,
+      decision: "propose",
+      model_usage: {},
+      ladder_trace: [],
+      escalation_bundle: null,
+      created_at: new Date().toISOString(),
+      kind: "repair",
+    };
+    expect(waitingRepairs([waiting as never])).toHaveLength(1);
+    const approved = {
+      ...waiting,
+      id: "repair-done",
+      decision: "approved",
+      approval: { id: "a", actor: "op", decision: "approve", created_at: new Date().toISOString() },
+    };
+    expect(waitingRepairs([approved as never])).toHaveLength(0);
+    const reopened = {
+      ...waiting,
+      id: "repair-re",
+      approval: { id: "b", actor: "engine", decision: "rollback", created_at: new Date().toISOString() },
+    };
+    expect(waitingRepairs([reopened as never])).toHaveLength(1);
+  });
+
+  it("a superseded former active release is not a waiting candidate (REQ-053 item 3)", () => {
+    const c = baseConnector({ active_release_id: "rel-2" });
+    const detail = detailWith({
+      active_release_id: "rel-2",
+      releases: [
+        { id: "rel-1", connector_id: c.id, version: 1, spec: {}, parent_release_id: null, provenance_build_run_id: "b", provenance_repair_run_id: null, verification_report_id: null, signature: "s1", created_at: new Date().toISOString() },
+        { id: "rel-2", connector_id: c.id, version: 2, spec: {}, parent_release_id: "rel-1", provenance_build_run_id: null, provenance_repair_run_id: "repair-done", verification_report_id: null, signature: "s2", created_at: new Date().toISOString() },
+      ] as unknown as ConnectorDetail["releases"],
+    });
+    const done = {
+      id: "repair-done",
+      drift_event_ids: ["drift-1"],
+      ladder_level_reached: 1,
+      vendor: "atlas",
+      drift_signature: null,
+      drift_class: "PAGINATION_CHANGE",
+      approval: { id: "a", actor: "op", decision: "approve", created_at: new Date().toISOString() },
+      fingerprint_delta: null,
+      candidate_patch: [{ op: "replace" }],
+      rule_id: "page_to_cursor",
+      hypothesis_ids: [],
+      visible_test_results: [],
+      verifier_report_id: null,
+      decision: "approved",
+      model_usage: {},
+      ladder_trace: [],
+      escalation_bundle: null,
+      created_at: new Date().toISOString(),
+      kind: "repair",
+    };
+    render(<ConnectorsTable connectors={[c]} detailsById={{ [c.id]: detail }} repairsByConnector={{ [c.id]: [done as never] }} />);
+    // r2 is active; r1 is superseded history — no "r1 waiting".
+    expect(screen.queryByText(/waiting/)).not.toBeInTheDocument();
   });
 });

@@ -203,6 +203,7 @@ def get_connector(connector_id: str, db: Session = Depends(get_db)) -> Connector
     # REQ-050 item 4: every docs build attempt, refused ones included
     # (they persist no release but stay recorded on the BuildRun).
     from autobridge.control.models import BuildRun as _BuildRun  # noqa: PLC0415
+    from autobridge.control.models import RefusedBuildAttempt as _Refused  # noqa: PLC0415
     from autobridge.control.schemas import BuildAttemptOut as _BuildAttemptOut  # noqa: PLC0415
 
     build_rows = db.execute(
@@ -227,6 +228,39 @@ def get_connector(connector_id: str, db: Session = Depends(get_db)) -> Connector
         )
         for b in build_rows
     ]
+    # REQ-053 item 7: vocabulary refusals recorded before this connector
+    # existed (no connector row then) join the same history by name, so
+    # the page shows the earlier refusal (e.g. Meridian v1) beside the
+    # build in use. Already-represented vocabularies are not duplicated.
+    seen_vocabularies = {a.spec_vocabulary for a in attempt_outs if a.spec_vocabulary}
+    try:
+        refused_rows = (
+            db.execute(
+                select(_Refused)
+                .where(_Refused.connector_name == conn.name)
+                .order_by(_Refused.created_at)
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:
+        refused_rows = []
+    for refused in refused_rows:
+        if refused.spec_vocabulary and refused.spec_vocabulary in seen_vocabularies:
+            continue
+        attempt_outs.append(
+            _BuildAttemptOut(
+                id=refused.id,
+                spec_vocabulary=refused.spec_vocabulary or "",
+                success=False,
+                degradation_reason=refused.reason or None,
+                release_id=None,
+                created_at=refused.created_at,
+            )
+        )
+        if refused.spec_vocabulary:
+            seen_vocabularies.add(refused.spec_vocabulary)
+    attempt_outs.sort(key=lambda a: str(a.created_at or ""))
 
     return ConnectorDetail(
         **base.model_dump(),
