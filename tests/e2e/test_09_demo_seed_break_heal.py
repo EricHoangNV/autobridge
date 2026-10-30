@@ -1,10 +1,10 @@
-"""Demo seed / break / heal journeys (REQ-031 items 1-3, REQ-049 item 3) against the live stack.
+"""Demo seed / break / heal journeys (REQ-031 items 1-3, REQ-049 item 3, REQ-059) against the live stack.
 
-- seed: ``make demo-reset && make demo-seed`` leaves one baseline-synced
-  ``working`` connector (atlaspms), 0 model tokens, nothing waiting (Harbor
-  is not seeded: deck 4 builds it from its wiki so the totals check comes
-  from the docs; Meridian and the PABX edge connector are not seeded
-  either: decks 6 and 7 build them live, REQ-050).
+- seed: ``make demo-reset && make demo-seed`` leaves the blank opening
+  frame — zero connectors, no drift, no repairs, nothing learned, every
+  simulator up on its baseline scenario. Nothing is seeded by design
+  (REQ-059): deck 2 builds Atlas from its OpenAPI live, deck 4 builds
+  Harbor from its wiki, deck 6 builds Meridian, deck 7 builds the PABX.
 - break: ``make demo-break SCENARIO=<id>`` injects exactly one fault (the
   single-call property is unit-tested; here the simulator shows the fault
   active and the break prints its one line).
@@ -54,32 +54,33 @@ def _active_scenario(sim_id: str) -> str | None:
 @pytest.mark.live
 @pytest.mark.timeout(600)
 def test_seed_end_state(e2e_stack: str) -> None:
-    """Seeded stack: one working connector (AtlasPMS only), 0 tokens, nothing waiting."""
+    """Blank slate (REQ-059): zero connectors, nothing waiting, sims on baseline."""
     assert e2e_stack
-    from bench.demo_seed import SEED_NAMES, run_seed  # noqa: PLC0415
+    from bench.demo_seed import run_seed  # noqa: PLC0415
     from tests.e2e.conftest import service_url  # noqa: PLC0415
 
     base_url = service_url("control", "")
     report = run_seed(base_url, 0)
     assert report["failed"] == 0, json.dumps(report["control_calls"][-3:], default=str)[:2000]
-    assert sorted(c["name"] for c in report["connectors"]) == sorted(SEED_NAMES)
-    for conn in report["connectors"]:
-        assert conn["baseline_outcome"] == "Complete", conn
+    assert report["connectors"] == []
 
     connectors = _control("GET", "/connectors")
     rows = connectors if isinstance(connectors, list) else connectors.get("connectors", [])
-    by_name = {r["name"]: r for r in rows}
-    for name in SEED_NAMES:
-        assert name in by_name, f"seed connector {name} missing: {sorted(by_name)}"
-        assert by_name[name]["state"] == "working", by_name[name]
-        assert by_name[name]["last_sync_at"], name
+    assert rows == [], rows
     assert _control("GET", "/drift") == []
     assert _control("GET", "/repairs") == []
     usage = _control("GET", "/metrics/model-usage")
     assert usage["total_calls"] == 0, usage
     knowledge = _control("GET", "/knowledge")
     assert knowledge["entries"] == []
+    assert knowledge.get("connectors", []) == []
     assert knowledge.get("decisions", []) == []
+    # Readiness: every simulator up and on its baseline scenario.
+    sims = _simulators()
+    assert sims, "no simulators listed"
+    for row in sims:
+        assert row.get("live") is True, row
+        assert row.get("active_scenario") is None, row
 
 
 @pytest.mark.live

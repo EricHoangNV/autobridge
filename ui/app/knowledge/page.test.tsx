@@ -91,6 +91,10 @@ describe("KnowledgePage", () => {
     mockBoth(CAPABILITIES, { entries: [], connectors: [], counts: {} });
     render(<KnowledgePage />);
     expect(screen.getByTestId("knowledge-learned-empty")).toBeInTheDocument();
+    // REQ-059 blank slate: every vocabulary reads "no connector built on it yet".
+    expect(screen.getByTestId("knowledge-vocabulary-v1-used-by")).toHaveTextContent("no connector built on it yet");
+    expect(screen.getByTestId("knowledge-vocabulary-v2-used-by")).toHaveTextContent("no connector built on it yet");
+    expect(screen.getByTestId("knowledge-vocabulary-v3-used-by")).toHaveTextContent("no connector built on it yet");
   });
 
   it("shows loading states", () => {

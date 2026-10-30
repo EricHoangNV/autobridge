@@ -5,7 +5,8 @@
  * docs/demo.md "Recording from the UI", asserted end to end in the
  * browser:
  *
- *   seed → all Working; break `page_to_cursor` → Degrading → "fix ready"
+ *   blank seed → build Atlas live from docs → Working; break
+ *   `page_to_cursor` → Degrading → "fix ready"
  *   appears without a manual sync → click Approve in the UI → Working,
  *   with the four repair sections present; break it again after
  *   reactivating the base release → L0 hit, Knowledge "reused" goes up;
@@ -23,24 +24,24 @@
  *
  * Live-stack only: without a reachable control plane the spec skips
  * (the mocked test_06 journey covers the screens offline). Requires the
- * seed frame — run `make demo-reset && make demo-seed` first, otherwise
- * every test skips with that message. Each break leg heals in a finally
- * so no fault leaks into the next test (random-order safe with the
- * Python e2e suite, which runs separately).
+ * blank seed — run `make demo-reset && make demo-seed` first, otherwise
+ * every test skips with that message. Each leg builds the connector it
+ * needs live from its docs (REQ-059: the seed builds nothing), and each
+ * break leg heals in a finally so no fault leaks into the next test
+ * (random-order safe with the Python e2e suite, which runs separately).
  *
  * The recorded semantic repair exists only after `make demo` step 4 has
  * run once on a stack whose break could not attempt L3 (no key and no
  * recording: POST /demo/record-climb fallback): on a fresh seed that half
  * skips, and it never runs when the break's own repair already attempted
- * L3. The semantic halves are split on purpose — the live half needs the
- * seed frame, the recorded half needs only the fallback row (step 4
- * leaves Harbor non-Working, since its recorded drift stays open).
+ * L3. The semantic halves are split on purpose — the live half needs
+ * Harbor built live from its wiki, the recorded half needs only the
+ * fallback row (step 4 leaves Harbor non-Working, since its recorded
+ * drift stays open).
  * Full coverage is two passes: seed → journey (live passes, recorded
  * skips) → `make demo` → journey again (recorded passes; live skips, its
  * drift is still open). Re-seed before re-running the journey — `make demo`
- * before re-running the journey — `make demo` leaves its rows behind
- * by design, and the opening frame asserts the seed contract
- * (Working, 0 tokens, nothing waiting).
+ * leaves its rows behind by design.
  *
  * Auth: write calls go straight to the control API with
  * `AUTOBRIDGE_CONTROL_TOKEN` (empty when unset = open). `make e2e-ui`
@@ -49,12 +50,12 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { existsSync, readFileSync } from "fs";
+import { join, resolve } from "path";
 
 const UI_BASE = process.env.E2E_UI_BASE || process.env.UI_BASE || "http://localhost:8107";
 const CONTROL_BASE = process.env.E2E_CONTROL_BASE || "http://localhost:8101";
 const CONTROL_TOKEN = process.env.AUTOBRIDGE_CONTROL_TOKEN || "";
-
-const SEED_NAMES = ["atlaspms"] as const;
 
 type Connector = {
   id: string;
@@ -110,21 +111,22 @@ async function repairsFor(connectorId: string): Promise<Repair[] | null> {
   return Array.isArray(list) ? list : null;
 }
 
+/** Read a simulator docs file from the repo tree without `import.meta`
+ *  (Playwright loads these specs as CJS here — `import.meta` fails at
+ *  load, so no test in the file runs at all). `make e2e-ui` runs with
+ *  cwd=ui/; a root run uses cwd=<root>: probe both. */
+function repoDocsText(docsRelPath: string): string {
+  for (const candidate of [resolve(process.cwd(), ".."), process.cwd()]) {
+    const full = join(candidate, docsRelPath);
+    if (existsSync(full)) return readFileSync(full, "utf-8");
+  }
+  throw new Error(`docs not found from cwd ${process.cwd()}: ${docsRelPath}`);
+}
+
 /** Newest repair first: the API does not guarantee order, so sort client-side. */
 function newest(rows: Repair[] | null): Repair | null {
   if (!rows || !rows.length) return null;
   return [...rows].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))[0];
-}
-
-async function seedFrame(): Promise<Map<string, Connector> | null> {
-  const list = await connectors();
-  if (!list) return null;
-  const byName = new Map(list.map((c) => [c.name, c]));
-  for (const name of SEED_NAMES) {
-    const c = byName.get(name);
-    if (!c || c.state !== "working") return null;
-  }
-  return byName;
 }
 
 async function poll<T>(fn: () => Promise<T | null>, isDone: (v: T | null) => boolean, what: string, timeoutMs: number, intervalMs = 5000): Promise<T> {
@@ -246,15 +248,11 @@ async function ensurePabxBuilt(): Promise<Connector> {
   });
   const connectorId = ensured?.id ?? existing?.id;
   if (!connectorId) throw new Error(`PABX edge ensure failed: ${JSON.stringify(ensured)}`);
-  const { readFileSync } = await import("fs");
-  const { join, dirname } = await import("path");
-  const { fileURLToPath } = await import("url");
-  const here = dirname(fileURLToPath(import.meta.url));
-  const docsText = readFileSync(join(here, "..", "..", "simulators", "docs", "fias-pabx.md"), "utf-8");
+  const docsText = repoDocsText(join("simulators", "docs", "fias-pabx.md"));
   const build = await control<{ build_run_id?: string; job_id?: string }>(
     "POST",
     `/connectors/${encodeURIComponent(connectorId)}/build`,
-    { docs_text: docsText, spec_vocabulary: "v3" },
+    { docs_text: docsText, spec_vocabulary: "v3", probe_wire_shape: true },
   );
   if (!build?.job_id) throw new Error(`PABX edge docs build not queued: ${JSON.stringify(build)}`);
   const job = await poll(
@@ -310,6 +308,63 @@ async function edgePostingKeys(): Promise<string[] | null> {
   return postings.postings.map((p) => String(p.idempotency_key ?? ""));
 }
 
+/** Deck 2 (REQ-059): Atlas is built live from its OpenAPI docs, not
+ *  seeded. Ensures the atlaspms connector exists with a docs-built v1
+ *  release, baseline-synced Complete. Idempotent: a Working atlaspms is
+ *  returned as-is (an active release from an earlier run is reused). */
+async function ensureAtlasBuilt(): Promise<Connector> {
+  const list = await connectors();
+  const existing = (list ?? []).find((c) => c.name === "atlaspms");
+  if (existing && existing.state === "working" && existing.active_release_id) return existing;
+  const ensured = await control<{ id?: string }>("POST", "/connectors", {
+    name: "atlaspms",
+    vendor_docs_ref: "simulators/docs/atlas-openapi.yaml",
+    base_url: "http://sim-atlas:8000",
+    credential_ref: "ATLAS_API_KEY",
+    target_entities: ["Reservation", "FolioCharge"],
+  });
+  const connectorId = ensured?.id ?? existing?.id;
+  if (!connectorId) throw new Error(`atlaspms ensure failed: ${JSON.stringify(ensured)}`);
+  const docsText = repoDocsText(join("simulators", "docs", "atlas-openapi.yaml"));
+  const build = await control<{ build_run_id?: string; job_id?: string }>(
+    "POST",
+    `/connectors/${encodeURIComponent(connectorId)}/build`,
+    // probe_wire_shape records the served wire keys at build time (like
+    // the UI build form and every demo step): without it a docs-mapped
+    // field the vendor never serves (Atlas `currency`) opens a phantom
+    // SCHEMA_RENAME on the baseline sync.
+    { docs_text: docsText, spec_vocabulary: "v1", probe_wire_shape: true },
+  );
+  if (!build?.job_id) throw new Error(`atlaspms docs build not queued: ${JSON.stringify(build)}`);
+  const job = await poll(
+    () => control<{ state?: string; result?: { release_id?: string } }>(
+      "GET",
+      `/jobs/${encodeURIComponent(build.job_id!)}`,
+    ),
+    (j) => !!j && (j.state === "succeeded" || j.state === "failed"),
+    "atlas docs build terminal",
+    180_000,
+    2000,
+  );
+  const releaseId = job.result?.release_id;
+  if (!releaseId) throw new Error(`atlaspms docs build produced no release: ${JSON.stringify(job)}`);
+  const sync = await control<{ job_id?: string }>("POST", `/connectors/${encodeURIComponent(connectorId)}/sync`, {});
+  if (sync?.job_id) {
+    await poll(
+      () => control<{ state?: string }>("GET", `/jobs/${encodeURIComponent(sync.job_id!)}`),
+      (j) => !!j && (j.state === "succeeded" || j.state === "failed"),
+      "atlas baseline sync terminal",
+      180_000,
+      2000,
+    );
+  }
+  const detail = await control<Connector>("GET", `/connectors/${encodeURIComponent(connectorId)}`);
+  if (!detail || detail.state !== "working") {
+    throw new Error(`atlaspms not working after docs build: ${JSON.stringify(detail)}`);
+  }
+  return detail;
+}
+
 /** Deck 4 (REQ-049): Harbor is built from its wiki docs, not seeded.
  *  Ensures the harborpms connector exists with a docs-built v1 release
  *  carrying the money check, baseline-synced Complete. Idempotent: a
@@ -327,15 +382,11 @@ async function ensureHarborBuilt(): Promise<Connector> {
   });
   const connectorId = ensured?.id ?? existing?.id;
   if (!connectorId) throw new Error(`harborpms ensure failed: ${JSON.stringify(ensured)}`);
-  const { readFileSync } = await import("fs");
-  const { join, dirname } = await import("path");
-  const { fileURLToPath } = await import("url");
-  const here = dirname(fileURLToPath(import.meta.url));
-  const docsText = readFileSync(join(here, "..", "..", "simulators", "docs", "harborpms.md"), "utf-8");
+  const docsText = repoDocsText(join("simulators", "docs", "harborpms.md"));
   const build = await control<{ build_run_id?: string; job_id?: string }>(
     "POST",
     `/connectors/${encodeURIComponent(connectorId)}/build`,
-    { docs_text: docsText, spec_vocabulary: "v1" },
+    { docs_text: docsText, spec_vocabulary: "v1", probe_wire_shape: true },
   );
   if (!build?.job_id) throw new Error(`harborpms build not queued: ${JSON.stringify(build)}`);
   const job = await poll(
@@ -369,14 +420,9 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
     if (!(await controlUp())) test.skip(true, "control plane unreachable — run after `make local-up`");
   }
 
-  async function requireSeed(): Promise<Map<string, Connector>> {
+  async function requireAtlas(): Promise<Connector> {
     await requireControl();
-    const frame = await seedFrame();
-    if (!frame) {
-      test.skip(true, "seed frame absent — run `make demo-reset && make demo-seed` first");
-      throw new Error("unreachable");
-    }
-    return frame;
+    return ensureAtlasBuilt();
   }
 
   test.afterEach(async () => {
@@ -385,16 +431,14 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
     if (await controlUp()) await healFaults(AFTER_EACH_TARGETS);
   });
 
-  test("opening frame: AtlasPMS Working, 0 model tokens, nothing waiting", async () => {
-    const byName = await requireSeed();
-    // Subset, not exact: other journey specs (test_06's live journey)
-    // may have added their own connectors and repairs in the same
-    // `make e2e-ui` run. The seed contract itself — exactly one working
-    // connector (AtlasPMS; Meridian and the PABX build live in decks 6/7),
-    // 0 tokens, nothing waiting — is asserted by
-    // test_09_demo_seed_break_heal.py on a fresh seed; every leg below
-    // scopes by connector and by time so leftovers cannot match.
-    expect([...byName.keys()].sort()).toEqual([...SEED_NAMES].sort());
+  test("opening frame: AtlasPMS built live from docs, Working, 0 model tokens", async () => {
+    // Blank slate (REQ-059): the seed builds nothing — deck 2 builds
+    // Atlas from its OpenAPI through the same calls the build page makes
+    // (spec_vocabulary v1). Subset-tolerant like before: other journey
+    // specs (test_06's live journey) may have added their own connectors
+    // in the same `make e2e-ui` run; the legs below scope by connector.
+    const atlas = await requireAtlas();
+    expect(atlas.state).toBe("working");
     const usage = await control<{ total_calls?: number; frontier_tokens?: number; small_tokens?: number }>(
       "GET",
       "/metrics/model-usage",
@@ -409,8 +453,7 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
     { timeout: 420_000 },
     async ({ page }) => {
       test.setTimeout(420_000);
-      const byName = await requireSeed();
-      const atlas = byName.get("atlaspms")!;
+      const atlas = await requireAtlas();
 
       await waitForTick(atlas.id);
       await breakFault("page_to_cursor", "sim-atlas");
@@ -456,7 +499,10 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       // what the fix is verified against) and lands Complete, retiring the
       // drift: the connector returns to Working.
       await page.getByTestId("repair-approve-btn").click();
-      await expect(page.getByTestId("repair-action-success")).toBeVisible({ timeout: 30_000 });
+      // The rail switches to its terminal branch on approve (the transient
+      // action flash unmounts with the propose branch), so assert the
+      // terminal confirmation the operator actually sees.
+      await expect(page.getByTestId("repair-outcome")).toContainText("Approved by", { timeout: 30_000 });
       await poll(() => connectorState(atlas.id), (s) => s === "working", "atlas working again", 180_000);
 
       // The fault stays active on purpose: the learning leg re-breaks the
@@ -473,15 +519,20 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       ).toEqual([repair.id]);
 
       // The repair page explains itself: four sections in order.
+      // REQ-056: the codes, ids and wire dumps live behind chapter 1's
+      // Technical details toggle — open it first (same as test_06).
       await expect(page.getByTestId("repair-section-happened")).toBeVisible();
+      await page.locator('[data-testid="happened-technical"] > summary').click();
       await expect(page.getByTestId("happened-connector")).toContainText("atlaspms");
       await expect(page.getByTestId("wire-change-summary")).toBeVisible();
       await expect(page.getByTestId("repair-section-did")).toBeVisible();
+      await page.locator('[data-testid="did-technical"] > summary').click();
       await expect(page.getByTestId("rung-timeline-0")).toContainText("L0");
       // REQ-054: model cost reads once, in the proof tile — with 0 calls the
       // per-call ledger box is omitted, not repeated.
       await expect(page.getByTestId("proof-model-calls")).toBeVisible();
       await expect(page.getByTestId("repair-section-decided")).toBeVisible();
+      await page.locator('[data-testid="decided-technical"] > summary').click();
       await expect(page.getByTestId("patch-diff")).toBeVisible();
       await expect(page.getByTestId("repair-section-approve")).toBeVisible();
       await expect(page.getByTestId(`after-approve-step-complete`)).toBeVisible({ timeout: 60_000 });
@@ -493,8 +544,7 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
     { timeout: 420_000 },
     async ({ page }) => {
       test.setTimeout(420_000);
-      const byName = await requireSeed();
-      const atlas = byName.get("atlaspms")!;
+      const atlas = await requireAtlas();
       // Timestamp BEFORE reactivating: the reactivation itself lets the
       // next tick detect the still-active fault, so the L0 repair may
       // predate the (idempotent) re-break below. Filtering from the break
@@ -586,10 +636,10 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
     { timeout: 120_000 },
     async ({ page }) => {
       test.setTimeout(120_000);
-      // Needs only the recorded row, not the seed frame: `make demo`
+      // Needs only the recorded row, not the blank seed: `make demo`
       // step 4 leaves Harbor non-Working (its recorded drift stays open),
-      // so this half runs after the demo; the live half needs the seed
-      // frame and runs last in the file.
+      // so this half runs after the demo; the live half builds Harbor from
+      // its wiki and runs last in the file.
       await requireControl();
       // Scope by connector: other legs' scars (e.g. a verifying sync that
       // raced release activation) must never match here.
@@ -609,6 +659,8 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       });
       await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 15_000 });
       await expect(page.getByTestId("repair-decision-line")).toContainText("Needs your decision");
+      await expect(page.getByTestId("repair-section-did")).toBeVisible();
+      await page.locator('[data-testid="did-technical"] > summary').click();
       await expect(page.getByTestId("hypothesis-funnel-headline")).toBeVisible();
       // Live or replayed frontier call when a key/recording exists;
       // otherwise the box says "0 model calls" and rung 3 says why L3
@@ -626,7 +678,7 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
         await expect(page.getByTestId("proof-model-calls")).toBeVisible();
         await expect(page.getByTestId("rung-timeline-3")).toContainText("L3 skipped");
       }
-      await expect(page.getByTestId("decided-question")).toBeVisible();
+      await expect(page.getByTestId("escalation-question-top")).toBeVisible();
       await expect(page.getByTestId("verifier-verdict")).toBeVisible();
     },
   );
@@ -702,7 +754,7 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
     { timeout: 420_000 },
     async ({ page }) => {
       test.setTimeout(420_000);
-      await requireSeed();
+      await requireControl();
       // Deck 4 → deck 5 (REQ-049): Harbor from its wiki docs (money
       // invariant included), so gross_to_net breaks live: inject →
       // scheduled sync → Degraded → engine drift + escalated repair →
@@ -752,8 +804,10 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 15_000 });
       await expect(page.getByTestId("repair-decision-line")).toContainText("Needs your decision");
       await expect(page.getByTestId("repair-section-happened")).toBeVisible();
+      await page.locator('[data-testid="happened-technical"] > summary').click();
       await expect(page.getByTestId("happened-class")).toContainText("Semantic value drift");
       await expect(page.getByTestId("repair-section-did")).toBeVisible();
+      await page.locator('[data-testid="did-technical"] > summary').click();
       await expect(page.getByTestId("hypothesis-funnel-headline")).toBeVisible();
       await expect(page.getByTestId("rung-timeline-0")).toBeVisible();
       await expect(page.getByTestId("rung-timeline-3")).toBeVisible();
@@ -771,8 +825,9 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
         await expect(page.getByTestId("proof-model-calls")).toBeVisible();
         await expect(page.getByTestId("rung-timeline-3")).toContainText("L3 skipped");
       }
-      await expect(page.getByTestId("decided-question")).toBeVisible();
+      await expect(page.getByTestId("escalation-question-top")).toBeVisible();
       await expect(page.getByTestId("verifier-verdict")).toBeVisible();
+      await page.locator('[data-testid="rail-consequences"] > summary').click();
       await expect(page.getByTestId("approve-preview")).toBeVisible();
     },
   );

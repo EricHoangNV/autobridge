@@ -134,7 +134,7 @@ demo-reset:
 	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_reset
 
 demo-seed:
-	@echo ">> demo-seed: the recording's connector via the control API (REQ-031, REQ-050)"
+	@echo ">> demo-seed: blank-slate opening frame, 0 connectors, readiness checks (REQ-059)"
 	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_seed
 
 demo-break:

@@ -29,25 +29,25 @@ Related: [Architecture](architecture.md) §9 (control API + UI),
 This is the UI-first version of the script above: the presenter runs one
 command per scenario in a terminal while the browser (`http://localhost:8107`)
 reacts by itself. Start with `make local-up` (or `make up`), then
-`make demo-reset && make demo-seed`, and wait until the seed connector
-shows ● Working with "last sync N s ago" ticking. Every state badge is colour +
+`make demo-reset && make demo-seed`: the opening frame reads
+"0 connectors · ready to build" — every simulator up on its baseline
+scenario, no connectors, no repairs, nothing learned, no injected
+faults. Every connector in decks 2–7 is built live from its docs; the
+seed builds nothing. Every state badge is colour +
 shape + word, never colour alone; the Repairs list polls every 2 s, so new
 repairs appear at the top without a reload. The presenter clicks every
 approval — nothing auto-applies, so every transition stays on screen.
 
-- **Deck 1 — What AutoBridge knows.** Point at `/knowledge` (top bar): vocabulary
-  v1, v2, v3 rows each list "used by" their connector — after the seed
-  that is atlaspms under v1; meridianpms lands under v2 (v1 refused) and
-  the PABX edge connector under v3 as decks 6 and 7 build them live. The
-  right-hand column fills with learned fixes as repairs are approved
-  ("learned from approval … by …", "reused N×"), and the Decisions
-  section below lists every operator decision newest first (approvals
-  with whether they were learned, business decisions, denies, rollbacks —
-  each with when, who, connector, the one-line summary and repair/release
-  links).
-- **Deck 2 — Reusable artifact.** On `/connectors`, AtlasPMS ● Working with
-  0 model tokens: the reference release from step 1 below, healed
-  through the ladder, not rebuilt.
+- **Deck 1 — What AutoBridge knows.** Point at `/knowledge` (top bar): each
+vocabulary row reads "no connector built on it yet", the right-hand
+column reads "Nothing learned yet", and Decisions reads "No operator
+decisions yet". On `/connectors` the header reads "0 connectors" and
+the empty state leads with **"Build a connector"**.
+- **Deck 2 — Build Atlas from its OpenAPI.** On `/connectors/new`, pick the
+Atlas docs, keep vocabulary v1 and **Build** — docs read → draft →
+probes → result → release r1, first sync Complete, AtlasPMS ● Working
+with 0 model calls. `/knowledge` now lists atlaspms under v1; the
+Connectors header reads "1 connector".
 - **Deck 3 — Zero-token fix.** Left: `make demo-break SCENARIO=page_to_cursor`.
   Right, on `/connectors`: AtlasPMS turns ▲ Degrading ("drift detected
   … · repairing at L1"). On `/repairs`: the new row reads connector
@@ -137,26 +137,34 @@ approval — nothing auto-applies, so every transition stays on screen.
   attempts (v1 refused with its reason, v2 in use), `/knowledge`
   lists Meridian under v2 with v1 refused, and the result carries the
   engine's runtime decision ("runs: cloud"). Deck 6 has no break.
-- **Deck 7 — On-premise PABX.** Build the PABX live from its spec: on
-  `/connectors/new` pick the FIAS PABX docs — no base URL to type, no
-  runtime to choose: the relay address is fixed, vocabulary v3 is
-  suggested, and the result says "runs: on-premise edge agent, via the
-  relay" (the engine decides from the docs). Build: release r1, the
-  edge agent connects, postings flow, PABX edge ● Working. Then
-  `make demo-break SCENARIO=fias_link_resync` on the live-built
-  connector: the PABX panel shows the link go down, the agent
-  re-handshakes (LS/LD/LR/LA), the link comes back — the relay log still
-  holds every pre-break posting exactly once (nothing lost, nothing
-  duplicated) — and the connector
-  stays ● Working (or is back within one tick). No repair, no Approve.
+- **Deck 7 — On-premise PABX.** Build the PABX live from its spec, twice
+from the same docs like deck 6: on `/connectors/new` pick the FIAS PABX
+docs — there is no base URL to type and no runtime to choose: the relay
+address is fixed and vocabulary v3 is suggested, because the engine runs
+framed docs on the on-premise edge agent (the result says "runs:
+on-premise edge agent, via the relay"). Keep/switch the vocabulary to
+**v2** and Build — the vocabulary check refuses on screen with the
+engine's named reason (event-driven feeds are not expressible in
+ConnectorSpec v2) and creates no connector; 0 model calls, the attempt
+recorded by name. "Download capability request" drafts the gap the same
+way as deck 6. Switch to **v3** and Build: release r1, the
+edge agent connects, postings flow, PABX edge ● Working; `/knowledge`
+lists it under v3 with v2 refused. Then
+`make demo-break SCENARIO=fias_link_resync` on the live-built
+connector: the PABX panel shows the link go down, the agent
+re-handshakes (LS/LD/LR/LA), the link comes back — the relay log still
+holds every pre-break posting exactly once (nothing lost, nothing
+duplicated) — and the connector
+stays ● Working (or is back within one tick). No repair, no Approve.
 - **Deck 8 — Proof.** The terminal `make demo` runs all eight steps
   through the API against the same seeds and prints the release ids it
   used; `experiments/scorecard.md` and the benchmark rehearsals carry
   the head-to-head numbers (steps 5–6).
 
 Retakes are `make demo-heal` (clears faults, keeps connectors) and
-`make demo-reset && make demo-seed` (the opening frame: AtlasPMS only —
-Harbor is built live in deck 4, Meridian in deck 6, the PABX in deck 7).
+`make demo-reset && make demo-seed` (the blank opening frame: 0
+connectors, every simulator on baseline — Atlas is rebuilt live in deck
+2, Harbor in deck 4, Meridian in deck 6, the PABX in deck 7).
 The terminal
 `make demo` approves the same repairs through the API; everything it
 does lands in the database exactly like the clicks do (REQ-030), so the
@@ -166,12 +174,13 @@ repair page, the Knowledge page and this recording agree.
 
 ## 1. Reusable artifact — Atlas release, zero inference
 
-Open the Atlas reference release spec, run a sync, show `ModelUsageLedger = 0`.
+Build Atlas from its OpenAPI docs on v1 (in-process evidence opens the
+reference release spec instead), run a sync, show `ModelUsageLedger = 0`.
 
 ```
 POST /connectors                       { id: atlaspms, vendor_docs_ref, base_url: ${ATLAS_BASE_URL},
                                          credential_ref: ATLAS_API_KEY, target_entities: [Reservation, FolioCharge] }
-POST /connectors/{id}/build            → release `reference` (spec.yaml + build-report.json + sha256 signature)
+POST /connectors/{id}/build            { docs_text (Atlas OpenAPI), spec_vocabulary: v1 } → release r1 (page pagination, 0 model calls)
 POST /connectors/{id}/sync             → SyncRun outcome Complete, data_readiness {current, complete}
 GET  /metrics/model-usage?run_id=…     → frontier_tokens 0, small_tokens 0, calls 0
 ```

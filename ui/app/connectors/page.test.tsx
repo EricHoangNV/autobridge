@@ -46,6 +46,18 @@ describe("ConnectorsPage", () => {
     expect(screen.getByTestId("new-connector-link")).toBeInTheDocument();
   });
 
+  it("blank seed: empty state leads with Build a connector, header reads 0 connectors (REQ-059)", async () => {
+    mockedUseSWR
+      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: { frontier_tokens: 0, small_tokens: 0 }, error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: {}, error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>);
+    render(<ConnectorsPage />);
+    await waitFor(() => expect(screen.getByTestId("connectors-empty")).toBeInTheDocument());
+    expect(screen.getByTestId("connectors-empty").querySelector("h2")).toHaveTextContent("Build a connector");
+    expect(screen.getByTestId("connectors-headline")).toHaveTextContent("0 connectors");
+    expect(screen.getByTestId("connectors-headline")).toHaveTextContent("nothing waiting for you.");
+  });
+
   it("counts error connectors in the header and links to the wait (REQ-048)", async () => {
     const connectors = [
       { id: "c-h", name: "HarborPMS", state: "error", health_status: "healthy", base_url: "http://x", active_release_id: "r1", credential_ref: "K", target_entities: [], runtime_target: {}, vendor_docs_ref: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },

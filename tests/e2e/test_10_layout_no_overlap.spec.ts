@@ -439,6 +439,9 @@ function isControlReachable(request: { get: (url: string, opts?: object) => Prom
 
 test.describe("REQ-055 item 3f layout: no overlap or overflow", () => {
   let repairState = "propose";
+  // REQ-059: the blank seed leaves no connectors and nothing learned —
+  // the empty Connectors / Knowledge renders get the same check.
+  let emptyMode = false;
   // With a live stack the pages render live data (the check still runs);
   // the fixture-content assertions below only apply to the mocked render.
   let mocked = false;
@@ -490,9 +493,14 @@ test.describe("REQ-055 item 3f layout: no overlap or overflow", () => {
           has_event_feeds: false,
         });
       if (url.match(/\/connectors\/[^/?]+$/)) return ok(connectorDetail);
-      if (url.includes("/connectors")) return ok(connectorsList);
+      if (url.includes("/connectors")) return ok(emptyMode ? [] : connectorsList);
       if (url.includes("/capabilities")) return ok({ transforms: ["money", "enum_map"], versions: { v1: { methods: ["GET"], auth_types: ["api_key"], pagination_strategies: ["page"], protocols: ["http"], transforms: ["money"], checks: ["money_invariant"], joins: false, body_templates: false, event_feeds: false, command_templates: false }, v2: { methods: ["GET", "POST"], auth_types: ["api_key", "bearer"], pagination_strategies: ["page", "cursor"], protocols: ["http"], transforms: ["money"], checks: ["money_invariant"], joins: true, body_templates: true, event_feeds: false, command_templates: false }, v3: { methods: ["GET", "POST"], auth_types: ["edge"], pagination_strategies: ["cursor"], protocols: ["event_feed"], transforms: ["money"], checks: ["money_invariant"], joins: false, body_templates: false, event_feeds: true, command_templates: false } }, rules: [{ id: "page_to_cursor", fixes: "paging", confidence: 0.9 }] });
-      if (url.includes("/knowledge")) return ok({ entries: [{ vendor: "atlaspms", drift_class: "PAGINATION_CURSOR", drift_signature: "layout-sig-room-for-a-long-row-that-might-overflow-its-box-0123456789", rule_id: "page_to_cursor", patch: [], learned_from: { run_id: "rep-layout-001", rung: 1, tokens: 0, cost: "0", at: new Date().toISOString(), approval_id: "ap-1", actor: "operator", release_id: "rel-2" }, times_reused: 3, tokens_saved: 1200, cost_saved: "0", approvals: 1 }], connectors: [{ connector_id: CONN_ID, name: "Atlas PMS with a very long connector name for wrapping", vocabulary: "v1", refused_vocabularies: [], builds: 2, confirmed_hypotheses: ["amount:total_amount:gross"], last_built_at: new Date().toISOString() }], counts: {} });
+      if (url.includes("/knowledge"))
+        return ok(
+          emptyMode
+            ? { entries: [], connectors: [], counts: {}, decisions: [] }
+            : { entries: [{ vendor: "atlaspms", drift_class: "PAGINATION_CURSOR", drift_signature: "layout-sig-room-for-a-long-row-that-might-overflow-its-box-0123456789", rule_id: "page_to_cursor", patch: [], learned_from: { run_id: "rep-layout-001", rung: 1, tokens: 0, cost: "0", at: new Date().toISOString(), approval_id: "ap-1", actor: "operator", release_id: "rel-2" }, times_reused: 3, tokens_saved: 1200, cost_saved: "0", approvals: 1 }], connectors: [{ connector_id: CONN_ID, name: "Atlas PMS with a very long connector name for wrapping", vocabulary: "v1", refused_vocabularies: [], builds: 2, confirmed_hypotheses: ["amount:total_amount:gross"], last_built_at: new Date().toISOString() }], counts: {} },
+        );
       if (url.includes("/metrics/model-usage")) return ok({ frontier_tokens: 17405, small_tokens: 400, calls: 2, total_cost: "0.05" });
       if (url.includes("/discovery")) return ok([]);
       if (url.includes("/demo/simulators")) return ok({ simulators: [{ id: "sim-atlas", display_name: "AtlasPMS demo simulator with a long display name", docs_source: "AtlasPMS.md", developers_url: "http://localhost:8105/developers" }] });
@@ -590,6 +598,34 @@ test.describe("REQ-055 item 3f layout: no overlap or overflow", () => {
       await page.goto(`${UI_BASE}/knowledge`);
       if (mocked) await expect(page.getByText("atlaspms / PAGINATION_CURSOR").first()).toBeVisible();
       await expectClean(page, "/knowledge", vp);
+    });
+
+    test(`connectors empty (blank seed) clean @ ${vp.width}x${vp.height}`, async ({ page }) => {
+      emptyMode = true;
+      try {
+        await page.goto(`${UI_BASE}/connectors`);
+        if (mocked) {
+          await expect(page.getByTestId("connectors-empty")).toBeVisible();
+          await expect(page.getByTestId("connectors-headline")).toContainText("0 connectors");
+        }
+        await expectClean(page, "/connectors [empty]", vp);
+      } finally {
+        emptyMode = false;
+      }
+    });
+
+    test(`knowledge empty (blank seed) clean @ ${vp.width}x${vp.height}`, async ({ page }) => {
+      emptyMode = true;
+      try {
+        await page.goto(`${UI_BASE}/knowledge`);
+        if (mocked) {
+          await expect(page.getByTestId("knowledge-learned-empty")).toBeVisible();
+          await expect(page.getByText("no connector built on it yet").first()).toBeVisible();
+        }
+        await expectClean(page, "/knowledge [empty]", vp);
+      } finally {
+        emptyMode = false;
+      }
     });
 
     const stateText: Record<string, string> = {

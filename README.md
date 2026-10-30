@@ -84,24 +84,21 @@ make local-up                  # or: make up (Docker). Wait for "all services re
 make demo-reset && make demo-seed
 ```
 
-Open `http://localhost:8107` and wait until the connector shows
-● Working ("last sync N s ago" ticking underneath). The seed leaves one
-connector (AtlasPMS) `working`, 0 model tokens, nothing waiting
-(`make demo-seed` fails loud otherwise). Meridian and the PABX edge
-connector are built live in decks 6 and 7. Each block below is one
-command, then watch (deck order, `docs/demo.md`):
+Open `http://localhost:8107`: the opening frame reads
+"0 connectors · ready to build" — every simulator up on its baseline
+scenario, nothing built, nothing learned (`make demo-seed` fails loud
+otherwise). Every connector below is built live from its docs.
+Each block is one command, then watch (deck order, `docs/demo.md`):
 
-- **Deck 1 — What AutoBridge knows.** Open `/knowledge` (top bar): vocabulary
-  v1/v2/v3 with "used by" per version (after the seed: AtlasPMS under v1;
-  Meridian lands under v2 and the PABX under v3 as decks 6 and 7 build
-  them), and any learned fixes with
-  "reused N×". The Decisions section below lists every operator decision
-  newest first (approvals, business decisions, denies, rollbacks).
-  Back on `/connectors`, AtlasPMS is the reusable
-  artifact: Working, 0 tokens.
-- **Deck 2 — Reusable artifact.** AtlasPMS stays Working through its
-  break-and-heal cycle without a rebuild (the ladder reuses the
-  reference release, then learned knowledge).
+- **Deck 1 — What AutoBridge knows.** Open `/knowledge` (top bar): each
+  vocabulary row reads "no connector built on it yet", the right-hand
+  column reads "Nothing learned yet", Decisions reads "No operator
+  decisions yet". On `/connectors` the header reads "0 connectors" and
+  the empty state leads with **"Build a connector"**.
+- **Deck 2 — Build Atlas from its OpenAPI.** Open `/connectors/new`,
+  pick the Atlas docs, keep vocabulary v1 and **Build**: release r1,
+  first sync Complete, AtlasPMS ● Working with 0 model calls.
+  `/knowledge` lists atlaspms under v1.
 - **Deck 3 — Zero-token fix.** `make demo-break SCENARIO=page_to_cursor` →
   AtlasPMS turns ▲ Degrading ("drift detected … · repairing at L1");
   a repair appears at the top of `/repairs` **without reloading** as
@@ -135,7 +132,9 @@ command, then watch (deck order, `docs/demo.md`):
   docs, keep vocabulary v1 and **Build**: the build is refused on screen
   with the engine's named reason (POST with a JSON body and body-field
   auth are not expressible in ConnectorSpec v1) — no release, 0 model
-  calls, and the attempt stays recorded. Build the same docs with v2:
+  calls, and the attempt stays recorded. **Download capability request**
+  drafts the gap as a Markdown file shaped for the build loop (no model
+  used). Build the same docs with v2:
   release r1, first sync Complete, MeridianPMS ● Working. The connector
   page shows both attempts (v1 refused with its reason, v2 in use) and
   the result carries the engine's runtime decision ("runs: cloud").
@@ -143,8 +142,12 @@ command, then watch (deck order, `docs/demo.md`):
   docs: there is no base URL to type and no runtime to choose — the
   relay address is fixed and vocabulary v3 is suggested, because the
   engine runs framed docs on the on-premise edge agent (the result says
-  "runs: on-premise edge agent, via the relay"). **Build**: release r1,
-  the edge agent connects, postings flow, PABX edge ● Working. Then
+  "runs: on-premise edge agent, via the relay"). Build with v2 first:
+  refused on screen (event-driven feeds are not expressible in
+  ConnectorSpec v2), 0 model calls, attempt recorded — then **Build**
+  with v3: release r1,
+  the edge agent connects, postings flow, PABX edge ● Working.
+  `/knowledge` lists it under v3 with v2 refused. Then
   `make demo-break SCENARIO=fias_link_resync` → the PABX panel shows the
   link go down, the agent re-handshakes (LS/LD/LR/LA), the link comes
   back — the relay log still holds every pre-break posting exactly once
@@ -156,7 +159,8 @@ command, then watch (deck order, `docs/demo.md`):
   numbers.
 
 Retakes: `make demo-heal` clears injected faults without a reset;
-`make demo-reset && make demo-seed` restores the opening frame.
+`make demo-reset && make demo-seed` restores the blank opening frame
+(0 connectors, every simulator on baseline).
 `make demo` (terminal-only, 8 steps) approves through the API and lands
 everything in the database exactly like the clicks do.
 Settings: `AUTOBRIDGE_SYNC_INTERVAL_S` (default 10; the scheduler syncs

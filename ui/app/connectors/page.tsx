@@ -145,8 +145,8 @@ export default function ConnectorsPage() {
       ) : !(connectors ?? []).length ? (
         <section data-testid="connectors-empty" className="cempty" aria-label="No connectors yet">
           <div>
-            <h2>No connectors yet</h2>
-            <p>Point AutoBridge at an API&apos;s docs and a sandbox, and it builds a connector you can read, test and approve.</p>
+            <h2>Build a connector</h2>
+            <p>No connectors yet. Point AutoBridge at an API&apos;s docs and a sandbox, and it builds a connector you can read, test and approve.</p>
             <Link href="/connectors/new" className="btn">
               Build a connector
             </Link>

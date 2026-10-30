@@ -69,7 +69,13 @@ def test_step1_complete_zero_model_usage_decimal() -> None:
 
 
 def _step1_live_fake(stored_base_url: str) -> Any:
-    """Stub control calls for step 1 live mode with a given stored base_url."""
+    """Stub control calls for step 1 live mode with a given stored base_url.
+
+    First detail read shows no active release (REQ-059: the blank seed
+    builds nothing), so step 1 builds Atlas from its docs on v1 itself,
+    then baseline-syncs Complete.
+    """
+    seen = {"detail": 0}
 
     def fake_call(base_url: str, method: str, path: str, _payload: Any = None) -> dict[str, Any]:
         assert "localhost:9" not in base_url  # uses the passed base
@@ -81,12 +87,22 @@ def _step1_live_fake(stored_base_url: str) -> Any:
             assert _payload is not None and _payload["base_url"] == "http://sim-atlas:8000"
             return {"method": method, "path": path, "status": 201, "body": {"id": "c-1", "name": "atlaspms"}}
         if path == "/connectors/c-1":
-            return {
-                "method": method,
-                "path": path,
-                "status": 200,
-                "body": {"id": "c-1", "name": "atlaspms", "base_url": stored_base_url},
-            }
+            seen["detail"] += 1
+            body: dict[str, Any] = {"id": "c-1", "name": "atlaspms", "base_url": stored_base_url}
+            if seen["detail"] > 1:
+                body["active_release_id"] = "rel-1"
+            return {"method": method, "path": path, "status": 200, "body": body}
+        if path == "/connectors/c-1/build":
+            assert isinstance(_payload, dict) and _payload.get("spec_vocabulary") == "v1", _payload
+            return {"method": method, "path": path, "status": 200, "body": {"job_id": "job-build-1"}}
+        if path == "/jobs/job-build-1":
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"state": "succeeded", "result": {"success": True, "release_id": "rel-1"}}}
+        if path == "/connectors/c-1/sync":
+            return {"method": method, "path": path, "status": 200, "body": {"job_id": "job-sync-1"}}
+        if path == "/jobs/job-sync-1":
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"state": "succeeded", "result": {"outcome": "Complete"}}}
         if path == "/metrics/model-usage":
             return {"method": method, "path": path, "status": 200, "body": {"calls": 0}}
         raise AssertionError(f"unexpected {method} {path}")
@@ -105,6 +121,9 @@ def test_step1_live_asserts_normalized_address_local(monkeypatch: Any) -> None:
     assert ev["connector_base_url_sent"] == "http://sim-atlas:8000"
     assert ev["connector_base_url_stored"] == "http://localhost:8105"
     assert "server-normalized" in ev["address_source"] and "local" in ev["address_source"]
+    # REQ-059: step 1 built Atlas itself (blank seed builds nothing).
+    assert ev["live_release_id"] == "rel-1"
+    assert ev["live_baseline_outcome"] == "Complete"
 
 
 def test_step1_live_fails_on_leaked_compose_hostname(monkeypatch: Any) -> None:
@@ -124,6 +143,7 @@ def test_step1_live_asserts_service_dns_in_compose(monkeypatch: Any) -> None:
     step = step1_reusable_artifact(0, True, "http://control:8101")
     assert step["status"] == "ok", step
     assert step["evidence"]["connector_base_url_stored"] == "http://sim-atlas:8000"
+    assert step["evidence"]["live_baseline_outcome"] == "Complete"
 
 
 def test_check_connector_address_compose_per_connector(monkeypatch: Any) -> None:

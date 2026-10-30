@@ -621,3 +621,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fix: the checker skips any element inside a `details:not([open])` (except that details' own `summary`), alongside `.sr-only`/aria-hidden skips; action-wrap squeezes are measured by text Range rects so button padding never counts as wrapping.
 
 **Rule:** Any in-page geometry assertion must treat closed-`<details>` content as invisible and measure text wraps by Range client rects, never by element height.
+
+## 69. Docs-built specs over-map: always build with the wire-shape probe or the baseline sync opens a phantom rename
+
+**Context:** REQ-059 blank-slate verification (sbx1 2026-10-30) — Atlas built live from its OpenAPI went `error` on its baseline sync with `SCHEMA_RENAME`.
+
+- Vendor docs describe fields the vendor never serves (Atlas docs name `currency` on reservations; the sim never sends it), so the docs-built spec maps a phantom field.
+- `_observe_wire_schema` compares spec-mapped top-level keys against the wire and fires `keys_changed` for the phantom — the classifier reads it as a rename on a clean baseline.
+- The build-time wire-shape probe (`probe_wire_shape`) exists exactly for this: it records the served keys (`observed_wire_keys`) so detection scopes `missing` to mappings the vendor actually served. Without the annotation, detection falls back to full spec-path coverage and phantom-fires.
+- The UI build form and `_live_build_and_poll` already probe; bare `POST /build` callers (test helpers, one-off scripts) silently skip it and get the phantom drift.
+- **Rule:** Every docs build — UI, demo, e2e helper or script — passes `probe_wire_shape: true` (the UI form already does); a test that builds without it and asserts Working is testing a configuration the product never ships.

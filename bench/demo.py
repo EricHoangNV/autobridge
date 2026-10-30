@@ -784,7 +784,13 @@ def _redact_body(body: Any, *, _depth: int = 0) -> Any:
 
 
 def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, Any]:
-    """Atlas reference release syncs Complete with zero model usage."""
+    """Atlas release syncs Complete with zero model usage.
+
+    In-process evidence uses the reference release; the live half builds
+    Atlas from its OpenAPI docs on v1 itself (REQ-059: ``make demo`` runs
+    stand-alone from the blank seed, reusing the connector when a run
+    already built it), then baseline-syncs Complete.
+    """
     from autobridge.engine.sync_run import execute_sync  # noqa: PLC0415
     from autobridge.spec.models import load_spec_from_dict  # noqa: PLC0415
 
@@ -803,6 +809,8 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
     # the stored connector back and asserts the normalized form.
     sent_base_url = "http://sim-atlas:8000"
     stored_base_url: Any = None
+    live_release_id: Any = None
+    live_baseline_outcome: Any = None
     if live:
         calls.append(_control_call(base_url, "GET", "/healthz"))
         # The reusable artifact must exist on the control plane too: ensure
@@ -819,12 +827,37 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
         )
         calls.extend(ensure_calls)
         connector_id = _connector_id_from_calls(ensure_calls, "atlaspms")
-        if connector_id is not None:
+        if connector_id is None:
+            _assert_live(calls, "connector atlaspms id", False, "no connector id from ensure calls")
+        else:
+            # REQ-059: the blank seed builds nothing, so step 1 builds
+            # Atlas itself from its docs on v1 (the deck-2 UI build through
+            # the API). An active release from an earlier run is reused —
+            # rebuilding every run would orphan the repair history.
             detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
             calls.append(detail)
             body = detail.get("body")
+            active_id = body.get("active_release_id") if isinstance(body, dict) else None
             if isinstance(body, dict):
                 stored_base_url = body.get("base_url")
+            if not isinstance(active_id, str) or not active_id:
+                live_release_id = _step_live_ensure_active_release(
+                    base_url, connector_id, "simulators/docs/atlas-openapi.yaml", calls,
+                    spec_vocabulary="v1",
+                )
+                _assert_live(
+                    calls, "atlaspms docs build with v1 succeeds",
+                    isinstance(live_release_id, str) and bool(live_release_id),
+                    f"build result release: {live_release_id}",
+                )
+            else:
+                live_release_id = active_id
+            sync_result = _step_live_sync_terminal(base_url, connector_id, calls)
+            live_baseline_outcome = sync_result.get("outcome")
+            _assert_live(
+                calls, "atlaspms baseline sync Complete", live_baseline_outcome == "Complete",
+                f"baseline sync outcome {live_baseline_outcome}: {sync_result.get('unmet_criteria')}",
+            )
         calls.append(_control_call(base_url, "GET", "/metrics/model-usage"))
         addr_error = _check_connector_address(sent_base_url, stored_base_url)
         if addr_error is not None:
@@ -849,6 +882,8 @@ def step1_reusable_artifact(seed: int, live: bool, base_url: str) -> dict[str, A
                 else "in-process evidence only (no live connector)"
             ),
             "release": "reference",
+            "live_release_id": live_release_id,
+            "live_baseline_outcome": live_baseline_outcome,
             "seed": seed,
             "signature": _load_reference_signature("atlaspms"),
             "outcome": summary["outcome"],
@@ -1971,8 +2006,9 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     predicate): the known decoy (net_amount -> total_amount) is rejected;
     anything else still ends Degraded with one operator question, because
     a semantic drift is never patched without the operator. Nothing is
-    released either way. Live, Harbor is seeded (or registered here) from
-    the reference release, so the same chain happens through the stack:
+    released either way. Live, Harbor is built from its wiki docs (never
+    the reference release, so the totals check comes from the docs), so
+    the same chain happens through the stack:
     inject → sync → Degraded → engine climb + escalated repair → error —
     the break's repair carries the funnel and the L3 attempt, and the
     instrumented climb below is recorded only when the break's L3 was

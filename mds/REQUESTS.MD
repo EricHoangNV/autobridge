@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 23:45): **REQ-055 (remaining items), then REQ-056, REQ-057, REQ-058, REQ-059, then REQ-052** (benchmark quality; must be done before tonight's validation and keyed benchmark). Do not start REQ-051 until the owner says so.
 
 ### REQ-059 — Blank-slate demo: the seed creates no connectors; every connector is built live from its docs (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 19:27)
+Status: DONE (sbx1 2026-10-30 -- blank seed + readiness checks, demo step-1 builds Atlas itself, UI empty states, docs deck order; make demo 8/8 from blank, test_09 5/5, test_08 five legs green live, full gates green; owner check: Aside run of the blank-slate decks)
 Run **after REQ-058** (needs its build-page fix: a simulator pick resets every field). Owner decision (2026-10-30):
 start from nothing — deck 1 Knowledge (nothing built, nothing learned) → deck 2 build **Atlas** from its OpenAPI on v1
 → ● Working, syncing with 0 model calls → deck 3 break Atlas (`page_to_cursor`) → L1 fix → Approve → deck 4 build
