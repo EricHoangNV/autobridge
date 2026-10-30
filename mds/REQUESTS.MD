@@ -63,6 +63,11 @@ proposal failed the dry-run, one retry, second passed ("tested on the current re
    `model_escalation` / `—`.
    Tests: rung trace with a rejected-then-passed retry renders both calls and reasons; Outcome labels; retry prompt
    contains field meanings and no scenario wording.
+5. **No dollar amounts in the UI; keep token counts** (owner, 2026-10-30: "rates may/will change, so cost does not
+   mean much here"). Remove the Cost column and the "· $total" from the model-call table (`ui/components/
+   ModelCallBox.tsx` ~91, ~100), the "Est. $…" in `ModelUsageView.tsx` (~120), and the per-call cost and "· $total" in
+   `RungLedger.tsx` (~117, ~130). Keep calls and tokens (in / out / reasoning, totals, budget). The API, ledger and
+   benchmark keep their cost fields unchanged (UI only). Update the affected UI tests.
 Tests: migration upgrade from each revision then approve; dry-run marks a skipped check as failed; UI tests for (a)–(d).
 Gates unkeyed + `make demo` 8/8. **Owner check after (keyed, through the browser):** decks 4 → 5: break → tested
 proposal whose label matches what it does → Approve → verifying sync Complete → Harbor ● Working.
