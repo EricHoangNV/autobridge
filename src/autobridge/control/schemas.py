@@ -875,6 +875,9 @@ class RecordClimbRequest(BaseModel):
     proposal: list[dict[str, Any]] | None = None
     verifier_verdict: dict[str, Any] | None = None
     escalation_question: str = Field(min_length=1)
+    # REQ-047 item 2: the model's rationale, rendered beneath its question
+    # on the repair page (empty when the engine escalated on its own).
+    model_rationale: str = ""
 
 
 class RecordClimbResponse(BaseModel):

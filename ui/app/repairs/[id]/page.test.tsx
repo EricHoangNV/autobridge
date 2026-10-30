@@ -332,4 +332,21 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("decided-question")).toHaveTextContent("The model's question for you:");
     expect(screen.getByTestId("decided-question")).toHaveTextContent("Should total_amount track gross or net?");
   });
+
+  it("shows the model rationale beneath its question (REQ-047)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [
+        { level: 3, action: "model_escalation", reason: "L3 asked for a human decision", model_question: "Should total_amount track gross or net?", model_rationale: "Net versus gross is a business call." },
+        { level: 4, action: "escalate", reason: "L3 asked for a human decision" },
+      ],
+      escalation_bundle: { reason: "gross_to_net: no fix; model rationale: Net versus gross is a business call.", question: "Should total_amount track gross or net?", suggested_action: "pick one" },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("decided-question")).toHaveTextContent("The model's question for you:");
+    expect(screen.getByTestId("decided-rationale")).toHaveTextContent("Net versus gross is a business call.");
+  });
 });

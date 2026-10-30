@@ -1030,3 +1030,86 @@ def test_poll_knowledge_profile_returns_last_on_timeout(monkeypatch: Any) -> Non
     )
     assert profile.get("vocabulary") == ""
     assert len(calls) == 2
+
+
+def _escalate_fake_provider() -> Any:
+    """REQ-047: the model escalates with the owner's live question + rationale."""
+    from autobridge.llm.provider import Completion, FakeProvider, Usage
+
+    return FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(96, 12)
+            ),
+            "frontier": Completion(
+                text='{"escalate": "Should Reservation.total_amount map to the vendor net `amount` or remain defined as gross `$.gross_sum`?", '
+                '"rationale": "Observed amounts sum to 900.00 versus gross baseline 1000.00 so choosing net versus gross for total_amount is a business decision the evidence does not settle."}',
+                usage=Usage(2000, 115, reasoning_tokens=2983),
+            ),
+        },
+        frontier_model="muse-spark-1.3",
+        small_model="muse-spark-1.3",
+    )
+
+
+def test_step4_escalate_answer_labels_model_decision(monkeypatch: Any) -> None:
+    """REQ-047 items 1-4: an explicit escalate answer says the model asked,
+    carries its question + rationale, and verifies nothing."""
+    import autobridge.llm.provider as provider_mod
+    from bench.demo import rung_table_row
+
+    fake = _escalate_fake_provider()
+    monkeypatch.setattr(provider_mod, "resolve_frontier_provider", lambda: (fake, "live"))
+    step = step4_hard_semantic_failure(0, False, "http://127.0.0.1:9")
+    assert step["status"] == "ok", step
+    ev = step["evidence"]
+    assert ev["l3_skipped"] is False
+    assert ev["model_escalated"] is True
+    assert ev["l3_proposal"] == []
+    # Item 1: reason line names the call and the human decision.
+    reason = ev["rejection_reason"]
+    assert "L3 called live" in reason
+    assert "muse-spark-1.3" in reason
+    assert "the model asked for a human decision" in reason
+    assert "no applicable patch" not in reason
+    assert "no JSON patch or escalation found" not in reason
+    assert ev["why_escalated"] == reason
+    # Item 2: the model's question IS the escalation question, with rationale.
+    assert ev["escalation_question"] == "Should Reservation.total_amount map to the vendor net `amount` or remain defined as gross `$.gross_sum`?"
+    assert "business decision" in ev["model_rationale"]
+    assert ev["escalation_question"] != "Harbor totals now read net instead of gross — should total_amount track $.gross_amount with the money transform, or is a new canonical field needed?"
+    # Item 3: nothing proposed, so no verifier verdict.
+    assert ev["checked_by"] == "no patch to verify (the model escalated)"
+    assert "verdict=fail" not in ev["checked_by"]
+    # Item 4: title names the new truth; per-run table carries the reason.
+    assert "model asked for a business decision" in step["name"]
+    assert "the model asked for a human decision" in rung_table_row(step)
+
+
+def test_step4_patch_answer_behaviour_unchanged(monkeypatch: Any) -> None:
+    """REQ-047: a real patch answer keeps the existing proposal wording."""
+    import autobridge.llm.provider as provider_mod
+    from autobridge.llm.provider import Completion, FakeProvider, Usage
+
+    fake = FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(96, 12)
+            ),
+            "frontier": Completion(
+                text='{"patch": [{"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.gross_amount"}], '
+                '"rationale": "Map to gross."}',
+                usage=Usage(2000, 115),
+            ),
+        },
+        frontier_model="muse-spark-1.3",
+        small_model="muse-spark-1.3",
+    )
+    monkeypatch.setattr(provider_mod, "resolve_frontier_provider", lambda: (fake, "live"))
+    step = step4_hard_semantic_failure(0, False, "http://127.0.0.1:9")
+    ev = step["evidence"]
+    assert ev["l3_skipped"] is False
+    assert ev["model_escalated"] is False
+    assert ev["l3_proposal"] != []
+    assert "frontier proposed" in ev["rejection_reason"]
+    assert ev["checked_by"] == "trap predicate (documented oracle rule)"

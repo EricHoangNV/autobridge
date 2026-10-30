@@ -925,3 +925,46 @@ def test_l3_envelope_replay_round_trip(tmp_path: Any) -> None:
         {"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}
     ]
     assert climb["model_rationale"] == "Replayed capture."
+
+
+def test_controller_escalate_bundle_carries_model_question_and_rationale() -> None:
+    """REQ-047 item 2: the controller's bundle uses the model's question with
+    its rationale beneath; the L4 reason names the human decision."""
+    from autobridge.repair.controller import RepairController
+
+    fake = FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(4, 4)
+            ),
+            "frontier": Completion(
+                text='{"escalate": "Should total_amount track gross or net?", "rationale": "Net versus gross is a business call."}',
+                usage=Usage(10, 10),
+            ),
+        }
+    )
+    controller = RepairController(knowledge_cache=KnowledgeCache())
+    result = controller._handle_semantic_climb(
+        spec={"spec_version": 1, "connector": {"id": "t", "vendor": "harbor"}},
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        signals_list=[],
+        fingerprint_delta={"semantic": "gross_to_net"},
+        extra_dict={},
+        vendor_val="harbor",
+        drift_event_ids=[],
+        session=None,
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=fake,
+        budget=Budget(),
+        scenario="gross_to_net",
+        validate_against=_harbor_ref(),
+        evidence=None,
+        hypothesis_stages=None,
+        run_id=None,
+    )
+    assert result.decision == "escalate"
+    assert result.escalation_bundle is not None
+    assert result.escalation_bundle.question == "Should total_amount track gross or net?"
+    assert "Net versus gross is a business call." in result.escalation_bundle.reason
+    assert "L3 asked for a human decision" in (result.escalation_reason or "")

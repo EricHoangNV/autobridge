@@ -2230,6 +2230,11 @@ export interface components {
             hypotheses?: components["schemas"]["RecordClimbHypothesisIn"][];
             /** Model Calls */
             model_calls?: components["schemas"]["RecordClimbCallIn"][];
+            /**
+             * Model Rationale
+             * @default
+             */
+            model_rationale: string;
             /** Model Usage */
             model_usage?: {
                 [key: string]: unknown;

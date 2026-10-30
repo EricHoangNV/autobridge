@@ -569,6 +569,11 @@ def record_climb(body: RecordClimbRequest, db: Session = Depends(get_db), _: Non
             "drift_class": body.drift_class,
         }
     )
+    _record_reason = f"{body.scenario or body.drift_class}: semantic drift, no verified fix"
+    _rationale = " ".join(str(body.model_rationale or "").split())[:300]
+    if _rationale:
+        # REQ-047 item 2: the model's rationale sits beneath its question.
+        _record_reason += f"; model rationale: {_rationale}"
     run = RepairRun(
         drift_event_ids=[drift.id],
         ladder_level_reached=4,
@@ -583,7 +588,7 @@ def record_climb(body: RecordClimbRequest, db: Session = Depends(get_db), _: Non
         model_usage=dict(body.model_usage or {}),
         ladder_trace=ladder_trace,
         escalation_bundle={
-            "reason": f"{body.scenario or body.drift_class}: semantic drift, no verified fix",
+            "reason": _record_reason,
             "question": body.escalation_question,
             "evidence_ids": [],
         },

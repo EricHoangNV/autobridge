@@ -2244,6 +2244,11 @@
             "title": "Model Calls",
             "type": "array"
           },
+          "model_rationale": {
+            "default": "",
+            "title": "Model Rationale",
+            "type": "string"
+          },
           "model_usage": {
             "additionalProperties": true,
             "title": "Model Usage",

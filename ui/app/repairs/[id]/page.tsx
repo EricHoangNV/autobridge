@@ -421,6 +421,22 @@ export default function RepairDetailPage({ params }: PageProps) {
   const modelAsked = (repair.ladder_trace ?? []).some(
     (e) => String(e["action"] ?? "") === "model_escalation",
   );
+  // REQ-047 item 2: the model's rationale sits beneath its question. Read
+  // it from the L3 rung (new rows); older rows carry it in the bundle
+  // reason after "model rationale:".
+  const modelRationale: string | null = (() => {
+    for (const e of repair.ladder_trace ?? []) {
+      const rec = e as Record<string, unknown>;
+      if (String(rec["action"] ?? "") === "model_escalation" && typeof rec["model_rationale"] === "string" && String(rec["model_rationale"]).trim()) {
+        return String(rec["model_rationale"]);
+      }
+    }
+    const reason = String((repair.escalation_bundle as Record<string, unknown> | null)?.["reason"] ?? "");
+    const marker = "model rationale:";
+    const idx = reason.toLowerCase().indexOf(marker);
+    if (idx >= 0) return reason.slice(idx + marker.length).trim() || null;
+    return null;
+  })();
 
   const passedCount = repair.visible_test_results.filter((t) => {
     const v = t as Record<string, unknown>;
@@ -624,6 +640,7 @@ export default function RepairDetailPage({ params }: PageProps) {
           visibleTestResults={repair.visible_test_results}
           escalationBundle={repair.escalation_bundle as never}
           decision={repair.decision}
+          modelEscalated={modelAsked}
         />
         <p data-testid="verifier-checks-line" className="num mt-1 font-mono text-xs text-ink-2">
           {totalTests > 0 ? `${passedCount}/${totalTests} checks pass` : "no visible checks recorded"}
@@ -646,6 +663,11 @@ export default function RepairDetailPage({ params }: PageProps) {
               {modelAsked ? "The model's question for you: " : "The engine's question: "}
               {String(repair.escalation_bundle["question"])}
             </p>
+            {modelAsked && modelRationale ? (
+              <p data-testid="decided-rationale" className="mt-1 text-xs text-ink-2">
+                Model rationale: {modelRationale}
+              </p>
+            ) : null}
             {repair.escalation_bundle["reason"] ? (
               <p className="mt-1 font-mono text-xs text-ink-2">{String(repair.escalation_bundle["reason"])}</p>
             ) : null}

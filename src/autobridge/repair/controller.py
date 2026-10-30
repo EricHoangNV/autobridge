@@ -496,7 +496,10 @@ class RepairController:
             l3_entry["proposal"] = list(climb["proposal"])
         scenario_name = scenario or drift_class
         model_question = str(climb.get("model_question") or "")
+        model_rationale = " ".join(str(climb.get("model_rationale") or "").split())[:300]
         model_escalated = bool(climb.get("model_escalated"))
+        if model_escalated and not model_question:
+            model_escalated = False
         if l3_entry is not None and l3_entry.get("action") == "model_escalation" and model_question:
             # REQ-044 item 3: the model explicitly asked for a human
             # decision — its question resolves L4, labelled as the model's,
@@ -506,6 +509,7 @@ class RepairController:
             model_question = normalize_model_question(model_question)
             l4_reason = (
                 f"L3 asked for a human decision ({scenario_name}): {model_question}"
+                + (f" (model rationale: {model_rationale})" if model_rationale else "")
             )
         elif l3_entry is not None and l3_entry.get("action") == "proposal_rejected":
             l4_reason = (
@@ -527,8 +531,14 @@ class RepairController:
         trace.append(
             {"level": 4, "action": "escalate", "reason": l4_reason, "drift_class": drift_class}
         )
+        # REQ-047 item 2: the model's question IS the escalation question,
+        # with its rationale beneath (in the bundle reason the repair page
+        # renders under the question); the canned text is the fallback only.
+        _bundle_reason = f"{scenario_name}: semantic drift, no verified fix"
+        if model_escalated and model_rationale:
+            _bundle_reason += f"; model rationale: {model_rationale}"
         bundle = escalation_for_no_fix(
-            f"{scenario_name}: semantic drift, no verified fix",
+            _bundle_reason,
             evidence_ids=_signal_evidence_ids(signals_list),
             question=(
                 model_question

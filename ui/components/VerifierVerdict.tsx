@@ -5,6 +5,9 @@ type Props = {
   visibleTestResults?: Array<Record<string, unknown>> | null;
   escalationBundle?: Record<string, unknown> | null;
   decision: string;
+  // REQ-047 item 3: when the model escalated, no patch was proposed, so no
+  // check ran — say so instead of showing a fail verdict.
+  modelEscalated?: boolean;
 };
 
 function countPassed(results: Array<Record<string, unknown>>): { passed: number; total: number } {
@@ -22,7 +25,7 @@ function countPassed(results: Array<Record<string, unknown>>): { passed: number;
   return { passed, total: results.length };
 }
 
-export function VerifierVerdict({ verifierReportId, visibleTestResults, escalationBundle, decision }: Props) {
+export function VerifierVerdict({ verifierReportId, visibleTestResults, escalationBundle, decision, modelEscalated = false }: Props) {
   const hasReport = !!verifierReportId;
   const hasEscalation = !!escalationBundle;
 
@@ -62,7 +65,9 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
           </span>
         ) : null}
         {!hasReport && hasEscalation ? (
-          <span className="text-xs text-ink-2">no verifier report — escalated</span>
+          <span className="text-xs text-ink-2">
+            {modelEscalated ? "no patch to verify (the model escalated)" : "no verifier report — escalated"}
+          </span>
         ) : null}
       </div>
 

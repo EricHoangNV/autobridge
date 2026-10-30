@@ -1808,6 +1808,7 @@ def _step4_record_climb(
     trapped: bool,
     question: str,
     calls: list[dict[str, Any]],
+    model_rationale: str = "",
 ) -> dict[str, Any]:
     """Record the instrumented climb as rows (REQ-030 item 3).
 
@@ -1817,20 +1818,32 @@ def _step4_record_climb(
     about step 4 are therefore backed by database rows the UI reads, never
     by process memory alone.
     """
-    trace = [
-        {
+    trace = []
+    for a in attempts:
+        if int(a.get("rung", a.get("level", -1))) == 4:
+            continue
+        entry: dict[str, Any] = {
             "level": int(a.get("rung", a.get("level", -1))),
             "action": str(a.get("action", "")),
             "reason": str(a.get("reason", "")),
         }
-        for a in attempts
-        if int(a.get("rung", a.get("level", -1))) != 4
-    ]
-    verdict = (
-        {"verdict": "fail", "failed_checks": ["invalid_patch_trap"], "judged_by": checked_by}
-        if trapped
-        else {"verdict": "fail", "failed_checks": [], "judged_by": checked_by}
-    )
+        # REQ-047: keep the model's own question/rationale on the rung so
+        # the repair page can label it as the model's.
+        if a.get("model_question"):
+            entry["model_question"] = str(a["model_question"])
+        if a.get("model_rationale"):
+            entry["model_rationale"] = str(a["model_rationale"])
+        trace.append(entry)
+    if not proposal:
+        # REQ-047 item 3: nothing was proposed (the model escalated), so no
+        # check ran — record not_verified, never a fail verdict.
+        verdict = {"verdict": "not_verified", "failed_checks": [], "judged_by": checked_by}
+    else:
+        verdict = (
+            {"verdict": "fail", "failed_checks": ["invalid_patch_trap"], "judged_by": checked_by}
+            if trapped
+            else {"verdict": "fail", "failed_checks": [], "judged_by": checked_by}
+        )
     payload = {
         "connector_id": connector_id,
         "drift_class": inp["drift_class"],
@@ -1847,6 +1860,7 @@ def _step4_record_climb(
         "proposal": proposal,
         "verifier_verdict": verdict,
         "escalation_question": question,
+        "model_rationale": model_rationale,
     }
     rec_call = _control_call(base_url, "POST", "/demo/record-climb", payload)
     calls.append(rec_call)
@@ -1985,8 +1999,23 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         for op in proposal
         if isinstance(op, dict)
     )
+    # REQ-047: the climb already knows whether the model escalated (an
+    # explicit {"escalate": ..., "rationale": ...} answer) — the labels
+    # below must say so instead of calling it "no applicable patch".
+    model_escalated = bool(climb.get("model_escalated"))
+    model_question = str(climb.get("model_question") or "").strip()
+    model_rationale = " ".join(str(climb.get("model_rationale") or "").split())[:300]
+    if model_escalated and not model_question:
+        # Defense-in-depth: an escalate answer always carries the question
+        # (ladder normalizes it); without one it is a no-answer, not an
+        # escalation.
+        model_escalated = False
     checked_by = "trap predicate (documented oracle rule)"
-    if live and not l3_skipped:
+    if model_escalated:
+        # No patch was proposed, so there is nothing for the verifier to
+        # judge — say so and do not report a fail verdict (REQ-047 item 3).
+        checked_by = "no patch to verify (the model escalated)"
+    elif live and not l3_skipped:
         from autobridge.engine.verification import verify_spec  # noqa: PLC0415
 
         harbor_spec = _load_reference_spec("harborpms")
@@ -2048,6 +2077,13 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             f"no frontier call available ({skip_detail}); "
             "L3 labelled skipped, semantic drift still needs the operator"
         )
+    elif model_escalated:
+        # REQ-047 item 1: an explicit escalate answer is a human decision,
+        # not a "no applicable patch" — name the call and the outcome.
+        rejection_reason = (
+            f"L3 called {mode} ({l3_model}, {frontier_tokens:,} tokens{reasoning_note}): "
+            "the model asked for a human decision"
+        )
     elif trapped:
         rejection_reason = "total_amount must stay gross; net_amount is the decoy net"
     elif proposal:
@@ -2072,16 +2108,28 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         below_label = f"{below_pct:.0f}% below gross"
     except Exception:
         below_label = "below gross"
+    # REQ-047 item 2: when the model escalates, its question IS the
+    # escalation question (with its rationale beneath); the canned text is
+    # only the fallback when no model question exists.
+    _canned_question = "Harbor totals now read net instead of gross — should total_amount track $.gross_amount with the money transform, or is a new canonical field needed?"
+    _question = model_question if model_escalated and model_question else _canned_question
+    _bundle_reason = f"gross_to_net: net is {below_label}; no deterministic rule maps net_amount safely"
+    if model_escalated and model_rationale:
+        _bundle_reason += f"; model rationale: {model_rationale}"
     bundle = escalation_for_no_fix(
-        f"gross_to_net: net is {below_label}; no deterministic rule maps net_amount safely",
+        _bundle_reason,
         evidence_ids=["demo-step4-faulted", "simulators/docs/harborpms.md#Money"],
-        question="Harbor totals now read net instead of gross — should total_amount track $.gross_amount with the money transform, or is a new canonical field needed?",
+        question=_question,
     )
+    if model_escalated:
+        _l4_reason = "model asked for a human decision: one operator question"
+    else:
+        _l4_reason = f"{'invalid_patch_trap' if trapped else 'unverified proposal'}: one operator question"
     attempts.append(
         {
             "rung": 4,
             "action": "escalate",
-            "reason": f"{'invalid_patch_trap' if trapped else 'unverified proposal'}: one operator question",
+            "reason": _l4_reason,
             "calls": [],
         }
     )
@@ -2116,6 +2164,7 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
                 trapped,
                 bundle.question,
                 calls,
+                model_rationale,
             )
         else:
             recorded = {
@@ -2142,8 +2191,19 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             replay_label = f"replayed from a live Muse capture on {captured}"
         else:
             replay_label = "replayed (test capture)"
+    # REQ-047 item 4: the title names the new truth — the model saw the
+    # evidence and asked for a business decision; when it proposes a patch
+    # instead, the verifier verdict decides.
+    if model_escalated:
+        _step_title = "Hard semantic failure — gross_to_net escalated: model asked for a business decision"
+    elif trapped:
+        _step_title = "Hard semantic failure — gross_to_net rejected (invalid_patch_trap), escalated"
+    elif proposal:
+        _step_title = "Hard semantic failure — gross_to_net proposal judged, escalated"
+    else:
+        _step_title = "Hard semantic failure — gross_to_net rejected, escalated"
     return _finish_step(
-        "Hard semantic failure — gross_to_net rejected, escalated",
+        _step_title,
         {
             "sync_outcome": inp["faulted_summary"]["outcome"],
             "unmet_criteria": list(inp["faulted_summary"].get("unmet_criteria") or []),
@@ -2170,6 +2230,9 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
             "replay_label": replay_label,
             "l3_skipped": l3_skipped,
             "escalation_question": bundle.question,
+            "model_escalated": model_escalated,
+            "model_question": model_question,
+            "model_rationale": model_rationale,
             "money_type": "Decimal(2dp)",
             "release_persisted": False,
             "resolved_rung": "L4 (escalated)",

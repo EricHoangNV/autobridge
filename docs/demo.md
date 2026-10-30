@@ -183,11 +183,19 @@ Renders in `/repairs/[id]`: drift evidence, ladder badges L0→L1, old/new patch
 side by side, visible tests, verifier verdict, Approve action. The ledger line —
 `frontier_tokens == 0` — is the point of the step.
 
-## 4. Hard semantic failure — `gross_to_net`
+## 4. Hard semantic failure — `gross_to_net` (the model asks for a business decision)
 
 Inject the money drift; the sync degrades on a named invariant, the engine's
-own climb runs (funnel → L2 skipped → exactly one L3 attempt), the proposal
-is judged and rejected, and the run escalates with one operator question.
+own climb runs (funnel → L2 skipped → exactly one L3 attempt), and the run
+escalates with one operator question. The live model saw the evidence and
+asked for a business decision (its `{"escalate": ..., "rationale": ...}`
+answer): the reason line reads "L3 called live (…): the model asked for a
+human decision", the escalation question is the model's question (labelled
+"The model's question for you:" with its rationale beneath), and the
+verifier line reads "no patch to verify (the model escalated)" — no fail
+verdict is shown because no patch was proposed. When the model instead
+proposes a patch, the verifier verdict on that proposal decides (the
+`net_amount → total_amount` decoy is rejected by `invalid_patch_trap`).
 
 ```
 POST /demo/inject-fault                { target: sim-harbor, scenario_id: gross_to_net, seed }
@@ -219,8 +227,10 @@ replay (or the explicit skip) runs inline, so the row is final at once.
 
 Renders in `/repairs/[id]`: `Degraded` with the failing money invariant named,
 the derivation funnel, the L3 model-call box (or the explicit skip with the
-capture hint), the rejected `net_amount → total_amount` decoy with the
-verdict, the escalation bundle side-by-side with Approve / Reject. Money
+capture hint), the model's question with its rationale and the "no patch to
+verify (the model escalated)" verifier line — or, when a patch was proposed,
+the rejected `net_amount → total_amount` decoy with the verifier verdict —
+the escalation bundle side-by-side with Approve / Reject. Money
 stays `Decimal` throughout; the UI never shows a guessed mapping. Capture
 the live prompt for replay with
 `make record-frontier SCENARIO=gross_to_net` (keyed stack, after the break).
