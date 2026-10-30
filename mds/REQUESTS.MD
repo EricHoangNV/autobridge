@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 21:30): **REQ-055 next.** Do not start REQ-051 or REQ-052 until the owner says so.
 
 ### REQ-055 — Deck 5 keyed: Approve fails on the migrated DB; the dry-run passed for the wrong reason; repair-page contradictions (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 14:31)
 Owner keyed check (2026-10-30, host `make local-up`, origin/main 5955fcca, fresh reset+seed, Aside at 1440): deck 4
 (Harbor from the wiki, "check added from the docs") and deck 5 up to the decision work — repairing view live, first
 proposal failed the dry-run, one retry, second passed ("tested on the current records: the checks pass"), 2 calls,
