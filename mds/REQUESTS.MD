@@ -24,6 +24,11 @@ Owner review of the connector page (2026-10-30, Atlas). UI only, no new API.
    (`4a5aa12461c6…`, the release's HMAC-SHA256 spec signature, `ReleaseHistory.tsx` ~55) gets a column header
    **"Signature"** and a tooltip saying what it is ("proves this release's spec is exactly the one that was verified
    and approved"). Same for "Fingerprint" in Sync runs ("shape of the vendor's responses; a change means drift").
+   Explicitly also (owner): the **Spec** section — the release picker ("r1 — 0705e3b5 (active)") and the viewer
+   header ("Spec — r1 (0705e3b5)") show the full release id and the full signature on hover, with the same
+   "Signature" label/explanation; and the **Fingerprint** section (the grouped list from item 2) — each group's
+   fingerprint and each expanded run id show the full value on hover, with the "shape of the vendor's responses"
+   explanation on the section title.
 Tests: grouping (same fingerprint merged, change starts a new group and links its drift), collapsed by default, spec
 viewer height + inner scroll + section jump.
 
