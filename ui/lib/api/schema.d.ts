@@ -2647,10 +2647,24 @@ export interface components {
         };
         /** SyncResponse */
         SyncResponse: {
+            /** Drift Class */
+            drift_class?: string | null;
+            /** Drift Found */
+            drift_found?: boolean | null;
+            /** Drift Id */
+            drift_id?: string | null;
             /** Job Id */
             job_id: string;
+            /** Outcome */
+            outcome?: string | null;
             /** Release Id */
             release_id: string;
+            /** Repair Job Id */
+            repair_job_id?: string | null;
+            /** Repair Pending */
+            repair_pending?: boolean | null;
+            /** Repair Run Id */
+            repair_run_id?: string | null;
             /** State */
             state: string;
             /** Sync Run Id */

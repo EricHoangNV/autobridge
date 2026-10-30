@@ -3591,3 +3591,15 @@ owner keyed local-up+e2e+demo re-run. No stack started this run; no code diff.
 **Notes for next iteration:**
 - REQ-041 owns the remaining 3 e2e-ui failures (test_s6); REQ-040 owns the RepairRun provenance race.
 - Owner keyed steps unchanged: REQ-027/028/021/024/025/039 verifications and P1.W10.3 recording.
+
+## 2026-10-30 02:15 UTC — REQ-042 DONE (code) in sbx1
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). POST /sync and
+the scheduler no longer run model calls: semantic drifts with a live
+provider are queued as background repair jobs (JSON-safe parcel), everything
+else repairs inline; control drains repairs on a 2 s loop honoring the reset
+pause, committing before/after each call. Demo step 4 polls the repair job
+then the row; docs note the live delay. Gates: make test 2676+134+409/0
+fail (90.35/91.49/90.48%), ui 192, lint+typecheck+openapi-check+ui-typecheck
+green. Owner step: keyed full run + demo. Side effect: REQ-040's prescribed
+fix (threaded repair_run_id, unscoped re-fetch deleted) is implemented and
+tested here; REQ-040 left OPEN for its own flip.

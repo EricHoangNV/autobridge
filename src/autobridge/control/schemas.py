@@ -375,6 +375,17 @@ class SyncResponse(BaseModel):
     sync_run_id: str | None = None
     state: str
     release_id: str
+    # REQ-042: what the sync detected. A semantic drift that needs a live
+    # frontier call returns at once with repair_pending + repair_job_id;
+    # the repair row appears when the background job climbs. All optional
+    # so older clients keep working.
+    drift_found: bool | None = None
+    drift_id: str | None = None
+    drift_class: str | None = None
+    repair_pending: bool | None = None
+    repair_job_id: str | None = None
+    repair_run_id: str | None = None
+    outcome: str | None = None
 
 
 class RunOut(BaseModel):

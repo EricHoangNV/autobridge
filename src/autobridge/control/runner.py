@@ -1,10 +1,11 @@
 """Shared job-runner + inline sync execution (REQ-030 item 1).
 
 ``POST /connectors/{id}/sync`` and the sync scheduler run the same code:
-validate the connector/release, submit the sync job, execute handlers
-inline (detect → classify → ladder → verifier gate), and return the job
-result. One implementation, two callers — the scheduler must never drift
-from what a manual sync does.
+validate the connector/release, submit the sync job, execute exactly
+that job inline (detect → classify → deterministic repair; a live-model
+climb is queued as a background repair job, REQ-042), and return the
+job result. One implementation, two callers — the scheduler must never
+drift from what a manual sync does.
 """
 
 from __future__ import annotations
@@ -81,6 +82,12 @@ def sync_connector_now(
 ) -> dict[str, Any]:
     """Validate, submit and inline-execute one sync; return the job result.
 
+    Executes exactly the submitted sync job (``run_job``). The sync
+    records its SyncRun row and any drift, and repairs deterministic
+    drifts inline; a semantic drift needing a live frontier call is
+    queued as a background repair job (REQ-042) — this call never runs
+    a model call and never holds a transaction across one.
+
     Raises :class:`SyncError` (404 unknown connector/release, 422
     unrunnable release) or ``RuntimeError`` (500 job store failure) —
     the route maps these to HTTP responses; the scheduler records them
@@ -154,7 +161,10 @@ def sync_connector_now(
         raise RuntimeError(str(exc)) from exc
 
     with contextlib.suppress(Exception):
-        runner.run_once()
+        # REQ-042: run exactly the sync job just submitted — never
+        # run_once() (which would claim the oldest queued job, possibly a
+        # repair whose model call would stall this request).
+        runner.run_job(job_id)
 
     job = session.get(JobModel, job_id)
     if job is None:

@@ -187,12 +187,23 @@ is judged and rejected, and the run escalates with one operator question.
 POST /demo/inject-fault                { target: sim-harbor, scenario_id: gross_to_net, seed }
 POST /connectors/{harbor_id}/sync      → SyncRun Degraded, unmet: [money_invariant],
                                          class SEMANTIC_VALUE_DRIFT, signal invariant_failure
+                                       → sync returns at once (repair_pending,
+                                         repair_job_id): the live climb runs
+                                         in the background repair job, never
+                                         in the request
                                        → engine climb L0 miss → L1 no rule → L2 skipped
                                          (one explanation) → L3 frontier attempt
                                          (live, replay, or explicit skip) → proposal
                                          judged (verifier baseline gate), never released
 → L4 escalate with EscalationBundle (one question + evidence ids)
 ```
+
+The semantic repair arrives a few seconds after the break when the
+frontier call is live: `POST /sync` records the sync run and the drift
+and returns, and the repair row lands when the background job finishes
+(the Repairs page polls; `make demo` step 4 polls the repair job, then
+the repair row, bounded by the L3 budget). With no key the replay (or
+the explicit skip) runs inline, so the row is there at once.
 
 Renders in `/repairs/[id]`: `Degraded` with the failing money invariant named,
 the derivation funnel, the L3 model-call box (or the explicit skip with the

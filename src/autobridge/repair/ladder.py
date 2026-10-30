@@ -152,6 +152,10 @@ class LadderResult:
     open_questions: list[str] = field(default_factory=list)
     escalation_bundle: EscalationBundle | None = None
     degradation_reason: str | None = None
+    # The RepairRun row this climb persisted (set by RepairController when
+    # session is given). Threading the id — never re-fetching "the newest
+    # row" — keeps concurrent repairs on their own rows (REQ-040/REQ-042).
+    repair_run_id: str | None = None
 
 
 def _empty_model_usage() -> dict[str, Any]:

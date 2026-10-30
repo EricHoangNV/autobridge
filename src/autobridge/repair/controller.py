@@ -14,6 +14,7 @@ AUTH_EXPIRED tries refresh if spec auth permits, else escalates.
 
 from __future__ import annotations
 
+from dataclasses import replace as _replace
 from typing import TYPE_CHECKING, Any
 
 from autobridge.control.models import DriftEvent, RepairRun
@@ -228,6 +229,11 @@ class RepairController:
             )
             session.add(run)
             session.flush()
+            # The row this climb persisted — callers link candidates and
+            # verdicts through it, never by re-fetching "the newest row"
+            # (concurrent repairs would cross-link, REQ-040/REQ-042).
+            # LadderResult is frozen: rebind instead of assigning.
+            result = _replace(result, repair_run_id=run.id)
             # REQ-030 2b: proposing caches nothing. A proposal that is still
             # waiting can never be reused at L0, by any connector — the fix
             # is learned only once it is approved (engine approve path), so
@@ -456,6 +462,11 @@ class RepairController:
             )
             session.add(run)
             session.flush()
+            # The row this climb persisted — callers link candidates and
+            # verdicts through it, never by re-fetching "the newest row"
+            # (concurrent repairs would cross-link, REQ-040/REQ-042).
+            # LadderResult is frozen: rebind instead of assigning.
+            result = _replace(result, repair_run_id=run.id)
             # REQ-030 item 3: the hypothesis derivation persists as a
             # kind=hypothesis evidence record owned by this repair run
             # (counts and ids per stage), and the climb's ModelCall rows —
@@ -605,6 +616,39 @@ class RepairController:
         return result, classification
 
 
+def prepare_semantic_inputs(
+    *,
+    spec: dict[str, Any],
+    signals: list[Any],
+    summary: dict[str, Any] | None,
+    sync_run_id: str | None,
+) -> dict[str, Any]:
+    """Derive the semantic climb's inputs from the wire (REQ-039/REQ-042).
+
+    Pure and fast: engine enumeration of amount readings from the spec,
+    wire-consistency filter against the observed invariant outcome, the
+    climbed reading plus siblings, the persisted funnel stages, and the
+    redacted L3 evidence. No provider, no model call, no DB write — the
+    sync path runs this inline, then either climbs immediately (replay /
+    no-provider) or queues it for the background repair job (live).
+    """
+    from autobridge.repair import semantic as _semantic  # noqa: PLC0415
+
+    source = f"sync_runs:{sync_run_id}" if sync_run_id else "live-sync"
+    enumerated, _fields = _semantic.enumerate_money_hypotheses(spec, source=source)
+    failed = _semantic.money_invariant_failed(summary, signals)
+    survivors = _semantic.filter_wire_consistent(enumerated, invariant_failed=failed)
+    climbed, siblings = _semantic.select_climbed(survivors)
+    stages = _semantic.funnel_stages(enumerated, survivors, climbed, siblings, source=source)
+    evidence = _semantic.build_l3_evidence(spec, summary, climbed)
+    return {
+        "climbed": climbed,
+        "siblings": list(siblings),
+        "stages": stages,
+        "evidence": evidence or {},
+    }
+
+
 def run_semantic_repair(
     *,
     spec: dict[str, Any],
@@ -638,23 +682,23 @@ def run_semantic_repair(
     the reason), the ``proposal`` when one was recorded, and the verifier
     ``verdict`` when it was judged. Never raises for provider or verifier
     trouble: a misconfigured live mode degrades to ``off``, an unreachable
-    verifier is recorded as evidence, and the escalation always stands.
+    verifier is recorded as evidence, and the     escalation always stands.
     """
-    from autobridge.repair import semantic as _semantic  # noqa: PLC0415
-
     controller = (
         RepairController(knowledge_cache=knowledge_cache)
         if knowledge_cache is not None
         else RepairController()
     )
-    source = f"sync_runs:{sync_run_id}" if sync_run_id else "live-sync"
-    enumerated, _fields = _semantic.enumerate_money_hypotheses(spec, source=source)
-    failed = _semantic.money_invariant_failed(summary, signals)
-    survivors = _semantic.filter_wire_consistent(enumerated, invariant_failed=failed)
-    climbed, siblings = _semantic.select_climbed(survivors)
-    stages = _semantic.funnel_stages(enumerated, survivors, climbed, siblings, source=source)
+    prepared = prepare_semantic_inputs(
+        spec=spec,
+        signals=signals,
+        summary=summary,
+        sync_run_id=sync_run_id,
+    )
+    climbed = prepared["climbed"]
+    stages = prepared["stages"]
+    evidence = prepared["evidence"]
     hyps: list[Any] = [climbed] if climbed is not None else []
-    evidence = _semantic.build_l3_evidence(spec, summary, climbed)
 
     from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
 
@@ -705,6 +749,7 @@ def run_semantic_repair(
         spec=spec,
         proposal=proposal,
         verifier_url=verifier_url,
+        repair_run_id=result.repair_run_id,
     )
     return result, info
 
@@ -715,30 +760,26 @@ def _judge_semantic_proposal(
     spec: dict[str, Any],
     proposal: list[dict[str, Any]] | None,
     verifier_url: str | None,
+    repair_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Judge an L3 proposal against the verifier; record it, never release it.
 
     Applies the proposal to a copy of the spec and runs the baseline
     regression gate. The verdict (or the reason it could not be judged:
     no proposal, no verifier, unreachable verifier) lands as a
-    kind=verification evidence record on the newest RepairRun plus the
+    kind=verification evidence record on the repair row plus the
     row's ``visible_test_results`` (what the repair page's verifier
-    section reads). Failures are row data — the escalation stands either
+    section reads). The row is addressed by *repair_run_id* — never by
+    re-fetching "the newest row" (concurrent repairs would cross-link,
+    REQ-040/REQ-042). Failures are row data — the escalation stands either
     way. Returns a small verdict summary for the caller.
     """
     from autobridge.control.models import RepairRun as _RepairRun  # noqa: PLC0415
 
     newest: Any = None
     try:
-        from sqlalchemy import select as _select  # noqa: PLC0415
-
-        newest = (
-            session.execute(
-                _select(_RepairRun).order_by(_RepairRun.created_at.desc()).limit(1)
-            )
-            .scalars()
-            .first()
-        )
+        if repair_run_id:
+            newest = session.get(_RepairRun, repair_run_id)
     except Exception:
         newest = None
     if newest is None:
@@ -830,7 +871,17 @@ def repair_job_handler(ctx: Any) -> dict[str, Any]:
 
     # Try to resolve spec from drift events if not in payload
     if spec is None and drift_ids:
+        # REQ-042: a deferred repair names the faulted release — load it
+        # directly (releases are immutable, so this is the exact spec the
+        # sync ran, even if the operator approved another release since).
+        release_id = payload.get("release_id")
+        if isinstance(release_id, str) and release_id:
+            rel = ctx.session.get(ConnectorRelease, release_id)
+            if rel is not None and rel.spec:
+                spec = rel.spec
         for did in drift_ids:
+            if spec is not None:
+                break
             ev = ctx.session.get(DriftEvent, did)
             if ev is not None:
                 # Try to find connector's active release
@@ -880,17 +931,90 @@ def repair_job_handler(ctx: Any) -> dict[str, Any]:
         # REQ-039: the worker repair path climbs the same semantic climb
         # as the sync-inline path (funnel + L3 attempt + verifier judge),
         # never the deterministic 0-call escalation.
-        result, info = run_semantic_repair(
-            spec=spec,
-            drift_class=drift_class,
-            signals=list(payload.get("signals") or []),
-            fingerprint_delta=payload.get("fingerprint_delta"),
-            summary=payload.get("summary"),
-            sync_run_id=payload.get("sync_run_id"),
-            vendor=vendor,
-            drift_event_ids=drift_ids,
-            session=ctx.session,
-        )
+        if isinstance(payload.get("hypotheses_json"), list) and payload.get("hypotheses_json"):
+            # REQ-042 deferred repair: the sync already derived the funnel
+            # (enumeration, wire filter, climbed reading, evidence) and
+            # queued it in the job payload. Rebuild the same objects and
+            # climb with the live provider — no model call ran in the
+            # request, and none is re-derived from a label here.
+            from autobridge.discovery.hypotheses import hypothesis_from_json  # noqa: PLC0415
+            from autobridge.drift.signals import signal_from_json  # noqa: PLC0415
+            from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
+
+            parcel_signals: list[Any] = []
+            for raw_sig in payload.get("signals_json") or []:
+                try:
+                    parcel_signals.append(
+                        signal_from_json(raw_sig) if isinstance(raw_sig, dict) else raw_sig
+                    )
+                except Exception:
+                    continue
+            parcel_hyps: list[Any] = []
+            for raw_hyp in payload.get("hypotheses_json") or []:
+                try:
+                    if isinstance(raw_hyp, dict):
+                        parcel_hyps.append(hypothesis_from_json(raw_hyp))
+                except Exception as exc:
+                    raise ValueError(f"repair job payload carries no usable hypothesis: {exc}") from exc
+            if not parcel_hyps:
+                raise ValueError("repair job payload carries no usable hypothesis")
+            try:
+                provider, mode = resolve_frontier_provider()
+            except Exception:
+                provider, mode = None, "off"
+            result = controller.handle(
+                spec=spec,
+                drift_class=drift_class,
+                signals=parcel_signals,
+                fingerprint_delta=payload.get("fingerprint_delta"),
+                vendor=vendor,
+                drift_event_ids=drift_ids,
+                session=ctx.session,
+                hypotheses=parcel_hyps,
+                provider=provider,
+                budget=Budget(),
+                scenario=payload.get("scenario"),
+                validate_against=spec,
+                evidence=payload.get("l3_evidence") or None,
+                hypothesis_stages=payload.get("hypothesis_stages"),
+            )
+            info: dict[str, Any] = {"provider_mode": mode}
+            l3_entry = next(
+                (
+                    e
+                    for e in (result.ladder_trace or [])
+                    if isinstance(e, dict) and e.get("level") == 3
+                ),
+                None,
+            )
+            if l3_entry is None:
+                info["l3_status"] = "skip: no L3 rung (no provider configured)"
+            elif l3_entry.get("action") in ("frontier_generate", "proposal_rejected"):
+                info["l3_status"] = "attempt"
+            else:
+                info["l3_status"] = f"skip: {l3_entry.get('reason', 'L3 skipped')}"
+            proposal = l3_entry.get("proposal") if isinstance(l3_entry, dict) else None
+            info["proposal"] = proposal
+            assert spec is not None  # noqa: S101 — fallback above guarantees a spec
+            info["verdict"] = _judge_semantic_proposal(
+                session=ctx.session,
+                spec=spec,
+                proposal=proposal if isinstance(proposal, list) else None,
+                verifier_url=None,
+                repair_run_id=result.repair_run_id,
+            )
+        else:
+            result, info = run_semantic_repair(
+                spec=spec,
+                drift_class=drift_class,
+                signals=list(payload.get("signals") or []),
+                fingerprint_delta=payload.get("fingerprint_delta"),
+                summary=payload.get("summary"),
+                sync_run_id=payload.get("sync_run_id"),
+                vendor=vendor,
+                drift_event_ids=drift_ids,
+                session=ctx.session,
+            )
     else:
         info = {}
         result = controller.handle(
@@ -921,26 +1045,11 @@ def repair_job_handler(ctx: Any) -> dict[str, Any]:
         out["provider_mode"] = info["provider_mode"]
     if info.get("l3_status"):
         out["l3_status"] = info["l3_status"]
-    # Persisted RepairRun id is in ctx.run_id after handle
-    # Find the run we just created (last RepairRun in this session)
-    # ctx.run_id is set by controller? No, controller creates RepairRun but doesn't set ctx.run_id.
-    # We set it here for JobRunner bookkeeping.
-    from autobridge.control.models import RepairRun as _RR
-
-    # Fetch most recent RepairRun for this job (by created_at)
-    # Simple: query last inserted in this session's identity map
-    for obj in reversed(list(ctx.session.new)):
-        if isinstance(obj, _RR):
-            ctx.run_id = obj.id
-            out["repair_run_id"] = obj.id
-            break
-    else:
-        # Fallback query
-        from sqlalchemy import select as _select
-
-        row = ctx.session.execute(_select(_RR).order_by(_RR.created_at.desc()).limit(1)).scalar_one_or_none()
-        if row is not None:
-            ctx.run_id = row.id
-            out["repair_run_id"] = row.id
+    # The RepairRun row this climb persisted, threaded through
+    # LadderResult — never re-fetched as "the newest row" (concurrent
+    # repairs would cross-link, REQ-040/REQ-042).
+    if result.repair_run_id is not None:
+        ctx.run_id = result.repair_run_id
+        out["repair_run_id"] = result.repair_run_id
 
     return out

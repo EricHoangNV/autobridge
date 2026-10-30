@@ -2343,3 +2343,60 @@ Re-verified both gaps on current main, no code changes needed:
 - docs_path 422: `POST /connectors/{id}/build` with only `docs_path` returns 422 "docs_path is an identifier only; send docs_text (or docs_url)" (`src/autobridge/control/routes/builds.py:148-161`, engine mirror `src/autobridge/engine/build_run.py:410-418`); callers (demo, UI, CLI `ab`, e2e, docs) send docs_text.
 Targeted suites green: test_autobridge_releases + test_autobridge_verification_gate + test_autobridge_engine_build_run (104 passed), test_autobridge_build_docs_guard + control_api + control_api_extended + cli (110 passed).
 Remaining (not mine to change): auditor flips the Code Review verdict line in FEEDBACKS.MD; owner keyed `make local-up && make e2e && make demo` re-run.
+
+### REQ-042 — no model call in a request or held transaction (sbx1 2026-10-30)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+Status: code DONE, full gates green unkeyed; remaining OWNER STEP: keyed
+`make local-up && make demo-seed && make e2e && make e2e-ui && make demo`
+with `FRONTIER_API_KEY` set (live L3 arrives seconds after the break),
+then the same without it.
+Fix: the sync (request or scheduler) records the sync run and the drift,
+commits, then queues the repair as a job and returns; a background repair
+drain in control climbs, committing before and after each model call.
+- `engine/detect_repair.py`: split `detect_after_sync` (new; never calls a
+  model) from `detect_and_repair_after_sync` (unchanged, in-process). Shared
+  `_detect_open` core (signals/classify/dedupe + pending-job dedupe) and
+  `_persist_drift`. Semantic + live provider → JSON-safe parcel (signals,
+  climbed hypothesis, funnel stages, L3 evidence) submitted via
+  `submit_repair(payload_extra=...)`; else inline (L0/L1, replay/off).
+  Drift committed before the job submit — no lock held across the queue.
+  `_finalize_proposal` links candidates by threaded id (no newest-row fetch).
+- `engine/sync_run.py`: `run_sync_handler` calls `detect_after_sync`.
+- `control/jobs.py`: `submit_repair(..., payload_extra)`, `run_job(job_id)`
+  (exact claim), `run_next_of_kind(kind)`, `count_queued(kind)`.
+- `control/runner.py`: `sync_connector_now` executes exactly its sync job
+  (`run_job`), never `run_once` (which could grab a queued repair).
+- `control/scheduler.py`: pass results surface `repair_pending/job_id`.
+- `control/app.py`: always-on `_repair_loop` (2 s tick, ≤4 parallel, honors
+  the reset pause; claims are atomic so overlapping ticks just find less).
+- `repair/controller.py`: `LadderResult.repair_run_id` set at both persist
+  sites (frozen → `replace`); `prepare_semantic_inputs` extracted and reused
+  by the deferred path; `repair_job_handler` rebuilds parcel objects and
+  climbs with the live provider, `ctx.run_id`/verdict via threaded id (the
+  session scan + unscoped newest-row query are gone); `_judge_semantic_proposal`
+  takes `repair_run_id`. Includes REQ-040's prescribed fix (thread id,
+  delete re-fetch) with a two-connector no-cross-link test — REQ-040 left
+  OPEN for its own flip.
+- `llm/provider.py`: `BudgetedProvider.complete` commits before the inner
+  call and after the ledger insert (best-effort, rollback on failure).
+- `control/schemas.py` + `routes/builds.py`: `SyncResponse` gains optional
+  `drift_found/drift_id/drift_class/repair_pending/repair_job_id/
+  repair_run_id/outcome`; `make openapi` regenerated (`ui/openapi.json`,
+  `ui/lib/api/schema.d.ts`).
+- `bench/demo.py` step 4: on `repair_pending`, polls the repair job then
+  `_poll_live_repair_for_drift` (75×2 s); `docs/demo.md` notes the live
+  repair arrives seconds after the break.
+- `tests/unit/test_autobridge_req042_deferred_repair.py` (3 tests): 10 s
+  sleep provider → detect < 2 s, queries answer meanwhile, drain finishes
+  with 1 call + funnel + escalate; same through the scheduler; two
+  concurrent deferred repairs finalize on their own rows. Plus
+  `signal_to/from_json`, `hypothesis_to/from_json` round-trips (covered in
+  the new tests via parcel).
+- `tests/e2e/test_09_demo_seed_break_heal.py`: keyed branch asserts the
+  L3-funnel + frontier tokens; deadline 150 → 240 s.
+Gates: `make test` 2676 + 134 + 409 pass, 0 fail (autobridge 90.35%,
+verifier 91.49%, simulators 90.48%; ui 192 pass); `make lint`,
+`make typecheck`, `make openapi-check` (clean tree), `make ui-typecheck`
+green. E2E/live-stack runs need Compose or a key — not in sandbox (owner
+step). `tests/unit/test_autobridge_control_contract.py` still uncollectable
+here (no `schemathesis` module installed — pre-existing env gap).

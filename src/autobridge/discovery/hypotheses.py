@@ -123,6 +123,80 @@ class Hypothesis:
         }
 
 
+def hypothesis_to_json(hyp: Hypothesis) -> dict[str, Any]:
+    """JSON-safe copy of a hypothesis for repair-job payloads (REQ-042).
+
+    The deferred semantic repair rebuilds the climbed hypothesis from this
+    dict (:func:`hypothesis_from_json`) so the background job ranks the
+    same reading the sync derived — never re-enumerated from a label.
+    Provenance round-trips as ``{source, line, snippet}`` triples.
+    """
+    import json as _json  # noqa: PLC0415
+
+    def _prov(p: Any) -> dict[str, Any]:
+        if isinstance(p, dict):
+            return {
+                "source": str(p.get("source", "")),
+                "line": int(p.get("line", 0) or 0),
+                "snippet": str(p.get("snippet", "")),
+            }
+        return {
+            "source": str(getattr(p, "source", "")),
+            "line": int(getattr(p, "line", 0) or 0),
+            "snippet": str(getattr(p, "snippet", "")),
+        }
+
+    raw = {
+        "id": hyp.id,
+        "family": hyp.family,
+        "claim": hyp.claim,
+        "candidate_mapping_fragment": dict(hyp.candidate_mapping_fragment or {}),
+        "prior": float(hyp.prior),
+        "evidence_for": [_prov(p) for p in (hyp.evidence_for or ())],
+        "evidence_against": [_prov(p) for p in (hyp.evidence_against or ())],
+        "field": hyp.field,
+        "strategy": hyp.strategy,
+    }
+    return _json.loads(_json.dumps(raw, sort_keys=True, default=str))
+
+
+def hypothesis_from_json(data: dict[str, Any]) -> Hypothesis:
+    """Rebuild a :class:`Hypothesis` from :func:`hypothesis_to_json` output.
+
+    Raises the constructor's own ``ValueError`` on material that cannot be
+    a hypothesis (empty id, unknown family, no evidence) — a corrupt job
+    payload fails the job loudly, never climbs on invented inputs.
+    """
+    data = data if isinstance(data, dict) else {}
+
+    def _prov(d: Any) -> Provenance:
+        if isinstance(d, dict):
+            return Provenance(
+                source=str(d.get("source", "")),
+                line=int(d.get("line", 0) or 0),
+                snippet=str(d.get("snippet", "")),
+            )
+        text = str(d)
+        source, _, line = text.rpartition(":")
+        try:
+            lineno = int(line)
+        except ValueError:
+            source, lineno = text, 0
+        return Provenance(source=source, line=lineno)
+
+    return Hypothesis(
+        id=str(data.get("id") or ""),
+        family=str(data.get("family") or ""),
+        claim=str(data.get("claim") or ""),
+        candidate_mapping_fragment=dict(data.get("candidate_mapping_fragment") or {}),
+        prior=float(data.get("prior", 0.5)),
+        evidence_for=tuple(_prov(p) for p in (data.get("evidence_for") or [])),
+        evidence_against=tuple(_prov(p) for p in (data.get("evidence_against") or ())),
+        field=data.get("field"),
+        strategy=data.get("strategy"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------

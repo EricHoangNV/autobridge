@@ -1250,6 +1250,43 @@ def _step_live_sync_terminal(
     return {}
 
 
+def _poll_live_repair_for_drift(
+    base_url: str, connector_id: str, drift_id: str, calls: list[dict[str, Any]],
+    *, tries: int = 75, wait_s: float = 2.0,
+) -> dict[str, Any]:
+    """Poll /repairs until the drift's repair row lands (REQ-042).
+
+    A semantic break with a live frontier key queues the climb as a
+    background repair job: POST /sync returns at once with
+    ``repair_pending``, and the repair row appears seconds later when
+    the job finishes. Every poll is a recorded call; the bound (~150 s)
+    covers the L3 budget with margin. Returns the repair row or {}.
+    """
+    import time as _time  # noqa: PLC0415
+
+    repair_row: dict[str, Any] = {}
+    for _ in range(tries):
+        rep_rows: list[Any] = _control_get_raw(base_url, f"/repairs?connector_id={connector_id}") or []
+        for rep in rep_rows:
+            if (
+                isinstance(rep, dict)
+                and drift_id in (rep.get("drift_event_ids") or [])
+                and rep.get("decision")
+            ):
+                calls.append(_control_call(base_url, "GET", f"/repairs?connector_id={connector_id}"))
+                return dict(rep)
+        _time.sleep(wait_s)
+    calls.append(
+        {
+            "method": "ASSERT",
+            "path": f"/repairs?connector_id={connector_id} drift {drift_id}",
+            "status": "assertion-failed",
+            "error": f"no finalized repair for drift {drift_id} after {tries} polls",
+        }
+    )
+    return repair_row
+
+
 def _live_latest_repair(
     base_url: str, connector_id: str, calls: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -1595,6 +1632,15 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         ):
             repair_row = dict(rep)
             break
+    if not repair_row and faulted_result.get("repair_pending"):
+        # REQ-042: the climb runs in the background repair job — the row
+        # lands seconds after the break when the frontier call is live.
+        repair_job_id = faulted_result.get("repair_job_id")
+        if isinstance(repair_job_id, str) and repair_job_id:
+            _poll_job_terminal(base_url, repair_job_id, calls)
+        repair_row = _poll_live_repair_for_drift(
+            base_url, connector_id, str(drift_row.get("id")), calls,
+        )
     _assert_live(
         calls, "engine escalated with one operator question (never patched)",
         repair_row.get("decision") == "escalate" and bool((repair_row.get("escalation_bundle") or {}).get("question")),

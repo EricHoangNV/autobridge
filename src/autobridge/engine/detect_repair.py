@@ -23,7 +23,6 @@ with one operator question.
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from sqlalchemy import select as _select
@@ -300,6 +299,117 @@ def _resolve_verified_drifts(
         return []
 
 
+def _live_frontier_wanted() -> bool:
+    """Whether the resolved frontier provider would make a live call.
+
+    REQ-042: the sync/request path must never run a model call. When the
+    provider resolves to ``live`` mode (a real key), a semantic climb
+    would call the frontier — so the sync queues the repair instead and
+    returns. Replay/offline modes are local and fast: they run inline.
+    A misconfigured live mode (raises) degrades to inline-off, exactly
+    like :func:`autobridge.repair.controller.run_semantic_repair`.
+    """
+    try:
+        from autobridge.llm.provider import resolve_frontier_provider  # noqa: PLC0415
+
+        _provider, mode = resolve_frontier_provider()
+        return mode == "live"
+    except Exception:
+        return False
+
+
+def _submit_deferred_semantic_repair(
+    session: Any,
+    *,
+    drift_id: str,
+    connector_id: str,
+    release_id: str,
+    prepared: dict[str, Any],
+    signals: list[Any],
+    delta: Any | None,
+) -> str:
+    """Queue the semantic climb as a background repair job (REQ-042).
+
+    The sync already derived everything the climb needs (funnel stages,
+    climbed hypothesis, L3 evidence); the parcel is JSON-safe so the job
+    survives threads and restarts. Returns the repair job id.
+    """
+    from autobridge.control.runner import get_runner  # noqa: PLC0415
+    from autobridge.discovery.hypotheses import hypothesis_to_json  # noqa: PLC0415
+    from autobridge.drift.signals import signal_to_json  # noqa: PLC0415
+
+    climbed = prepared.get("climbed")
+    hyps_json = []
+    if climbed is not None:
+        hyps_json.append(hypothesis_to_json(climbed))
+    runner = get_runner(session)
+    return runner.submit_repair(
+        [drift_id],
+        payload_extra={
+            "drift_class": "SEMANTIC_VALUE_DRIFT",
+            "connector_id": connector_id,
+            "release_id": release_id,
+            "scenario": None,
+            "signals_json": [signal_to_json(s) for s in (signals or [])],
+            "fingerprint_delta": delta,
+            "hypotheses_json": hyps_json,
+            "hypothesis_stages": list(prepared.get("stages") or []),
+            "l3_evidence": dict(prepared.get("evidence") or {}),
+        },
+    )
+
+
+def _finalize_proposal(
+    session: Any,
+    *,
+    connector_id: str,
+    release_id: str,
+    repair_run_id: str | None,
+    result: Any,
+    verifier_url: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Persist a proposed patch as a candidate release (verifier-gated).
+
+    The candidate links to the repair row by its threaded id — never by
+    re-fetching "the newest row" (concurrent repairs would cross-link,
+    REQ-040/REQ-042). Gate/patch failures are row data, never raised.
+    Returns ``(candidate_release_id, gate_error)``.
+    """
+    if result.decision != "propose" or not result.candidate_patch or repair_run_id is None:
+        return None, None
+    import os as _os  # noqa: PLC0415
+
+    from autobridge.engine.releases import create_release_from_patch  # noqa: PLC0415
+
+    active_verifier = (
+        verifier_url if verifier_url is not None else _os.environ.get("VERIFIER_URL")
+    )
+    try:
+        candidate = create_release_from_patch(
+            session,
+            connector_id=connector_id,
+            base_release_id=release_id,
+            patch=list(result.candidate_patch),
+            provenance_repair_run_id=repair_run_id,
+            verifier_url=active_verifier or None,
+        )
+        session.flush()
+        candidate_release_id: str | None = candidate.id
+        if candidate.verification_report_id:
+            # REQ-030 item 3: the verifier verdict lives on the repair row
+            # too (the candidate release carries the report id) — the
+            # repair page reads verdicts from here, never recomputed.
+            from autobridge.control.models import RepairRun  # noqa: PLC0415
+
+            row = session.get(RepairRun, repair_run_id)
+            if row is not None:
+                row.verifier_report_id = candidate.verification_report_id
+                session.flush()
+        return candidate_release_id, None
+    except Exception as exc:  # noqa: BLE001 — gate/patch failures are row data
+        return None, f"{type(exc).__name__}: {exc}"[:500]
+
+
 def detect_and_repair_after_sync(
     session: Any,
     *,
@@ -325,17 +435,157 @@ def detect_and_repair_after_sync(
     signals (silent shape change with no invariant failure) — that is
     drift, and it is repaired here.
     """
-    from autobridge.control.models import DriftEvent, RepairRun
+    opened = _detect_open(
+        session,
+        connector_id=connector_id,
+        release_id=release_id,
+        spec_dict=spec_dict,
+        summary=summary,
+        sync_run_id=sync_run_id,
+    )
+    if opened["status"] != "open":
+        return opened["out"]
+    drift = _persist_drift(
+        session,
+        connector_id=connector_id,
+        classification=opened["classification"],
+        sync_run_id=sync_run_id,
+    )
+    result, semantic_info = _repair_inline(
+        session,
+        spec_dict=spec_dict,
+        signals=opened["signals"],
+        classification=opened["classification"],
+        delta=opened["delta"],
+        drift_id=drift.id,
+        summary=summary,
+        sync_run_id=sync_run_id,
+        verifier_url=verifier_url,
+        knowledge_cache=knowledge_cache,
+    )
+    candidate_release_id, gate_error = _finalize_proposal(
+        session,
+        connector_id=connector_id,
+        release_id=release_id,
+        repair_run_id=result.repair_run_id,
+        result=result,
+        verifier_url=verifier_url,
+    )
+    out: dict[str, Any] = {
+        "drift_found": True,
+        "outcome": opened["outcome"],
+        "drift_id": drift.id,
+        "drift_class": opened["classification"].drift_class,
+        "drift_reason": opened["classification"].reason,
+        "repair_run_id": result.repair_run_id,
+        "decision": result.decision,
+        "rule_id": result.rule_id,
+        "ladder_level_reached": result.ladder_level_reached,
+        "model_usage": dict(result.model_usage),
+        "candidate_release_id": candidate_release_id,
+        "gate_error": gate_error,
+    }
+    if semantic_info:
+        # What the semantic climb did (provider mode, L3 attempt-or-skip,
+        # verifier verdict summary) — the demo and the UI read the rows,
+        # but the sync result carries the headline too.
+        out["provider_mode"] = semantic_info.get("provider_mode")
+        out["l3_status"] = semantic_info.get("l3_status")
+        out["verdict"] = semantic_info.get("verdict")
+    return out
+
+
+
+def _newest_open_engine_drift(
+    session: Any, connector_id: str, drift_class: str
+) -> Any | None:
+    """Newest open engine-derived drift of this class (repair or not)."""
+    from autobridge.control.models import DriftEvent
+
+    return (
+        session.execute(
+            _select(DriftEvent)
+            .where(
+                DriftEvent.connector_id == connector_id,
+                DriftEvent.drift_class == drift_class,
+                DriftEvent.status == "open",
+                DriftEvent.source_sync_run_id.is_not(None),
+            )
+            .order_by(DriftEvent.created_at.desc())
+        )
+        .scalars()
+        .first()
+    )
+
+
+def _pending_repair_job(session: Any, connector_id: str, drift_class: str) -> Any | None:
+    """A queued/running repair job for (connector, drift class), if any.
+
+    REQ-042: a deferred semantic repair leaves its drift without a row
+    until the background job climbs. A second sync in between must dedupe
+    onto the pending job — never open a second drift.
+    """
+    from autobridge.control.models import Job
+
+    try:
+        jobs = (
+            session.execute(
+                _select(Job)
+                .where(
+                    Job.kind == "repair",
+                    Job.state.in_(("queued", "running")),
+                )
+                .order_by(Job.created_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:
+        return None
+    for job in jobs:
+        payload = job.payload if isinstance(job.payload, dict) else {}
+        if (
+            payload.get("connector_id") == connector_id
+            and payload.get("drift_class") == drift_class
+        ):
+            return job
+    return None
+
+
+def _detect_open(
+    session: Any,
+    *,
+    connector_id: str,
+    release_id: str,
+    spec_dict: dict[str, Any],
+    summary: dict[str, Any],
+    sync_run_id: str,
+) -> dict[str, Any]:
+    """Shared detection core: signals → classify → dedupe-or-open inputs.
+
+    Returns ``{"status": "no_drift" | "dedupe" | "pending" | "open", ...}``:
+
+    * ``no_drift`` — ``out`` is the final detection dict (no rows beyond
+      the verifying-sync retirement the caller already handles).
+    * ``dedupe`` — ``out`` reuses the existing drift + repair rows.
+    * ``pending`` — an open drift with a queued/running repair job but no
+      repair row yet (REQ-042 deferred repair in flight); ``out`` names
+      the drift and the job.
+    * ``open`` — ``signals``, ``classification``, ``delta`` and ``outcome``
+      for the caller to persist a drift and repair (inline or queued).
+    """
     from autobridge.drift.classifier import classify
     from autobridge.drift.signals import signals_from_sync
-    from autobridge.repair.controller import RepairController
 
     outcome = summary.get("outcome") if isinstance(summary, dict) else None
     if not _summary_has_responses(summary if isinstance(summary, dict) else {}):
         # No vendor response, no drift evidence: a Blocked connectivity
         # failure stays the sync's own outcome (recorded on the SyncRun),
         # never a DriftEvent, never a repair. Fail closed, loudly visible.
-        return {"drift_found": False, "outcome": outcome, "reason": "no_vendor_response"}
+        return {
+            "status": "no_drift",
+            "out": {"drift_found": False, "outcome": outcome, "reason": "no_vendor_response"},
+        }
     signals = signals_from_sync(
         summary, spec=spec_dict, source_run_id=sync_run_id
     )
@@ -346,7 +596,10 @@ def detect_and_repair_after_sync(
         # connector returns to Working). Any other outcome leaves them
         # open: the fix is not verified yet.
         resolved = _resolve_verified_drifts(session, connector_id, release_id, summary)
-        return {"drift_found": False, "outcome": outcome, "drifts_resolved": resolved}
+        return {
+            "status": "no_drift",
+            "out": {"drift_found": False, "outcome": outcome, "drifts_resolved": resolved},
+        }
     if all(s.kind == "zero_records" for s in signals):
         # An empty entity on a healthy sync is not drift (REQ-031): the
         # PABX edge connector idles at zero RoomStatus records between
@@ -355,7 +608,15 @@ def detect_and_repair_after_sync(
         # only quiets Complete syncs — the endpoint_removed pattern (zero
         # records + Blocked) still fires through capability_removed.
         resolved = _resolve_verified_drifts(session, connector_id, release_id, summary)
-        return {"drift_found": False, "outcome": outcome, "drifts_resolved": resolved, "reason": "empty_entities_on_healthy_sync"}
+        return {
+            "status": "no_drift",
+            "out": {
+                "drift_found": False,
+                "outcome": outcome,
+                "drifts_resolved": resolved,
+                "reason": "empty_entities_on_healthy_sync",
+            },
+        }
 
     classification = classify(signals)
     delta = build_detector_delta(spec_dict, signals)
@@ -392,20 +653,62 @@ def detect_and_repair_after_sync(
         except Exception:
             dedupe_candidate_id = None
         return {
-            "drift_found": True,
-            "deduped": True,
-            "outcome": outcome,
-            "drift_id": existing_drift.id,
-            "drift_class": classification.drift_class,
-            "drift_reason": classification.reason,
-            "repair_run_id": existing_repair.id,
-            "decision": existing_repair.decision,
-            "rule_id": existing_repair.rule_id,
-            "ladder_level_reached": existing_repair.ladder_level_reached,
-            "model_usage": dict(existing_repair.model_usage or {}),
-            "candidate_release_id": dedupe_candidate_id,
-            "gate_error": None,
+            "status": "dedupe",
+            "out": {
+                "drift_found": True,
+                "deduped": True,
+                "outcome": outcome,
+                "drift_id": existing_drift.id,
+                "drift_class": classification.drift_class,
+                "drift_reason": classification.reason,
+                "repair_run_id": existing_repair.id,
+                "decision": existing_repair.decision,
+                "rule_id": existing_repair.rule_id,
+                "ladder_level_reached": existing_repair.ladder_level_reached,
+                "model_usage": dict(existing_repair.model_usage or {}),
+                "candidate_release_id": dedupe_candidate_id,
+                "gate_error": None,
+            },
         }
+    pending_job = None
+    open_alone = _newest_open_engine_drift(session, connector_id, classification.drift_class)
+    if open_alone is not None:
+        pending_job = _pending_repair_job(session, connector_id, classification.drift_class)
+    if open_alone is not None and pending_job is not None:
+        return {
+            "status": "pending",
+            "out": {
+                "drift_found": True,
+                "deduped": True,
+                "repair_pending": True,
+                "outcome": outcome,
+                "drift_id": open_alone.id,
+                "drift_class": classification.drift_class,
+                "drift_reason": classification.reason,
+                "repair_job_id": pending_job.id,
+                "repair_run_id": None,
+                "decision": None,
+                "gate_error": None,
+            },
+        }
+    return {
+        "status": "open",
+        "outcome": outcome,
+        "signals": signals,
+        "classification": classification,
+        "delta": delta,
+    }
+
+
+def _persist_drift(
+    session: Any,
+    *,
+    connector_id: str,
+    classification: Any,
+    sync_run_id: str,
+) -> Any:
+    """Insert the open DriftEvent for a fresh detection; returns the row."""
+    from autobridge.control.models import DriftEvent
 
     drift = DriftEvent(
         connector_id=connector_id,
@@ -417,6 +720,29 @@ def detect_and_repair_after_sync(
     )
     session.add(drift)
     session.flush()
+    return drift
+
+
+def _repair_inline(
+    session: Any,
+    *,
+    spec_dict: dict[str, Any],
+    signals: list[Any],
+    classification: Any,
+    delta: Any | None,
+    drift_id: str,
+    summary: dict[str, Any],
+    sync_run_id: str,
+    verifier_url: str | None,
+    knowledge_cache: Any | None,
+    ) -> tuple[Any, dict[str, Any]]:
+    """Run the ladder inline (no deferral): deterministic rungs and any
+    provider the climb resolves locally (replay/off). Callers that may
+    hold a request open use :func:`detect_after_sync` instead, which
+    queues the live-model climb as a background job."""
+    import os as _os  # noqa: PLC0415
+
+    from autobridge.repair.controller import RepairController  # noqa: PLC0415
 
     controller = RepairController(knowledge_cache=knowledge_cache) if knowledge_cache is not None else RepairController()
     semantic_info: dict[str, Any] = {}
@@ -428,7 +754,7 @@ def detect_and_repair_after_sync(
         # escalation question. Never the deterministic 0-call escalation.
         from autobridge.repair.controller import run_semantic_repair  # noqa: PLC0415
 
-        active_verifier = verifier_url if verifier_url is not None else os.environ.get("VERIFIER_URL")
+        active_verifier = verifier_url if verifier_url is not None else _os.environ.get("VERIFIER_URL")
         result, semantic_info = run_semantic_repair(
             spec=spec_dict,
             drift_class=classification.drift_class,
@@ -437,7 +763,7 @@ def detect_and_repair_after_sync(
             summary=summary if isinstance(summary, dict) else None,
             sync_run_id=sync_run_id,
             vendor=None,
-            drift_event_ids=[drift.id],
+            drift_event_ids=[drift_id],
             session=session,
             knowledge_cache=knowledge_cache,
             verifier_url=active_verifier or None,
@@ -447,48 +773,137 @@ def detect_and_repair_after_sync(
             spec=spec_dict,
             signals=list(signals),
             fingerprint_delta=delta,
-            drift_event_ids=[drift.id],
+            drift_event_ids=[drift_id],
             session=session,
         )
+    return result, semantic_info
 
-    # The run handle() just persisted (same session, flushed): newest row.
-    repair_run = session.execute(
-        _select(RepairRun).order_by(RepairRun.created_at.desc()).limit(1)
-    ).scalars().first()
 
-    candidate_release_id: str | None = None
-    gate_error: str | None = None
-    if result.decision == "propose" and result.candidate_patch and repair_run is not None:
-        from autobridge.engine.releases import create_release_from_patch
+def detect_after_sync(
+    session: Any,
+    *,
+    connector_id: str,
+    release_id: str,
+    spec_dict: dict[str, Any],
+    summary: dict[str, Any],
+    sync_run_id: str,
+    verifier_url: str | None = None,
+    knowledge_cache: Any | None = None,
+    ) -> dict[str, Any]:
+    """Detect drift and arrange its repair without ever calling a model.
 
-        active_verifier = verifier_url if verifier_url is not None else os.environ.get("VERIFIER_URL")
-        try:
-            candidate = create_release_from_patch(
-                session,
-                connector_id=connector_id,
-                base_release_id=release_id,
-                patch=list(result.candidate_patch),
-                provenance_repair_run_id=repair_run.id,
-                verifier_url=active_verifier or None,
-            )
-            session.flush()
-            candidate_release_id = candidate.id
-            # REQ-030 item 3: the verifier verdict lives on the repair row
-            # too (the candidate release carries the report id) — the
-            # repair page reads verdicts from here, never recomputed.
-            if candidate.verification_report_id:
-                repair_run.verifier_report_id = candidate.verification_report_id
-                session.flush()
-        except Exception as exc:  # noqa: BLE001 — gate/patch failures are row data
-            gate_error = f"{type(exc).__name__}: {exc}"[:500]
+    REQ-042: ``POST /sync`` and the scheduler run this (via
+    :func:`autobridge.engine.sync_run.run_sync_handler`). It persists the
+    ``DriftEvent`` and:
 
+    * repairs deterministic drifts inline (L0/L1, zero model calls) and
+      persists the ``RepairRun`` + candidate release exactly like
+      :func:`detect_and_repair_after_sync`;
+    * queues a semantic drift that would need a live frontier call as a
+      background ``repair`` job and returns at once (``repair_pending``).
+      The job climbs the same semantic climb with the same inputs and
+      finalizes the ``RepairRun``; the UI and ``make demo`` poll the
+      repair row. Replay/offline semantic drifts run inline (local reads).
+
+    No DB transaction is held across a model call: the sync commits when
+    its job finishes, and the repair job commits before and after each
+    call (see :class:`autobridge.llm.provider.BudgetedProvider`).
+    """
+    opened = _detect_open(
+        session,
+        connector_id=connector_id,
+        release_id=release_id,
+        spec_dict=spec_dict,
+        summary=summary,
+        sync_run_id=sync_run_id,
+    )
+    if opened["status"] != "open":
+        return opened["out"]
+    signals = opened["signals"]
+    classification = opened["classification"]
+    delta = opened["delta"]
+    drift = _persist_drift(
+        session,
+        connector_id=connector_id,
+        classification=classification,
+        sync_run_id=sync_run_id,
+    )
+    # The sync returns with the drift durable — and, crucially, without
+    # holding a write transaction open: the repair-job submit below runs
+    # on its own session, and the background climb must never wait on a
+    # lock this request holds (REQ-042).
+    session.commit()
+    if classification.drift_class == "SEMANTIC_VALUE_DRIFT" and _live_frontier_wanted():
+        # The climb would call the frontier: derive its inputs now (fast,
+        # local) and queue the climb. The request returns as soon as this
+        # job row commits — well under 2 s — while the repair runs in the
+        # background drain.
+        import json as _json  # noqa: PLC0415
+
+        from autobridge.repair.controller import prepare_semantic_inputs  # noqa: PLC0415
+
+        prepared = prepare_semantic_inputs(
+            spec=spec_dict,
+            signals=list(signals),
+            summary=summary if isinstance(summary, dict) else None,
+            sync_run_id=sync_run_id,
+        )
+        job_id = _submit_deferred_semantic_repair(
+            session,
+            drift_id=drift.id,
+            connector_id=connector_id,
+            release_id=release_id,
+            prepared=prepared,
+            signals=list(signals),
+            delta=_json.loads(_json.dumps(delta, sort_keys=True, default=str))
+            if delta is not None
+            else None,
+        )
+        return {
+            "drift_found": True,
+            "repair_pending": True,
+            "outcome": opened["outcome"],
+            "drift_id": drift.id,
+            "drift_class": classification.drift_class,
+            "drift_reason": classification.reason,
+            "repair_job_id": job_id,
+            "repair_run_id": None,
+            "decision": None,
+            "rule_id": None,
+            "ladder_level_reached": None,
+            "model_usage": {},
+            "candidate_release_id": None,
+            "gate_error": None,
+            "provider_mode": "live",
+            "l3_status": f"queued: live climb runs in repair job {job_id}",
+        }
+    result, semantic_info = _repair_inline(
+        session,
+        spec_dict=spec_dict,
+        signals=signals,
+        classification=classification,
+        delta=delta,
+        drift_id=drift.id,
+        summary=summary,
+        sync_run_id=sync_run_id,
+        verifier_url=verifier_url,
+        knowledge_cache=knowledge_cache,
+    )
+    candidate_release_id, gate_error = _finalize_proposal(
+        session,
+        connector_id=connector_id,
+        release_id=release_id,
+        repair_run_id=result.repair_run_id,
+        result=result,
+        verifier_url=verifier_url,
+    )
     out: dict[str, Any] = {
         "drift_found": True,
-        "outcome": outcome,
+        "outcome": opened["outcome"],
         "drift_id": drift.id,
         "drift_class": classification.drift_class,
         "drift_reason": classification.reason,
-        "repair_run_id": repair_run.id if repair_run is not None else None,
+        "repair_run_id": result.repair_run_id,
         "decision": result.decision,
         "rule_id": result.rule_id,
         "ladder_level_reached": result.ladder_level_reached,
@@ -497,9 +912,6 @@ def detect_and_repair_after_sync(
         "gate_error": gate_error,
     }
     if semantic_info:
-        # What the semantic climb did (provider mode, L3 attempt-or-skip,
-        # verifier verdict summary) — the demo and the UI read the rows,
-        # but the sync result carries the headline too.
         out["provider_mode"] = semantic_info.get("provider_mode")
         out["l3_status"] = semantic_info.get("l3_status")
         out["verdict"] = semantic_info.get("verdict")

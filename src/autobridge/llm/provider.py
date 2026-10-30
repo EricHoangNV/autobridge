@@ -12,6 +12,7 @@ table via :func:`record_model_call`; the in-memory :class:`Budget` counters
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -360,6 +361,19 @@ class BudgetedProvider:
         outcome: str | None = None,
     ) -> Completion:
         self.budget.check_pre_call()
+        if self.session is not None:
+            # REQ-042: no DB transaction is held across a model call. The
+            # ladder may have flushed rows (earlier ModelCalls, evidence)
+            # in this session; commit them before the network call so a
+            # 30 s frontier call never holds the write lock that keeps
+            # control responsive. Best-effort: a failed commit rolls back
+            # and the call still proceeds (the ledger row below re-flushes
+            # what matters).
+            try:
+                self.session.commit()
+            except Exception:
+                with contextlib.suppress(Exception):
+                    self.session.rollback()
         start = time.monotonic()
         result = self.inner.complete(
             messages, max_tokens=max_tokens, tier=tier, purpose=purpose, tools=tools
@@ -391,6 +405,16 @@ class BudgetedProvider:
                 captured_at=(result.captured_at or "").strip(),
                 outcome=outcome,
             )
+            # REQ-042: commit right after the call too — the ModelCall row
+            # is durable (and visible in the ledger) even while the ladder
+            # keeps reasoning, and the lock is released before the next
+            # call. A failed commit rolls back to the pre-call state; the
+            # in-memory usage counters the repair row reports stay correct.
+            try:
+                self.session.commit()
+            except Exception:
+                with contextlib.suppress(Exception):
+                    self.session.rollback()
         return result
 
 

@@ -195,7 +195,9 @@ def test_break_semantic_opens_exactly_one_drift_and_repair(e2e_stack: str) -> No
         assert record["ok"] is True, record
         assert _active_scenario("sim-harbor") == "gross_to_net"
         # The scheduled tick (default 10 s) detects; wait for the engine rows.
-        deadline = time.time() + 150
+        # Keyed stacks climb live in the background job (REQ-042), so the
+        # bound covers the L3 budget with margin; unkeyed runs break early.
+        deadline = time.time() + 240
         drift_row: dict[str, Any] = {}
         repair_row: dict[str, Any] = {}
         while time.time() < deadline:
@@ -214,7 +216,19 @@ def test_break_semantic_opens_exactly_one_drift_and_repair(e2e_stack: str) -> No
         assert repair_row.get("decision") == "escalate", repair_row
         assert (repair_row.get("escalation_bundle") or {}).get("question"), repair_row
         usage = repair_row.get("model_usage") or {}
-        assert int(usage.get("frontier_tokens", 0) or 0) == 0, usage
+        import os as _os  # noqa: PLC0415
+
+        if _os.environ.get("FRONTIER_API_KEY"):
+            # Keyed stack (REQ-042): the live climb runs in the background
+            # repair job — the repair carries one L3 attempt with tokens.
+            trace_levels = [
+                a.get("level") for a in (repair_row.get("ladder_trace") or [])
+                if isinstance(a, dict)
+            ]
+            assert sorted(lv for lv in trace_levels if isinstance(lv, int)) == [0, 1, 2, 3, 4], trace_levels
+            assert int(usage.get("frontier_tokens", 0) or 0) > 0, usage
+        else:
+            assert int(usage.get("frontier_tokens", 0) or 0) == 0, usage
         # One more tick must not double the rows (dedupe + busy-skip).
         time.sleep(15)
         drifts = _control("GET", f"/drift?connector_id={connector_id}")

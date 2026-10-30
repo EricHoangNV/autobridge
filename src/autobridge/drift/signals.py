@@ -85,6 +85,81 @@ class DriftSignal:
     fingerprint_delta: FingerprintDelta | None = None
 
 
+def signal_to_json(sig: Any) -> dict[str, Any]:
+    """JSON-safe copy of a drift signal for job payloads (REQ-042).
+
+    The background repair job rebuilds :class:`DriftSignal` objects from
+    these dicts (:func:`signal_from_json`), so a deferred semantic repair
+    carries the same wire evidence the sync observed — never re-diagnosed
+    from a scenario id. ``details`` hold names and strategies only (no
+    secrets ever flow through signals). Round-trips through ``json`` with
+    ``default=str`` so stray Decimals become strings.
+    """
+    import json as _json  # noqa: PLC0415
+
+    if isinstance(sig, dict):
+        raw: dict[str, Any] = dict(sig)
+    else:
+        raw = {
+            "kind": getattr(sig, "kind", None),
+            "operation": getattr(sig, "operation", None),
+            "entity": getattr(sig, "entity", None),
+            "severity": getattr(sig, "severity", "medium"),
+            "message": getattr(sig, "message", ""),
+            "evidence_ids": list(getattr(sig, "evidence_ids", None) or []),
+            "details": dict(getattr(sig, "details", None) or {}),
+            "source_run_id": getattr(sig, "source_run_id", None),
+            "fingerprint_delta": getattr(sig, "fingerprint_delta", None),
+        }
+    fd = raw.get("fingerprint_delta")
+    if fd is not None and not isinstance(fd, dict):
+        from autobridge.repair.knowledge import _delta_to_dict  # noqa: PLC0415
+
+        try:
+            fd = _delta_to_dict(fd)
+        except Exception:
+            fd = None
+    raw["fingerprint_delta"] = fd
+    return _json.loads(_json.dumps(raw, sort_keys=True, default=str))
+
+
+def signal_from_json(data: dict[str, Any]) -> DriftSignal:
+    """Rebuild a :class:`DriftSignal` from :func:`signal_to_json` output.
+
+    Unknown/missing fields fall back to the dataclass defaults; an
+    unparsable ``fingerprint_delta`` becomes ``None`` (the ladder treats
+    a missing delta as "nothing observed", never as evidence).
+    """
+    fd: FingerprintDelta | None = None
+    raw_fd = (data or {}).get("fingerprint_delta")
+    if isinstance(raw_fd, dict):
+        try:
+            fd = FingerprintDelta(
+                fingerprint_changed=bool(raw_fd.get("fingerprint_changed", False)),
+                pagination_changed=bool(raw_fd.get("pagination_changed", False)),
+                keys_changed=bool(raw_fd.get("keys_changed", False)),
+                types_changed=bool(raw_fd.get("types_changed", False)),
+                changed_entities=list(raw_fd.get("changed_entities") or []),
+                pagination_details=dict(raw_fd.get("pagination_details") or {}),
+                keys_details=dict(raw_fd.get("keys_details") or {}),
+                types_details=dict(raw_fd.get("types_details") or {}),
+            )
+        except Exception:
+            fd = None
+    details = (data or {}).get("details")
+    return DriftSignal(
+        kind=str((data or {}).get("kind") or "unknown"),
+        operation=(data or {}).get("operation"),
+        entity=(data or {}).get("entity"),
+        severity=(data or {}).get("severity") or "medium",
+        message=str((data or {}).get("message") or ""),
+        evidence_ids=[str(e) for e in ((data or {}).get("evidence_ids") or [])],
+        details=dict(details) if isinstance(details, dict) else {},
+        source_run_id=(data or {}).get("source_run_id"),
+        fingerprint_delta=fd,
+    )
+
+
 def _severity_for_kind(kind: str) -> Severity:
     if kind in {"outcome_blocked", "unknown_enum", "capability_removed", "auth_error"}:
         return "critical"

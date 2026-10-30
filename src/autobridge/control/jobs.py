@@ -247,22 +247,76 @@ class JobRunner:
         self,
         drift_event_ids: list[str],
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        payload_extra: dict[str, Any] | None = None,
     ) -> str:
-        """Queue a repair: the RepairRun row is created by the handler."""
+        """Queue a repair: the RepairRun row is created by the handler.
+
+        *payload_extra* carries deferred-repair inputs (REQ-042: drift
+        class, connector/release ids, JSON-safe signals, hypotheses, L3
+        evidence) so the background job climbs with the sync's evidence.
+        """
         self._check_budget(max_attempts)
         with self._sessions() as session:
+            payload: dict[str, Any] = {"drift_event_ids": list(drift_event_ids)}
+            if payload_extra:
+                payload.update(dict(payload_extra))
             job = Job(
                 kind="repair",
                 run_id=None,
                 state="queued",
                 max_attempts=max_attempts,
-                payload={"drift_event_ids": list(drift_event_ids)},
+                payload=payload,
             )
             session.add(job)
             session.commit()
             return job.id
 
     # -- run -----------------------------------------------------------
+
+    def run_job(self, job_id: str) -> bool:
+        """Claim and execute one specific job when it is still queued.
+
+        REQ-042: ``POST /sync`` must run exactly the sync job it
+        submitted — never a queued repair behind it (a repair's model
+        call would stall the request). Returns True when the job ran,
+        False when it was already claimed or gone.
+        """
+        for _ in range(3):  # tolerate a lost claim race, then stop
+            with self._sessions() as session:
+                claim = self._claim_specific(session, job_id)
+            if claim is not None:
+                self._execute(claim)
+                return True
+            return False
+        return False
+
+    def run_next_of_kind(self, kind: str) -> str | None:
+        """Claim and execute the oldest queued job of one kind (REQ-042).
+
+        The background repair drain uses this so sync/build jobs are
+        never executed off their own path. Returns the job id, or None
+        when no job of that kind is queued.
+        """
+        if kind not in JOB_KINDS:
+            raise JobError(f"unknown job kind {kind!r}")
+        for _ in range(3):  # tolerate a lost claim race, then stop
+            with self._sessions() as session:
+                claim = self._claim_of_kind(session, kind)
+            if claim is not None:
+                return self._execute(claim)
+            if not self.count_queued(kind):
+                return None
+        return None
+
+    def count_queued(self, kind: str | None = None) -> int:
+        """Number of queued jobs, optionally restricted to one kind."""
+        with self._sessions() as session:
+            stmt = select(func.count()).select_from(Job).where(Job.state == "queued")
+            if kind is not None:
+                if kind not in JOB_KINDS:
+                    raise JobError(f"unknown job kind {kind!r}")
+                stmt = stmt.where(Job.kind == kind)
+            return session.execute(stmt).scalar_one()
 
     def run_once(self) -> str | None:
         """Claim and execute one job; returns its id, or None when idle.
@@ -303,6 +357,49 @@ class JobRunner:
             return count
 
     # -- internals -----------------------------------------------------
+
+    def _claim_specific(self, session: Session, job_id: str) -> _Claim | None:
+        """Claim one job by id when it is still queued, else None."""
+        claimed = cast(
+            "CursorResult",
+            session.execute(
+                update(Job)
+                .where(Job.id == job_id, Job.state == "queued")
+                .values(
+                    state="running",
+                    worker_id=self._worker_id,
+                    attempts=Job.attempts + 1,
+                    updated_at=utcnow(),
+                )
+            ),
+        ).rowcount
+        if claimed != 1:
+            session.rollback()
+            return None  # already claimed, finished, or gone
+        session.commit()
+        job = session.get(Job, job_id)
+        assert job is not None
+        payload = dict(job.payload) if isinstance(job.payload, dict) else {}
+        return _Claim(
+            job_id=job.id,
+            kind=job.kind,
+            run_id=job.run_id,
+            payload=payload,
+            attempt=job.attempts,
+            max_attempts=job.max_attempts,
+        )
+
+    def _claim_of_kind(self, session: Session, kind: str) -> _Claim | None:
+        """Claim the oldest queued job of one kind, else None."""
+        oldest = session.execute(
+            select(Job.id)
+            .where(Job.state == "queued", Job.kind == kind)
+            .order_by(Job.created_at)
+            .limit(1)
+        ).scalar_one_or_none()
+        if oldest is None:
+            return None
+        return self._claim_specific(session, oldest)
 
     @staticmethod
     def _check_budget(max_attempts: int) -> None:

@@ -581,17 +581,20 @@ def run_sync_handler(
     )
     ctx.run_id = run.id
 
-    # REQ-027 sub-step 3: the live chain. Every sync detects drift from its
-    # own summary (observed responses only) and repairs it deterministically:
-    # DriftEvent + RepairRun + candidate release are persisted here, so the
-    # worker path and POST /sync (which runs the worker inline) both feed
-    # GET /drift and GET /repairs. Detection never fails the sync.
+    # REQ-027 sub-step 3 (REQ-042 revision): the live chain. Every sync
+    # detects drift from its own summary (observed responses only) and
+    # arranges its repair: deterministic drifts repair inline here, while
+    # a semantic drift needing a live frontier call is queued as a
+    # background repair job — no model call ever runs inside this handler
+    # (which executes inline in POST /sync) or across its transaction.
+    # DriftEvent + RepairRun (+ candidate) rows are persisted here, so
+    # GET /drift and GET /repairs serve them; detection never fails sync.
     detection: dict[str, Any] = {"drift_found": False}
     try:
-        from autobridge.engine.detect_repair import detect_and_repair_after_sync  # noqa: PLC0415
+        from autobridge.engine.detect_repair import detect_after_sync  # noqa: PLC0415
 
         connector_id = release.connector_id if release is not None else ""
-        detection = detect_and_repair_after_sync(
+        detection = detect_after_sync(
             ctx.session,
             connector_id=connector_id,
             release_id=release_id,

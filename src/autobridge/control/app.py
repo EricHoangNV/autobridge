@@ -75,6 +75,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     scheduler_task: asyncio.Task[None] | None = None
+    repair_task: asyncio.Task[None] | None = None
     try:
         interval = sync_interval_seconds()
     except ValueError:
@@ -83,15 +84,20 @@ async def lifespan(app: FastAPI):
         raise
     if interval is not None:
         scheduler_task = asyncio.create_task(_scheduler_loop(interval))
+    # REQ-042: the repair drain always runs (even when the sync scheduler
+    # is off): deferred semantic repairs queued by POST /sync or the
+    # scheduler climb here, on worker threads — never in a request.
+    repair_task = asyncio.create_task(_repair_loop())
     try:
         yield
     finally:
-        if scheduler_task is not None:
-            scheduler_task.cancel()
-            try:
-                await scheduler_task
-            except asyncio.CancelledError:
-                pass
+        for task in (scheduler_task, repair_task):
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
 
 def _run_scheduler_pass(factory: Any) -> None:
@@ -112,6 +118,66 @@ def _run_scheduler_pass(factory: Any) -> None:
                 session.rollback()
     except Exception:
         pass
+
+
+async def _repair_loop() -> None:
+    """Drain queued repair jobs in the background (REQ-042).
+
+    ``POST /sync`` and the scheduler queue a repair job when the climb
+    would need a live frontier call; this loop claims those jobs and runs
+    them on worker threads (bounded parallelism), committing before and
+    after each model call. Control stays responsive while a call is in
+    flight: requests and syncs never wait for repairs. Honors the same
+    pause ``POST /demo/reset`` uses (reset waits for in-flight repairs
+    via ``wait_for_quiescent``, so the drain must not claim new ones
+    while paused). A tick whose drain is still running is skipped.
+    """
+    import asyncio  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
+
+    from autobridge.control.deps import get_session_factory  # noqa: PLC0415
+
+    try:
+        interval_s = float(_os.environ.get("AUTOBRIDGE_REPAIR_INTERVAL_S", "2") or "2")
+    except ValueError:
+        interval_s = 2.0
+    interval_s = min(max(interval_s, 0.5), 30.0)
+    try:
+        max_parallel = int(_os.environ.get("AUTOBRIDGE_REPAIR_PARALLEL", "4") or "4")
+    except ValueError:
+        max_parallel = 4
+    max_parallel = min(max(max_parallel, 1), 8)
+
+    factory = get_session_factory()
+
+    def _drain() -> None:
+        """Claim and run queued repairs, up to the parallelism bound."""
+        from autobridge.control.runner import get_runner  # noqa: PLC0415
+        from autobridge.control.scheduler import scheduler_pause_status  # noqa: PLC0415
+
+        runner = get_runner(None)
+        with factory() as session:
+            try:
+                if scheduler_pause_status(session).get("paused"):
+                    return
+                queued = runner.count_queued("repair")
+            except Exception:
+                return
+        for _ in range(min(queued, max_parallel)):
+            try:
+                runner.run_next_of_kind("repair")
+            except Exception:
+                pass
+
+    while True:
+        # Runs on a worker thread: a 30 s frontier call never blocks the
+        # event loop (readyz, SSE, the UI). Claims are atomic, so a tick
+        # that overlaps its predecessor just finds less work.
+        await asyncio.to_thread(_drain)
+        try:
+            await asyncio.sleep(interval_s)
+        except asyncio.CancelledError:
+            break
 
 
 async def _scheduler_loop(interval_s: float) -> None:

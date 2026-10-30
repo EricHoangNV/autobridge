@@ -334,15 +334,21 @@ def run_scheduler_pass(session: Any) -> dict[str, Any]:
             continue
         try:
             out = sync_connector_now(session, conn.id)
-            results.append(
-                {
-                    "connector_id": conn.id,
-                    "status": "synced",
-                    "sync_run_id": out.get("sync_run_id"),
-                    "outcome": out.get("outcome"),
-                    "drift_found": out.get("drift_found", False),
-                }
-            )
+            result: dict[str, Any] = {
+                "connector_id": conn.id,
+                "status": "synced",
+                "sync_run_id": out.get("sync_run_id"),
+                "outcome": out.get("outcome"),
+                "drift_found": out.get("drift_found", False),
+            }
+            # REQ-042: surface a queued background repair so callers can
+            # follow it (the Repairs page polls; the demo polls the job,
+            # then the row).
+            if out.get("repair_pending"):
+                result["repair_pending"] = True
+                result["repair_job_id"] = out.get("repair_job_id")
+                result["drift_id"] = out.get("drift_id")
+            results.append(result)
         except Exception as exc:  # noqa: BLE001 — one connector never stops the pass
             results.append(
                 {

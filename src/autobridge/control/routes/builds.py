@@ -258,4 +258,11 @@ def trigger_sync(connector_id: str, body: SyncRequest, db: Session = Depends(get
         sync_run_id=out.get("sync_run_id"),
         state=str(out.get("state")),
         release_id=str(out.get("release_id")),
+        drift_found=out.get("drift_found"),
+        drift_id=out.get("drift_id"),
+        drift_class=out.get("drift_class"),
+        repair_pending=out.get("repair_pending"),
+        repair_job_id=out.get("repair_job_id"),
+        repair_run_id=out.get("repair_run_id"),
+        outcome=out.get("outcome"),
     )
