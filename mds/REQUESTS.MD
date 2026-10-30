@@ -2,7 +2,47 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 11:30): **REQ-043 next.**
+Owner priority (2026-10-30 12:00): **REQ-044 next.**
+
+### REQ-044 — Ask L3 a well-posed question: show the spec it patches, the raw record, and allow an explicit escalation (2026-10-30)
+Status: OPEN
+Owner run (2026-10-30, sandbox, `origin/main` 8750fad4, keyed): `make demo` 8/8, but step 4's live L3 call
+(`muse-spark-1.3`, 8,429 tokens, 8,234 reasoning) returned `patch does not apply: member 'mappings' not found in
+{'spec_version': 1, 'connector': …, 'source': …}`. The model is not weak; the question is ill-posed. Today's prompt
+(`repair/ladder.py` ~1736–1756, evidence from `repair/semantic.py` `build_l3_evidence`) is only: system "Propose a
+JSON Patch … that fixes the drift. Answer with the patch only." + user drift class, hypothesis ids, and evidence
+(entity, field, the **wire JSONPath** `$.total_amount`, money check, two key+amount rows, observed vs baseline sum).
+Three defects:
+1. **The patch target is never named or shown.** A JSON Patch needs paths into one document — the connector spec —
+   and the model never sees the spec or its layout, so it invents one (`/mappings/...`). The only "path" it sees is a
+   JSONPath into the vendor response, a different thing.
+2. **It cannot see the data it would need.** Sample rows are canonical key+amount only; it never sees the raw vendor
+   record, so it cannot know which fields (e.g. `gross_amount`) exist. Our own escalation question names
+   `$.gross_amount`, but the model is never shown it.
+3. **It is not allowed to say "this needs a human".** "Answer with the patch only" forces a guess even when the
+   honest answer is a business decision (gross vs net is one).
+Fix (L3 prompt and parsing only — no change to the gate, the verifier, or which drifts reach L3):
+1. Prompt states the patch applies to **the connector spec**, and includes the spec subtree it may change (the
+   entity's `fields`, its checks/transforms as relevant) **with the exact JSON Pointer of each patchable member**
+   (e.g. `/entities/Reservation/fields/total_amount/path`), plus the allowed ops (`replace`/`add` on those members;
+   the vocabulary's transforms by name). Secrets, base URLs and auth never enter the prompt (redaction as today).
+2. Prompt includes one or two **redacted raw vendor records** for the entity (field names and value shapes; money as
+   strings; PII/keys redacted by the existing redaction seam), so the model can see which wire fields exist.
+3. The answer is **one JSON object**, either `{"patch": [...], "rationale": "<one sentence>"}` or
+   `{"escalate": "<the question for the human>", "rationale": "..."}`. Parse both; tolerate a fenced block. An
+   `escalate` answer resolves L4 with the model's question shown on the repair page (as the escalation question,
+   labelled as the model's), counted as a valid L3 outcome, not an error.
+4. Before the verifier, check the patch applies to the spec and touches only allowed pointers; if not, **one**
+   retry with the apply error appended (both calls on the ledger and the repair page), then escalate.
+5. The repair page "what the engine did" shows the model's rationale (and for a patch, the pointer/value it changed).
+6. Replay: the prompt hash changes, so update the replay fixtures/tests; `make record-frontier` stays the owner's
+   capture step (note it in docs/demo.md). Update `docs/` where the L3 prompt is described.
+7. Tests: prompt contains the spec pointers and a raw-record sample and no secret; parse patch / escalate / fenced /
+   garbage; a non-applying patch → one retry with the error → escalate; an `escalate` answer → L4 with the model's
+   question; replay round-trip.
+8. Gates keyed and unkeyed: `make demo` 8/8 both ways. Owner check after: keyed step 4's L3 answer is either a
+   patch that applies to the spec (verifier verdict shown) or an explicit escalation with a sensible question —
+   never "does not apply"; report tokens (reasoning vs answer) and the answer.
 
 ### REQ-043 — Show a repair while it is running: the repair row exists from the start of the climb (2026-10-30)
 Status: DONE (sbx1 2026-10-30 — code + full gates green unkeyed + live-stack e2e (local-up): running row at job start, rung snapshots, crash-orphan handling, repairing list + page + connector link, FRONTIER_MAX_TOKENS, demo poll waits terminal, docs; keyed owner step outstanding: keyed step-4 live watch + L3-with-131072 report)
