@@ -54,7 +54,7 @@ totals check) → deck 5 `gross_to_net` → ■ Error, the model's question **an
 
 
 ### REQ-048 — Deck 5 on screen: an escalation reads as a question, not a disabled Approve (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 08:29)
+Status: DONE (sbx1 2026-10-30 -- escalate top box, single question, header count, in-flight calls, one-repair token cell, budget= L3 cap on row/ledger/page + BudgetExhausted label, funnel deriving, docs rewritten; full gates green unkeyed + make demo 8/8; owner check: Aside run + screenshots)
 Owner UI run (2026-10-30, host `make local-up` keyed, `origin/main` 6b677b2d, Aside at 1440×900): `make demo-reset &&
 make demo-seed`, then `make demo-break SCENARIO=gross_to_net TARGET=harbor`. The flow works (running repair on top
 within ~2 s, "Repairing at L3 … calling muse-spark-1.3 · 4 s so far", then the model's question + rationale, prompt
@@ -92,6 +92,7 @@ question rendering, the one-repair token cell, the in-flight call count, the run
 the frontier budget is ≥ the L3 cap. Gates unkeyed + `make demo` 8/8. Owner check after: the same Aside run, with
 screenshots of the repair page top, Connectors header, and Repairs list during the call.
 
+Resolution: repair page escalate top box leads with the question (no Approve, Reject closes it); question/rationale shown once; header counts error connectors; repairs list shows in-flight calls; one-repair token cell has no chart; repair frontier budget is the L3 cap (row/ledger/page) with a BudgetExhausted label; funnel shows deriving while climbing; deck-5 docs rewritten to ask-or-propose.
 
 ### REQ-047 — When the model escalates, every label must say so: reason line, question, verifier line (2026-10-30)
 Status: DONE (sbx1 2026-10-30 -- reason/question/rationale/verifier/title/docs fixed, full gates green unkeyed + keyed-shaped escalate test; owner check: keyed step 4 + repair-page screenshots)

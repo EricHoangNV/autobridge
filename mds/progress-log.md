@@ -3721,3 +3721,46 @@ Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process
 - Title: dynamic — escalated names "model asked for a business decision"; trapped/proposal/no-answer keep their judged wording; docs/demo.md §4 rewritten to the new truth.
 - Tests: 2 new demo tests (escalate labels with the owner's live JSON incl. reasoning tokens; patch unchanged), 1 controller bundle test (question + rationale + L4 reason), 2 VerifierVerdict tests, 1 repair-page rationale test; full make test green (ui 205), offline run_demo 8/8, openapi regen + ui-typecheck green.
 - Not run: live-stack make demo / e2e (no stack, no FRONTIER_API_KEY in sandbox) — owner check: keyed step 4 + repair-page screenshots. Connector activity left as the "needs your decision" status (no false reason shown there).
+
+## REQ-048 — Deck 5: escalation reads as a question, not a disabled Approve
+**Date:** 2026-10-30
+**Ref:** REQUESTS.MD REQ-048 (owner Aside run 2026-10-30, origin/main 6b677b2d)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Repair page escalate top box now leads with the decision line, the question (model's labelled, or engine's), the rationale, and operator next-steps (build a new release from the connector page, or Reject to close; roll back secondary) — no Approve button at all for `escalate`; Reject enabled (server `reject_release` has no decision gate). `propose`/`climbing` unchanged.
+- Question + rationale render once (top box). Rung timeline names the handoff (`the model asked for a human decision` / `escalated to you`) when L3 `model_escalation` / L4 escalate-with-model-question; backend trace text untouched so REQ-047 tests, demo tables and connector activity are unchanged. Escalation bundle box keeps reason/action; the question line removed and the trailing `model rationale: …` clause stripped at display time (`displayBundleReason`).
+- Connectors header counts connectors with `state === "error"` (same source as the rows) and links to the first one; `waitingRepairs` (propose-only) kept for approval-specific boxes.
+- Repairs list shows `N call(s) in flight` from the rung `model`+`call_started_at` snapshot while `decision == climbing`.
+- One-repair token cell shows the number only, no chart; `Sparkline` bars get headroom so no bar fills the cell height.
+- Backend: `ladder.repair_frontier_budget()` (== `config.frontier_max_tokens()`, default 131072) is the single source of truth; both repair-path `Budget()`s use it as `max_frontier_tokens`; the running row and the finalized row stamp `frontier_budget` into `model_usage`; `GET .../ledger` returns `frontier_budget` (OpenAPI + TS client regenerated). Hard-coded 40,000 default removed — the budget clause hides when no budget is known. `BudgetExhausted` in the trace renders a `repair-budget-exhausted` badge.
+- Small glitches: identical start/end sync timestamps no longer print `took 0 ms`; connector name column gets `min-width: 0` + `overflow-wrap` and a `title`; funnel shows `deriving…` while climbing with no stages yet.
+- Docs: README deck-5 line and three docs/demo.md passages rewritten to ask-or-propose; `invalid_patch_trap` kept as a catalogue check, not the deck-5 outcome.
+
+**Key decisions:**
+- De-duplication is UI-side only: backend trace/bundle text stays byte-identical so REQ-047's backend tests and demo assertions keep passing; the bundle object keeps its `question` field (the top box reads it).
+- Header counts connector *states*, not repairs, per the REQ's "same connector-state source as the rows".
+- Budget and L3 cap are literally the same value (`frontier_max_tokens()`), not two compared values — the invariant holds even if the operator lowers the cap.
+
+**Files changed:**
+- `src/autobridge/repair/ladder.py` — `repair_frontier_budget()` helper
+- `src/autobridge/repair/controller.py` — budgeted repair paths, `frontier_budget` stamped on running + finalized rows
+- `src/autobridge/control/schemas.py`, `src/autobridge/control/routes/drift.py` — `RungLedgerOut.frontier_budget`
+- `ui/lib/api/schema.d.ts`, `ui/openapi.json` — regenerated
+- `ui/app/repairs/[id]/page.tsx` — top question box, handoff rungs, budget badge, budget prop, 0ms omit, funnel pending
+- `ui/components/RepairActions.tsx` — no Approve + enabled Reject for escalate
+- `ui/components/VerifierVerdict.tsx` — bundle without question, `displayBundleReason`
+- `ui/components/ModelUsageView.tsx` — budget prop (no invented default)
+- `ui/components/HypothesisFunnel.tsx` — `pending` → `deriving…`
+- `ui/components/ConnectorsTable.tsx` — one-repair number, name `title`
+- `ui/components/Sparkline.tsx` — headroom scaling
+- `ui/app/connectors/page.tsx` — error-state header count + link
+- `ui/app/repairs/page.tsx` — `inFlightCallsOf` + cell
+- `ui/app/globals.css` — row child `min-width: 0`, name wrap
+- `tests/unit/test_autobridge_rung_ledger.py` — budget-is-cap + row/ledger tests
+- UI tests: `RepairActions`, `VerifierVerdict`, `ModelUsageView`, `Sparkline`, `ConnectorsTable`, repair detail/list, connectors page
+- `README.md`, `docs/demo.md` — deck-5 outcome rewritten
+
+**Notes for next iteration:**
+- Compose-stack e2e and keyed runs are owner steps (no FRONTIER_API_KEY / Compose in sandbox). `make demo 8/8` unkeyed passed on the local stack; live `demo-break gross_to_net/harbor` verified `frontier_budget: 131072` on row + ledger and Harbor `error`/`needs your decision`.
+- Owner VERIFY for REQ-048: Aside run + screenshots (repair top, Connectors header, Repairs list during call).
