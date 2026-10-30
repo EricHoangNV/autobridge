@@ -6,7 +6,7 @@ vi.mock("swr", () => ({
 }));
 
 import useSWR from "swr";
-import RepairsPage, { currentRungOf, repairStatus } from "./page";
+import RepairsPage, { currentRungOf, inFlightCallsOf, repairStatus } from "./page";
 import type { RepairRunOut } from "@/lib/api/client";
 
 const mockedUseSWR = useSWR as unknown as ReturnType<typeof vi.fn>;
@@ -212,5 +212,32 @@ describe("currentRungOf", () => {
     expect(currentRungOf(mk([{ level: 0 }, { level: 3 }], 0) as never)).toBe(3);
     expect(currentRungOf(mk([], 0) as never)).toBe(0);
     expect(currentRungOf(mk([{ level: 1 }], 4) as never)).toBe(4);
+  });
+});
+
+describe("inFlightCallsOf (REQ-048)", () => {
+  const base = {
+    id: "r",
+    drift_event_ids: ["d1"],
+    ladder_level_reached: 2,
+    decision: "climbing",
+    model_usage: {},
+    ladder_trace: [],
+    created_at: "2026-10-29T11:00:00Z",
+  };
+  const stamp = { level: 3, action: "frontier_generate", reason: "L3 invoked", model: "muse-spark-1.3", call_started_at: "2026-10-29T11:00:04Z" };
+
+  it("counts rung snapshots with a model call in flight", () => {
+    expect(inFlightCallsOf({ ...base, ladder_trace: [stamp] } as never)).toBe(1);
+    expect(inFlightCallsOf({ ...base, ladder_trace: [] } as never)).toBe(0);
+    // A finished row never reads as in flight, even with a stale stamp.
+    expect(inFlightCallsOf({ ...base, decision: "escalate", ladder_trace: [stamp] } as never)).toBe(0);
+  });
+
+  it("shows in-flight instead of zero calls while the call runs", () => {
+    const running = { ...base, id: "rep-run", ladder_trace: [stamp] };
+    mockAll([running], [{ id: "d1", connector_id: "conn-atlas" }], CONNECTORS);
+    render(<RepairsPage />);
+    expect(screen.getByTestId("repair-calls-rep-run")).toHaveTextContent("1 call in flight");
   });
 });

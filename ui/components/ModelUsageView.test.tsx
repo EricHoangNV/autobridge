@@ -53,4 +53,13 @@ describe("ModelUsageView", () => {
     render(<ModelUsageView modelUsage={{ frontier_tokens: 8412, small_tokens: 0, calls: 9 }} liveFrontierTokens={1200} />);
     expect(screen.getByTestId("model-usage-frontier-tokens")).toHaveTextContent("1,200");
   });
+
+  it("shows the budget that applies, and no budget clause without one (REQ-048)", () => {
+    const { rerender } = render(
+      <ModelUsageView modelUsage={{ frontier_tokens: 3530, small_tokens: 0, calls: 1 }} budget={131072} />,
+    );
+    expect(screen.getByTestId("model-usage-view")).toHaveTextContent("of a 131,072 budget");
+    rerender(<ModelUsageView modelUsage={{ frontier_tokens: 3530, small_tokens: 0, calls: 1 }} />);
+    expect(screen.getByTestId("model-usage-view")).not.toHaveTextContent("budget");
+  });
 });

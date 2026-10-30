@@ -6,7 +6,6 @@ import {
   ConnectorsTable,
   frontierTokensOf,
   groupRepairsByConnector,
-  waitingRepairs,
 } from "@/components/ConnectorsTable";
 import type {
   ConnectorOut,
@@ -83,7 +82,10 @@ export default function ConnectorsPage() {
 
   const repairsByConnector =
     repairs && drifts ? groupRepairsByConnector(repairs, drifts) : undefined;
-  const waiting = repairs ? waitingRepairs(repairs) : [];
+  // REQ-048 item 2: the header counts from the same connector-state source
+  // as the rows — connectors in `error` (needing a decision) — never "nothing
+  // waiting" above an ■ Error row.
+  const errored = (connectors ?? []).filter((c) => (c.state ?? "degrading") === "error");
   const driftToConnector = new Map((drifts ?? []).map((d) => [d.id, d.connector_id]));
   const connectorName = (id: string) =>
     (connectors ?? []).find((c) => c.id === id)?.name ?? id.slice(0, 8);
@@ -94,16 +96,20 @@ export default function ConnectorsPage() {
   const headline = (() => {
     const n = connectors?.length ?? 0;
     const nouns = `${n} connector${n === 1 ? "" : "s"}`;
-    const wait = waiting.length
-      ? `${waiting.length} repair${waiting.length === 1 ? " is" : "s are"} waiting for you.`
-      : "nothing waiting for you.";
     const tokens =
       modelUsage != null
         ? ` ${(modelUsage.frontier_tokens + modelUsage.small_tokens).toLocaleString()} model tokens.`
         : "";
     return (
       <>
-        {nouns}. <b>{wait}</b>
+        {nouns}.{" "}
+        {errored.length ? (
+          <Link data-testid="connectors-waiting-link" href={`/connectors/${encodeURIComponent(errored[0].id)}`}>
+            <b>{errored.length} waiting for you.</b>
+          </Link>
+        ) : (
+          <b>nothing waiting for you.</b>
+        )}
         {tokens}
       </>
     );
@@ -115,7 +121,7 @@ export default function ConnectorsPage() {
         <div>
           <h1>Connectors</h1>
           {!connLoading && !connError && connectors ? (
-            <p className="conn-line num">{headline}</p>
+            <p className="conn-line num" data-testid="connectors-headline">{headline}</p>
           ) : null}
         </div>
         <Link href="/connectors/new" data-testid="new-connector-link" className="btn quiet">

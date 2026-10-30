@@ -120,8 +120,9 @@ command, then watch:
   single "net" reading), rung L3 with the one frontier attempt (live with
   `FRONTIER_API_KEY`, labelled replay from a committed capture otherwise,
   or the explicit skip naming the capture to run when neither exists),
-  the rejected `net_amount → total_amount` decoy with the verifier
-  judgment, the operator question. The instrumented step-4 climb in
+  and the escalation: the model saw the evidence and either asked for a
+  business decision (its question shown first, with its rationale) or
+  proposed a patch that the verifier judged. The instrumented step-4 climb in
   `make demo` runs the same inputs for the printed derivation; it is
   recorded as a second row only when the break's L3 was skipped.
 - **New kind of API.** Meridian's page shows the refused v1 build with

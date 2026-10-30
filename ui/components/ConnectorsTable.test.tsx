@@ -74,7 +74,47 @@ describe("ConnectorsTable", () => {
     expect(screen.getByText("r3")).toBeInTheDocument();
     expect(screen.getByTestId("sync-outcome-badge")).toHaveTextContent("Complete");
     expect(screen.getByTestId(`drift-count-${c.id}`)).toHaveTextContent("0");
+    // No repairs: no chart, just the honest empty line.
+    expect(screen.queryByTestId("sparkline")).not.toBeInTheDocument();
+  });
+
+  it("draws bars only for two or more repairs (REQ-048)", () => {
+    const c = baseConnector();
+    const detail = detailWith();
+    const one = {
+      id: "repair-one",
+      drift_event_ids: [],
+      ladder_level_reached: 4,
+      vendor: "atlas",
+      drift_signature: null,
+      drift_class: "SEMANTIC_VALUE_DRIFT",
+      approval: null,
+      fingerprint_delta: null,
+      candidate_patch: null,
+      rule_id: null,
+      hypothesis_ids: [],
+      visible_test_results: [],
+      verifier_report_id: null,
+      decision: "escalate",
+      model_usage: { frontier_tokens: 3530, calls: 1 },
+      ladder_trace: [],
+      escalation_bundle: null,
+      created_at: new Date().toISOString(),
+      kind: "repair",
+    };
+    const { rerender } = render(
+      <ConnectorsTable connectors={[c]} detailsById={{ [c.id]: detail }} repairsByConnector={{ [c.id]: [one as never] }} />,
+    );
+    // One repair: the number only, no chart.
+    expect(screen.queryByTestId("sparkline")).not.toBeInTheDocument();
+    expect(screen.getByTestId(`connector-tokens-${c.id}`)).toHaveTextContent("3,530");
+    expect(screen.getByTestId(`connector-tokens-${c.id}`)).toHaveTextContent("in 1 repair");
+    const two = { ...one, id: "repair-two", model_usage: { frontier_tokens: 1000, calls: 1 } };
+    rerender(
+      <ConnectorsTable connectors={[c]} detailsById={{ [c.id]: detail }} repairsByConnector={{ [c.id]: [one as never, two as never] }} />,
+    );
     expect(screen.getByTestId("sparkline")).toBeInTheDocument();
+    expect(screen.getByTestId(`connector-tokens-${c.id}`)).toHaveTextContent("in 2 repairs");
   });
 
   it("shows open drift count when drift exists", () => {

@@ -52,6 +52,24 @@ from autobridge.repair.registry import matching_rules
 L3_MAX_TOKENS = 131072
 
 
+def repair_frontier_budget() -> int:
+    """Frontier token budget for a repair climb (REQ-048 item 6).
+
+    Single source of truth: the L3 output cap from
+    :func:`autobridge.config.frontier_max_tokens` (env
+    ``FRONTIER_MAX_TOKENS``, default 131072). The repair's budget is the
+    same value the L3 call is capped at, so a legitimate L3 attempt can
+    never exceed the budget it is measured against. Falls back to
+    ``L3_MAX_TOKENS`` when config is unavailable.
+    """
+    try:
+        from autobridge.config import frontier_max_tokens  # noqa: PLC0415
+
+        return frontier_max_tokens()
+    except Exception:
+        return L3_MAX_TOKENS
+
+
 def _utc_now_iso() -> str:
     """Current UTC time as an ISO string (rung call-started stamps)."""
     return datetime.now(UTC).isoformat()

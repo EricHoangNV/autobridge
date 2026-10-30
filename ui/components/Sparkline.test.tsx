@@ -24,4 +24,13 @@ describe("Sparkline", () => {
     render(<Sparkline values={[5]} />);
     expect(screen.getByTestId("sparkline")).toBeInTheDocument();
   });
+
+  it("leaves headroom so no bar fills the cell height (REQ-048)", () => {
+    const { container } = render(<Sparkline values={[5, 5]} height={40} />);
+    const bars = container.querySelectorAll('[data-testid="sparkline-bar"]');
+    expect(bars.length).toBe(2);
+    for (const b of Array.from(bars)) {
+      expect(Number(b.getAttribute("height"))).toBeLessThan(40);
+    }
+  });
 });

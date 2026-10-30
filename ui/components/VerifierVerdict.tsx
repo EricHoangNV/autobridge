@@ -25,6 +25,18 @@ function countPassed(results: Array<Record<string, unknown>>): { passed: number;
   return { passed, total: results.length };
 }
 
+/**
+ * Display form of an escalation bundle reason (REQ-048 item 3): the
+ * escalation question and the model's rationale live once in the top
+ * decision box, so the bundle box shows the reason and the suggested
+ * action without repeating them. Reasons without the backend's trailing
+ * "model rationale: …" clause pass through unchanged.
+ */
+export function displayBundleReason(reason: unknown): string {
+  const text = String(reason ?? "");
+  return text.replace(/;?\s*model rationale:.*$/is, "").trim();
+}
+
 export function VerifierVerdict({ verifierReportId, visibleTestResults, escalationBundle, decision, modelEscalated = false }: Props) {
   const hasReport = !!verifierReportId;
   const hasEscalation = !!escalationBundle;
@@ -86,14 +98,11 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
           <div className="text-xs font-medium text-ink">Escalation bundle</div>
           {escalationBundle.reason ? (
             <div data-testid="escalation-reason" className="mt-1 text-xs text-ink-2">
-              Reason: {String(escalationBundle.reason)}
+              Reason: {displayBundleReason(escalationBundle.reason)}
             </div>
           ) : null}
-          {escalationBundle.question ? (
-            <div data-testid="escalation-question" className="mt-1 text-xs font-medium text-ink">
-              Q: {String(escalationBundle.question)}
-            </div>
-          ) : null}
+          {/* REQ-048 item 3: the question (and rationale) live once in the
+              top decision box — the bundle keeps reason/action only. */}
           {escalationBundle.suggested_action ? (
             <div className="mt-1 text-xs text-ink-2">Action: {String(escalationBundle.suggested_action)}</div>
           ) : null}

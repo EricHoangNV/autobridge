@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from autobridge.drift.fingerprint import FingerprintDelta
 
-from autobridge.repair.ladder import LadderResult, run_ladder
+from autobridge.repair.ladder import LadderResult, repair_frontier_budget, run_ladder
 
 
 def _spec_vendor(spec: dict[str, Any]) -> str:
@@ -168,7 +168,10 @@ def _finalize_repair_row(
         # resetting keeps a retried climb from showing a stale verdict.
         "visible_test_results": [],
         "verifier_report_id": None,
-        "model_usage": dict(result.model_usage),
+        # REQ-048 item 6: the row carries the frontier budget that applies
+        # to it (same source as the L3 cap), so the repair page shows the
+        # real budget instead of a hard-coded default.
+        "model_usage": {**dict(result.model_usage), "frontier_budget": repair_frontier_budget()},
         "ladder_trace": list(result.ladder_trace),
         "escalation_bundle": bundle_dict,
         "decision": result.decision,
@@ -834,7 +837,10 @@ def run_semantic_repair(
         session=session,
         hypotheses=hyps,
         provider=provider,
-        budget=Budget(),
+        # REQ-048 item 6: the repair's frontier budget is the L3 cap (one
+        # source of truth) — a legitimate L3 attempt can exhaust it only
+        # by genuinely exceeding the cap, and BudgetExhausted escalates.
+        budget=Budget(max_frontier_tokens=repair_frontier_budget()),
         scenario=scenario,
         validate_against=spec,
         evidence=evidence or None,
@@ -1023,7 +1029,9 @@ def _start_running_repair_row(
             visible_test_results=[],
             verifier_report_id=None,
             decision="climbing",
-            model_usage={},
+            # REQ-048 item 6: the running row already names the budget that
+            # applies, so the page shows it while the climb is in flight.
+            model_usage={"frontier_budget": repair_frontier_budget()},
             ladder_trace=[],
             escalation_bundle=None,
         )
@@ -1302,7 +1310,9 @@ def _run_repair_climb(
                 session=ctx.session,
                 hypotheses=parcel_hyps,
                 provider=provider,
-                budget=Budget(),
+                # REQ-048 item 6: same repair budget as the live path — the
+                # L3 cap, one source of truth (see above).
+                budget=Budget(max_frontier_tokens=repair_frontier_budget()),
                 scenario=payload.get("scenario"),
                 validate_against=spec,
                 evidence=payload.get("l3_evidence") or None,

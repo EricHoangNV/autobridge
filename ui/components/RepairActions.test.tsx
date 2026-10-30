@@ -34,9 +34,19 @@ describe("RepairActions", () => {
     expect(await screen.findByTestId("approving-as")).toHaveTextContent("Approving as operator");
   });
 
-  it("shows disabled when not propose", () => {
+  it("escalations show no Approve button and an enabled Reject (REQ-048)", () => {
     mockOperator("alice");
     render(<RepairActions repairId="rep-1" decision="escalate" />);
+    expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Approve\/Reject available only when decision is/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("repair-reject-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("repair-reject-btn")).not.toBeDisabled();
+    expect(screen.getByTestId("rollback-btn")).toBeInTheDocument();
+  });
+
+  it("shows disabled when not propose and not escalate", () => {
+    mockOperator("alice");
+    render(<RepairActions repairId="rep-1" decision="climbing" />);
     expect(screen.getByText(/Approve\/Reject available only when decision is/)).toBeInTheDocument();
   });
 

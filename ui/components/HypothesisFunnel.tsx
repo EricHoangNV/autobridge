@@ -15,15 +15,16 @@ export type FunnelStage = {
  * ("generated → amount → wire-consistent → distinct"), each expandable
  * to the hypotheses it holds. Stages come from the persisted derivation
  * evidence record (`GET /runs/{id}/evidence`, kind=hypothesis) — never
- * recomputed in the browser. An empty stage list renders an honest empty
- * state, not an invented funnel.
+ * recomputed in the browser. An empty stage list on a finished repair is
+ * an honest empty state; while the climb is still running (`pending`)
+ * the derivation simply has not landed yet.
  */
-export function HypothesisFunnel({ stages }: { stages: FunnelStage[] }) {
+export function HypothesisFunnel({ stages, pending = false }: { stages: FunnelStage[]; pending?: boolean }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   if (!stages.length) {
     return (
       <p data-testid="hypothesis-funnel-empty" className="text-sm text-ink-2">
-        No hypothesis derivation was recorded for this repair.
+        {pending ? "deriving…" : "No hypothesis derivation was recorded for this repair."}
       </p>
     );
   }

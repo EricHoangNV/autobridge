@@ -705,6 +705,14 @@ h2.sec {
   width: 6px;
   background: var(--live);
 }
+/* REQ-048 item 7: grid children must shrink instead of shoving into the
+   next column (long vendor names overlapped "Last sync" at 1440px). */
+.crow > * {
+  min-width: 0;
+}
+.crow .name a {
+  overflow-wrap: anywhere;
+}
 .crow .name a {
   font-size: 30px;
   font-weight: 800;

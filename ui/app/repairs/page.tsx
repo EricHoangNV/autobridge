@@ -52,6 +52,22 @@ export function modelCallsOf(repair: RepairRunOut): { calls: number; frontierTok
 }
 
 /**
+ * In-flight model calls on a running repair (REQ-048 item 5): the rung
+ * snapshot stamps the model id + call start just before a call goes out
+ * (REQ-043), so a climbing row whose usage is still 0 reads
+ * "N call(s) in flight" instead of "0 model calls" until the call lands.
+ */
+export function inFlightCallsOf(repair: RepairRunOut): number {
+  if (repair.decision !== "climbing") return 0;
+  let n = 0;
+  for (const entry of repair.ladder_trace ?? []) {
+    const rec = entry as Record<string, unknown>;
+    if (typeof rec["model"] === "string" && typeof rec["call_started_at"] === "string") n += 1;
+  }
+  return n;
+}
+
+/**
  * Live repair status (REQ-032 §2), from persisted rows only:
  * rejected (decision or reject approval) · applied (approved release is
  * active) · approved (approved but superseded) · fix ready (verified patch
@@ -170,6 +186,7 @@ export default function RepairsPage() {
                 );
                 const status = repairStatus(r, activeReleaseByConnector, driftToConnector);
                 const { calls, frontierTokens } = modelCallsOf(r);
+                const inFlight = inFlightCallsOf(r);
                 return (
                   <tr key={r.id} data-testid={`repair-row-${r.id}`} className="hover:bg-ground">
                     <td className="px-4 py-3">
@@ -193,7 +210,11 @@ export default function RepairsPage() {
                       {r.rule_id ?? "—"}
                     </td>
                     <td data-testid={`repair-calls-${r.id}`} className="num px-4 py-3 text-xs text-ink-2">
-                      {calls === 0 ? "0 model calls" : `${calls} calls · ${frontierTokens.toLocaleString("en-US")} frontier`}
+                      {inFlight > 0
+                        ? `${inFlight} call${inFlight === 1 ? "" : "s"} in flight`
+                        : calls === 0
+                          ? "0 model calls"
+                          : `${calls} calls · ${frontierTokens.toLocaleString("en-US")} frontier`}
                     </td>
                     <td className="px-4 py-3">
                       <span data-testid={`repair-status-${r.id}`} className={`inline-flex border px-2 py-0.5 text-xs font-medium ${statusClass(status)}`}>

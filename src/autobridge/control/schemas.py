@@ -575,6 +575,10 @@ class RungLedgerOut(BaseModel):
     small_tokens: int = 0
     frontier_tokens: int = 0
     total_cost: str = "0"
+    #: Frontier token budget that applies to this repair (REQ-048 item 6):
+    #: the L3 cap from ``autobridge.config.frontier_max_tokens`` — one
+    #: source of truth, so the page shows the real budget.
+    frontier_budget: int | None = None
 
 
 class CapabilityVersionOut(BaseModel):

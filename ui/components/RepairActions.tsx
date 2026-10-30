@@ -53,9 +53,14 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
   }, []);
 
   const canApprove = decision === "propose" && patchReady;
-  const canReject = decision === "propose" && patchReady;
+  // REQ-048 item 1: an escalation has no patch to approve, but Reject
+  // closes it (the server records a reject approval on any decision).
+  const canReject = (decision === "propose" && patchReady) || decision === "escalate";
   // The climb: no verdict and no action until a patch has passed.
   const awaitingPatch = decision === "propose" && !patchReady;
+  // REQ-048 item 1: escalations lead with the question, never an Approve
+  // button — not even a disabled one.
+  const isEscalated = decision === "escalate";
   // Rollback is available when there was a prior release (we allow it always; backend validates)
   const canRollback = true;
 
@@ -141,14 +146,16 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
 
   return (
     <div data-testid="repair-actions" className="repair-acts repair-past">
-      <button
-        data-testid="repair-approve-btn"
-        onClick={doApprove}
-        disabled={!canApprove || busy !== null}
-        className={awaitingPatch ? "btn quiet" : "btn"}
-      >
-        {busy === "approve" ? "Approving…" : awaitingPatch ? "No patch to approve yet" : "Approve release"}
-      </button>
+      {isEscalated ? null : (
+        <button
+          data-testid="repair-approve-btn"
+          onClick={doApprove}
+          disabled={!canApprove || busy !== null}
+          className={awaitingPatch ? "btn quiet" : "btn"}
+        >
+          {busy === "approve" ? "Approving…" : awaitingPatch ? "No patch to approve yet" : "Approve release"}
+        </button>
+      )}
       <div className="more">
         <button
           data-testid="repair-reject-btn"
@@ -185,7 +192,7 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
         Approving as {operatorName ?? "…"}
       </p>
 
-      {!canApprove ? (
+      {!canApprove && !canReject ? (
         <p className="text-xs text-ink-2">
           {awaitingPatch
             ? "The verifier has not passed a patch yet — Approve/Reject unlock when it does."

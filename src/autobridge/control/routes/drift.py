@@ -128,7 +128,7 @@ def get_repair_ledger(repair_id: str, db: Session = Depends(get_db)) -> RungLedg
     Costs are Decimal strings end to end; prompts and responses never leave
     the ledger table.
     """
-    from autobridge.repair.ladder import ledger_totals, rung_ledger  # noqa: PLC0415
+    from autobridge.repair.ladder import ledger_totals, repair_frontier_budget, rung_ledger  # noqa: PLC0415
 
     r = db.get(RepairRun, repair_id)
     if r is None:
@@ -145,4 +145,6 @@ def get_repair_ledger(repair_id: str, db: Session = Depends(get_db)) -> RungLedg
         small_tokens=totals["small_tokens"],
         frontier_tokens=totals["frontier_tokens"],
         total_cost=totals["cost"],
+        # REQ-048 item 6: the budget that actually applies (the L3 cap).
+        frontier_budget=repair_frontier_budget(),
     )

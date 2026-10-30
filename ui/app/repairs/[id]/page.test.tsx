@@ -143,12 +143,12 @@ const mockModelUsage = {
   ],
 };
 
-function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger) {
+function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger, runEvidence: unknown = [mockDerivation]) {
   mockedUseSWR
     .mockReturnValueOnce({ data: repair, error: undefined, isLoading: false, mutate: vi.fn() })
     .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: [mockEvidence], error: undefined, isLoading: false })
-    .mockReturnValueOnce({ data: [mockDerivation], error: undefined, isLoading: false })
+    .mockReturnValueOnce({ data: runEvidence, error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: ledger, error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: mockConnector, error: undefined, isLoading: false })
     .mockReturnValueOnce({ data: mockSyncRun, error: undefined, isLoading: false })
@@ -228,8 +228,28 @@ describe("RepairDetailPage", () => {
     });
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Needs your decision");
-    expect(screen.getByTestId("decided-question")).toHaveTextContent("Which mapping is correct?");
+    // REQ-048: the question lives once, first, in the top box.
+    expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("Which mapping is correct?");
+    expect(screen.getAllByText("Which mapping is correct?")).toHaveLength(1);
     expect(screen.getByTestId("decided-rejected")).toHaveTextContent("proposal_rejected");
+  });
+
+  it("escalate top box has no Approve button and names the operator's options (REQ-048)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [{ level: 4, action: "escalate", reason: "no verified fix" }],
+      escalation_bundle: { reason: "no verified fix", question: "Which mapping is correct?", suggested_action: "pick one" },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Approve\/Reject available only when decision is/)).not.toBeInTheDocument();
+    // Reject closes it; roll back stays available.
+    expect(screen.getByTestId("repair-reject-btn")).not.toBeDisabled();
+    expect(screen.getByTestId("rollback-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("or Reject below to close this repair");
   });
 
   it("shows the running view while the climb is in flight", () => {
@@ -317,20 +337,39 @@ describe("RepairDetailPage", () => {
   });
 
   it("labels the escalation question as the model's when L3 escalated explicitly", () => {
-    mockAll({
-      ...mockRepair,
-      decision: "escalate",
-      verifier_report_id: null,
-      candidate_patch: [],
-      ladder_trace: [
-        { level: 3, action: "model_escalation", reason: "L3 asked for a human decision: Should total_amount track gross or net?", model_question: "Should total_amount track gross or net?" },
-        { level: 4, action: "escalate", reason: "L3 asked for a human decision (gross_to_net): Should total_amount track gross or net?" },
-      ],
-      escalation_bundle: { reason: "L3 asked for a human decision", question: "Should total_amount track gross or net?", suggested_action: "pick one" },
-    });
+    const question = "Should total_amount track gross or net?";
+    mockAll(
+      {
+        ...mockRepair,
+        decision: "escalate",
+        verifier_report_id: null,
+        candidate_patch: [],
+        ladder_trace: [
+          { level: 3, action: "model_escalation", reason: `L3 asked for a human decision: ${question}`, model_question: question },
+          { level: 4, action: "escalate", reason: `L3 asked for a human decision (gross_to_net): ${question}` },
+        ],
+        escalation_bundle: { reason: "L3 asked for a human decision", question, suggested_action: "pick one" },
+      },
+      {
+        ...mockLedger,
+        decision: "escalate",
+        resolved_rung: 4,
+        attempts: [
+          { rung: 3, action: "model_escalation", reason: `L3 asked for a human decision: ${question}`, calls: [] },
+          { rung: 4, action: "escalate", reason: `L3 asked for a human decision (gross_to_net): ${question}`, calls: [] },
+        ],
+      },
+    );
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    expect(screen.getByTestId("decided-question")).toHaveTextContent("The model's question for you:");
-    expect(screen.getByTestId("decided-question")).toHaveTextContent("Should total_amount track gross or net?");
+    // REQ-048: the question lives once, in the top box.
+    expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("The model's question for you:");
+    expect(screen.getByTestId("escalation-question-top")).toHaveTextContent(question);
+    expect(screen.getAllByText(question)).toHaveLength(1);
+    // Rungs name the handoff instead of repeating the question.
+    expect(screen.getByTestId("rung-timeline-3")).toHaveTextContent("the model asked for a human decision");
+    expect(screen.getByTestId("rung-timeline-3")).not.toHaveTextContent(question);
+    expect(screen.getByTestId("rung-timeline-4")).toHaveTextContent("escalated to you");
+    expect(screen.getByTestId("rung-timeline-4")).not.toHaveTextContent(question);
   });
 
   it("shows the model rationale beneath its question (REQ-047)", () => {
@@ -346,7 +385,54 @@ describe("RepairDetailPage", () => {
       escalation_bundle: { reason: "gross_to_net: no fix; model rationale: Net versus gross is a business call.", question: "Should total_amount track gross or net?", suggested_action: "pick one" },
     });
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    expect(screen.getByTestId("decided-question")).toHaveTextContent("The model's question for you:");
-    expect(screen.getByTestId("decided-rationale")).toHaveTextContent("Net versus gross is a business call.");
+    expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("The model's question for you:");
+    expect(screen.getByTestId("escalation-rationale-top")).toHaveTextContent("Net versus gross is a business call.");
+    // REQ-048: the rationale is printed once — the bundle box strips the clause.
+    expect(screen.getByTestId("escalation-reason")).not.toHaveTextContent("Net versus gross is a business call.");
+  });
+
+  it("shows the running funnel as deriving while the climb runs (REQ-048)", () => {
+    mockAll(
+      {
+        ...mockRepair,
+        decision: "climbing",
+        ladder_level_reached: 1,
+        verifier_report_id: null,
+        candidate_patch: [],
+        rule_id: null,
+        model_usage: {},
+        ladder_trace: [{ level: 1, action: "no_rule_matched", reason: "L1: no rule precondition matched" }],
+      },
+      { ...mockLedger, decision: "climbing", resolved_rung: 1, attempts: [] },
+      [],
+    );
+    // No derivation evidence linked: the fourth SWR mock returns [] here.
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("hypothesis-funnel-empty")).toHaveTextContent("deriving…");
+  });
+
+  it("labels a BudgetExhausted climb on the page (REQ-048)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [
+        { level: 3, action: "frontier_generate", reason: "BudgetExhausted in L3: max_frontier_tokens 131072 exceeded (now 131100)" },
+        { level: 4, action: "escalate", reason: "BudgetExhausted in L3: max_frontier_tokens 131072 exceeded (now 131100)" },
+      ],
+      escalation_bundle: { reason: "budget ran out", question: "Which mapping?", suggested_action: "retry later" },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-budget-exhausted")).toHaveTextContent("Budget exhausted");
+  });
+
+  it("shows the frontier budget that applies, never a hard-coded default (REQ-048)", () => {
+    mockAll({
+      ...mockRepair,
+      model_usage: { frontier_tokens: 3530, small_tokens: 0, calls: 1, frontier_budget: 131072 },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("model-usage-view")).toHaveTextContent("of a 131,072 budget");
   });
 });

@@ -26,7 +26,12 @@ from autobridge.control.models import (
 )
 from autobridge.llm.provider import Usage, record_model_call
 from autobridge.repair.controller import RepairController
-from autobridge.repair.ladder import ledger_totals, rung_ledger
+from autobridge.repair.ladder import (
+    L3_MAX_TOKENS,
+    ledger_totals,
+    repair_frontier_budget,
+    rung_ledger,
+)
 
 
 def _trace() -> list[dict[str, Any]]:
@@ -218,3 +223,35 @@ def test_demo_rung_table_row() -> None:
     summary = render_rung_summary({"steps": [step, escalated]})
     assert summary.startswith("per-run model usage:")
     assert "Zero-token recovery" in summary and "Hard semantic failure" in summary
+
+
+def test_repair_frontier_budget_is_the_l3_cap(monkeypatch: Any) -> None:
+    """REQ-048 item 6: one source of truth — the repair's frontier budget is
+    the L3 cap, never below it."""
+    from autobridge.config import frontier_max_tokens
+
+    monkeypatch.delenv("FRONTIER_MAX_TOKENS", raising=False)
+    assert repair_frontier_budget() == frontier_max_tokens() == L3_MAX_TOKENS
+    monkeypatch.setenv("FRONTIER_MAX_TOKENS", "200000")
+    assert repair_frontier_budget() == 200000 >= L3_MAX_TOKENS
+
+
+def test_repair_row_and_ledger_carry_the_frontier_budget(tmp_path: pathlib.Path) -> None:
+    """REQ-048 item 6: the persisted row stamps the budget that applies and
+    the ledger endpoint repeats it."""
+    _client, factory = _client_for(tmp_path)
+    try:
+        repair_id = _repair_id(factory)
+        with factory() as s:
+            row = s.get(RepairRun, repair_id)
+            assert row is not None
+            usage = dict(row.model_usage or {})
+            assert usage.get("frontier_budget") == repair_frontier_budget()
+            assert usage["frontier_budget"] >= L3_MAX_TOKENS
+        r = _client.get(f"/repairs/{repair_id}/ledger")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["frontier_budget"] == repair_frontier_budget()
+        assert body["frontier_budget"] >= L3_MAX_TOKENS
+    finally:
+        app.dependency_overrides.clear()

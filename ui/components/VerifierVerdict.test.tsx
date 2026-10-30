@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { VerifierVerdict } from "./VerifierVerdict";
+import { VerifierVerdict, displayBundleReason } from "./VerifierVerdict";
 
 describe("VerifierVerdict", () => {
   it("shows pass when report exists and propose", () => {
@@ -9,16 +9,19 @@ describe("VerifierVerdict", () => {
     expect(screen.getByTestId("verifier-verdict-badge").getAttribute("data-verdict")).toBe("pass");
   });
 
-  it("shows escalation bundle when present", () => {
+  it("shows escalation bundle with reason and action but no repeated question (REQ-048)", () => {
     render(
       <VerifierVerdict
         decision="escalate"
-        escalationBundle={{ reason: "CAPABILITY_REMOVED", question: "Which endpoint should replace /old?", evidence_ids: ["ev-1"] }}
+        escalationBundle={{ reason: "CAPABILITY_REMOVED", question: "Which endpoint should replace /old?", suggested_action: "pick one", evidence_ids: ["ev-1"] }}
       />,
     );
     expect(screen.getByTestId("escalation-bundle")).toBeInTheDocument();
     expect(screen.getByTestId("escalation-reason")).toHaveTextContent("CAPABILITY_REMOVED");
-    expect(screen.getByTestId("escalation-question")).toHaveTextContent("Which endpoint");
+    // The question lives once in the top decision box — never in the bundle.
+    expect(screen.queryByTestId("escalation-question")).not.toBeInTheDocument();
+    expect(screen.getByTestId("escalation-bundle")).toHaveTextContent("pick one");
+    expect(screen.getByTestId("escalation-bundle")).not.toHaveTextContent("Which endpoint");
   });
 
   it("shows report id", () => {
@@ -48,5 +51,18 @@ describe("VerifierVerdict REQ-047", () => {
       />,
     );
     expect(screen.getByTestId("verifier-verdict")).toHaveTextContent("no verifier report — escalated");
+  });
+});
+
+describe("displayBundleReason (REQ-048)", () => {
+  it("strips the trailing model-rationale clause", () => {
+    expect(
+      displayBundleReason("gross_to_net: semantic drift, no verified fix; model rationale: Net versus gross is a business call."),
+    ).toBe("gross_to_net: semantic drift, no verified fix");
+  });
+
+  it("passes reasons without the clause through", () => {
+    expect(displayBundleReason("CAPABILITY_REMOVED")).toBe("CAPABILITY_REMOVED");
+    expect(displayBundleReason(null)).toBe("");
   });
 });

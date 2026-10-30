@@ -109,6 +109,7 @@ type LedgerOut = {
   small_tokens: number;
   frontier_tokens: number;
   total_cost: string;
+  frontier_budget?: number | null;
 };
 
 type CapabilitiesOut = {
@@ -151,7 +152,9 @@ function shortTime(iso: string): string {
 function shortDuration(startedAt: string, finishedAt: string | null | undefined): string | null {
   if (!finishedAt) return null;
   const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return null;
+  // REQ-048 item 7: a faulted sync can stamp identical start/end times —
+  // "took 0 ms" is a clock artefact, not a measurement. Omit it.
+  if (!Number.isFinite(ms) || ms <= 0) return null;
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
 }
@@ -416,6 +419,11 @@ export default function RepairDetailPage({ params }: PageProps) {
     const action = String(e["action"] ?? "");
     return action.includes("reject") || action.includes("fail");
   });
+  // REQ-048 item 6: a rung stopped by the token budget is labelled on the
+  // page — the reason already names BudgetExhausted in the timeline.
+  const budgetExhausted = (repair.ladder_trace ?? []).some((e) =>
+    String((e as Record<string, unknown>)["reason"] ?? "").includes("BudgetExhausted"),
+  );
   // REQ-044: an explicit model escalation carries the model's own question —
   // label it as the model's instead of the engine's.
   const modelAsked = (repair.ladder_trace ?? []).some(
@@ -436,6 +444,22 @@ export default function RepairDetailPage({ params }: PageProps) {
     const idx = reason.toLowerCase().indexOf(marker);
     if (idx >= 0) return reason.slice(idx + marker.length).trim() || null;
     return null;
+  })();
+  // REQ-048 item 1: the escalation question lives once, in the top box.
+  // The bundle's question is the model's when it escalated explicitly,
+  // else the engine's canned question.
+  const escalationQuestion = (() => {
+    const q = (repair.escalation_bundle as Record<string, unknown> | null)?.["question"];
+    return typeof q === "string" && q.trim() ? q : null;
+  })();
+
+  // REQ-048 item 6: the frontier budget that applies to this repair — the
+  // row stamps it at write time; the ledger repeats it.
+  const frontierBudget = (() => {
+    const fromUsage = toNumber((repair.model_usage as Record<string, unknown>)["frontier_budget"]);
+    if (fromUsage > 0) return fromUsage;
+    const fromLedger = ledger?.frontier_budget;
+    return typeof fromLedger === "number" && Number.isFinite(fromLedger) && fromLedger > 0 ? fromLedger : null;
   })();
 
   const passedCount = repair.visible_test_results.filter((t) => {
@@ -473,6 +497,31 @@ export default function RepairDetailPage({ params }: PageProps) {
         <p data-testid="repair-decision-line" className="text-base font-semibold">
           {decisionLine}
         </p>
+        {isEscalated && escalationQuestion ? (
+          <div data-testid="escalation-question-top" className="mt-3 border border-rule bg-ground px-3 py-2.5 text-sm">
+            <p>
+              {modelAsked ? "The model's question for you: " : "The engine's question: "}
+              <b>{escalationQuestion}</b>
+            </p>
+            {modelAsked && modelRationale ? (
+              <p data-testid="escalation-rationale-top" className="mt-1 text-xs text-ink-2">
+                Model rationale: {modelRationale}
+              </p>
+            ) : null}
+            <p className="mt-2 text-xs text-ink-2">
+              To resolve it: edit the spec and build a new release
+              {primaryConnectorId ? (
+                <>
+                  {" "}from the{" "}
+                  <a className="underline hover:text-ink" href={`/connectors/${encodeURIComponent(primaryConnectorId)}`}>
+                    connector page
+                  </a>
+                </>
+              ) : null}
+              , or Reject below to close this repair. Roll back stays available below.
+            </p>
+          </div>
+        ) : null}
         <div id="repair-acts" className="mt-2">
           <RepairActions
             repairId={repair.id}
@@ -577,13 +626,26 @@ export default function RepairDetailPage({ params }: PageProps) {
         <ol data-testid="rung-timeline" className="list-none space-y-1 p-0 text-sm">
           {[0, 1, 2, 3, 4].map((rung) => {
             const attempt = rungByLevel.get(rung);
+            // REQ-048 item 3: the model's question and rationale live once
+            // in the top box — the rungs name the handoff instead of
+            // repeating them (full reasons stay in the persisted trace).
+            const handoff =
+              attempt?.action === "model_escalation"
+                ? "the model asked for a human decision"
+                : rung === 4 && attempt?.action === "escalate" && modelAsked
+                  ? "escalated to you"
+                  : null;
             return (
               <li key={rung} data-testid={`rung-timeline-${rung}`}>
                 <b className="num">L{rung}</b>{" "}
                 {attempt ? (
-                  <>
-                    {attempt.action} — <span className="text-ink-2">{attempt.reason}</span>
-                  </>
+                  handoff ? (
+                    <span className="text-ink-2">{handoff}</span>
+                  ) : (
+                    <>
+                      {attempt.action} — <span className="text-ink-2">{attempt.reason}</span>
+                    </>
+                  )
                 ) : (
                   <span className="text-ink-2">no attempt recorded</span>
                 )}
@@ -592,7 +654,7 @@ export default function RepairDetailPage({ params }: PageProps) {
           })}
         </ol>
         <h3 className="mb-1 mt-4 text-sm font-semibold">Hypothesis funnel</h3>
-        <HypothesisFunnel stages={funnelStages} />
+        <HypothesisFunnel stages={funnelStages} pending={climbingNow} />
         {hypotheses?.length ? (
           <div className="mt-3">
             <HypothesesPanel hypothesisIds={repair.hypothesis_ids} hypotheses={hypotheses as never} probes={probes} />
@@ -632,7 +694,7 @@ export default function RepairDetailPage({ params }: PageProps) {
         ) : null}
         <ModelCallBox attempts={attempts} pending={climbingNow} />
         <div className="mt-2">
-          <ModelUsageView modelUsage={repair.model_usage} liveFrontierTokens={tickingFrontier} pending={climbingNow} />
+          <ModelUsageView modelUsage={repair.model_usage} liveFrontierTokens={tickingFrontier} pending={climbingNow} budget={frontierBudget} />
         </div>
         <h3 className="mb-1 mt-4 text-sm font-semibold">Verifier run</h3>
         <VerifierVerdict
@@ -657,27 +719,15 @@ export default function RepairDetailPage({ params }: PageProps) {
             <span className="text-ink-2"> · rule {repair.rule_id} confidence {ruleConfidence}</span>
           ) : null}
         </p>
-        {isEscalated && repair.escalation_bundle?.["question"] ? (
-          <div data-testid="decided-question" className="mt-2 border border-rule px-3 py-2 text-sm">
-            <p>
-              {modelAsked ? "The model's question for you: " : "The engine's question: "}
-              {String(repair.escalation_bundle["question"])}
-            </p>
-            {modelAsked && modelRationale ? (
-              <p data-testid="decided-rationale" className="mt-1 text-xs text-ink-2">
-                Model rationale: {modelRationale}
-              </p>
-            ) : null}
-            {repair.escalation_bundle["reason"] ? (
-              <p className="mt-1 font-mono text-xs text-ink-2">{String(repair.escalation_bundle["reason"])}</p>
-            ) : null}
-            {repair.escalation_bundle["suggested_action"] ? (
-              <p className="mt-1 text-xs text-ink-2">
-                Suggested: {String(repair.escalation_bundle["suggested_action"])}
-              </p>
-            ) : null}
-          </div>
+        {budgetExhausted ? (
+          <p data-testid="repair-budget-exhausted" className="mt-1 font-mono text-xs" style={{ color: "var(--stop)" }}>
+            Budget exhausted: a rung stopped when the frontier token budget ran out (see the rung timeline) — the run
+            escalated instead of guessing.
+          </p>
         ) : null}
+        {/* REQ-048 item 3: the escalation question and rationale live once,
+            in the top box above — the decided section keeps the rejected
+            proposals and the patch, never the question. */}
         {rejectedProposals.length ? (
           <div data-testid="decided-rejected" className="mt-2 text-sm">
             <h3 className="mb-1 text-sm font-semibold">Rejected proposals</h3>

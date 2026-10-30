@@ -6,8 +6,10 @@ type Props = {
 };
 
 /**
- * Broadcast token bars: one bar per sync/repair, zero bars drawn as a
- * 2px baseline tick in --off. Nonzero bars fill in --ink.
+ * Broadcast token bars: one bar per sync/repair, zero values drawn as a
+ * 2px baseline tick in --off. Nonzero bars fill in --ink. Bars are scaled
+ * with headroom (REQ-048 item 4) so a lone tall value never fills the
+ * whole cell height and reads as a full bar.
  */
 export function Sparkline({ values, width = 200, height = 40, label }: Props) {
   if (!values.length) {
@@ -37,7 +39,7 @@ export function Sparkline({ values, width = 200, height = 40, label }: Props) {
           const x = i * slot + (slot - barW) / 2;
           return <rect key={i} data-testid="sparkline-tick" fill="var(--off)" x={x} y={height - 2} width={barW} height={2} />;
         }
-        const h = Math.max(3, (v / max) * height);
+        const h = Math.max(3, (v / max) * (height - 8));
         const x = i * slot + (slot - barW) / 2;
         return <rect key={i} data-testid="sparkline-bar" fill="var(--ink)" x={x} y={height - h} width={barW} height={h} />;
       })}

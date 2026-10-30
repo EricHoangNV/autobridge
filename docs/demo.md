@@ -85,11 +85,12 @@ approval — nothing auto-applies, so every transition stays on screen.
   call — live ("muse-spark-1.3, N tokens") with `FRONTIER_API_KEY` set,
   otherwise the labelled replay ("replayed from a live Muse capture on
   …"), or the explicit L3 skip naming the capture to run when neither
-  exists — the rejected `net_amount → total_amount` decoy with the
-  verifier judgment (or the model's own escalation question, labelled as
-  the model's, when it asks for a human decision instead of patching),
-  the operator question, and the Reject path (a semantic drift is never
-  patched without the operator). The L3 question is well-posed: the
+  exists — and the escalation: the model saw the evidence and either
+  asked for a business decision (its question shown first, labelled as
+  the model's, with its rationale beneath) or proposed a patch that the
+  verifier judged. The operator answers the question from the repair
+  page (or Rejects to close it), and the Reject path stays available
+  (a semantic drift is never patched without the operator). The L3 question is well-posed: the
   prompt names the patch target (the connector spec), lists the exact
   JSON Pointer of every patchable member, shows redacted raw vendor
   records, and lets the model answer `{"escalate": ...}` — a
@@ -194,8 +195,9 @@ human decision", the escalation question is the model's question (labelled
 "The model's question for you:" with its rationale beneath), and the
 verifier line reads "no patch to verify (the model escalated)" — no fail
 verdict is shown because no patch was proposed. When the model instead
-proposes a patch, the verifier verdict on that proposal decides (the
-`net_amount → total_amount` decoy is rejected by `invalid_patch_trap`).
+proposes a patch, the verifier verdict on that proposal decides (a
+non-applying shape such as `net_amount → total_amount` is rejected by the
+`invalid_patch_trap` catalogue check).
 
 ```
 POST /demo/inject-fault                { target: sim-harbor, scenario_id: gross_to_net, seed }
@@ -228,9 +230,10 @@ replay (or the explicit skip) runs inline, so the row is final at once.
 Renders in `/repairs/[id]`: `Degraded` with the failing money invariant named,
 the derivation funnel, the L3 model-call box (or the explicit skip with the
 capture hint), the model's question with its rationale and the "no patch to
-verify (the model escalated)" verifier line — or, when a patch was proposed,
-the rejected `net_amount → total_amount` decoy with the verifier verdict —
-the escalation bundle side-by-side with Approve / Reject. Money
+verify (the model escalated)" verifier line — or, when a patch was proposed
+instead, the proposal with the verifier verdict on it —
+the escalation bundle side-by-side with Reject (no Approve: there is no
+verified patch) and roll back. Money
 stays `Decimal` throughout; the UI never shows a guessed mapping. Capture
 the live prompt for replay with
 `make record-frontier SCENARIO=gross_to_net` (keyed stack, after the break).

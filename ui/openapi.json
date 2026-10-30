@@ -3007,6 +3007,17 @@
             "title": "Decision",
             "type": "string"
           },
+          "frontier_budget": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frontier Budget"
+          },
           "frontier_tokens": {
             "default": 0,
             "title": "Frontier Tokens",

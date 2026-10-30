@@ -45,4 +45,36 @@ describe("ConnectorsPage", () => {
     expect(screen.getByText("Connectors")).toBeInTheDocument();
     expect(screen.getByTestId("new-connector-link")).toBeInTheDocument();
   });
+
+  it("counts error connectors in the header and links to the wait (REQ-048)", async () => {
+    const connectors = [
+      { id: "c-h", name: "HarborPMS", state: "error", health_status: "healthy", base_url: "http://x", active_release_id: "r1", credential_ref: "K", target_entities: [], runtime_target: {}, vendor_docs_ref: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { id: "c-a", name: "AtlasPMS", state: "working", health_status: "healthy", base_url: "http://y", active_release_id: "r2", credential_ref: "K", target_entities: [], runtime_target: {}, vendor_docs_ref: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    ];
+    mockedUseSWR
+      .mockReturnValueOnce({ data: connectors, error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: null, error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: {}, error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: [], error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>);
+    render(<ConnectorsPage />);
+    await waitFor(() => expect(screen.getByTestId("connectors-headline")).toBeInTheDocument());
+    expect(screen.getByTestId("connectors-headline")).toHaveTextContent("1 waiting for you.");
+    expect(screen.getByTestId("connectors-waiting-link").getAttribute("href")).toBe("/connectors/c-h");
+  });
+
+  it("says nothing is waiting when no connector is in error (REQ-048)", async () => {
+    const connectors = [
+      { id: "c-a", name: "AtlasPMS", state: "working", health_status: "healthy", base_url: "http://y", active_release_id: "r2", credential_ref: "K", target_entities: [], runtime_target: {}, vendor_docs_ref: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    ];
+    mockedUseSWR
+      .mockReturnValueOnce({ data: connectors, error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: null, error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: {}, error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>);
+    render(<ConnectorsPage />);
+    await waitFor(() => expect(screen.getByTestId("connectors-headline")).toBeInTheDocument());
+    expect(screen.getByTestId("connectors-headline")).toHaveTextContent("nothing waiting for you.");
+    expect(screen.queryByTestId("connectors-waiting-link")).not.toBeInTheDocument();
+  });
 });

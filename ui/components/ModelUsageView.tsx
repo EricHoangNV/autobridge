@@ -21,8 +21,13 @@ type Props = {
   modelUsage: ModelUsage | null | undefined;
   title?: string;
   compact?: boolean;
-  /** Frontier budget the counter is measured against (default 40,000). */
-  budget?: number;
+  /**
+   * Frontier budget the counter is measured against (REQ-048 item 6): the
+   * budget that actually applies to the repair (the L3 cap, one source of
+   * truth), passed by the repair page from the row/ledger. Null/undefined
+   * hides the budget clause instead of inventing a default.
+   */
+  budget?: number | null;
   /** Live display value for the big counter (the L3 tick); defaults to the final total. */
   liveFrontierTokens?: number | null;
   /** True while the repair is still climbing: the counter is "so far" and the zero badge stays hidden. */
@@ -42,7 +47,7 @@ function formatInt(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-export function ModelUsageView({ modelUsage, title, compact, budget = 40000, liveFrontierTokens = null, pending = false }: Props) {
+export function ModelUsageView({ modelUsage, title, compact, budget = null, liveFrontierTokens = null, pending = false }: Props) {
   if (!modelUsage || Object.keys(modelUsage).length === 0) {
     return (
       <div data-testid="model-usage-empty" className="border border-dashed border-rule px-4 py-4 text-center text-sm text-ink-2">
@@ -84,7 +89,8 @@ export function ModelUsageView({ modelUsage, title, compact, budget = 40000, liv
         {formatInt(shownFrontier)}
       </div>
       <p className="repair-tok-l num">
-        {pending ? "frontier tokens so far" : (title ?? "frontier tokens")} of a {formatInt(budget)} budget
+        {pending ? "frontier tokens so far" : (title ?? "frontier tokens")}
+        {typeof budget === "number" && Number.isFinite(budget) && budget > 0 ? ` of a ${formatInt(budget)} budget` : ""}
       </p>
 
       {/* Zero-frontier badge (important for W4/W6: known repairs show 0 frontier).

@@ -2544,6 +2544,8 @@ export interface components {
             attempts?: components["schemas"]["RungAttemptOut"][];
             /** Decision */
             decision: string;
+            /** Frontier Budget */
+            frontier_budget?: number | null;
             /**
              * Frontier Tokens
              * @default 0

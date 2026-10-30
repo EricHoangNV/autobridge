@@ -160,7 +160,7 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage: _modelUsa
             className={needs ? "crow needs" : "crow"}
           >
             <div className="name">
-              <Link href={`/connectors/${encodeURIComponent(c.id)}`}>{c.name}</Link>
+              <Link href={`/connectors/${encodeURIComponent(c.id)}`} title={c.name}>{c.name}</Link>
               <code>
                 {c.id.slice(0, 8)} · {c.base_url}
               </code>
@@ -222,11 +222,16 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage: _modelUsa
             </div>
             <div className="cspark">
               <span className="clbl">Model tokens, per repair</span>
-              <Sparkline
-                values={tokenSeries}
-                label={repairs.length ? `frontier tokens for ${c.name}` : `no repairs for ${c.name} yet`}
-              />
-              <p className="num">
+              {/* REQ-048 item 4: one repair is a number, not a chart — a
+                  lone bar fills the cell and reads as a glitch. Bars only
+                  for 2+ repairs. */}
+              {repairs.length > 1 ? (
+                <Sparkline
+                  values={tokenSeries}
+                  label={repairs.length ? `frontier tokens for ${c.name}` : `no repairs for ${c.name} yet`}
+                />
+              ) : null}
+              <p className="num" data-testid={`connector-tokens-${c.id}`}>
                 {repairs.length ? (
                   <>
                     <b>{tokenTotal.toLocaleString()}</b> in {repairs.length} repair{repairs.length === 1 ? "" : "s"}
