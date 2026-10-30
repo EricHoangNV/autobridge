@@ -570,6 +570,59 @@ def test_run_build_handler_refusal_records_no_release(tmp_path: Path) -> None:
     engine.dispose()
 
 
+def test_run_build_handler_framed_build_sets_edge_runtime(tmp_path: Path) -> None:
+    """REQ-050 item 6: the engine decides the runtime from the docs.
+
+    A UI-built connector carries no runtime choice (local_process
+    default); a framed/FIAS docs build flips the record to edge (the
+    on-premise edge agent, via the relay) so link snapshots and the PABX
+    panel work. An HTTP docs build leaves the record on local_process.
+    """
+    from autobridge.control.models import Connector as _Conn
+
+    fias_docs = (REPO_ROOT / "simulators" / "docs" / "fias-pabx.md").read_text()
+    SessionLocal, engine = _sessions(tmp_path)
+    try:
+        with SessionLocal() as s:
+            conn = _Conn(
+                name="PABX edge",
+                base_url="edge-relay://queue/fias-commands",
+                credential_ref="EDGE_TOKEN",
+                target_entities=["FolioCharge"],
+                runtime_target={"kind": "local_process"},
+            )
+            s.add(conn)
+            s.commit()
+            cid = conn.id
+        runner = JobRunner(SessionLocal, handlers={"build": run_build_handler})
+        runner.submit_build(
+            cid,
+            inputs={"docs_text": fias_docs, "docs_source": "fias-pabx.md", "spec_vocabulary": "v3"},
+        )
+        runner.run_until_empty()
+        with SessionLocal() as s:
+            conn = s.get(_Conn, cid)
+            assert conn is not None
+            assert conn.runtime_target == {"kind": "edge"}
+            br = s.query(BuildRun).filter_by(connector_id=cid).first()
+            assert br is not None and br.result["success"] is True
+            assert br.result.get("release_id")
+
+        # HTTP docs keep the cloud default.
+        cid2 = _connector_id(SessionLocal)
+        runner.submit_build(
+            cid2,
+            inputs={"docs_text": HARBOR_MD, "docs_source": "harbor.md", "spec_vocabulary": "v1"},
+        )
+        runner.run_until_empty()
+        with SessionLocal() as s:
+            conn2 = s.get(_Conn, cid2)
+            assert conn2 is not None
+            assert conn2.runtime_target in ({}, {"kind": "local_process"})
+    finally:
+        engine.dispose()
+
+
 # ---------------------------------------------------------------------------
 # REQ-027: wire-shape probe (observed_wire_keys)
 # ---------------------------------------------------------------------------

@@ -406,8 +406,7 @@ describe("NewConnectorForm", () => {
     expect(screen.getByTestId("radio-vocabulary-v3")).toBeInTheDocument();
   });
 
-  it("names the documented totals check on the draft stage (REQ-049)", async () => {
-    mockResponses([
+  it("names the documented totals check on the draft stage (REQ-049)", async () => {    mockResponses([
       simsRoute(),
       { match: "/connectors/conn-p/build", json: { build_run_id: "bp", job_id: "jp" } },
       { match: "/connectors", json: { id: "conn-p" } },
@@ -442,6 +441,132 @@ describe("NewConnectorForm", () => {
       expect(screen.getByTestId("build-stage-draft")).toHaveTextContent(
         "check added from the docs: totals must match meta.gross_sum",
       ),
+    );
+  });
+
+  it("sends no runtime choice; the engine's decision reads cloud for HTTP docs (REQ-050)", async () => {
+    mockResponses([
+      simsRoute(),
+      { match: "/connectors/conn-rt/build", json: { build_run_id: "brt", job_id: "jrt" } },
+      { match: "/connectors", json: { id: "conn-rt" } },
+      { match: "/jobs/", json: { state: "succeeded" } },
+      {
+        match: "/runs/",
+        json: {
+          kind: "build",
+          run: {
+            inputs: { source: "docs" },
+            draft_spec: {
+              spec_version: 2,
+              connector: { id: "meridianpms", vendor: "meridianpms" },
+              source: { base_url: "http://sim-meridian:8000" },
+              operations: { list_orders: { method: "POST" } },
+            },
+            ladder_trace: [{ stage: "classify" }],
+            result: { success: true, verified: true, release_id: "rel-rt" },
+            model_usage: {},
+          },
+        },
+      },
+    ]);
+
+    render(<NewConnectorForm />);
+    typeInto(screen.getByTestId("input-name"), "MeridianPMS");
+    typeInto(screen.getByTestId("input-base-url"), "http://sim-meridian:8000");
+    typeInto(screen.getByTestId("input-docs-text"), "docs");
+    fireEvent.click(screen.getByTestId("submit-build"));
+
+    await waitFor(() => expect(screen.getByTestId("submit-success")).toBeInTheDocument());
+
+    const createBody = JSON.parse(findCall("/connectors")[1].body as string);
+    expect(createBody).not.toHaveProperty("runtime_target");
+    expect(screen.getByTestId("build-runtime-decision").textContent).toContain("runs: cloud");
+  });
+
+  it("shows each vocabulary version's release note (REQ-050)", () => {
+    render(<NewConnectorForm />);
+    expect(screen.getByTestId("radio-vocabulary-v1").parentElement?.textContent).toContain(
+      "REST reads: GET with headers or basic auth",
+    );
+    expect(screen.getByTestId("radio-vocabulary-v2").parentElement?.textContent).toContain(
+      "request bodies and joins (POST-style APIs)",
+    );
+    expect(screen.getByTestId("radio-vocabulary-v3").parentElement?.textContent).toContain(
+      "event streams over TCP (on-premise devices)",
+    );
+  });
+
+  it("builds the PABX live from its spec: no base-URL typing, no runtime choice, edge decision (REQ-050)", async () => {
+    const fiasDocs = "# FIAS PABX interface";
+    mockResponses([
+      {
+        match: "/demo/simulators",
+        json: {
+          simulators: [
+            {
+              id: "sim-fias-pabx",
+              display_name: "FIAS PABX",
+              docs_source: "simulators/docs/fias-pabx.md",
+              developers_url: "http://localhost:8118/developers",
+            },
+          ],
+        },
+      },
+      {
+        match: "/demo/docs",
+        json: {
+          target: "sim-fias-pabx",
+          display_name: "FIAS PABX",
+          docs_source: "simulators/docs/fias-pabx.md",
+          characters: fiasDocs.length,
+          docs_text: fiasDocs,
+        },
+      },
+      { match: "/connectors/conn-fias/build", json: { build_run_id: "bf", job_id: "jf" } },
+      { match: "/connectors", json: { id: "conn-fias" } },
+      { match: "/jobs/", json: { state: "succeeded" } },
+      {
+        match: "/runs/",
+        json: {
+          kind: "build",
+          run: {
+            inputs: { source: "simulators/docs/fias-pabx.md" },
+            draft_spec: {
+              spec_version: 3,
+              connector: { id: "fiaspabx", vendor: "PABX edge", runtime_target: "edge" },
+              source: { base_url: "fias://listen:8000", protocol: "fias_tcp" },
+              operations: {},
+            },
+            ladder_trace: [{ stage: "classify" }],
+            result: { success: true, verified: true, release_id: "rel-f" },
+            model_usage: {},
+          },
+        },
+      },
+    ]);
+
+    render(<NewConnectorForm />);
+    await waitFor(() => expect(screen.getByTestId("input-sim-docs")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("input-sim-docs"), { target: { value: "sim-fias-pabx" } });
+
+    await waitFor(() => expect(screen.getByTestId("edge-runtime-note")).toBeInTheDocument());
+    // No base-URL typing for the PABX on camera.
+    expect(screen.queryByTestId("input-base-url")).not.toBeInTheDocument();
+    // Event docs need v3: the picker moves off the v1 default.
+    expect((screen.getByTestId("radio-vocabulary-v3") as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(screen.getByTestId("submit-build"));
+    await waitFor(() => expect(screen.getByTestId("submit-success")).toBeInTheDocument());
+
+    const createBody = JSON.parse(findCall("/connectors")[1].body as string);
+    expect(createBody.name).toBe("PABX edge");
+    expect(createBody.base_url).toBe("edge-relay://queue/fias-commands");
+    expect(createBody).not.toHaveProperty("runtime_target");
+    const buildBody = JSON.parse(findCall("/connectors/conn-fias/build")[1].body as string);
+    expect(buildBody.docs_text).toBe(fiasDocs);
+    expect(buildBody.spec_vocabulary).toBe("v3");
+    expect(screen.getByTestId("build-runtime-decision").textContent).toContain(
+      "runs: on-premise edge agent, via the relay",
     );
   });
 });

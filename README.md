@@ -84,14 +84,17 @@ make local-up                  # or: make up (Docker). Wait for "all services re
 make demo-reset && make demo-seed
 ```
 
-Open `http://localhost:8107` and wait until every connector shows
-● Working ("last sync N s ago" ticking underneath). The seed leaves three
-connectors `working`, 0 model tokens, nothing waiting
-(`make demo-seed` fails loud otherwise). Each block below is one
+Open `http://localhost:8107` and wait until the connector shows
+● Working ("last sync N s ago" ticking underneath). The seed leaves one
+connector (AtlasPMS) `working`, 0 model tokens, nothing waiting
+(`make demo-seed` fails loud otherwise). Meridian and the PABX edge
+connector are built live in decks 6 and 7. Each block below is one
 command, then watch (deck order, `docs/demo.md`):
 
 - **Deck 1 — What AutoBridge knows.** Open `/knowledge` (top bar): vocabulary
-  v1/v2/v3 with "used by" per version, and any learned fixes with
+  v1/v2/v3 with "used by" per version (after the seed: AtlasPMS under v1;
+  Meridian lands under v2 and the PABX under v3 as decks 6 and 7 build
+  them), and any learned fixes with
   "reused N×". The Decisions section below lists every operator decision
   newest first (approvals, business decisions, denies, rollbacks).
   Back on `/connectors`, AtlasPMS is the reusable
@@ -113,8 +116,7 @@ command, then watch (deck order, `docs/demo.md`):
   probes → result → release — including the line "check added from the
   docs: totals must match `meta.gross_sum`". The new connector's page
   shows its spec (with the totals check), releases and sync runs,
-  ● Working. The refused v1 / working v2 pair for
-  Meridian is already on its connector page from the seed.
+  ● Working. Deck 6 below builds Meridian the same way (v1 first).
 - **Deck 5 — Break Harbor right after.** `make demo-break
   SCENARIO=gross_to_net TARGET=harbor` → the scheduled sync Degrades on
   `money_invariant` (the wiki-built release carries the check):
@@ -129,18 +131,25 @@ command, then watch (deck order, `docs/demo.md`):
   and watch it stay ■ Error. The instrumented step-4 climb in
   `make demo` runs the same inputs for the printed derivation; it is
   recorded as a second row only when the break's L3 was skipped.
-- **Deck 6 — New kind of API.** Meridian's page shows the refused v1 build with
-  its reason and v2 in use. `make demo-break
-  SCENARIO=meridian_cursor_renamed` → fix at L1 → **Approve** → Working.
-- **Deck 7 — On-premise PABX.** Open the PABX edge connector page (link state,
-  postings arriving, layout v3). `make demo-break
-  SCENARIO=fias_record_layout_change` → the link drops and re-handshakes
-  on the new layout (TM, CX announced), postings resume, the connector
-  stays Working — the edge agent absorbs it, no approval; the L1
-  `rename_field` (TA → TM) patch itself is proven in-process by `make
-  demo` step 8. `make demo-break SCENARIO=agent_restart_inflight` →
-  after `make demo`, the panel's restart line reads
-  "lost 0 · duplicated 0".
+- **Deck 6 — New kind of API.** Open `/connectors/new`, pick the Meridian
+  docs, keep vocabulary v1 and **Build**: the build is refused on screen
+  with the engine's named reason (POST with a JSON body and body-field
+  auth are not expressible in ConnectorSpec v1) — no release, 0 model
+  calls, and the attempt stays recorded. Build the same docs with v2:
+  release r1, first sync Complete, MeridianPMS ● Working. The connector
+  page shows both attempts (v1 refused with its reason, v2 in use) and
+  the result carries the engine's runtime decision ("runs: cloud").
+- **Deck 7 — On-premise PABX.** Open `/connectors/new`, pick the FIAS PABX
+  docs: there is no base URL to type and no runtime to choose — the
+  relay address is fixed and vocabulary v3 is suggested, because the
+  engine runs framed docs on the on-premise edge agent (the result says
+  "runs: on-premise edge agent, via the relay"). **Build**: release r1,
+  the edge agent connects, postings flow, PABX edge ● Working. Then
+  `make demo-break SCENARIO=fias_link_resync` → the PABX panel shows the
+  link go down, the agent re-handshakes (LS/LD/LR/LA), the link comes
+  back — the relay log still holds every pre-break posting exactly once
+  (nothing lost, nothing duplicated) — and the connector stays ● Working.
+  No repair, no Approve.
 - **Deck 8 — Proof.** `make demo` (terminal-only, 8 steps) approves through
   the API and lands everything in the database exactly like the clicks
   do; `experiments/scorecard.md` and the benchmark rehearsals carry the

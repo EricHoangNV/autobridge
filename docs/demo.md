@@ -29,15 +29,16 @@ Related: [Architecture](architecture.md) §9 (control API + UI),
 This is the UI-first version of the script above: the presenter runs one
 command per scenario in a terminal while the browser (`http://localhost:8107`)
 reacts by itself. Start with `make local-up` (or `make up`), then
-`make demo-reset && make demo-seed`, and wait until every connector shows
-● Working with "last sync N s ago" ticking. Every state badge is colour +
+`make demo-reset && make demo-seed`, and wait until the seed connector
+shows ● Working with "last sync N s ago" ticking. Every state badge is colour +
 shape + word, never colour alone; the Repairs list polls every 2 s, so new
 repairs appear at the top without a reload. The presenter clicks every
 approval — nothing auto-applies, so every transition stays on screen.
 
 - **Deck 1 — What AutoBridge knows.** Point at `/knowledge` (top bar): vocabulary
-  v1, v2, v3 rows each list "used by" their seed connector (atlaspms v1
-  with no refusal, meridianpms v2 with v1 refused, PABX edge v3), the
+  v1, v2, v3 rows each list "used by" their connector — after the seed
+  that is atlaspms under v1; meridianpms lands under v2 (v1 refused) and
+  the PABX edge connector under v3 as decks 6 and 7 build them live. The
   right-hand column fills with learned fixes as repairs are approved
   ("learned from approval … by …", "reused N×"), and the Decisions
   section below lists every operator decision newest first (approvals
@@ -113,28 +114,35 @@ approval — nothing auto-applies, so every transition stays on screen.
   break's L3 was skipped, `make demo` step 4 additionally records its
   instrumented climb (same inputs) as the documented fallback row; when
   the break attempted L3, no second row is written.
-- **Deck 6 — New kind of API.** Meridian's connector page shows the refused v1
-  build with its reason and v2 in use (step 7). Break
-  `meridian_cursor_renamed`, watch the L1 fix land, **Approve**, Working.
-- **Deck 7 — On-premise PABX.** The PABX edge connector page carries the PABX
-  panel: link state, postings arriving (count rising, last posting
-  time), current record layout (v3, announced in the handshake), and the
-  last restart result. Break `fias_record_layout_change`: the link drops
-  and the agent re-handshakes on the new shape (TM renamed, CX added —
-  point at the layout line), postings resume, the connector stays
-  Working. No repair lands and none is needed: the edge agent absorbs
-  the firmware change (catalogue kind "agent"); the L1 `rename_field`
-  (TA → TM) patch is proven in-process by step 8, which also records
-  the restart line. Break `agent_restart_inflight`, then compare with
-  the    recorded row: "lost 0 · duplicated 0".
+- **Deck 6 — New kind of API.** Build Meridian live, twice, from the same
+  docs: on `/connectors/new` pick the Meridian docs, keep vocabulary v1
+  and Build — the build is refused on screen with the engine's named
+  reason (no POST with a body in ConnectorSpec v1), no release, 0 model
+  calls, the attempt recorded. Build the same docs with v2: release r1,
+  first sync Complete, MeridianPMS ● Working. The connector page shows
+  both attempts (v1 refused with its reason, v2 in use), `/knowledge`
+  lists Meridian under v2 with v1 refused, and the result carries the
+  engine's runtime decision ("runs: cloud"). Deck 6 has no break.
+- **Deck 7 — On-premise PABX.** Build the PABX live from its spec: on
+  `/connectors/new` pick the FIAS PABX docs — no base URL to type, no
+  runtime to choose: the relay address is fixed, vocabulary v3 is
+  suggested, and the result says "runs: on-premise edge agent, via the
+  relay" (the engine decides from the docs). Build: release r1, the
+  edge agent connects, postings flow, PABX edge ● Working. Then
+  `make demo-break SCENARIO=fias_link_resync` on the live-built
+  connector: the PABX panel shows the link go down, the agent
+  re-handshakes (LS/LD/LR/LA), the link comes back — the relay log still
+  holds every pre-break posting exactly once (nothing lost, nothing
+  duplicated) — and the connector
+  stays ● Working (or is back within one tick). No repair, no Approve.
 - **Deck 8 — Proof.** The terminal `make demo` runs all eight steps
   through the API against the same seeds and prints the release ids it
   used; `experiments/scorecard.md` and the benchmark rehearsals carry
   the head-to-head numbers (steps 5–6).
 
 Retakes are `make demo-heal` (clears faults, keeps connectors) and
-`make demo-reset && make demo-seed` (the opening frame: three connectors
-— Atlas, Meridian, PABX edge — since Harbor is built live in deck 4).
+`make demo-reset && make demo-seed` (the opening frame: AtlasPMS only —
+Harbor is built live in deck 4, Meridian in deck 6, the PABX in deck 7).
 The terminal
 `make demo` approves the same repairs through the API; everything it
 does lands in the database exactly like the clicks do (REQ-030), so the
@@ -315,34 +323,37 @@ Every step above is reproducible:
 
 ```
 make demo    # eight steps via the control API; output is the same evidence the UI renders
+## 8. On-premise PABX — built live, the link drops and resyncs with nothing lost (REQ-022, REQ-050)
 
-## 8. On-premise PABX — the agent keeps working through a firmware change (REQ-022)
-
-Postings flow from the FIAS PABX through the on-premise edge agent; a firmware
-update announces a new `PS` layout (`TA` renamed to `TM`, `CX` added, fields
-reordered). The new shape does not fail the run — it corrupts it silently (the
-amount path reads nothing) — so the drift is detected from the handshake `LR`
-announcement, not from the sync outcome. Detection plus the `rename_field` L1
-rule propose the mapping patch through the ladder (L0 miss → L1, 0 model calls);
-the repaired mapping syncs the new shape `Complete` with `Decimal` amounts. A
-restart moment replays the same durable outbox: identical idempotency keys, so
-each charge lands once — 0 lost, 0 duplicated.
+The FIAS PABX docs (`simulators/docs/fias-pabx.md`, framed interface over
+TCP: STX/ETX framing, link handshake, PS postings answered with PA) build
+a connector live from the build page with `spec_vocabulary: v3` and no
+runtime choice — the engine runs framed docs on the on-premise edge
+agent, and the result says "runs: on-premise edge agent, via the relay".
+The edge agent connects, postings flow through the relay outbox, the
+connector syncs `Complete`, money stays `Decimal` throughout, and a
+redelivered durable outbox carries identical idempotency keys, so each
+charge lands once — 0 lost, 0 duplicated.
 
 ```
-POST /demo/inject-fault                { target: sim-fias-pabx, scenario_id: fias_record_layout_change, seed }
-GET  /demo/simulators                   → FIAS PABX row shows the active fault; the other rows stay green
-POST /repairs (auto) or ladder         → L0 miss → L1 rename_field → JSON Patch (amount path $.TA → $.TM)
-POST /verify { spec, scenario_id }     → verdict pass (visible), regression pass
-GET  /metrics/model-usage?run_id=…     → frontier_tokens 0 (L0/L1 only); the per-run table reads
-                                         "resolved L1 | 0 calls | 0 small / 0 frontier"
+Build a connector → FIAS PABX docs → vocabulary v3 → Build
+  → release r1 · runs: on-premise edge agent, via the relay
+  → edge agent connects → postings flow → ● Working
+make demo-break SCENARIO=fias_link_resync   (on the live-built connector)
+GET  /edge/agents                            → link down, then back up (LS/LD/LR/LA re-handshake)
+GET  /edge/postings                          → every pre-break key still logged exactly once (0 lost, 0 duplicated)
+GET  /connectors/{id}                        → ● Working; GET /drift, /repairs → nothing (no rung ran)
 ```
 
-Renders in the simulators index (live up/down, active fault, connectors using
-the PABX) and in `/repairs/[id]` (handshake evidence, ladder badges L0→L1, old/
-new mapping diff, verifier verdict). Money stays `Decimal` throughout; the agent
-ACKs the PABX after a durable local write, so the link never stalls on the cloud.
-Live, step 8 also builds the committed FIAS docs through the control API with
-`spec_vocabulary: v3`, so `/knowledge` lists the `PABX edge` connector under v3.
+Renders in the PABX panel on the connector page (link state, postings
+arriving, record layout) and in `/knowledge` (`PABX edge` under v3).
+Live, step 8 ensures the connector, builds the committed FIAS docs with
+`spec_vocabulary: v3`, asserts the engine's edge runtime on the record,
+baseline-syncs `Complete`, then drops and resyncs the link and asserts
+the counts. The firmware layout change (`fias_record_layout_change`)
+and the agent restart (`agent_restart_inflight`) stay in the catalogue
+but are not part of the demo script (layout-change live repair is
+REQ-051, deferred).
 ```
 
 ## 7. New API style — Meridian refuses safely, then connects (REQ-020)
@@ -402,7 +413,7 @@ has merged and its e2e test is green.
 | `offset_to_cursor` | both | L1 rule patch, verified | L1 | 0 | REQ-023 |
 | `page_to_cursor` | both | L1 rule patch, verified; reusable via L0 (step 3) | L1 | 0 | REQ-019/021 |
 | `cursor_repeat_token` | both | L1 rule + repeated_cursor loop guard | L1 | 0 | REQ-023 |
-| `fias_record_layout_change` | fias | Handshake detect + L1 mapping patch (step 8) | L1 | 0 | REQ-022 |
+| `fias_record_layout_change` | fias | Handshake detect + L1 mapping patch (catalogue only; live repair REQ-051 deferred) | L1 | 0 | REQ-022 |
 | `gross_to_net` | both | Deck 4 builds Harbor from its wiki (money check from the docs), deck 5 breaks it → full climb L0→L4; the model asks and optionally proposes (step 4 approve → business decision, deny → error) | L4 (via L0,L1,L2,L3) | 1 (replay: frontier; L2 skipped, one surviving reading) | REQ-021/023 |
 | `status_vocab_change` | both | Escalate, never guess a mapping | L4 | 0 | REQ-023 |
 | `tz_boundary_shift` | both | Degraded + operator question | L4 | 0 | REQ-023 |
@@ -410,9 +421,9 @@ has merged and its e2e test is green.
 | `invalid_patch_trap` | both | L3 decoy proposal rejected → L4 (step 4) | L4 (via L0,L1,L2,L3) | 2 (replay: 1 small + 1 frontier) | REQ-021/023 |
 | `meridian_cursor_renamed` | meridian | L1 cursor path patch, verified | L1 | 0 | REQ-020 |
 | `meridian_state_renamed` | meridian | L1 rename_field patch, verified | L1 | 0 | REQ-020 |
-| `fias_link_resync` | fias | Re-handshake, 0 lost | n/a (agent) | 0 | REQ-022 |
+| `fias_link_resync` | fias | Re-handshake, 0 lost (deck 7 live break, step 8) | n/a (agent) | 0 | REQ-022 |
 | `fias_ack_timeout` | fias | Timeout reported, link survives | n/a (agent) | 0 | REQ-022 |
-| `agent_restart_inflight` | fias | 0 lost, 0 duplicated (step 8) | n/a (agent) | 0 | REQ-022 |
+| `agent_restart_inflight` | fias | 0 lost, 0 duplicated (catalogue only) | n/a (agent) | 0 | REQ-022 |
 | `fias_duplicate_records` | fias | Duplicates land once (idempotency) | n/a (agent) | 0 | REQ-022 |
 | `fias_oversize_frame` | fias | Session closes and redials | n/a (agent) | 0 | REQ-022 |
 | `fias_record_flood` | fias | Session closes and redials | n/a (agent) | 0 | REQ-022 |

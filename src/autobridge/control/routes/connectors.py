@@ -169,8 +169,7 @@ def get_connector(connector_id: str, db: Session = Depends(get_db)) -> Connector
     conn = db.get(Connector, connector_id)
     if conn is None:
         raise HTTPException(status_code=404, detail=f"Connector {connector_id!r} not found")
-    base = _connector_to_out(conn, db)
-    # Releases
+    base = _connector_to_out(conn, db)    # Releases
     releases = db.execute(
         select(ConnectorRelease).where(ConnectorRelease.connector_id == connector_id).order_by(ConnectorRelease.version)
     ).scalars().all()
@@ -201,9 +200,38 @@ def get_connector(connector_id: str, db: Session = Depends(get_db)) -> Connector
     deps = db.execute(select(DependencyRegistration).where(DependencyRegistration.connector_id == connector_id)).scalars().all()
     dep_outs = [_dep_to_out(d) for d in deps]
 
+    # REQ-050 item 4: every docs build attempt, refused ones included
+    # (they persist no release but stay recorded on the BuildRun).
+    from autobridge.control.models import BuildRun as _BuildRun  # noqa: PLC0415
+    from autobridge.control.schemas import BuildAttemptOut as _BuildAttemptOut  # noqa: PLC0415
+
+    build_rows = db.execute(
+        select(_BuildRun).where(_BuildRun.connector_id == connector_id).order_by(_BuildRun.created_at)
+    ).scalars().all()
+    attempt_outs = [
+        _BuildAttemptOut(
+            id=b.id,
+            spec_vocabulary=str((b.inputs or {}).get("spec_vocabulary", "") or ""),
+            success=bool(isinstance(b.result, dict) and b.result.get("success")),
+            degradation_reason=(
+                str(b.result.get("degradation_reason"))
+                if isinstance(b.result, dict) and b.result.get("degradation_reason")
+                else None
+            ),
+            release_id=(
+                str(b.result.get("release_id"))
+                if isinstance(b.result, dict) and b.result.get("release_id")
+                else None
+            ),
+            created_at=b.created_at,
+        )
+        for b in build_rows
+    ]
+
     return ConnectorDetail(
         **base.model_dump(),
         releases=release_outs,
+        builds=attempt_outs,
         last_sync=last_sync,
         open_drift=open_drift_out,
         dependencies=dep_outs,

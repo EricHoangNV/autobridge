@@ -640,7 +640,8 @@ def test_seed_creates_no_harbor() -> None:
     from bench.demo_seed import SEED_CONNECTORS, SEED_NAMES  # noqa: PLC0415
 
     assert "harborpms" not in SEED_NAMES
-    assert sorted(SEED_NAMES) == ["PABX edge", "atlaspms", "meridianpms"]
+    # REQ-050: decks 6/7 build Meridian and the PABX live; the seed is Atlas only.
+    assert sorted(SEED_NAMES) == ["atlaspms"]
     assert all("reference_spec" not in s for s in SEED_CONNECTORS)
 
 

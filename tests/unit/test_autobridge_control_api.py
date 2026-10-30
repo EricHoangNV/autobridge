@@ -193,6 +193,41 @@ def test_get_connector_not_found(client: Any) -> None:  # type: ignore[no-untype
     assert r.status_code == 404
 
 
+def test_connector_detail_lists_build_attempts_incl_refused(client: Any) -> None:  # type: ignore[no-untyped-def]
+    """REQ-050 item 4: the detail shows both attempts — v1 refused with its
+    reason (no release) and v2 in use."""
+    from pathlib import Path as _Path
+
+    meridian_docs = (_Path(__file__).resolve().parents[2] / "simulators" / "docs" / "meridian-openapi.yaml").read_text(
+        encoding="utf-8"
+    )
+    c = _create_connector(
+        client,
+        name="meridianpms",
+        base_url="http://sim-meridian:8000",
+        credential_ref="MERIDIAN_API_KEY",
+        target_entities=["Reservation", "FolioCharge"],
+    )
+    # The build page sends no runtime choice (REQ-050 item 6).
+    assert c["runtime_target"] == {"kind": "local_process"}
+    r1 = client.post(f"/connectors/{c['id']}/build", json={"docs_text": meridian_docs, "spec_vocabulary": "v1"})
+    assert r1.status_code == 200, r1.text
+    r2 = client.post(f"/connectors/{c['id']}/build", json={"docs_text": meridian_docs, "spec_vocabulary": "v2"})
+    assert r2.status_code == 200, r2.text
+    detail = client.get(f"/connectors/{c['id']}").json()
+    attempts = detail["builds"]
+    assert len(attempts) == 2, attempts
+    assert [a["spec_vocabulary"] for a in attempts] == ["v1", "v2"]
+    assert attempts[0]["success"] is False
+    assert attempts[0]["release_id"] is None
+    assert "POST" in (attempts[0]["degradation_reason"] or "")
+    assert "ConnectorSpec v1" in (attempts[0]["degradation_reason"] or "")
+    assert attempts[1]["success"] is True
+    assert attempts[1]["release_id"]
+    # HTTP docs stay on the cloud runtime.
+    assert detail["runtime_target"] == {"kind": "local_process"}
+
+
 def test_dependency_create_and_list(client: Any) -> None:  # type: ignore[no-untyped-def]
     c = _create_connector(client)
     r = client.post(

@@ -163,6 +163,64 @@
         "title": "ApprovePreviewOut",
         "type": "object"
       },
+      "BuildAttemptOut": {
+        "description": "One docs build on a connector (REQ-050 item 4).\n\nRefused builds persist no release but stay recorded here, so the\nconnector page shows both attempts (e.g. Meridian v1 refused with its\nreason, v2 in use). Source of truth is the BuildRun row.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "degradation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degradation Reason"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "spec_vocabulary": {
+            "default": "",
+            "title": "Spec Vocabulary",
+            "type": "string"
+          },
+          "success": {
+            "default": false,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "BuildAttemptOut",
+        "type": "object"
+      },
       "BuildRequest": {
         "additionalProperties": true,
         "properties": {
@@ -562,6 +620,13 @@
           "base_url": {
             "title": "Base Url",
             "type": "string"
+          },
+          "builds": {
+            "items": {
+              "$ref": "#/components/schemas/BuildAttemptOut"
+            },
+            "title": "Builds",
+            "type": "array"
           },
           "created_at": {
             "format": "date-time",

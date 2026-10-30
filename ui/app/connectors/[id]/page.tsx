@@ -306,7 +306,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
           disabled={syncState === "sending"}
           className="btn quiet"
         >
-          {syncState === "sending" ? "Starting sync…" : "Sync now"}
+          {syncState === "sending" ? "Starting sync…" : "Sync now…"}
         </button>
         {syncMsg ? (
           <div
@@ -317,6 +317,49 @@ export default function ConnectorDetailPage({ params }: PageProps) {
           </div>
         ) : null}
       </div>
+
+      {/* REQ-050 item 4: every docs build attempt — refused builds persist
+          no release but stay recorded, so the page shows both attempts
+          (e.g. Meridian v1 refused with its reason, v2 in use). */}
+      {(detail as { builds?: Array<{
+        id: string;
+        spec_vocabulary?: string;
+        success?: boolean;
+        degradation_reason?: string | null;
+        release_id?: string | null;
+        created_at?: string | null;
+      }> }).builds?.length ? (
+        <section className="px-10 pt-4" aria-label="Build attempts">
+          <h2 className="sec">Builds</h2>
+          <ul data-testid="build-attempts" className="mt-2 list-none space-y-2 p-0">
+            {((detail as { builds?: Array<{
+              id: string;
+              spec_vocabulary?: string;
+              success?: boolean;
+              degradation_reason?: string | null;
+              release_id?: string | null;
+            }> }).builds ?? []).map((b) => (
+              <li
+                key={b.id}
+                data-testid={`build-attempt-${b.id}`}
+                className="border border-rule bg-band px-4 py-2.5 text-sm"
+              >
+                <span className="font-mono font-bold">v{b.spec_vocabulary || "?"}</span>{" "}
+                {b.success ? (
+                  <span>
+                    connected{b.release_id ? ` · release ${b.release_id.slice(0, 8)}` : ""}
+                    {b.release_id === detail.active_release_id ? " (in use)" : ""}
+                  </span>
+                ) : (
+                  <span className="text-stop">
+                    refused{b.degradation_reason ? ` — ${b.degradation_reason}` : ""}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="cols">
         <div>

@@ -23,10 +23,9 @@ engine so ``make demo`` is reproducible anywhere:
    vocabulary v1 refuses cleanly (``Blocked``, named reason, 0 model
    calls); the same docs with vocabulary v2 bootstrap a connector that
    syncs ``Complete``.
-8. On-premise PABX (REQ-022 E) — FIAS postings flow through the edge
-   agent; a firmware layout change (``TA`` → ``TM``, ``CX`` added) is
-   detected from the handshake ``LR`` and repaired at L1 (0 model
-   calls); a restart replay loses and duplicates nothing.
+8. On-premise PABX (REQ-022 E, REQ-050 deck 7) — the FIAS docs build a
+   v3 edge connector live; a link drop (``fias_link_resync``) re-handshakes
+   with nothing lost and nothing duplicated, no repair, no approval.
 
 Trust boundaries (DIRECTIVES §2): this module never imports ``verifier`` or
 ``simulators``. The verifier is reached only over HTTP (``POST /verify``
@@ -2586,6 +2585,24 @@ def _step7_live(docs_text: str, base_url: str, calls: list[dict[str, Any]]) -> d
         profile.get("vocabulary") == "v2" and "v1" in (profile.get("refused_vocabularies") or []),
         f"meridianpms profile: {profile}",
     )
+    # The connector page shows both attempts (REQ-050 item 4): the v1
+    # refusal with its reason and no release, the v2 build in use.
+    attempts = _control_get_raw(base_url, f"/connectors/{connector_id}") or {}
+    attempt_rows = attempts.get("builds") if isinstance(attempts, dict) else None
+    vocabularies = [a.get("spec_vocabulary") for a in attempt_rows] if isinstance(attempt_rows, list) else []
+    _assert_live(
+        calls, "connector page shows the v1 refusal and the v2 build",
+        vocabularies == ["v1", "v2"],
+        f"connector builds: {attempt_rows}",
+    )
+    refused_rows = [a for a in attempt_rows if isinstance(a, dict) and a.get("spec_vocabulary") == "v1"] if isinstance(attempt_rows, list) else []
+    _assert_live(
+        calls, "v1 attempt refused with reason and no release",
+        bool(refused_rows) and refused_rows[0].get("success") is False
+        and not refused_rows[0].get("release_id")
+        and "POST" in str(refused_rows[0].get("degradation_reason") or ""),
+        f"v1 attempt: {refused_rows}",
+    )
     return {
         "connector_id": connector_id,
         "spec_vocabulary_refused": "v1",
@@ -2593,42 +2610,32 @@ def _step7_live(docs_text: str, base_url: str, calls: list[dict[str, Any]]) -> d
         "spec_vocabulary_release": "v2",
         "release_id": release_id,
         "knowledge_profile": profile,
+        "build_attempts": vocabularies,
     }
 
 
 def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
-    """On-premise PABX: firmware layout change → L1 mapping repair → postings flow.
+    """On-premise PABX — built live from its spec; the link drops and resyncs with nothing lost.
 
-    Postings flow on the announced v2 layout; a firmware update announces v3
-    (``TA`` renamed to ``TM``, ``CX`` added, fields reordered). The new shape
-    does not fail the run — it corrupts it silently (the amount path reads
-    nothing), so the drift is detected from the handshake ``LR``
-    announcement, not from the sync outcome. Detection plus the
-    ``rename_field`` L1 rule propose the mapping patch through the ladder
-    (L0 miss → L1, 0 model calls); the repaired mapping syncs the v3 shape
-    ``Complete`` with ``Decimal`` amounts. A restart moment replays the same
-    durable outbox: the idempotency keys are unchanged, so each charge
-    lands once — 0 lost, 0 duplicated.
+    The committed FIAS docs compile to a ``spec_version`` 3 spec
+    (framed/event vocabulary, ``fias_tcp`` protocol, on-premise edge
+    runtime) whose postings sync ``Complete`` with ``Decimal`` amounts. A
+    redelivered durable outbox carries identical idempotency keys, so each
+    charge lands once — 0 lost, 0 duplicated. Live (REQ-050 deck 7): the
+    PABX connector is built from its spec through the API with no runtime
+    choice — the engine runs framed docs on the on-premise edge agent —
+    then the link drop (``fias_link_resync``) shows the link go down, the
+    agent re-handshake (LS/LD/LR/LA), the link come back and postings
+    resume, with the connector ``Working`` throughout (or back within one
+    tick). No repair, no Approve: the agent absorbs the link failure. The
+    firmware layout change and the agent restart are not part of the demo
+    script (layout-change live repair is REQ-051, deferred); the L1 rename
+    proof stays in unit tests (``test_autobridge_drift_event_feeds``) and
+    ``test_fias_faults``.
     """
-    import yaml  # noqa: PLC0415
-
     from autobridge.discovery.bootstrap import build_draft_spec  # noqa: PLC0415
-    from autobridge.drift.classifier import classify  # noqa: PLC0415
-    from autobridge.drift.event_feeds import detect_feed_field_rename  # noqa: PLC0415
-    from autobridge.drift.signals import DriftSignal  # noqa: PLC0415
     from autobridge.edge.store import posting_key  # noqa: PLC0415
     from autobridge.engine.sync_run import execute_sync  # noqa: PLC0415
-    from autobridge.repair.controller import RepairController  # noqa: PLC0415
-    from autobridge.spec.patch import apply_patch  # noqa: PLC0415
-
-    fault = yaml.safe_load(FIAS_FAULT_PATH.read_text(encoding="utf-8"))
-    assert fault["id"] == "fias_record_layout_change", fault.get("id")
-    exp = fault["expected"]
-    assert "".join(FIAS_PS_LAYOUT_V3) == exp["announced_ps_layout"], "demo v3 layout must match the fault YAML"
-    assert exp["renamed_wire"] == {"TA": "TM"}, exp
-    assert exp["added_wire"] == ["CX"], exp
-    assert exp["repair"]["rung"] == 1, exp
-    assert exp["repair"]["frontier_tokens"] == 0, exp
 
     built = build_draft_spec(
         FIAS_DOCS_PATH.read_text(encoding="utf-8"),
@@ -2640,6 +2647,11 @@ def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
     assert built.draft_spec is not None
     spec = dict(built.draft_spec)
     assert spec.get("spec_version") == 3, spec.get("spec_version")
+    assert (spec.get("source", {}) or {}).get("protocol") == "fias_tcp", spec.get("source")
+    # The engine's runtime decision (REQ-050 item 6): framed docs run on
+    # the on-premise edge agent — the build page displays this, never a
+    # setting.
+    assert (spec.get("connector", {}) or {}).get("runtime_target") == "edge", spec.get("connector")
 
     base = {
         "RN": "101", "P#": "000417", "DA": "261028", "TI": "231504",
@@ -2653,64 +2665,20 @@ def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
         row.pop("TA" if tm else "TM")
         return [{fid: row[fid] for fid in layout if fid in row}]
 
-    # Postings flow on the v2 layout the connector was discovered against.
-    out = execute_sync(spec, None, feed_reader=_FiasFeed(shaped(FIAS_PS_LAYOUT_V2, tm=False), re_))
+    # Postings flow on the announced layout the connector was discovered against.
+    ps = shaped(FIAS_PS_LAYOUT_V2, tm=False)
+    out = execute_sync(spec, None, feed_reader=_FiasFeed(ps, re_))
     assert out["outcome"] == "Complete", out.get("unmet_criteria")
     assert out["canonical_records"]["FolioCharge"][0]["amount"] == Decimal("12.50")
-
-    # Firmware update on the wire: v3-shaped postings against the old mapping.
-    # The run still reports Complete — the amount silently reads nothing.
-    ps_v3 = shaped(FIAS_PS_LAYOUT_V3, tm=True)
-    stale = execute_sync(spec, None, feed_reader=_FiasFeed(ps_v3, re_))
-    assert stale["outcome"] == "Complete", stale.get("unmet_criteria")
-    assert stale["canonical_records"]["FolioCharge"][0]["amount"] is None
-
-    # Detect from the handshake announcement (real drift data, not the YAML).
-    call = dict(ps_v3[0])
-    samples = [call, {"RN": "102", "P#": "000418", "DA": "261028", "TI": "232000",
-                       "TM": "450", "DD": "", "DU": "", "SO": "MINI", "CX": "SNACK"}]
-    drift = detect_feed_field_rename(spec, "PS", FIAS_PS_LAYOUT_V3, samples)
-    assert drift["drift_found"] is True, drift
-    assert drift["missing_wire"] == ["TA"], drift.get("missing_wire")
-    assert (drift["rename"] or {}).get("new_path") == "$.TM", drift.get("rename")
-
-    signal = DriftSignal(
-        kind="types_changed", entity="FolioCharge", severity="medium",
-        message="PS layout drift from handshake LR",
-        details={"missing_wire": drift["missing_wire"], "added_wire": drift["added_wire"],
-                 "announced_layout": drift["announced_ids"]},
-        fingerprint_delta=drift["delta"],
-    )
-    classification = classify([signal])
-    controller = RepairController()
-    result = controller.handle(
-        spec=spec, drift_class=classification.drift_class, signals=[signal],
-        fingerprint_delta=drift["delta"], extra=drift["extra"],
-    )
-    assert result.decision == "propose", result.escalation_reason
-    assert result.rule_id == "rename_field", result.rule_id
-    assert result.candidate_patch == [
-        {"op": "replace", "path": "/entities/FolioCharge/fields/amount/path", "value": "$.TM"}
-    ], result.candidate_patch
-    rung_levels = [t["level"] for t in result.ladder_trace]
-    assert rung_levels == [0, 1], rung_levels
-    for key in ("calls", "frontier_tokens", "small_tokens"):
-        assert int(result.model_usage.get(key, 0)) == 0, f"known layout variant must cost 0 {key}"
-
-    # The repaired mapping syncs the new shape Complete, amounts exact.
-    new_spec = apply_patch(spec, result.candidate_patch)
-    fixed = execute_sync(new_spec, None, feed_reader=_FiasFeed(ps_v3, re_))
-    assert fixed["outcome"] == "Complete", fixed.get("unmet_criteria")
-    assert fixed["canonical_records"]["FolioCharge"][0]["amount"] == Decimal("12.50")
 
     # Restart without loss: the same durable outbox redelivered after a
     # restart carries identical idempotency keys, and the replay syncs the
     # same charges — each posting lands once downstream.
-    keys_before = sorted(posting_key("PS", r) for r in ps_v3)
-    assert len(set(keys_before)) == len(ps_v3), "outbox keys must already be unique"
-    replayed = execute_sync(new_spec, None, feed_reader=_FiasFeed([dict(r) for r in ps_v3], re_))
+    keys_before = sorted(posting_key("PS", r) for r in ps)
+    assert len(set(keys_before)) == len(ps), "outbox keys must already be unique"
+    replayed = execute_sync(spec, None, feed_reader=_FiasFeed([dict(r) for r in ps], re_))
     assert replayed["outcome"] == "Complete", replayed.get("unmet_criteria")
-    keys_after = sorted(posting_key("PS", r) for r in ps_v3)
+    keys_after = sorted(posting_key("PS", r) for r in ps)
     assert keys_after == keys_before
     assert replayed["canonical_records"]["FolioCharge"][0]["amount"] == Decimal("12.50")
 
@@ -2718,73 +2686,48 @@ def step8_onprem_pabx(seed: int, live: bool, base_url: str) -> dict[str, Any]:
     live_evidence: dict[str, Any] = {"mode": "in-process evidence only (no live connector)"}
     if live:
         live_evidence = _step8_live(seed, base_url, calls)
-    # REQ-030 item 3: the restart result persists as a row the PABX panel
-    # reads. The counts are the step's real idempotency-key comparison
-    # (durable outbox replayed across a restart: identical keys, each
-    # charge landing once); recording runs only against a live control
-    # plane, through the labelled demo endpoint.
-    recorded_restart: dict[str, Any] = {"mode": "not recorded (no live control plane)"}
-    if live and isinstance(live_evidence, dict) and live_evidence.get("connector_id"):
-        rec = _control_call(
-            base_url, "POST", "/demo/pabx-restart",
-            {
-                "connector_id": live_evidence["connector_id"],
-                "redelivered": len(ps_v3),
-                "lost": 0,
-                "duplicated": 0,
-                "unique_keys": len(set(keys_after)),
-            },
-        )
-        calls.append(rec)
-        _assert_live(
-            calls, "restart report recorded",
-            (rec.get("body") or {}).get("payload", {}).get("redelivered") == len(ps_v3),
-            f"pabx-restart: {rec}",
-        )
-        recorded_restart = {"recorded": True, "redelivered": len(ps_v3)}
     return _finish_step(
-        "On-premise PABX — firmware layout change repaired, restart loses nothing",
+        "On-premise PABX — built live, link drops and resyncs with nothing lost",
         {
             "seed": seed,
-            "fault": fault["id"],
-            "drift_class": fault["drift_class"],
-            "announced_layout": "".join(FIAS_PS_LAYOUT_V3),
-            "renamed_wire": exp["renamed_wire"],
-            "added_wire": exp["added_wire"],
+            "spec_vocabulary": "v3",
+            "spec_version": spec.get("spec_version"),
+            "protocol": "fias_tcp",
+            "runtime": "on-premise edge agent, via the relay",
+            "announced_layout": "".join(FIAS_PS_LAYOUT_V2),
             "baseline": {"layout": "v2", "outcome": out["outcome"], "amount": "12.50"},
-            "stale_mapping_reads": None,
-            "l1_rule": result.rule_id,
-            "patch": result.candidate_patch,
-            "repaired": {"layout": "v3", "outcome": fixed["outcome"], "amount": "12.50"},
-            "restart": {"redelivered": len(ps_v3), "unique_keys": len(set(keys_after)),
+            "restart": {"redelivered": len(ps), "unique_keys": len(set(keys_after)),
                         "lost": 0, "duplicated": 0},
             "money_type": "Decimal(2dp)",
             "model_usage_ledger": {"calls": 0, "small_tokens": 0, "frontier_tokens": 0},
-            "resolved_rung": "L1",
+            "resolved_rung": "n/a (agent)",
             "rung_attempts": [
-                {"rung": 0, "action": "knowledge_miss",
-                 "reason": "L0 miss: no known fix for fias+layout delta"},
-                {"rung": 1, "action": "rule_applied",
-                 "reason": "L1 rename_field precondition matched handshake delta (TA→TM); JSON Patch generated"},
+                {"rung": "build", "action": "connect",
+                 "reason": "FIAS docs compile to spec v3; the engine runs it on the edge agent"},
+                {"rung": "agent", "action": "resync",
+                 "reason": "link drop re-handshakes (LS/LD/LR/LA); postings resume, 0 lost, 0 duplicated"},
             ],
-            "why_escalated": "L0 miss: no known fix for fias+layout delta; "
-                             "L1 rename_field matched the handshake delta, 0 model calls",
+            "why_escalated": "no ladder rung: the edge agent absorbs the link drop (re-handshake), 0 model calls",
             "live": live_evidence,
-            "recorded_restart": recorded_restart,
         },
         calls,
     )
 
 
 def _step8_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """Live half of step 8: the PABX connector exists on the control plane.
+    """Live half of step 8 (REQ-050 deck 7): build the PABX from its spec,
+    then drop the link and watch it resync with nothing lost.
 
-    Ensures the on-premise connector and builds the committed FIAS docs with
-    the pinned v3 vocabulary, so the knowledge page lists the PABX connector
-    under v3. The firmware fault itself is injected through the control API
-    (the edge agent drives the repair live; the in-process half above proves
-    the L1 mapping patch and the restart guarantee).
+    The connector is ensured with no runtime choice — the engine decides
+    from the docs (framed/FIAS → the on-premise edge agent, asserted on
+    the record after the v3 build). The break is ``fias_link_resync``:
+    the PABX panel shows the link go down, the agent re-handshakes, the
+    link comes back, postings resume, the connector stays ``Working``.
+    No repair, no Approve. Counts come from the relay (postings before vs
+    after) and the knowledge profile (PABX edge under v3).
     """
+    import time as _time  # noqa: PLC0415
+
     ensure_calls = _live_ensure_connector(
         base_url,
         {
@@ -2793,7 +2736,6 @@ def _step8_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
             "base_url": "edge-relay://queue/fias-commands",
             "credential_ref": "EDGE_TOKEN",
             "target_entities": ["FolioCharge"],
-            "runtime_target": {"kind": "edge"},
         },
     )
     calls.extend(ensure_calls)
@@ -2812,9 +2754,37 @@ def _step8_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         build_result.get("success") is True,
         f"v3 build result: {build_result}",
     )
-    calls.append(_control_call(base_url, "POST", "/demo/inject-fault",
-                               {"target": "sim-fias-pabx", "scenario_id": "fias_record_layout_change", "seed": seed}))
-    calls.append(_control_call(base_url, "GET", "/demo/simulators"))
+    release_id = build_result.get("release_id")
+    if isinstance(release_id, str) and release_id:
+        detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
+        calls.append(detail)
+        detail_body = detail.get("body") if isinstance(detail.get("body"), dict) else {}
+        active_id = detail_body.get("active_release_id") if isinstance(detail_body, dict) else None
+        if active_id != release_id:
+            calls.append(
+                _control_call(
+                    base_url, "POST",
+                    f"/connectors/{connector_id}/releases/{release_id}/activate", {},
+                )
+            )
+    # The engine's runtime decision lands on the record (REQ-050 item 6).
+    detail = _control_call(base_url, "GET", f"/connectors/{connector_id}")
+    calls.append(detail)
+    runtime_kind: Any = None
+    if isinstance(detail.get("body"), dict):
+        runtime_kind = (detail["body"].get("runtime_target") or {}).get("kind")
+    _assert_live(
+        calls, "engine runs the FIAS docs on the edge agent (no runtime choice sent)",
+        runtime_kind == "edge",
+        f"connector runtime_target: {runtime_kind!r}",
+    )
+    # Baseline: the live-built edge release syncs Complete.
+    sync_result = _step_live_sync_terminal(base_url, connector_id, calls)
+    _assert_live(
+        calls, "PABX baseline sync Complete",
+        sync_result.get("outcome") == "Complete",
+        f"baseline sync outcome {sync_result.get('outcome')}: {sync_result.get('unmet_criteria')}",
+    )
     # Poll for convergence like step 7: the v3 build's profile write may
     # lag the terminal job read by one request.
     profile = _poll_knowledge_profile(
@@ -2828,12 +2798,107 @@ def _step8_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         profile.get("vocabulary") == "v3",
         f"PABX edge profile: {profile}",
     )
+
+    def _agent_link() -> dict[str, Any]:
+        raw = _control_get_raw(base_url, "/edge/agents") or {}
+        agents = raw.get("agents") if isinstance(raw, dict) else None
+        if isinstance(agents, list):
+            for agent in agents:
+                if isinstance(agent, dict) and agent.get("agent_id") == "grand-plaza-pabx":
+                    return agent
+        return {}
+
+    def _posting_keys() -> list[str]:
+        raw = _control_get_raw(base_url, "/edge/postings") or {}
+        postings = raw.get("postings") if isinstance(raw, dict) else None
+        if not isinstance(postings, list):
+            return []
+        return [str(p.get("idempotency_key")) for p in postings if isinstance(p, dict) and p.get("idempotency_key")]
+
+    keys_before = _posting_keys()
+    link_before = _agent_link()
+    calls.append(_control_call(base_url, "POST", "/demo/inject-fault",
+                               {"target": "sim-fias-pabx", "scenario_id": "fias_link_resync", "seed": seed}))
+    calls.append(_control_call(base_url, "GET", "/demo/simulators"))
+    # The link drops (zeros mid-session) and the agent re-handshakes
+    # (LS/LD/LR/LA): poll until the heartbeat reports the link back up.
+    # The flap can be quick, so a down sighting is evidence, not required.
+    saw_down = bool(link_before) and link_before.get("link_up") is not True
+    link_after: dict[str, Any] = {}
+    for _ in range(120):
+        link_after = _agent_link()
+        if link_after.get("link_up") is True:
+            break
+        if link_after and link_after.get("link_up") is not True:
+            saw_down = True
+        _time.sleep(1.0)
+    _assert_live(
+        calls, "link back up after resync",
+        link_after.get("link_up") is True,
+        f"agent link after resync: {link_after}",
+    )
+    # The resync guarantee is on idempotency keys (the relay folds
+    # re-sent postings with the same key): after one settle tick the
+    # log still holds every pre-break key exactly once — nothing lost,
+    # nothing duplicated. Counts can only grow on genuinely new PABX
+    # activity, never on a resend.
+    _time.sleep(12.0)
+    keys_after = _posting_keys()
+    lost = sorted(set(keys_before) - set(keys_after))
+    _assert_live(
+        calls, "nothing lost in the resync (every pre-break key still logged)",
+        len(keys_before) > 0 and len(lost) == 0,
+        f"keys before={len(keys_before)} after={len(keys_after)} lost={lost[:5]}",
+    )
+    dupes = len(keys_after) - len(set(keys_after))
+    _assert_live(
+        calls, "nothing duplicated in the resync (keys unique)",
+        len(keys_after) > 0 and dupes == 0,
+        f"keys after={len(keys_after)} duplicated={dupes}",
+    )
+    # The cloud path still flows end to end after the drop.
+    resync_sync = _step_live_sync_terminal(base_url, connector_id, calls)
+    _assert_live(
+        calls, "post-resync sync Complete",
+        resync_sync.get("outcome") == "Complete",
+        f"post-resync sync outcome {resync_sync.get('outcome')}: {resync_sync.get('unmet_criteria')}",
+    )
+    state_after = ""
+    for _ in range(30):
+        raw_state = _control_get_raw(base_url, f"/connectors/{connector_id}") or {}
+        state_after = str(raw_state.get("state") or "")
+        if state_after == "working":
+            break
+        _time.sleep(2.0)
+    _assert_live(
+        calls, "connector Working after resync (no repair, no Approve)",
+        state_after == "working",
+        f"connector state: {state_after!r}",
+    )
+    # No ladder rung ran for the link drop: no drift, no repair.
+    drift_rows: list[Any] = _control_get_raw(base_url, f"/drift?connector_id={connector_id}") or []
+    open_drift = [d for d in drift_rows if isinstance(d, dict) and d.get("status") == "open"]
+    _assert_live(
+        calls, "no drift from the link drop",
+        len(open_drift) == 0,
+        f"open drift rows: {open_drift}",
+    )
+    rep_rows: list[Any] = _control_get_raw(base_url, f"/repairs?connector_id={connector_id}") or []
+    _assert_live(
+        calls, "no repair for the link drop",
+        len(rep_rows) == 0,
+        f"repair rows: {rep_rows}",
+    )
     return {
         "connector_id": connector_id,
         "spec_vocabulary": "v3",
         "vocabulary_source": "explicit spec_vocabulary=v3 on the docs build (recorded on the connector profile)",
         "build_success": build_result.get("success"),
+        "runtime_decision": "runs: on-premise edge agent, via the relay",
         "knowledge_profile": profile,
+        "link": {"saw_down": saw_down, "up_after_resync": link_after.get("link_up") is True},
+        "postings": {"before": len(keys_before), "after": len(keys_after), "lost": 0, "duplicated": 0},
+        "state_after_resync": state_after,
     }
 
 
@@ -2916,7 +2981,7 @@ CATALOGUE: tuple[dict[str, Any], ...] = (
     {"scenario": "fias_record_layout_change", "vendor": "fias",
      "expected_outcome": "Handshake detect + L1 mapping patch, postings flow",
      "rung": "L1", "model_calls": "0", "req": "REQ-022",
-     "e2e": "tests/e2e/test_fias_faults.py", "main_step": 8, "kind": "ladder-demo"},
+     "e2e": "tests/e2e/test_fias_faults.py", "main_step": None, "kind": "ladder-demo"},
     # Semantic and data quality.
     {"scenario": "gross_to_net", "vendor": "both",
      "expected_outcome": "Degraded (money invariant) → full climb L0→L4; L3 rejected",
@@ -2953,7 +3018,7 @@ CATALOGUE: tuple[dict[str, Any], ...] = (
     {"scenario": "fias_link_resync", "vendor": "fias",
      "expected_outcome": "Re-handshake, 0 lost", "rung": "n/a (agent)", "model_calls": "0",
      "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
-     "main_step": None, "kind": "agent"},
+     "main_step": 8, "kind": "agent"},
     {"scenario": "fias_ack_timeout", "vendor": "fias",
      "expected_outcome": "Timeout reported, link survives", "rung": "n/a (agent)",
      "model_calls": "0", "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
@@ -2961,7 +3026,7 @@ CATALOGUE: tuple[dict[str, Any], ...] = (
     {"scenario": "agent_restart_inflight", "vendor": "fias",
      "expected_outcome": "0 lost, 0 duplicated after restart", "rung": "n/a (agent)",
      "model_calls": "0", "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",
-     "main_step": 8, "kind": "agent"},
+     "main_step": None, "kind": "agent"},
     {"scenario": "fias_duplicate_records", "vendor": "fias",
      "expected_outcome": "Duplicates land once (idempotency)", "rung": "n/a (agent)",
      "model_calls": "0", "req": "REQ-022", "e2e": "tests/e2e/test_fias_faults.py",

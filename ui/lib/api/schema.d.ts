@@ -1229,6 +1229,34 @@ export interface components {
             /** Repair Run Id */
             repair_run_id: string;
         };
+        /**
+         * BuildAttemptOut
+         * @description One docs build on a connector (REQ-050 item 4).
+         *
+         *     Refused builds persist no release but stay recorded here, so the
+         *     connector page shows both attempts (e.g. Meridian v1 refused with its
+         *     reason, v2 in use). Source of truth is the BuildRun row.
+         */
+        BuildAttemptOut: {
+            /** Created At */
+            created_at?: string | null;
+            /** Degradation Reason */
+            degradation_reason?: string | null;
+            /** Id */
+            id: string;
+            /** Release Id */
+            release_id?: string | null;
+            /**
+             * Spec Vocabulary
+             * @default
+             */
+            spec_vocabulary: string;
+            /**
+             * Success
+             * @default false
+             */
+            success: boolean;
+        };
         /** BuildRequest */
         BuildRequest: {
             /** Base Url Override */
@@ -1420,6 +1448,8 @@ export interface components {
             activity: string;
             /** Base Url */
             base_url: string;
+            /** Builds */
+            builds?: components["schemas"]["BuildAttemptOut"][];
             /**
              * Created At
              * Format: date-time

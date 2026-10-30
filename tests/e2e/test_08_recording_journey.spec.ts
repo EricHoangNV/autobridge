@@ -9,9 +9,10 @@
  *   appears without a manual sync → click Approve in the UI → Working,
  *   with the four repair sections present; break it again after
  *   reactivating the base release → L0 hit, Knowledge "reused" goes up;
- *   break `fias_record_layout_change` → the agent re-handshakes, the
- *   connector stays Working, postings resume (no approval needed); break
- *   `gross_to_net` last → the scheduled sync Degrades on the money
+ *   deck 7 builds the PABX live from its spec, then break
+ *   `fias_link_resync` → the link drops, the agent re-handshakes, the
+ *   link comes back, postings resume, the connector stays Working, no
+ *   repair lands (no approval needed); break `gross_to_net` last → the scheduled sync Degrades on the money
  *   invariant and the engine's own climb runs (funnel, L2 skipped, one
  *   L3 attempt live or replayed — or the explicit skip when neither
  *   exists) and escalates to `error` with the operator question,
@@ -53,7 +54,7 @@ const UI_BASE = process.env.E2E_UI_BASE || process.env.UI_BASE || "http://localh
 const CONTROL_BASE = process.env.E2E_CONTROL_BASE || "http://localhost:8101";
 const CONTROL_TOKEN = process.env.AUTOBRIDGE_CONTROL_TOKEN || "";
 
-const SEED_NAMES = ["atlaspms", "meridianpms", "PABX edge"] as const;
+const SEED_NAMES = ["atlaspms"] as const;
 
 type Connector = {
   id: string;
@@ -220,6 +221,95 @@ async function healFaults(target?: string | string[]): Promise<void> {
  *  reset+seed after the learning leg). */
 const AFTER_EACH_TARGETS = ["sim-harbor", "sim-legacystay", "sim-meridian", "sim-fias-pabx"];
 
+/** Deck 7 (REQ-050): the PABX is built live from its spec, not seeded.
+ *  Ensures the "PABX edge" connector exists with a docs-built v3 release
+ *  carrying postings flow, baseline-synced Complete. The build sends no
+ *  runtime choice: the engine runs framed docs on the on-premise edge
+ *  agent (asserted on the record). Idempotent: a Working PABX edge is
+ *  returned as-is. */
+async function ensurePabxBuilt(): Promise<Connector> {
+  const list = await connectors();
+  const existing = (list ?? []).find((c) => c.name === "PABX edge");
+  if (existing && existing.state === "working") {
+    const detail = await control<Connector & { runtime_target?: { kind?: string } }>(
+      "GET",
+      `/connectors/${encodeURIComponent(existing.id)}`,
+    );
+    if (detail?.runtime_target?.kind === "edge") return existing;
+  }
+  const ensured = await control<{ id?: string }>("POST", "/connectors", {
+    name: "PABX edge",
+    vendor_docs_ref: "simulators/docs/fias-pabx.md",
+    base_url: "edge-relay://queue/fias-commands",
+    credential_ref: "EDGE_TOKEN",
+    target_entities: ["FolioCharge"],
+  });
+  const connectorId = ensured?.id ?? existing?.id;
+  if (!connectorId) throw new Error(`PABX edge ensure failed: ${JSON.stringify(ensured)}`);
+  const { readFileSync } = await import("fs");
+  const { join, dirname } = await import("path");
+  const { fileURLToPath } = await import("url");
+  const here = dirname(fileURLToPath(import.meta.url));
+  const docsText = readFileSync(join(here, "..", "..", "simulators", "docs", "fias-pabx.md"), "utf-8");
+  const build = await control<{ build_run_id?: string; job_id?: string }>(
+    "POST",
+    `/connectors/${encodeURIComponent(connectorId)}/build`,
+    { docs_text: docsText, spec_vocabulary: "v3" },
+  );
+  if (!build?.job_id) throw new Error(`PABX edge docs build not queued: ${JSON.stringify(build)}`);
+  const job = await poll(
+    () => control<{ state?: string; result?: { release_id?: string; success?: boolean } }>(
+      "GET",
+      `/jobs/${encodeURIComponent(build.job_id!)}`,
+    ),
+    (j) => !!j && (j.state === "succeeded" || j.state === "failed"),
+    "PABX edge docs build terminal",
+    180_000,
+    2000,
+  );
+  if (job.state !== "succeeded") throw new Error(`PABX edge docs build failed: ${JSON.stringify(job)}`);
+  const releaseId = job.result?.release_id;
+  if (!releaseId) throw new Error(`PABX edge docs build produced no release: ${JSON.stringify(job)}`);
+  const detail = await control<Connector & { runtime_target?: { kind?: string } }>(
+    "GET",
+    `/connectors/${encodeURIComponent(connectorId)}`,
+  );
+  if (detail?.runtime_target?.kind !== "edge") {
+    throw new Error(`engine did not decide edge runtime for the FIAS docs: ${JSON.stringify(detail?.runtime_target)}`);
+  }
+  const sync = await control<{ job_id?: string }>("POST", `/connectors/${encodeURIComponent(connectorId)}/sync`, {});
+  if (sync?.job_id) {
+    await poll(
+      () => control<{ state?: string }>("GET", `/jobs/${encodeURIComponent(sync.job_id!)}`),
+      (j) => !!j && (j.state === "succeeded" || j.state === "failed"),
+      "PABX edge baseline sync terminal",
+      180_000,
+      2000,
+    );
+  }
+  const settled = await control<Connector>("GET", `/connectors/${encodeURIComponent(connectorId)}`);
+  if (!settled || settled.state !== "working") {
+    throw new Error(`PABX edge not working after docs build: ${JSON.stringify(settled)}`);
+  }
+  return settled;
+}
+
+async function edgeLinkUp(): Promise<boolean | null> {
+  const agents = await control<{ agents?: Array<{ agent_id?: string; link_up?: boolean }> }>(
+    "GET",
+    "/edge/agents",
+  );
+  if (!agents?.agents) return null;
+  if (!agents.agents.length) return null;
+  return agents.agents.some((a) => a.link_up === true);
+}
+
+async function edgePostingKeys(): Promise<string[] | null> {
+  const postings = await control<{ postings?: Array<{ idempotency_key?: string }> }>("GET", "/edge/postings");
+  if (!Array.isArray(postings?.postings)) return null;
+  return postings.postings.map((p) => String(p.idempotency_key ?? ""));
+}
+
 /** Deck 4 (REQ-049): Harbor is built from its wiki docs, not seeded.
  *  Ensures the harborpms connector exists with a docs-built v1 release
  *  carrying the money check, baseline-synced Complete. Idempotent: a
@@ -295,12 +385,13 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
     if (await controlUp()) await healFaults(AFTER_EACH_TARGETS);
   });
 
-  test("opening frame: three connectors Working, 0 model tokens, nothing waiting", async () => {
+  test("opening frame: AtlasPMS Working, 0 model tokens, nothing waiting", async () => {
     const byName = await requireSeed();
     // Subset, not exact: other journey specs (test_06's live journey)
     // may have added their own connectors and repairs in the same
-    // `make e2e-ui` run. The seed contract itself — exactly three working
-    // connectors, 0 tokens, nothing waiting — is asserted by
+    // `make e2e-ui` run. The seed contract itself — exactly one working
+    // connector (AtlasPMS; Meridian and the PABX build live in decks 6/7),
+    // 0 tokens, nothing waiting — is asserted by
     // test_09_demo_seed_break_heal.py on a fresh seed; every leg below
     // scopes by connector and by time so leftovers cannot match.
     expect([...byName.keys()].sort()).toEqual([...SEED_NAMES].sort());
@@ -538,22 +629,52 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
   );
 
   test(
-    "on-premise PABX: layout break re-handshakes, postings resume, no approval needed",
+    "on-premise PABX: built live, link drops and resyncs with nothing lost",
     { timeout: 300_000 },
     async ({ page }) => {
       test.setTimeout(300_000);
-      const byName = await requireSeed();
-      const pabx = byName.get("PABX edge")!;
+      await requireControl();
+      // Deck 7 (REQ-050): the PABX is built live from its spec through the
+      // same calls the build page makes (no runtime choice — the engine
+      // decides edge from the docs).
+      const pabx = await ensurePabxBuilt();
+      const keysBefore = await edgePostingKeys();
 
       await waitForTick(pabx.id);
-      await breakFault("fias_record_layout_change", "sim-fias-pabx");
-      // The edge agent absorbs the firmware change (re-handshake on the
-      // new layout); the connector stays Working and no repair lands —
-      // the L1 rename patch is proven in-process by `make demo` step 8.
-      await page.waitForTimeout(40_000);
-      expect(await connectorState(pabx.id)).toBe("working");
+      await breakFault("fias_link_resync", "sim-fias-pabx");
+      // The link drops (zeros mid-session) and the agent re-handshakes
+      // (LS/LD/LR/LA): poll until the heartbeat reports the link back up.
+      // The flap can be quick, so a down sighting is evidence, not required.
+      await poll(() => edgeLinkUp(), (up) => up === true, "edge link back up after resync", 120_000, 1000);
+      // The resync guarantee is on idempotency keys (the relay folds
+      // re-sent postings with the same key): after one settle tick the log
+      // still holds every pre-break key exactly once.
+      await new Promise((r) => setTimeout(r, 12_000));
+      const keysAfter = await edgePostingKeys();
+      expect(keysBefore?.length, "relay logged postings before the break").toBeGreaterThan(0);
+      expect(keysAfter?.length, "relay logs postings after the resync").toBeGreaterThan(0);
+      const lost = (keysBefore ?? []).filter((k) => !(keysAfter ?? []).includes(k));
+      expect(lost, "nothing lost in the resync").toEqual([]);
+      expect(new Set(keysAfter).size, "nothing duplicated in the resync").toBe(keysAfter?.length);
+      // The connector is Working throughout or back within a tick or two;
+      // no ladder rung ran: no drift, no repair, no approval.
+      await poll(
+        () => connectorState(pabx.id),
+        (s) => s === "working",
+        "PABX edge Working after resync",
+        120_000,
+        2000,
+      );
       const rows = (await repairsFor(pabx.id)) ?? [];
-      expect(rows.length, "no engine repair for the agent-absorbed layout change").toBe(0);
+      expect(rows.length, "no engine repair for the link drop").toBe(0);
+      const drift = await control<Array<{ status?: string }>>(
+        "GET",
+        `/drift?connector_id=${encodeURIComponent(pabx.id)}`,
+      );
+      expect(
+        (drift ?? []).filter((d) => d.status === "open").length,
+        "no open drift from the link drop",
+      ).toBe(0);
 
       const agents = await control<{ agents?: Array<{ agent_id?: string; link_up?: boolean }> }>(
         "GET",
@@ -561,13 +682,13 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       );
       expect(agents?.agents?.some((a) => a.link_up), "edge link up after re-handshake").toBe(true);
 
-      // The PABX panel shows the link, the postings and the layout.
+      // The PABX panel shows the link and the arriving postings.
       await page.goto(`${UI_BASE}/connectors/${encodeURIComponent(pabx.id)}`, {
         waitUntil: "domcontentloaded",
       });
       await expect(page.getByTestId("connector-detail-page")).toBeVisible({ timeout: 15_000 });
       await expect(page.getByTestId("pabx-panel")).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByTestId("pabx-link-state")).toBeVisible();
+      await expect(page.getByTestId("pabx-link-state")).toContainText("up");
       await expect(page.getByTestId("pabx-postings")).toBeVisible();
       await expect(page.getByTestId("pabx-layout")).toBeVisible();
     },

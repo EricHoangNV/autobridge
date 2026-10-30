@@ -524,6 +524,22 @@ def run_build_handler(ctx: Any) -> dict[str, Any]:
             release_id = release.id
             result["release_id"] = release_id
             result["connector_id"] = conn.id
+            # REQ-050 item 6: the engine decides where the connector runs
+            # from the docs — the build page sends no runtime choice. A
+            # framed/event spec carries ``connector.runtime_target:
+            # "edge"`` (the on-premise edge agent, via the relay); HTTP
+            # specs carry none (cloud). The record follows the built spec
+            # so the PABX panel and link snapshots work on a UI-built edge
+            # connector; an explicit non-empty kind is otherwise kept.
+            try:
+                spec_conn_rt = (build_out["draft_spec"].get("connector", {}) or {}).get("runtime_target")
+            except Exception:
+                spec_conn_rt = None
+            if spec_conn_rt == "edge":
+                conn.runtime_target = {"kind": "edge"}
+            elif not isinstance(conn.runtime_target, dict) or not conn.runtime_target.get("kind"):
+                conn.runtime_target = {"kind": "local_process"}
+            ctx.session.flush()
             # REQ-013: first-build activation. A persisted candidate is
             # either gate-passed (verifier or control proxy ran, the release
             # carries a verification_report_id) or gate-skipped (no verifier

@@ -2,8 +2,12 @@
 
 import { useState, useRef, useEffect, type FormEvent } from "react";
 
-const KNOWN_CREDENTIAL_REFS = ["ATLAS_API_KEY", "HARBOR_API_KEY", "MERIDIAN_API_KEY", "LEGACYSTAY_API_KEY", "ATLAS_BASE_URL", "HARBOR_BASE_URL"];
+const KNOWN_CREDENTIAL_REFS = ["ATLAS_API_KEY", "HARBOR_API_KEY", "MERIDIAN_API_KEY", "LEGACYSTAY_API_KEY", "EDGE_TOKEN", "ATLAS_BASE_URL", "HARBOR_BASE_URL"];
 const ENTITY_OPTIONS = ["Reservation", "FolioCharge"] as const;
+// Relay address the engine's framed (FIAS) builds poll through. The build
+// page never asks for it: choosing the PABX docs fills it in, and the
+// engine decides the runtime from the docs (REQ-050 item 6).
+const EDGE_RELAY_BASE_URL = "edge-relay://queue/fias-commands";
 const BASE_URL_SUGGESTIONS = [
   "http://sim-atlas:8000",
   "http://sim-harbor:8000",
@@ -20,7 +24,9 @@ export type CreateConnectorPayload = {
   credential_ref: string;
   vendor_docs_ref: string | null;
   target_entities: string[];
-  runtime_target: Record<string, unknown>;
+  // REQ-050 item 6: the page sends no runtime choice — the engine decides
+  // where the connector runs from the docs (HTTP → cloud, framed/FIAS →
+  // the on-premise edge agent), and the result displays that decision.
 };
 
 type SubmitState = "idle" | "creating" | "building" | "done" | "error";
@@ -99,6 +105,9 @@ function BuildProgress({
   );
   const success = result.success === true;
   const releaseId = typeof result.release_id === "string" ? result.release_id : null;
+  // REQ-050 item 6: the engine decides where the connector runs from the
+  // docs — the page displays the decision, never a setting.
+  const runtimeLine = detail ? runtimeDecisionLine(draft) : `job ${jobState}…`;
 
   // REQ-049 item 2: when discovery added a money check from a total the
   // docs describe, the build page names it (never invented silently).
@@ -163,6 +172,9 @@ function BuildProgress({
   return (
     <div data-testid="build-progress" className="mt-4 border-t border-rule pt-4">
       <p className="font-bold">Build progress</p>
+      <p data-testid="build-runtime-decision" className="mt-1 font-mono text-[13px] text-ink-2">
+        {runtimeLine}
+      </p>
       {failed ? (
         <p data-testid="build-progress-error" className="mt-1 text-[15px] text-stop">
           {failed}
@@ -197,6 +209,46 @@ const FIELD_HINT = "mt-1.5 block text-sm text-ink-2";
 const TEXT_INPUT =
   "mt-2 w-full border-[1.5px] border-off bg-ground px-3.5 py-3 font-mono text-base text-ink placeholder:text-ink-2/60 focus:border-live focus:outline-none";
 const FIELD_ERROR = "mt-1.5 text-sm text-stop";
+
+// One line per language release, shared with the Knowledge page
+// (ui/app/knowledge/page.tsx RELEASE_NOTE): the chain reads as a
+// timeline, and the engine refuses docs a vocabulary cannot express.
+const VOCABULARY_NOTES: Record<"v1" | "v2" | "v3", string> = {
+  v1: "REST reads: GET with headers or basic auth",
+  v2: "request bodies and joins (POST-style APIs)",
+  v3: "event streams over TCP (on-premise devices)",
+};
+
+/** Where the engine runs a built connector, decided from the built spec
+ * (REQ-050 item 6): framed/event docs carry
+ * ``connector.runtime_target: "edge"`` and a non-HTTP protocol (the
+ * on-premise edge agent, via the relay); HTTP docs run in the cloud.
+ * Never a page setting — the page only displays the decision. */
+export function runtimeDecisionForDraft(draft: unknown): "edge" | "cloud" {
+  if (draft !== null && typeof draft === "object" && !Array.isArray(draft)) {
+    const connector = (draft as Record<string, unknown>)["connector"];
+    if (
+      connector !== null &&
+      typeof connector === "object" &&
+      !Array.isArray(connector) &&
+      (connector as Record<string, unknown>)["runtime_target"] === "edge"
+    ) {
+      return "edge";
+    }
+    const source = (draft as Record<string, unknown>)["source"];
+    if (source !== null && typeof source === "object" && !Array.isArray(source)) {
+      const protocol = (source as Record<string, unknown>)["protocol"];
+      if (typeof protocol === "string" && protocol !== "" && protocol !== "http") return "edge";
+    }
+  }
+  return "cloud";
+}
+
+export function runtimeDecisionLine(draft: unknown): string {
+  return runtimeDecisionForDraft(draft) === "edge"
+    ? "runs: on-premise edge agent, via the relay"
+    : "runs: cloud";
+}
 
 export function NewConnectorForm() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -279,7 +331,19 @@ export function NewConnectorForm() {
         docs_source: body.docs_source || row?.docs_source || "",
         characters: body.characters ?? text.length,
       });
-      if (!baseUrl.trim() && row?.developers_url) {
+      const docsSource = body.docs_source || row?.docs_source || "";
+      const pickedFias =
+        id.toLowerCase().includes("fias") || docsSource.toLowerCase().includes("fias-pabx");
+      if (pickedFias) {
+        // REQ-050 item 6: no base-URL typing for the PABX on camera. The
+        // relay address is fixed and the engine runs the connector on the
+        // on-premise edge agent — decided from the docs, not a setting.
+        // The PABX posts charges only, and event docs need v3 to compile.
+        setBaseUrl(EDGE_RELAY_BASE_URL);
+        setTargetEntities(["FolioCharge"]);
+        setVocabulary((v) => (v === "v1" ? "v3" : v));
+        if (!name.trim()) setName("PABX edge");
+      } else if (!baseUrl.trim() && row?.developers_url) {
         setBaseUrl(row.developers_url.replace(/\/developers\/?$/, ""));
       }
     } catch (err) {
@@ -289,6 +353,12 @@ export function NewConnectorForm() {
       setSimDocsLoading(false);
     }
   }
+
+  // REQ-050 item 6: the PABX docs mean the on-premise edge agent — the
+  // base-URL field stays hidden and the relay address goes on the wire.
+  const isFiasDocs =
+    simDocsId.toLowerCase().includes("fias") ||
+    (simDocsInfo?.docs_source ?? "").toLowerCase().includes("fias-pabx");
 
   // UI state
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
@@ -307,12 +377,17 @@ export function NewConnectorForm() {
   function validate(): boolean {
     const errs: Record<string, string> = {};
     if (!name.trim()) errs.name = "Name is required";
-    if (!baseUrl.trim()) errs.base_url = "Sandbox base URL is required";
-    else {
-      try {
-        new URL(baseUrl.trim());
-      } catch {
-        errs.base_url = "Must be a valid URL";
+    if (!isFiasDocs) {
+      if (!baseUrl.trim()) errs.base_url = "Sandbox base URL is required";
+      else {
+        try {
+          const parsed = new URL(baseUrl.trim());
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            errs.base_url = "Must be an http(s) URL";
+          }
+        } catch {
+          errs.base_url = "Must be a valid URL";
+        }
       }
     }
     if (!effectiveCredentialRef) errs.credential_ref = "Credential env-ref is required";
@@ -353,11 +428,10 @@ export function NewConnectorForm() {
 
     const connectorPayload: CreateConnectorPayload = {
       name: name.trim(),
-      base_url: baseUrl.trim(),
+      base_url: isFiasDocs ? EDGE_RELAY_BASE_URL : baseUrl.trim(),
       credential_ref: effectiveCredentialRef,
       vendor_docs_ref: docsUrl.trim() || simDocsInfo?.docs_source || (fileName ? `file:${fileName}` : null),
       target_entities: [...targetEntities],
-      runtime_target: { kind: "local_process" },
     };
 
     setSubmitState("creating");
@@ -565,34 +639,49 @@ export function NewConnectorForm() {
           ) : null}
         </div>
 
-        {/* Sandbox base URL */}
-        <div>
-          <label htmlFor="connector-base-url" className={FIELD_LABEL}>
-            Sandbox base URL <span className="text-live" aria-hidden="true">*</span>
-          </label>
-          <input
-            id="connector-base-url"
-            data-testid="input-base-url"
-            type="url"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="http://sim-legacystay:8000"
-            list="base-url-suggestions"
-            className={TEXT_INPUT}
-            aria-invalid={Boolean(fieldErrors.base_url)}
-            aria-describedby={fieldErrors.base_url ? "error-base-url" : undefined}
-          />
-          <datalist id="base-url-suggestions">
-            {BASE_URL_SUGGESTIONS.map((u) => (
-              <option key={u} value={u} />
-            ))}
-          </datalist>
-          {fieldErrors.base_url ? (
-            <p id="error-base-url" data-testid="error-base-url" className={FIELD_ERROR}>
-              {fieldErrors.base_url}
+        {/* Sandbox base URL — hidden for the PABX (REQ-050 item 6): the
+            relay address is fixed and the engine runs the connector on
+            the on-premise edge agent, decided from the docs. */}
+        {isFiasDocs ? (
+          <div data-testid="edge-runtime-note">
+            <span className={FIELD_LABEL}>Where it runs</span>
+            <p className="mt-2 border border-rule bg-band px-3.5 py-3 font-mono text-base text-ink">
+              {EDGE_RELAY_BASE_URL}
             </p>
-          ) : null}
-        </div>
+            <span className={FIELD_HINT}>
+              FIAS docs run on the on-premise edge agent, via the relay — decided by the engine from the
+              docs, not a setting. No base URL to type.
+            </span>
+          </div>
+        ) : (
+          <div>
+            <label htmlFor="connector-base-url" className={FIELD_LABEL}>
+              Sandbox base URL <span className="text-live" aria-hidden="true">*</span>
+            </label>
+            <input
+              id="connector-base-url"
+              data-testid="input-base-url"
+              type="url"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="http://sim-legacystay:8000"
+              list="base-url-suggestions"
+              className={TEXT_INPUT}
+              aria-invalid={Boolean(fieldErrors.base_url)}
+              aria-describedby={fieldErrors.base_url ? "error-base-url" : undefined}
+            />
+            <datalist id="base-url-suggestions">
+              {BASE_URL_SUGGESTIONS.map((u) => (
+                <option key={u} value={u} />
+              ))}
+            </datalist>
+            {fieldErrors.base_url ? (
+              <p id="error-base-url" data-testid="error-base-url" className={FIELD_ERROR}>
+                {fieldErrors.base_url}
+              </p>
+            ) : null}
+          </div>
+        )}
 
         {/* Credential env-ref picker */}
         <div>
@@ -679,14 +768,16 @@ export function NewConnectorForm() {
           ) : null}
         </fieldset>
 
-        {/* Spec vocabulary (REQ-021 item 2) */}
+        {/* Spec vocabulary (REQ-021 item 2; REQ-050 item 2: each version
+            carries its one-line release note, shared with the Knowledge
+            page; the current default is v1) */}
         <fieldset>
           <legend className={FIELD_LABEL}>Spec vocabulary</legend>
-          <div className="mt-2 flex flex-wrap gap-2.5">
+          <div className="mt-2 flex flex-col gap-2.5">
             {(["v1", "v2", "v3"] as const).map((v) => (
               <label
                 key={v}
-                className={`flex cursor-pointer items-center gap-2.5 border-[1.5px] px-4 py-2.5 font-mono text-[15px] ${
+                className={`flex cursor-pointer items-start gap-2.5 border-[1.5px] px-4 py-2.5 font-mono text-[15px] ${
                   vocabulary === v ? "border-ink text-ink" : "border-off text-ink-2"
                 }`}
               >
@@ -697,16 +788,18 @@ export function NewConnectorForm() {
                   value={v}
                   checked={vocabulary === v}
                   onChange={() => setVocabulary(v)}
-                  className="h-4 w-4 accent-live"
+                  className="mt-1 h-4 w-4 accent-live"
                 />
-                {v}
+                <span>
+                  <span className="font-bold">{v}</span>
+                  <span className="text-ink-2"> — {VOCABULARY_NOTES[v]}</span>
+                </span>
               </label>
             ))}
           </div>
           <span className={FIELD_HINT}>
-            v1 refuses unfamiliar API styles deterministically (0 model calls); v2 additionally compiles POST
-            with a JSON body, body-field auth and body-cursor pagination; v3 covers framed/event-driven docs
-            (FIAS PABX).
+            The engine refuses docs a vocabulary cannot express, deterministically at 0 model calls
+            (v1 cannot do POST with a body, or event streams).
           </span>
         </fieldset>
 

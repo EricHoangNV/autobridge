@@ -288,8 +288,25 @@ class ConnectorOut(BaseModel):
     updated_at: UtcDatetime
 
 
+class BuildAttemptOut(BaseModel):
+    """One docs build on a connector (REQ-050 item 4).
+
+    Refused builds persist no release but stay recorded here, so the
+    connector page shows both attempts (e.g. Meridian v1 refused with its
+    reason, v2 in use). Source of truth is the BuildRun row.
+    """
+
+    id: str
+    spec_vocabulary: str = ""
+    success: bool = False
+    degradation_reason: str | None = None
+    release_id: str | None = None
+    created_at: UtcDatetime | None = None
+
+
 class ConnectorDetail(ConnectorOut):
     releases: list[ReleaseOut] = Field(default_factory=list)
+    builds: list[BuildAttemptOut] = Field(default_factory=list)
     last_sync: SyncRunOut | None = None
     open_drift: list[DriftEventOut] = Field(default_factory=list)
     dependencies: list[DependencyOut] = Field(default_factory=list)

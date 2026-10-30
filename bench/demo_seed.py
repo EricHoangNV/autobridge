@@ -1,20 +1,18 @@
-"""`make demo-seed` driver (REQ-031 item 1, REQ-049 item 3).
+"""`make demo-seed` driver (REQ-031 item 1, REQ-049 item 3, REQ-050 item 1).
 
-From `make demo-reset`, creates the recording's connectors **through the
-control API only** (the calls the UI makes), each baseline-synced
-``Complete``:
+From `make demo-reset`, creates the recording's connector **through the
+control API only** (the call the UI makes), baseline-synced ``Complete``:
 
-- atlaspms — docs-built release, pinned vocabulary v1;
-- meridianpms — the refused v1 build recorded with its reason, v2 release
-  in use;
-- PABX edge — the Grand Plaza PABX edge connector, docs-built v3 release,
-  link up, postings flowing.
+- atlaspms — docs-built release, pinned vocabulary v1.
 
+Meridian and the PABX edge connector are NOT seeded (REQ-050): deck 6
+builds Meridian live in the UI (v1 refused, v2 release in use) and deck 7
+builds the PABX live from its spec (v3 release, postings flowing).
 Harbor is NOT seeded (REQ-049): deck 4 builds it from its wiki in the UI
 (or `make demo` step 4 builds it from docs itself), so the totals check
 it carries comes from the docs, not from a reference release.
 
-End state: three connectors ``working``, 0 model tokens, nothing waiting.
+End state: one connector ``working``, 0 model tokens, nothing waiting.
 Clean names, real addresses, no leftover or example.com rows. Fails loud
 (exit non-zero naming the unmet step); the transcript records every
 control call, redacted like the demo's.
@@ -44,11 +42,13 @@ from bench.demo import (
     env_default,
 )
 
-#: The recording's connectors, in seed order. Names match the demo steps'
-#: ensure-by-name payloads so `make demo` after `make demo-seed` reuses
-#: them instead of leaving duplicates. Base URLs are the canonical
-#: service-DNS form — valid input in both modes; the server normalizes them
+#: The recording's connector, in seed order. The name matches the demo
+#: steps' ensure-by-name payload so `make demo` after `make demo-seed`
+#: reuses it instead of leaving a duplicate. The base URL is the canonical
+#: service-DNS form — valid input in both modes; the server normalizes it
 #: to the address that works where the engine runs (REQ-027 sub-step 1).
+#: Meridian and the PABX edge connector are built live in decks 6/7
+#: (REQ-050), never seeded.
 SEED_CONNECTORS: tuple[dict[str, Any], ...] = (
     {
         "name": "atlaspms",
@@ -61,32 +61,6 @@ SEED_CONNECTORS: tuple[dict[str, Any], ...] = (
         },
         "docs_file": "simulators/docs/atlas-openapi.yaml",
         "spec_vocabulary": "v1",
-    },
-    {
-        "name": "meridianpms",
-        "connector": {
-            "name": "meridianpms",
-            "vendor_docs_ref": "simulators/docs/meridian-openapi.yaml",
-            "base_url": "http://sim-meridian:8000",
-            "credential_ref": "MERIDIAN_API_KEY",
-            "target_entities": ["Reservation", "FolioCharge"],
-        },
-        "docs_file": "simulators/docs/meridian-openapi.yaml",
-        "spec_vocabulary": "v2",
-        "refused_vocabulary": "v1",
-    },
-    {
-        "name": "PABX edge",
-        "connector": {
-            "name": "PABX edge",
-            "vendor_docs_ref": "simulators/docs/fias-pabx.md",
-            "base_url": "edge-relay://queue/fias-commands",
-            "credential_ref": "EDGE_TOKEN",
-            "target_entities": ["FolioCharge"],
-            "runtime_target": {"kind": "edge"},
-        },
-        "docs_file": "simulators/docs/fias-pabx.md",
-        "spec_vocabulary": "v3",
     },
 )
 
@@ -210,7 +184,7 @@ def seed_connector(base_url: str, spec: dict[str, Any], calls: list[dict[str, An
 
 
 def verify_end_state(base_url: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """Assert the seeded end state: 4 working, 0 tokens, nothing waiting."""
+    """Assert the seeded end state: the one seed connector working, 0 tokens, nothing waiting."""
     state: dict[str, Any] = {}
     connectors_rec = _control_call(base_url, "GET", "/connectors")
     calls.append(connectors_rec)
@@ -221,7 +195,7 @@ def verify_end_state(base_url: str, calls: list[dict[str, Any]]) -> dict[str, An
     elif isinstance(body, dict) and isinstance(body.get("connectors"), list):
         rows = body["connectors"]
     names = sorted(str(r.get("name")) for r in rows if isinstance(r, dict))
-    _assert_live(calls, "seed connectors are exactly the three recording names",
+    _assert_live(calls, "seed connector is exactly the one recording name",
                  names == sorted(SEED_NAMES), f"connectors: {names}")
     states = {str(r.get("name")): str(r.get("state")) for r in rows if isinstance(r, dict)}
     _assert_live(calls, "every seed connector working",
@@ -277,7 +251,7 @@ def verify_end_state(base_url: str, calls: list[dict[str, Any]]) -> dict[str, An
 
 
 def run_seed(base_url: str, seed: int) -> dict[str, Any]:
-    """Reset, seed the three connectors, verify the end state."""
+    """Reset, seed the one connector, verify the end state."""
     calls: list[dict[str, Any]] = []
     # REQ-031 owner check: the scheduler pauses for the whole seed (an
     # explicit pause/resume the scheduler honours), not just inside reset
@@ -313,7 +287,7 @@ def run_seed(base_url: str, seed: int) -> dict[str, Any]:
 
 
 def _run_seed_paused(base_url: str, seed: int, calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """Reset, seed the three connectors, verify the end state (scheduler paused)."""
+    """Reset, seed the one connector, verify the end state (scheduler paused)."""
     reset_rec = _control_call(base_url, "POST", "/demo/reset", {})
     calls.append(reset_rec)
     if not _call_ok(reset_rec):
@@ -372,7 +346,7 @@ def render_text(report: dict[str, Any]) -> str:
                     detail_text = str(detail)[:300]
                 lines.append(f"    FAILED {call.get('method')} {call.get('path')}: {detail_text}")
     else:
-        lines.append("demo-seed complete: three connectors working, 0 model tokens, nothing waiting")
+        lines.append("demo-seed complete: one connector working, 0 model tokens, nothing waiting")
     return "\n".join(lines)
 
 
@@ -380,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for ``make demo-seed``."""
     import httpx  # noqa: PLC0415
 
-    parser = argparse.ArgumentParser(description="Seed the recording's connectors (REQ-031 item 1)")
+    parser = argparse.ArgumentParser(description="Seed the recording's connector (REQ-031 item 1, REQ-050 item 1)")
     parser.add_argument("--control-url", default=env_default("CONTROL_URL", DEFAULT_CONTROL_URL))
     parser.add_argument("--seed", type=int, default=int(env_default("DEMO_SEED", str(DEFAULT_SEED))))
     args = parser.parse_args(argv)

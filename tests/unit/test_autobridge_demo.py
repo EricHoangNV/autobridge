@@ -18,6 +18,7 @@ import pytest
 
 from bench import demo as demo_mod
 from bench.demo import (
+    FIAS_PS_LAYOUT_V2,
     _redact_body,
     main,
     render_text,
@@ -231,25 +232,20 @@ def test_step7_rung_row_reports_zero_frontier() -> None:
     assert "0 frontier" in row and "v1 Blocked" in row
 
 
-def test_step8_pabx_layout_repair_zero_frontier() -> None:
-    """REQ-022 E: firmware v2→v3 → L1 rename_field patch, 0 model calls."""
+def test_step8_pabx_built_live_link_resync_zero_frontier() -> None:
+    """REQ-050 deck 7: FIAS docs build a v3 edge spec; postings flow, restart loses nothing."""
     step = step8_onprem_pabx(0, False, "http://127.0.0.1:9")
     assert step["status"] == "ok", step
     ev = step["evidence"]
-    assert ev["fault"] == "fias_record_layout_change"
-    assert ev["drift_class"] == "SCHEMA_RENAME"
-    assert ev["renamed_wire"] == {"TA": "TM"} and ev["added_wire"] == ["CX"]
+    assert ev["spec_vocabulary"] == "v3" and ev["spec_version"] == 3
+    assert ev["protocol"] == "fias_tcp"
+    assert ev["runtime"] == "on-premise edge agent, via the relay"
+    assert ev["announced_layout"] == "".join(FIAS_PS_LAYOUT_V2)
     assert ev["baseline"] == {"layout": "v2", "outcome": "Complete", "amount": "12.50"}
-    assert ev["stale_mapping_reads"] is None  # silent corruption: why handshake detection
-    assert ev["l1_rule"] == "rename_field"
-    assert ev["patch"] == [
-        {"op": "replace", "path": "/entities/FolioCharge/fields/amount/path", "value": "$.TM"}
-    ]
-    assert ev["repaired"] == {"layout": "v3", "outcome": "Complete", "amount": "12.50"}
     assert ev["money_type"] == "Decimal(2dp)"
     assert ev["model_usage_ledger"] == {"calls": 0, "small_tokens": 0, "frontier_tokens": 0}
-    assert ev["resolved_rung"] == "L1"
-    assert [a["rung"] for a in ev["rung_attempts"]] == [0, 1]
+    assert ev["resolved_rung"] == "n/a (agent)"
+    assert [a["rung"] for a in ev["rung_attempts"]] == ["build", "agent"]
 
 
 def test_step8_restart_redelivery_loses_nothing() -> None:
@@ -271,12 +267,12 @@ def test_step8_wire_layouts_pinned_to_fault_yaml() -> None:
     assert set(FIAS_PS_LAYOUT_V2) - set(FIAS_PS_LAYOUT_V3) == {"TA"}
 
 
-def test_step8_rung_row_reports_l1_zero_frontier() -> None:
+def test_step8_rung_row_reports_agent_zero_frontier() -> None:
     from bench.demo import rung_table_row
 
     step = step8_onprem_pabx(0, False, "http://127.0.0.1:9")
     row = rung_table_row(step)
-    assert "resolved L1" in row and "0 frontier" in row and "rename_field" in row
+    assert "resolved n/a (agent)" in row and "0 frontier" in row and "re-handshake" in row
 
 
 def test_step6_signatures_match_build_reports() -> None:
@@ -301,6 +297,11 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
     recorded_climb: dict[str, Any] = {}
     harbor_injects = {"n": 0}
     harbor_live_repair = {"created": False}
+    # REQ-050 deck 7: the stub relay reports the edge link and the PABX
+    # outbox. A fias inject drops the link for the next two agent reads
+    # (the poll loop watches it come back) and redelivers postings.
+    fias_link = {"down_reads": 0}
+    pabx_postings = {"n": 3}
 
     def _connector_id(name: str) -> str:
         return f"c-{name.lower().replace(' ', '-')}"
@@ -325,6 +326,10 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
             payload = _payload or {}
             conn = {"id": _connector_id(str(payload.get("name", "x"))), "name": str(payload.get("name", "x")),
                     "base_url": str(payload.get("base_url", "")), "active_release_id": None,
+                    # REQ-050 item 6: the page sends no runtime choice; the
+                    # engine decides from the docs (stub: framed v3 →
+                    # edge on the build below, HTTP stays cloud).
+                    "runtime_target": {"kind": "local_process"},
                     "releases": [], "builds": []}
             connectors[conn["name"]] = conn
             return {"method": method, "path": path, "status": 201, "body": {"id": conn["id"], "name": conn["name"]}}
@@ -337,12 +342,19 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
             counters["job"] += 1
             jid = f"j-build-{counters['job']}"
             if conn["name"] == "meridianpms" and vocab == "v1":
-                conn["builds"].append({"spec_vocabulary": "v1", "success": False})
+                conn["builds"].append({"id": f"b-ref-{counters['job']}", "spec_vocabulary": "v1",
+                                       "success": False, "release_id": None,
+                                       "degradation_reason": "operations need POST with a JSON body and body-field auth; not expressible in ConnectorSpec v1"})
                 jobs[jid] = {"success": False, "release_id": None,
                              "degradation_reason": "operations need POST with a JSON body and body-field auth; not expressible in ConnectorSpec v1"}
             else:
-                conn["builds"].append({"spec_vocabulary": vocab or "v1", "success": True})
+                conn["builds"].append({"id": f"b-{counters['job']}", "spec_vocabulary": vocab or "v1",
+                                       "success": True, "release_id": None, "degradation_reason": None})
+                if conn["name"] == "PABX edge" and vocab == "v3":
+                    # Engine runtime decision from framed docs (REQ-050).
+                    conn["runtime_target"] = {"kind": "edge"}
                 rel = _new_release(conn)
+                conn["builds"][-1]["release_id"] = rel["id"]
                 if conn["name"] == "harborpms":
                     # REQ-049 deck 4: the wiki-built release carries the
                     # documented totals check the demo asserts on.
@@ -381,7 +393,24 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
                 atlas_injects["n"] += 1
             if (_payload or {}).get("target") == "sim-harbor":
                 harbor_injects["n"] += 1
+            if (_payload or {}).get("target") == "sim-fias-pabx":
+                # Link drop: the next agent reads see it down, then the
+                # re-handshake brings it back; postings resume (count up).
+                fias_link["down_reads"] = 2
+                pabx_postings["n"] += 2
             return {"method": method, "path": path, "status": 200, "body": {"ok": True}}
+        if path == "/edge/agents" and method == "GET":
+            link_up = True
+            if fias_link["down_reads"] > 0:
+                fias_link["down_reads"] -= 1
+                link_up = False
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"agents": [{"agent_id": "grand-plaza-pabx", "link_up": link_up,
+                                         "link_detail": "LS/LD/LR/LA re-handshake" if link_up else "zeros mid-session",
+                                         "outbox_depth": 0, "inbox_depth": 0}]}}
+        if path == "/edge/postings" and method == "GET":
+            return {"method": method, "path": path, "status": 200,
+                    "body": {"postings": [{"idempotency_key": f"PS-{i:06d}", "record": "PS"} for i in range(pabx_postings["n"])]}}
         if path == "/demo/record-climb" and method == "POST":
             # REQ-030: persist the stub; read-back serves the recorded rows.
             recorded_climb["payload"] = dict(_payload or {})
@@ -545,6 +574,8 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
                 return {"method": method, "path": path, "status": 200, "body": {"ok": True}}
             return {"method": method, "path": path, "status": 200,
                     "body": {"id": conn["id"], "name": conn["name"], "base_url": conn["base_url"],
+                             "runtime_target": conn.get("runtime_target", {"kind": "local_process"}),
+                             "state": "working", "builds": list(conn.get("builds", [])),
                              "active_release_id": conn["active_release_id"], "releases": conn["releases"]}}
         if path == "/knowledge" and method == "GET":
             entries: list[dict[str, Any]] = []

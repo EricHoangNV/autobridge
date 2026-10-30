@@ -1,9 +1,10 @@
 """Demo seed / break / heal journeys (REQ-031 items 1-3, REQ-049 item 3) against the live stack.
 
-- seed: ``make demo-reset && make demo-seed`` leaves three baseline-synced
-  ``working`` connectors, 0 model tokens, nothing waiting (Harbor is not
-  seeded: deck 4 builds it from its wiki so the totals check comes from
-  the docs).
+- seed: ``make demo-reset && make demo-seed`` leaves one baseline-synced
+  ``working`` connector (atlaspms), 0 model tokens, nothing waiting (Harbor
+  is not seeded: deck 4 builds it from its wiki so the totals check comes
+  from the docs; Meridian and the PABX edge connector are not seeded
+  either: decks 6 and 7 build them live, REQ-050).
 - break: ``make demo-break SCENARIO=<id>`` injects exactly one fault (the
   single-call property is unit-tested; here the simulator shows the fault
   active and the break prints its one line).
@@ -53,7 +54,7 @@ def _active_scenario(sim_id: str) -> str | None:
 @pytest.mark.live
 @pytest.mark.timeout(600)
 def test_seed_end_state(e2e_stack: str) -> None:
-    """Seeded stack: three working connectors, 0 tokens, nothing waiting."""
+    """Seeded stack: one working connector (AtlasPMS only), 0 tokens, nothing waiting."""
     assert e2e_stack
     from bench.demo_seed import SEED_NAMES, run_seed  # noqa: PLC0415
     from tests.e2e.conftest import service_url  # noqa: PLC0415
