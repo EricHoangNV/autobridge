@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 23:30): **REQ-055 (remaining items), then REQ-056, REQ-057, REQ-058, then REQ-059.** Do not start REQ-051 or REQ-052 until the owner says so.
+Owner priority (2026-10-30 23:45): **REQ-055 (remaining items), then REQ-056, REQ-057, REQ-058, REQ-059, then REQ-052** (benchmark quality; must be done before tonight's validation and keyed benchmark). Do not start REQ-051 until the owner says so.
 
 ### REQ-059 — Blank-slate demo: the seed creates no connectors; every connector is built live from its docs (2026-10-30)
 Status: OPEN
@@ -262,7 +262,7 @@ proposal → approved).
 
 
 ### REQ-052 — Benchmark quality: the frontier arms must make real, complete, gradable attempts (2026-10-30)
-Status: OPEN (owner will start it)
+Status: OPEN (owner released it 2026-10-30: run after REQ-059, before the daily validation)
 Owner keyed run (2026-10-30, sandbox, `origin/main` 6cf0511b, `BENCH_TRIALS=1 make bench-ablation`, 16 min): engine
 arms are right (AutoBridge cold/warm: 6/6 fixable faults fixed, 6/6 unfixable held back, 0 wrong patches). The
 frontier arms' **quality** numbers are not trustworthy — they measure our harness, not the model. Owner: focus on
