@@ -98,7 +98,9 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
         ? "Rolled back"
         : decision === "reject" || done === "reject" || done === "deny"
           ? "Rejected"
-          : null;
+          : decision === "failed"
+            ? "Failed"
+            : null;
 
   async function doApprove() {
     setBusy("approve");
@@ -268,6 +270,19 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
           >
             {busy === "reject" ? "Denying…" : "Deny: keep everything as-is, contact the vendor"}
           </button>
+        ) : isEscalated ? (
+          // REQ-054 item 7: every escalation resolves through Deny (plain) or
+          // Approve/Deny (with a tested proposal) — never a Reject patch.
+          terminalLabel ? null : (
+            <button
+              data-testid="repair-deny-btn"
+              onClick={doDeny}
+              disabled={busy !== null}
+              className="link"
+            >
+              {busy === "reject" ? "Denying…" : "Deny: keep everything as-is, contact the vendor"}
+            </button>
+          )
         ) : (
           <button
             data-testid="repair-reject-btn"

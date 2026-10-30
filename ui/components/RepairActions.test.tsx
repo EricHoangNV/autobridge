@@ -50,13 +50,15 @@ describe("RepairActions", () => {
     expect(rolledBack).toHaveTextContent("Rolled back");
   });
 
-  it("escalations show no Approve button and an enabled Reject (REQ-048)", () => {
+  it("escalations show no Approve button and an enabled Deny (REQ-048, REQ-054)", () => {
     mockOperator("alice");
     render(<RepairActions repairId="rep-1" decision="escalate" />);
     expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
     expect(screen.queryByText(/Approve\/Reject available only when decision is/)).not.toBeInTheDocument();
-    expect(screen.getByTestId("repair-reject-btn")).toBeInTheDocument();
-    expect(screen.getByTestId("repair-reject-btn")).not.toBeDisabled();
+    expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
+    const deny = screen.getByTestId("repair-deny-btn");
+    expect(deny).toHaveTextContent(/Deny: keep everything as-is/);
+    expect(deny).not.toBeDisabled();
     expect(screen.getByTestId("rollback-btn")).toBeInTheDocument();
   });
 
@@ -141,11 +143,11 @@ describe("RepairActions", () => {
     expect(await screen.findByTestId("repair-action-success")).toHaveTextContent(/kept everything as-is/);
   });
 
-  it("escalation with an empty proposal patch keeps plain Reject (REQ-049)", () => {
+  it("escalation with an empty proposal patch keeps Deny, no Approve (REQ-049, REQ-054)", () => {
     mockOperator("alice");
     render(<RepairActions repairId="rep-1" decision="escalate" proposal={{ label: "Accept net", effect: "x", patch: [] }} />);
     expect(screen.queryByTestId("repair-approve-proposal-btn")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("repair-deny-btn")).not.toBeInTheDocument();
-    expect(screen.getByTestId("repair-reject-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
+    expect(screen.getByTestId("repair-deny-btn")).toBeInTheDocument();
   });
 });

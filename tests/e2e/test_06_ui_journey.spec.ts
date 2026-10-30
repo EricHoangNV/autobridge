@@ -747,50 +747,65 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
 
     await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 10000 });
 
-    // Decision line + actions at the top, one click from the Repairs list.
+    // Headline + storyline (REQ-054): the story in one sentence, then
+    // 1 happened → 2 did → 3 recommends, each a jump link to its chapter.
+    await expect(page.getByTestId("repair-headline")).toBeVisible({ timeout: 8000 });
+    await expect(page.getByTestId("storyline-1")).toBeVisible();
+    await expect(page.getByTestId("storyline-2")).toBeVisible();
+    await expect(page.getByTestId("storyline-3")).toBeVisible();
+    if (!uiReachable) {
+      await expect(page.getByTestId("repair-headline")).toContainText("fixed at L1");
+      await expect(page.getByTestId("storyline-3")).toContainText("3 · Recommendation");
+    }
+
+    // Decision rail: decision line + actions beside the story.
     await expect(page.getByTestId("repair-decision-line")).toBeVisible({ timeout: 8000 });
     await expect(page.getByTestId("repair-actions")).toBeVisible();
 
     // §1 What happened — connector, detecting sync + outcome, wire
-    // before/after, affected records, evidence.
+    // before/after, affected records, evidence (collapsed disclosure).
     await expect(page.getByTestId("repair-section-happened")).toBeVisible({ timeout: 8000 });
     if (!uiReachable) {
       await expect(page.getByTestId("happened-connector")).toContainText("Atlas PMS");
       await expect(page.getByTestId("happened-sync-outcome")).toContainText("Degraded");
       await expect(page.getByTestId("happened-sync-outcome")).toContainText("money_invariant");
       await expect(page.getByTestId("wire-change-line-0")).toContainText("page → cursor");
+      // Affected records + evidence live collapsed in chapter 1: open first.
+      await page.getByTestId("affected-evidence-summary").click();
       await expect(page.getByTestId("happened-affects")).toContainText("Reservation");
     } else {
       // Live: the same rows render from the seeded/broken stack.
       await expect(page.getByTestId("happened-connector")).toBeVisible();
       await expect(page.getByTestId("wire-change-summary")).toBeVisible();
+      await page.getByTestId("affected-evidence-summary").click().catch(() => {});
     }
     await expect(
       page.getByTestId("drift-evidence-section").or(page.getByTestId("drift-evidence-empty")),
     ).toBeVisible({ timeout: 8000 });
 
-    // §2 What the engine did — rung timeline, funnel, probes, model calls,
-    // verifier run.
+    // §2 What the engine did — rung timeline, proof tiles, funnel, probes,
+    // verifier run. Model cost reads once, in the proof tile.
     await expect(page.getByTestId("repair-section-did")).toBeVisible();
     await expect(page.getByTestId("rung-timeline-0")).toContainText(/L0/);
+    await expect(page.getByTestId("proof-model-calls")).toBeVisible();
     await expect(page.getByTestId("hypothesis-funnel-headline")).toBeVisible();
     if (!uiReachable) {
       await expect(page.getByTestId("hypothesis-funnel-headline")).toContainText("12 → 1");
       await expect(page.getByTestId("repair-probe-0")).toContainText("GET /reservations");
+      await expect(page.getByTestId("proof-model-calls")).toContainText("0");
     }
-    await expect(
-      page.getByTestId("model-call-box-empty").or(page.getByTestId("model-call-box")),
-    ).toBeVisible();
     await expect(page.getByTestId("verifier-verdict")).toBeVisible({ timeout: 5000 });
     await expect(page.getByTestId("verifier-checks-line")).toBeVisible();
 
-    // §3 What the engine decided — diff, touches, raw patch one click away.
+    // §3 What the engine recommends — Now → Proposed table grouped by
+    // operation, raw JSON one click away.
     await expect(page.getByTestId("repair-section-decided")).toBeVisible();
     await expect(page.getByTestId("decided-line")).toBeVisible();
     const hasPatch = await page.getByTestId("patch-diff").isVisible().catch(() => false);
     if (hasPatch) {
-      await expect(page.getByTestId("patch-line-0")).toBeVisible();
+      await expect(page.getByTestId("op-row-0")).toBeVisible();
       await expect(page.getByTestId("patch-touches")).toContainText("touches:");
+      // Raw JSON stays collapsed; its text still reads.
       await expect(page.getByTestId("patch-raw")).toContainText("cursor");
     }
 
@@ -821,7 +836,15 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
         await expect(page.getByTestId("repair-action-success")).toBeVisible({ timeout: 8000 });
         await expect(page.getByTestId("repair-action-success")).toContainText(/Approved/);
       } else {
-        await expect(page.getByTestId("repair-approve-btn")).toBeVisible();
+        // Live stack: the first repair may propose (Approve), escalate with
+        // a tested proposal (Approve: <label>), escalate plainly (Deny) or
+        // sit terminal (disabled outcome) — assert whichever action the rail
+        // offers for that state instead of assuming a propose.
+        const actionable = page
+          .getByTestId("repair-approve-btn")
+          .or(page.getByTestId("repair-approve-proposal-btn"))
+          .or(page.getByTestId("repair-deny-btn"));
+        await expect(actionable.first()).toBeVisible();
       }
     }
 

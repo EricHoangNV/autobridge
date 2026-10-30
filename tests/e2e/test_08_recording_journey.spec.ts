@@ -448,7 +448,7 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       // after approval — they render from the same persisted rows.
       await row.getByRole("link").first().click();
       await expect(page.getByTestId("repair-detail-page")).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByTestId("repair-decision-line")).toContainText("Fix ready: verified, 0 model calls");
+      await expect(page.getByTestId("repair-decision-line")).toContainText("Fix ready: verified");
       await expect(page.getByTestId("approve-preview-line-0")).toContainText("Creates release r2");
 
       // The presenter clicks Approve; the page follows the outcome live.
@@ -478,7 +478,9 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
       await expect(page.getByTestId("wire-change-summary")).toBeVisible();
       await expect(page.getByTestId("repair-section-did")).toBeVisible();
       await expect(page.getByTestId("rung-timeline-0")).toContainText("L0");
-      await expect(page.getByTestId("model-call-box-empty")).toBeVisible();
+      // REQ-054: model cost reads once, in the proof tile — with 0 calls the
+      // per-call ledger box is omitted, not repeated.
+      await expect(page.getByTestId("proof-model-calls")).toBeVisible();
       await expect(page.getByTestId("repair-section-decided")).toBeVisible();
       await expect(page.getByTestId("patch-diff")).toBeVisible();
       await expect(page.getByTestId("repair-section-approve")).toBeVisible();
@@ -620,7 +622,8 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
         await expect(page.getByTestId("model-call-box")).toBeVisible();
         await expect(page.getByTestId("model-call-box-total")).toBeVisible();
       } else {
-        await expect(page.getByTestId("model-call-box-empty")).toContainText("0 model calls");
+        // REQ-054: with 0 calls the ledger box is omitted; the proof tile carries the cost.
+        await expect(page.getByTestId("proof-model-calls")).toBeVisible();
         await expect(page.getByTestId("rung-timeline-3")).toContainText("L3 skipped");
       }
       await expect(page.getByTestId("decided-question")).toBeVisible();
@@ -764,7 +767,8 @@ test.describe("REQ-033 recording journey — UI-first demo", () => {
         await expect(page.getByTestId("model-call-box")).toBeVisible();
         await expect(page.getByTestId("model-call-box-total")).toBeVisible();
       } else {
-        await expect(page.getByTestId("model-call-box-empty")).toContainText("0 model calls");
+        // REQ-054: with 0 calls the ledger box is omitted; the proof tile carries the cost.
+        await expect(page.getByTestId("proof-model-calls")).toBeVisible();
         await expect(page.getByTestId("rung-timeline-3")).toContainText("L3 skipped");
       }
       await expect(page.getByTestId("decided-question")).toBeVisible();

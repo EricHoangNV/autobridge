@@ -539,21 +539,33 @@ with the scheduler ticking.
    `Complete|Degraded|Blocked`, fingerprints, dependency registrations;
    edge (PABX) connectors also get a link panel (link state, arriving
    postings count, announced record layout, last restart result).
-4. `/repairs/[id]` — four plain-language sections in order, all from
-   persisted rows, never recomputed in the browser (REQ-032): "What
-   happened" (connector/vendor, detecting sync + outcome + unmet
-   criterion, wire before/after from the fingerprint delta, affected
-   entities/records, evidence records); "What the engine did" (rung
-   timeline L0–L4 from the ledger, hypothesis funnel stages from the
-   derivation record, probes, per-call model-call box with an explicit
-   "0 model calls", verifier run); "What the engine decided and
-   recommends" (one-line decision, readable patch diff with the raw JSON
-   Patch one click away, confidence, verifier verdict, touched sections,
-   escalation question + rejected proposals); "What happens when you
-   click Approve" (from `GET /repairs/{id}/approve-preview`, plus the
-   after-approve live tracker: approval → activation → verifying sync →
-   connector working). Decision line + Approve/Reject sit at the top;
-   evidence graph and Inject Fault drawer stay as the appendix. The list
+4. `/repairs/[id]` — the story in one sentence (headline from facts) plus the
+   storyline 1 happened → 2 did → 3 recommends (jump links; yellow mark
+   on the step that needs the operator), then three chapters and a sticky
+   decision rail, all from persisted rows, never recomputed in the browser
+   (REQ-032, rearranged REQ-054): "1 What happened" (connector/vendor,
+   detecting sync + outcome + unmet criterion, wire before/after from the
+   fingerprint delta, ▸ affected records and evidence); "2 What the engine
+   did" (rung timeline L0–L4 from the ledger with the rung that held lit
+   and unused rungs reading "Not needed", proof tiles — one model-cost
+   tile, verifier verdict, hypotheses/probes with "The rule needed no
+   enumeration" when empty — per-call ledger rows only when calls landed,
+   hypothesis funnel stages from the derivation record, probes,
+   ▸ model usage across runs, ▸ evidence graph); "3 What the engine
+   recommends" (one-line decision, per-operation Now → Proposed table
+   grouped by operation with Now read from the active release spec,
+   touched sections, raw JSON Patch one click away with copy; rejected
+   proposals; never the escalation question). The rail merges Approve
+   (release rN), what Approve does (from
+   `GET /repairs/{id}/approve-preview`), Reject + what it does, ▸ roll
+   back, and "Approving as …"; climbing rails show "repairing at L<n>"
+   with model/elapsed/token counter and no actions; escalated rails show
+   the question + rationale and the tested proposal with Approve: \<label\>
+   / Deny (question only + Deny without a proposal); terminal rails show
+   the outcome with actions disabled. Below 1100 px the rail moves after
+   chapter 3 with a sticky bottom bar; reduced motion draws the storyline
+   bars full with no pulse. The demo "inject fault" drawer stays dashed at
+   the bottom, clearly labelled. The list
    at `/repairs` shows connector, drift class, rung, rule, model calls
    and status (fix ready / needs your decision / approved / applied /
    rejected, from `RepairRunOut.approval`), newest first. P2.S6.1 keeps two

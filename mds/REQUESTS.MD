@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 19:40): **REQ-053, then REQ-054.** Do not start REQ-051 or REQ-052 until the owner says so.
 
 ### REQ-054 — Repair page rearranged around the story (UI only, no new API) (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 13:34)
+Status: DONE (sbx1 2026-10-30 -- story layout live: headline+storyline, 3 chapters, decision rail per state, Now-from-spec op tables, fact-once, reduced-motion; ui 244 pass, typecheck+lint clean, make demo 8/8 + test_06 8/8 live unkeyed; owner check: Aside screenshots at 1440 deck 3 + deck 5)
 Owner design, read in place (local only, gitignored — **read it, never copy it into the repo, never edit it**):
 `/Volumes/OWC-Express-1M2/Development/autobridge/tmp/design/repair-flow/` — `PROPOSAL.md` (read first),
 `proposal.html` (static prototype), `app.css`; renders in

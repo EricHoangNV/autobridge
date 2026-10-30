@@ -3850,3 +3850,31 @@ Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process
 - REQ-054 is next (owner order). It rearranges the repair page — the dry-run lines (`patch-dry-run`, `proposal-dry-run`, `repair-section-approve` moving into the rail) and `data-testid`s will move; coordinate.
 - Keyed owner runs outstanding: deck-5 Approve-to-green (FRONTIER_API_KEY), Aside screenshots, keyed bench-ablation (REQ-028/046), other VERIFY items in progress-state.
 - e2e-ui (Playwright) still unrunnable in sandbox (pre-existing ESM loader failure); UI covered by vitest (237) + live verification.
+
+## REQ-054 — Repair page rearranged around the story (UI only)
+**Date:** 2026-10-30
+**Ref:** REQUESTS.MD REQ-054 (owner design in tmp/design/repair-flow, read in place)
+
+**What was done:**
+- Rewrote `ui/app/repairs/[id]/page.tsx` around the story: headline + storyline 1→2→3, chapters 1/2/3, sticky decision rail; per-state rails (propose/climbing/escalated±proposal/approved/rejected/rolled_back/failed); Now→Proposed op-group tables with Now from the active release spec; fact-once; reduced-motion signature.
+- `RepairActions`: plain escalations resolve through Deny (not Reject); failed repairs get a disabled outcome label.
+- `ui/app/globals.css`: story layout/rail/proof/op-table styles, reduced-motion gating, single code size.
+- Tests: page suite rewritten/extended to 28, RepairActions Deny cases, test_06 journey updated, test_08 stale assertions updated; SWR mocks dispatch by key (learning 64).
+- Docs: `docs/demo.md` decks 3+5, `docs/architecture.md` repair-page item.
+
+**Key decisions:**
+- No new API/schema: active spec comes from the existing connector-detail releases; grouped-table parsing handles add/remove/replace/move/copy/test.
+- Decision line keeps `repair-decision-line` testid on the rail so existing journeys keep working; `repair-section-approve` moved onto the rail.
+- Live-stack test_06 first-repair assertion made state-aware (Approve vs Deny vs terminal) since demo leaves escalate repairs first in the list.
+
+**Files changed:**
+- `ui/app/repairs/[id]/page.tsx` — story rewrite
+- `ui/app/repairs/[id]/page.test.tsx` — 28 tests
+- `ui/components/RepairActions.tsx` + `.test.tsx` — Deny for escalations, failed outcome
+- `ui/app/globals.css` — story styles
+- `tests/e2e/test_06_ui_journey.spec.ts`, `tests/e2e/test_08_recording_journey.spec.ts` — journey updates
+- `docs/demo.md`, `docs/architecture.md` — layout docs
+
+**Notes for next iteration:**
+- Owner check outstanding: Aside screenshots at 1440 deck 3 + deck 5.
+- `make e2e-ui` full runner blocked by pre-existing sandbox test_08 ESM loader failure (identical on clean main); run test files individually in sandbox.

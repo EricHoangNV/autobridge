@@ -52,20 +52,21 @@ approval — nothing auto-applies, so every transition stays on screen.
   Right, on `/connectors`: AtlasPMS turns ▲ Degrading ("drift detected
   … · repairing at L1"). On `/repairs`: the new row reads connector
   AtlasPMS, class `PAGINATION_CHANGE`, rung L1, rule `page_to_cursor`,
-  "0 model calls", status "fix ready". Open it and scroll the four
-  sections in order: **What happened** (connector + detecting sync with
-  its outcome and unmet criterion, the wire before/after
-  "page → cursor", affected entities/records, redacted samples);
-  **What the engine did** (rung timeline "L0: no known fix …" →
-  "L1: rule page_to_cursor matched", the hypothesis funnel
+  "0 model calls", status "fix ready". Open it: the headline tells the whole
+  story in one sentence, then the storyline 1 happened → 2 did →
+  3 recommends jumps to each chapter. **1 What happened** (connector +
+  detecting sync with its outcome and unmet criterion, the wire
+  before/after "page → cursor", ▸ affected records and evidence with
+  redacted samples); **2 What the engine did** (rung timeline "L0: no
+  known fix …" → "L1: rule page_to_cursor matched", proof tiles — model
+  calls, verifier, hypotheses/probes — the hypothesis funnel
   "24 explanations → … → 1 distinct" with expandable stages, probes,
-  the model-call box saying "0 model calls", the verifier run);
-  **What the engine decided** (the "Fix ready: verified, 0 model calls"
-  line, the JSON-Patch diff against the current spec with the raw patch
-  one click away); **What happens when you click Approve** (the server's
-  own preview: "creates release r2 from r1 … activates r2 … this fix is
-  kept as known … rollback to r1 stays available"). Click **Approve** at
-  the top: the page follows approval → release → verifying sync →
+  ▸ model usage across runs, ▸ evidence graph); **3 What the engine
+  recommends** (per-operation Now → Proposed table grouped by operation,
+  raw JSON Patch one click away with copy). The decision rail sits beside
+  the story: Approve release r2 with what Approve does, Reject with what
+  it does, ▸ roll back, "Approving as …". Click **Approve** in the rail:
+  the page follows approval → release → verifying sync →
   Complete, and the connector returns to ● Working. Break it again:
   the same drift resolves at L0 and the Knowledge entry reads "reused 1×".
 - **Deck 4 — Build Harbor from its wiki.** On
@@ -83,16 +84,14 @@ approval — nothing auto-applies, so every transition stays on screen.
   detected …"), then ■ Error ("needs your decision") as the engine
   escalates. On `/repairs`: the new row reads connector HarborPMS,
   class `SEMANTIC_VALUE_DRIFT`, rung L4, decision "escalate".
-  Open it: the top box leads with the model's question and its rationale
-  (or the engine's question when the model offered none) plus the one
-  proposed change when the model offered it — with its effect and the
-  diff. The four sections read from the break's own rows — the decision
-  line ("Needs your decision: the engine is not confident" or, after
-  the click below, "Business decision by …"), the climb (L0 miss →
-  L1 no rule → L2 skipped with its one explanation → exactly one L3
-  attempt → L4 escalate), the hypothesis funnel (generated → amount →
-  wire-consistent → distinct, ending on the single "net" reading), the
-  model-call box with the single frontier call — live
+  Open it: the rail leads with the decision line, the model's question and
+  its rationale (or the engine's question when the model offered none)
+  plus the one proposed change when the model offered it — with its
+  effect and the diff. The chapters read from the break's own rows —
+  chapter 2 holds the climb (L0 miss → L1 no rule → L2 skipped with its
+  one explanation → exactly one L3 attempt → L4 escalate), the hypothesis
+  funnel (generated → amount → wire-consistent → distinct, ending on the
+  single "net" reading), the proof tiles and the single frontier call — live
   ("muse-spark-1.3, N tokens") with `FRONTIER_API_KEY` set, otherwise
   the labelled replay ("replayed from a live Muse capture on …"), or the
   explicit L3 skip naming the capture to run when neither exists — and

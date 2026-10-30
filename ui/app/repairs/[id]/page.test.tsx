@@ -93,6 +93,23 @@ const mockConnector = {
   target_entities: ["Reservation"],
 };
 
+const mockConnectorWithSpec = {
+  ...mockConnector,
+  active_release_id: "rel-1",
+  releases: [
+    {
+      id: "rel-1",
+      version: 1,
+      spec: { operations: { list_reservations: { pagination: { strategy: "page", page_param: "page" } } } },
+    },
+  ],
+};
+
+const mockRepairRename = {
+  ...mockRepair,
+  candidate_patch: [{ op: "replace", path: "/operations/list_reservations/pagination/strategy", value: "cursor" }],
+};
+
 const mockSyncRun = {
   kind: "sync",
   payload: {
@@ -143,18 +160,24 @@ const mockModelUsage = {
   ],
 };
 
-function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger, runEvidence: unknown = [mockDerivation]) {
-  mockedUseSWR
-    .mockReturnValueOnce({ data: repair, error: undefined, isLoading: false, mutate: vi.fn() })
-    .mockReturnValueOnce({ data: [mockDrift], error: undefined, isLoading: false })
-    .mockReturnValueOnce({ data: [mockEvidence], error: undefined, isLoading: false })
-    .mockReturnValueOnce({ data: runEvidence, error: undefined, isLoading: false })
-    .mockReturnValueOnce({ data: ledger, error: undefined, isLoading: false })
-    .mockReturnValueOnce({ data: mockConnector, error: undefined, isLoading: false })
-    .mockReturnValueOnce({ data: mockSyncRun, error: undefined, isLoading: false })
-    .mockReturnValueOnce({ data: { rules: [{ id: "page_to_cursor", fixes: "page→cursor", confidence: 0.95 }] }, error: undefined, isLoading: false })
-    .mockReturnValueOnce({ data: mockModelUsage, error: undefined, isLoading: false })
-    .mockReturnValue({ data: undefined, error: undefined, isLoading: false });
+function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger, runEvidence: unknown = [mockDerivation], connector: unknown = mockConnector, evidence: unknown = [mockEvidence]) {
+  const repairId = (repair as { id: string }).id;
+  mockedUseSWR.mockImplementation(((key: unknown) => {
+    const ok = (data: unknown) => ({ data, error: undefined, isLoading: false, mutate: vi.fn() });
+    if (typeof key !== "string") return { data: undefined, error: undefined, isLoading: false, mutate: vi.fn() };
+    if (key === `/repairs/${encodeURIComponent(repairId)}`) return ok(repair);
+    if (key === `/repairs/${encodeURIComponent(repairId)}/ledger`) return ok(ledger);
+    if (key.startsWith("drift-for-repair-")) return ok([mockDrift]);
+    if (key.startsWith("evidence-for-repair-")) return ok(evidence);
+    if (key.endsWith("/evidence")) return ok(runEvidence);
+    if (key.startsWith("/runs/")) return ok(mockSyncRun);
+    if (key.endsWith("/sync-runs")) return ok([]);
+    if (key.startsWith("/connectors/")) return ok(connector);
+    if (key === "/capabilities") return ok({ rules: [{ id: "page_to_cursor", fixes: "page→cursor", confidence: 0.95 }] });
+    if (key === "/metrics/model-usage") return ok(mockModelUsage);
+    // ApprovePreviewSection, AfterApproveTracker and anything else: no data.
+    return { data: undefined, error: undefined, isLoading: false, mutate: vi.fn() };
+  }) as unknown as typeof useSWR);
 }
 
 describe("RepairDetailPage", () => {
@@ -166,12 +189,32 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("repair-detail-page")).toBeInTheDocument();
   });
 
-  it("renders the decision line and actions at the top", () => {
+  it("renders the headline, storyline and the decision rail", () => {
     mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Fix ready: verified, 0 model calls");
+    expect(screen.getByTestId("repair-headline")).toHaveTextContent("AtlasPMS");
+    expect(screen.getByTestId("repair-headline")).toHaveTextContent("fixed at L1");
+    // Storyline: 1 happened → 2 did → 3 recommends, mark on step 3.
+    expect(screen.getByTestId("storyline-1")).toHaveTextContent("1 · What happened");
+    expect(screen.getByTestId("storyline-2")).toHaveTextContent("2 · What the engine did");
+    expect(screen.getByTestId("storyline-3")).toHaveTextContent("3 · Recommendation");
+    expect(screen.getByTestId("storyline-3")).toHaveAttribute("data-active", "true");
+    expect(screen.getByTestId("storyline-1").querySelector("a")).toHaveAttribute("href", "#happened");
+    expect(screen.getByTestId("storyline-2").querySelector("a")).toHaveAttribute("href", "#did");
+    expect(screen.getByTestId("storyline-3").querySelector("a")).toHaveAttribute("href", "#recommends");
+    // Decision rail carries the approve block (data-testid moved with it).
+    expect(screen.getByTestId("repair-section-approve")).toBeInTheDocument();
     expect(screen.getByTestId("repair-actions")).toBeInTheDocument();
     expect(screen.getByTestId("inject-fault-drawer")).toBeInTheDocument();
+    // Mobile sticky bar renders the same summary.
+    expect(screen.getByTestId("repair-sticky-summary")).toHaveTextContent("Fix verified");
+  });
+
+  it("renders the decision line without repeating the model cost", () => {
+    mockAll();
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Fix ready: verified");
+    expect(screen.getByTestId("repair-decision-line")).not.toHaveTextContent("model calls");
   });
 
   it("answers what happened from persisted rows", () => {
@@ -187,30 +230,55 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("drift-evidence-section")).toBeInTheDocument();
   });
 
-  it("answers what the engine did: rungs, funnel, probes, model calls, verifier", () => {
+  it("answers what the engine did: rungs, funnel, probes, proof tiles, verifier", () => {
     mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-section-did")).toBeInTheDocument();
     expect(screen.getByTestId("rung-timeline-0")).toHaveTextContent("L0 miss");
     expect(screen.getByTestId("rung-timeline-1")).toHaveTextContent("page_to_cursor");
+    // Unused rungs shrink to one line.
+    expect(screen.getByTestId("rung-timeline-2")).toHaveTextContent("Not needed");
     expect(screen.getByTestId("hypothesis-funnel-headline")).toHaveTextContent("24 → 1");
     expect(screen.getByTestId("repair-probe-0")).toHaveTextContent("GET /reservations");
-    expect(screen.getByTestId("model-call-box-empty")).toHaveTextContent("0 model calls");
+    // Model cost is a single tile; with no calls the ledger box is omitted.
+    expect(screen.getByTestId("proof-model-calls")).toHaveTextContent("0");
+    expect(screen.queryByTestId("model-call-box-empty")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("model-call-box")).not.toBeInTheDocument();
+    expect(screen.getByTestId("proof-verifier")).toBeInTheDocument();
     expect(screen.getByTestId("verifier-checks-line")).toHaveTextContent("1/1 checks pass");
   });
 
-  it("answers what the engine decided: patch diff, touches, raw patch", () => {
-    mockAll();
+  it("shows the tile when the rule needed no enumeration (REQ-054)", () => {
+    mockAll(mockRepair, mockLedger, [], mockConnector, []);
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("proof-hypotheses")).toHaveTextContent("The rule needed no enumeration");
+    expect(screen.queryByTestId("hypothesis-funnel")).not.toBeInTheDocument();
+  });
+
+  it("renders the Now → Proposed table grouped by operation (REQ-054)", () => {
+    mockAll(mockRepairRename, mockLedger, [mockDerivation], mockConnectorWithSpec);
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-section-decided")).toBeInTheDocument();
     expect(screen.getByTestId("decided-line")).toHaveTextContent("Fix ready");
-    expect(screen.getByTestId("patch-line-0")).toHaveTextContent("set /operations/list/pagination/strategy");
+    // Grouped by operation, one row per op.
+    expect(screen.getByTestId("op-group-0")).toHaveTextContent("list_reservations");
+    expect(screen.getByTestId("op-row-0")).toHaveTextContent("/pagination/strategy");
+    // Now values come from the active spec, never placeholders.
+    expect(screen.getByTestId("op-now-0")).toHaveTextContent('"page"');
+    expect(screen.getByTestId("op-proposed-0")).toHaveTextContent('"cursor"');
     expect(screen.getByTestId("patch-touches")).toHaveTextContent("touches: operations");
     expect(screen.getByTestId("patch-raw")).toHaveTextContent("cursor");
-    expect(screen.getByTestId("patch-diff")).toBeInTheDocument();
+    expect(screen.getByTestId("patch-copy")).toBeInTheDocument();
   });
 
-  it("answers what approve will do from the server preview", () => {
+  it("shows unset Now values when the connector has no active spec yet", () => {
+    mockAll();
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("op-now-0")).toHaveTextContent("—");
+    expect(screen.getByTestId("op-proposed-0")).toHaveTextContent('"cursor"');
+  });
+
+  it("answers what approve will do from the server preview, inside the rail", () => {
     mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-section-approve")).toBeInTheDocument();
@@ -218,7 +286,7 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("approve-preview-loading")).toBeInTheDocument();
   });
 
-  it("shows the escalation question and rejected proposals for escalations", () => {    mockAll({
+  it("shows the escalation question and rejected proposals in the rail", () => {    mockAll({
       ...mockRepair,
       decision: "escalate",
       verifier_report_id: null,
@@ -228,13 +296,14 @@ describe("RepairDetailPage", () => {
     });
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Needs your decision");
-    // REQ-048: the question lives once, first, in the top box.
+    // REQ-048: the question lives once, first, in the rail.
+    expect(screen.getByTestId("repair-section-approve")).toContainElement(screen.getByTestId("escalation-question-top"));
     expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("Which mapping is correct?");
     expect(screen.getAllByText("Which mapping is correct?")).toHaveLength(1);
     expect(screen.getByTestId("decided-rejected")).toHaveTextContent("proposal_rejected");
   });
 
-  it("escalate top box has no Approve button and names the operator's options (REQ-048)", () => {
+  it("escalate rail has no Approve button and a Deny that closes it (REQ-048, REQ-054)", () => {
     mockAll({
       ...mockRepair,
       decision: "escalate",
@@ -245,14 +314,18 @@ describe("RepairDetailPage", () => {
     });
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("repair-approve-proposal-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
     expect(screen.queryByText(/Approve\/Reject available only when decision is/)).not.toBeInTheDocument();
-    // Reject closes it; roll back stays available.
-    expect(screen.getByTestId("repair-reject-btn")).not.toBeDisabled();
+    // Deny closes it; roll back stays available.
+    const deny = screen.getByTestId("repair-deny-btn");
+    expect(deny).not.toBeDisabled();
+    expect(deny).toHaveTextContent(/Deny: keep everything-as-is|Deny: keep everything as-is/);
     expect(screen.getByTestId("rollback-btn")).toBeInTheDocument();
-    expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("or Reject below to close this repair");
+    expect(screen.getByTestId("repair-section-approve")).toHaveTextContent("or Deny below to close this repair");
   });
 
-  it("shows the running view while the climb is in flight", () => {
+  it("climbing uses the same layout: step 2 active, rail shows the run, no actions (REQ-054)", () => {
     const climbingLedger = {
       ...mockLedger,
       decision: "climbing",
@@ -290,14 +363,21 @@ describe("RepairDetailPage", () => {
     );
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-detail-page")).toHaveAttribute("data-state", "climbing");
+    expect(screen.getByTestId("storyline-2")).toHaveAttribute("data-active", "true");
+    expect(screen.getByTestId("storyline-3")).toHaveAttribute("data-active", "false");
     expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Repairing at L3");
-    expect(screen.getByTestId("repair-calling")).toHaveTextContent("calling sleep-frontier");
+    // Rail shows the run, not actions.
+    expect(screen.getByTestId("repair-climbing-status")).toHaveTextContent("calling sleep-frontier");
+    expect(screen.getByTestId("repair-climbing-status")).toHaveTextContent("so far");
+    expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("repair-deny-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
     expect(screen.getByTestId("repair-calling")).toHaveTextContent("so far");
     expect(screen.getByTestId("model-call-box-empty")).toHaveTextContent("no calls landed yet");
     expect(screen.getByTestId("rung-timeline-3")).toHaveTextContent("L3 invoked");
   });
 
-  it("names a failed climb without offering approve", () => {
+  it("names a failed climb in the rail with actions disabled", () => {
     mockAll({
       ...mockRepair,
       decision: "failed",
@@ -307,6 +387,22 @@ describe("RepairDetailPage", () => {
     });
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Repair failed");
+    expect(screen.getByTestId("repair-outcome")).toHaveTextContent("No approval record");
+    const failed = screen.getByTestId("repair-approve-btn");
+    expect(failed).toBeDisabled();
+    expect(failed).toHaveTextContent("Failed");
+  });
+
+  it("rejected repairs show the outcome with actions disabled", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "reject",
+      verifier_report_id: "report-xyz",
+      approval: { id: "ap-9", actor: "bob", decision: "reject", from_release_id: "r1", to_release_id: null, created_at: new Date().toISOString() },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Rejected");
+    expect(screen.getByTestId("repair-outcome")).toHaveTextContent("Rejected by bob");
   });
 
   it("survives the loading-to-loaded transition without a hooks crash", () => {
@@ -320,13 +416,14 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Fix ready");
   });
 
-  it("keeps the evidence graph appendix", () => {
+  it("keeps the evidence graph appendix collapsed in chapter 2", () => {
     mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("evidence-graph-panel")).toBeInTheDocument();
     expect(screen.getByTestId("evidence-graph")).toBeInTheDocument();
   });
 
-  it("restores the per-run model-usage chart appendix with the repair highlighted", () => {
+  it("restores the per-run model-usage chart collapsed in chapter 2", () => {
     mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     const chart = screen.getByTestId("model-usage-chart");
@@ -361,7 +458,7 @@ describe("RepairDetailPage", () => {
       },
     );
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    // REQ-048: the question lives once, in the top box.
+    // REQ-048: the question lives once, in the rail.
     expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("The model's question for you:");
     expect(screen.getByTestId("escalation-question-top")).toHaveTextContent(question);
     expect(screen.getAllByText(question)).toHaveLength(1);
@@ -433,7 +530,7 @@ describe("RepairDetailPage", () => {
       model_usage: { frontier_tokens: 3530, small_tokens: 0, calls: 1, frontier_budget: 131072 },
     });
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    expect(screen.getByTestId("model-usage-view")).toHaveTextContent("of a 131,072 budget");
+    expect(screen.getByTestId("proof-model-calls")).toHaveTextContent("of 131,072 budget");
   });
 
   it("escalation with a model proposal shows the effect, the diff and Approve/Deny (REQ-049)", () => {
@@ -458,7 +555,7 @@ describe("RepairDetailPage", () => {
       },
     });
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    // Question once, first, in the top box — plus the proposal's effect and diff.
+    // Question once, first, in the rail — plus the proposal's effect and diff.
     expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("Should the new behaviour stand?");
     expect(screen.getByTestId("escalation-proposal-top")).toHaveTextContent("Retarget the totals check");
     expect(screen.getByTestId("escalation-proposal-top")).toHaveTextContent("/entities/Reservation/checks/2/compare_to");
@@ -469,7 +566,7 @@ describe("RepairDetailPage", () => {
     expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
   });
 
-  it("escalation without a proposal keeps Reject and no Approve (REQ-049)", () => {
+  it("escalation without a proposal keeps Deny and no Approve (REQ-054)", () => {
     mockAll({
       ...mockRepair,
       decision: "escalate",
@@ -480,8 +577,8 @@ describe("RepairDetailPage", () => {
     });
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.queryByTestId("repair-approve-proposal-btn")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("repair-deny-btn")).not.toBeInTheDocument();
-    expect(screen.getByTestId("repair-reject-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("repair-deny-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
   });
 
   it("approved escalation reads as a business decision, not a verified fix (REQ-049)", () => {
@@ -509,5 +606,35 @@ describe("RepairDetailPage", () => {
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Business decision by alice");
     expect(screen.getByTestId("repair-decision-line")).not.toHaveTextContent("Fix ready: verified");
+    expect(screen.getByTestId("repair-outcome")).toHaveTextContent("Approved by alice");
+  });
+
+  it("renders each fact once: one model-cost tile, one patch table (REQ-054)", () => {
+    mockAll();
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    // "model calls" reads once (the tile label); the ledger box is omitted.
+    expect(screen.getAllByText(/model calls/i)).toHaveLength(1);
+    // The patch reads once as the table; the raw JSON stays collapsed.
+    expect(screen.getByTestId("op-row-0")).toBeInTheDocument();
+    expect(screen.getByTestId("patch-raw")).toBeInTheDocument();
+  });
+
+  it("animates the storyline by default and skips motion when reduced (REQ-054)", () => {
+    mockAll();
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("storyline")).toHaveAttribute("data-animate", "on");
+    expect(screen.getByTestId("repair-section-approve")).toHaveAttribute("data-animate", "on");
+  });
+
+  it("draws storyline bars full with reduced motion (REQ-054)", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+    );
+    mockAll();
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("storyline")).toHaveAttribute("data-animate", "off");
+    expect(screen.getByTestId("repair-section-approve")).toHaveAttribute("data-animate", "off");
+    vi.unstubAllGlobals();
   });
 });

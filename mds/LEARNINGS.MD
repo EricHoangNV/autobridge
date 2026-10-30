@@ -581,3 +581,10 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed by `copy.deepcopy` before mutating, then assigning the new list.
 
 **Rule:** When updating a JSON column, always assign a deep-copied structure — never mutate the loaded objects in place.
+## 64. Key SWR mocks by request, never by call order — React renders twice
+
+**Context:** REQ-054 page rewrite; 10 of 28 page tests failed with "Repair not found" after switching assertions, although the mock queue looked right.
+
+- `mockReturnValueOnce` chains assume one render pass consumes N mocks in order. React 18 invokes the component twice per commit, so the queue drains 2× and the committed pass sees the default — repair undefined, "Repair not found", while a sibling test order still passes, which misleads.
+- Fixed by dispatching on the SWR key (`mockImplementation`: repair path → repair, `drift-for-repair-*` → drifts, `*/sync-runs` → `[]`, etc.), immune to render count and to hook additions that shift positions.
+- **Rule:** Mock data-fetching hooks by request identity (key/URL), never by call sequence; sequence mocks rot the moment render count or hook order changes.
