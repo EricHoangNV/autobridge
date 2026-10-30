@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 12:00): **REQ-044 next.**
 
 ### REQ-044 — Ask L3 a well-posed question: show the spec it patches, the raw record, and allow an explicit escalation (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 05:03)
 Owner run (2026-10-30, sandbox, `origin/main` 8750fad4, keyed): `make demo` 8/8, but step 4's live L3 call
 (`muse-spark-1.3`, 8,429 tokens, 8,234 reasoning) returned `patch does not apply: member 'mappings' not found in
 {'spec_version': 1, 'connector': …, 'source': …}`. The model is not weak; the question is ill-posed. Today's prompt
