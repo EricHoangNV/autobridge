@@ -35,7 +35,7 @@ applies and postings after r2 carry the amount; e2e on the live stack (break →
 present). Gates unkeyed + `make demo` 8/8. Owner check after: the Aside UI rehearsal of deck 7.
 
 ### REQ-050 — Decks 6 and 7: build Meridian live (v1 refused, v2 connects) and the PABX live from its spec (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 10:12)
 Owner decision (2026-10-30). Today `make demo-seed` builds Meridian twice behind the scenes (v1 refused, v2 release;
 `bench/demo_seed.py` ~181–205) and deck 6 only points at the result. The owner wants it built live in the UI, like
 Harbor in deck 4. The control API already takes `spec_vocabulary` per build (`control/routes/builds.py` ~176–192); the
