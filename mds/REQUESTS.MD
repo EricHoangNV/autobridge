@@ -2,7 +2,38 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 18:00): **REQ-050, then STOP** (owner runs the demo cases next; more changes will follow). **Do not start REQ-051.**
+Owner priority (2026-10-30 18:00): **REQ-050, then STOP** (owner runs the demo cases next; more changes will follow). **Do not start REQ-051 or REQ-052 until the owner says so.**
+
+### REQ-052 — Benchmark quality: the frontier arms must make real, complete, gradable attempts (2026-10-30)
+Status: OPEN (owner will start it)
+Owner keyed run (2026-10-30, sandbox, `origin/main` 6cf0511b, `BENCH_TRIALS=1 make bench-ablation`, 16 min): engine
+arms are right (AutoBridge cold/warm: 6/6 fixable faults fixed, 6/6 unfixable held back, 0 wrong patches). The
+frontier arms' **quality** numbers are not trustworthy — they measure our harness, not the model. Owner: focus on
+quality, not on the agent's spend (token/cost accounting for the agent arm is out of scope here).
+1. **One-shot answers are truncated.** All 12 trials ended at exactly **4,096 output tokens**
+   (`bench/one_shot.py` ~375 `max_tokens: int = 4096`; the reasoning model spends the budget thinking, then the spec is
+   cut off) → 0/6 fixed measures our cap. Give the one-shot the same output room as the engine's L3
+   (`FRONTIER_MAX_TOKENS`, REQ-043/048), and **detect truncation** (`finish_reason == "length"` or no parseable spec):
+   such a row is labelled `truncated`, never silently scored as a model failure.
+2. **The agent arm must run the model it claims and have time to finish.** Rows carry `model=baseline-claude`
+   (`bench/harness.py` ~873 default label) — record the model actually used (`muse-spark-1.3` via OpenCode, from the
+   run itself, not a default), and fail the run if it differs from `FRONTIER_MODEL`. Two trials (`token_expired`,
+   `transient_503`) hit the 120 s CLI timeout; size the agent's wall-clock budget so a real attempt can finish (same
+   budget rule for every arm, pre-registration amended), and label timeouts as `timed_out`, not as failures to fix.
+3. **Every frontier attempt is graded, with the reason.** All frontier rows have `verdict` and `failed_checks` =
+   null. For each arm × scenario record: did it produce a spec/patch at all, did it apply, the verifier's verdict and
+   failed checks, and for unfixable faults whether it correctly held back. The summary reports, per arm, fixable
+   fixed / unfixable held back / wrong patches shipped, plus counts of `truncated` / `timed_out` / `no_output`.
+4. **Learning curve:** with `FRONTIER_API_KEY` set, the agent column must come from the live agent, not
+   `FakeOpenCodeDriver` (today's `experiments/learning_curve.md` still says "fake-opencode", "2000" per repeat); the
+   rung table must be filled (it is empty). Quality first: report whether each of the 5 agent repairs was verified.
+5. One-shot cost uses a flat placeholder ($15 / M tokens: $0.2163 for 14,420 tokens); use the real Muse prices from
+   one table (Spark 1.3: $1.25 in / $0.15 cached / $4.25 out per M). Minor; do not extend to the agent arm.
+Tests: truncation detected and labelled; agent model recorded from the run and checked against `FRONTIER_MODEL`;
+timeout labelled; every arm × scenario row has a verdict or an explicit `truncated`/`timed_out`/`no_output` label;
+learning curve refuses the fake driver when a key is set. Owner check after: keyed `BENCH_TRIALS=1 make
+bench-ablation` in the sandbox, per-scenario table of what each frontier arm produced and why it failed or passed.
+
 
 ### REQ-051 — Deck 7: the PABX layout change is detected and repaired live (rename_field, Approve), not only in-process (2026-10-30)
 Status: DEFERRED (owner 2026-10-30: low priority; deck 7 now uses the link drop. Do not start until the owner reopens it.)
