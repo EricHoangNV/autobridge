@@ -86,9 +86,15 @@ approval — nothing auto-applies, so every transition stays on screen.
   otherwise the labelled replay ("replayed from a live Muse capture on
   …"), or the explicit L3 skip naming the capture to run when neither
   exists — the rejected `net_amount → total_amount` decoy with the
-  verifier judgment, the operator question, and the Reject path (a
-  semantic drift is never patched without the operator). When the
-  break's L3 was skipped, `make demo` step 4 additionally records its
+  verifier judgment (or the model's own escalation question, labelled as
+  the model's, when it asks for a human decision instead of patching),
+  the operator question, and the Reject path (a semantic drift is never
+  patched without the operator). The L3 question is well-posed: the
+  prompt names the patch target (the connector spec), lists the exact
+  JSON Pointer of every patchable member, shows redacted raw vendor
+  records, and lets the model answer `{"escalate": ...}` — a
+  non-applying patch gets one retry with the error, then escalates.
+  When the break's L3 was skipped, `make demo` step 4 additionally records its
   instrumented climb (same inputs) as the documented fallback row; when
   the break attempted L3, no second row is written.
 - **New kind of API.** Meridian's connector page shows the refused v1
@@ -218,6 +224,10 @@ verdict, the escalation bundle side-by-side with Approve / Reject. Money
 stays `Decimal` throughout; the UI never shows a guessed mapping. Capture
 the live prompt for replay with
 `make record-frontier SCENARIO=gross_to_net` (keyed stack, after the break).
+The L3 prompt hash changes with the prompt: after any change to what the
+engine asks (REQ-044 well-posed prompt), the previous capture no longer
+matches — the repair records an explicit skip naming the new hash — until
+the owner re-runs the capture and commits `demo/recordings/gross_to_net.json`.
 
 ## 5. Head-to-head — `/bench/scorecards`
 

@@ -23,13 +23,29 @@
     "text": "[\"gross_is_canonical\", \"net_is_canonical\"]",
     "tool_calls": []
   },
-  "_note": "Synthetic test fixture for the gross_to_net climb (replay mechanics only). Mirrors the shape of a make record-frontier capture; never shown as a model capture (labelled test fixture everywhere). 1a814981 covers the unified engine prompt (spec + records evidence, one net hypothesis \u2014 the same prompt the live repair path asks); b36d2ed8 is the retired docs-excerpt prompt; the older hashes cover the hand-built matrix/climb prompts.",
+  "_note": "Synthetic test fixture for the gross_to_net climb (replay mechanics only). Mirrors the shape of a make record-frontier capture; never shown as a model capture (labelled test fixture everywhere). REQ-044 well-posed L3 prompt (patch target + spec pointers + raw record, one-JSON-object answer): bd59fb05 covers the evidence=None shape shared by the unit climb and the matrix climb; b327e844 covers the in-process demo climb (_semantic_climb_inputs evidence); 1a814981 covers the pre-044 unified engine prompt (spec + records evidence); b36d2ed8 is the retired docs-excerpt prompt; the older hashes cover the hand-built matrix/climb prompts.",
+  "b327e844c94fc4d0eb134d7690bd035202bcb89ee9aa6ff87dc62d3ce2e858a8": {
+    "captured_at": "synthetic-test-fixture",
+    "input_tokens": 1250,
+    "model": "muse-spark-1.3",
+    "output_tokens": 60,
+    "text": "{\"patch\": [{\"op\": \"replace\", \"path\": \"/entities/Reservation/fields/total_amount/path\", \"value\": \"$.net_amount\"}], \"rationale\": \"Map total_amount to the net wire field.\"}",
+    "tool_calls": []
+  },
   "b36d2ed8e1c3729d649a957a4cdb5fb6c3d39ea44e6ce5effeac36cae91b3fe3": {
     "captured_at": "synthetic-test-fixture",
     "input_tokens": 1150,
     "model": "muse-spark-1.3",
     "output_tokens": 60,
     "text": "[{\"op\": \"replace\", \"path\": \"/entities/Reservation/fields/total_amount/path\", \"value\": \"$.net_amount\"}]",
+    "tool_calls": []
+  },
+  "bd59fb05518842c052c90eef52267b88a9425665a2582e3bd6288515955cf05f": {
+    "captured_at": "synthetic-test-fixture",
+    "input_tokens": 1150,
+    "model": "muse-spark-1.3",
+    "output_tokens": 60,
+    "text": "{\"patch\": [{\"op\": \"replace\", \"path\": \"/entities/Reservation/fields/total_amount/path\", \"value\": \"$.net_amount\"}], \"rationale\": \"Map total_amount to the net wire field.\"}",
     "tool_calls": []
   }
 }

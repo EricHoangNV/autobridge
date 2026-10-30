@@ -906,7 +906,7 @@ def test_step4_live_prose_without_patch_says_what_happened(monkeypatch: Any) -> 
     assert "L3 called live" in reason
     assert "muse-spark-1.3" in reason
     assert "2,115 tokens" in reason
-    assert "no JSON Patch found in response" in reason
+    assert "no JSON patch or escalation found in response" in reason
     assert "no frontier call available" not in reason
     assert "skipped" not in reason.lower()
     assert ev["frontier_replayed"] is False

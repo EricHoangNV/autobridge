@@ -367,6 +367,7 @@ def _climb_with_texts(l3_text: str, validate_against: Any = "harbor") -> dict[st
 
 
 def test_l3_non_applying_patch_is_recorded_rejection() -> None:
+    """REQ-044 item 4: one retry with the apply error, then escalate."""
     climb = _climb_with_texts('[{"op": "replace", "path": "/entities/Reservation/fields/nope/path", "value": "x"}]')
     assert climb["proposal"] is None
     assert climb["resolved_rung"] == 3
@@ -374,7 +375,13 @@ def test_l3_non_applying_patch_is_recorded_rejection() -> None:
     assert l3["action"] == "proposal_rejected"
     assert "does not apply" in l3["reason"]
     assert l3["raw_preview"]
-    assert climb["usage"]["frontier_tokens"] == 20
+    # The same bad patch comes back on the single retry (the fake answers
+    # every tier identically), so both calls are billed and the error that
+    # triggered the retry is recorded.
+    assert l3["retry_error"] and "does not apply" in l3["retry_error"]
+    assert "retry failed too" in l3["reason"]
+    assert climb["usage"]["frontier_tokens"] == 40
+    assert climb["usage"]["frontier_calls"] == 2
 
 
 def test_l3_malformed_json_is_recorded_not_raised() -> None:
@@ -416,7 +423,7 @@ def test_l3_prose_without_patch_records_detail_not_skipped() -> None:
     assert climb["resolved_rung"] == 3
     l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
     assert l3["action"] == "frontier_generate"
-    assert l3.get("parse_detail") == "no JSON Patch found in response"
+    assert l3.get("parse_detail") == "no JSON patch or escalation found in response"
     assert l3["raw_preview"].startswith("I cannot determine")
     assert climb["usage"]["frontier_tokens"] == 20
     assert "\n" not in l3["reason"]
@@ -621,3 +628,297 @@ def test_controller_derives_l3_gate_count_from_surviving_hypotheses() -> None:
     l3_2 = next(t for t in res2.ladder_trace if t.get("level") == 3)
     assert l3_2["action"] == "l3_skipped"
     assert "enumerator yielded 5 >= 2" in l3_2["reason"], l3_2["reason"]
+
+
+# ---------------------------------------------------------------------------
+# REQ-044: well-posed L3 prompt (spec pointers, raw record, escalate)
+# ---------------------------------------------------------------------------
+
+
+def test_l3_envelope_patch_parses_with_rationale() -> None:
+    climb = _climb_with_texts(
+        '{"patch": [{"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", '
+        '"value": "$.net_amount"}], "rationale": "Map total_amount to the net wire field."}'
+    )
+    assert climb["proposal"] == [
+        {"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}
+    ]
+    assert climb["model_rationale"] == "Map total_amount to the net wire field."
+    assert climb["model_escalated"] is False
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "frontier_generate"
+    assert l3["model_rationale"] == "Map total_amount to the net wire field."
+    assert "model rationale" in l3["reason"]
+
+
+def test_l3_fenced_envelope_parses() -> None:
+    climb = _climb_with_texts(
+        'Some thinking.\n```json\n{"escalate": "Should total_amount track gross or net?", '
+        '"rationale": "Gross vs net is a business decision."}\n```'
+    )
+    assert climb["proposal"] is None
+    assert climb["model_escalated"] is True
+    assert climb["model_question"] == "Should total_amount track gross or net?"
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "model_escalation"
+    assert l3["model_question"] == "Should total_amount track gross or net?"
+
+
+def test_l3_envelope_garbage_details() -> None:
+    from autobridge.repair.ladder import _parse_l3_response
+
+    parsed = _parse_l3_response('{"foo": 1, "rationale": "thinking out loud"}')
+    assert parsed["kind"] == "none"
+    assert parsed["detail"] == "response JSON is neither a patch nor an escalation object"
+    parsed = _parse_l3_response('{"patch": [{"op": "add"}], "rationale": "x"}')
+    assert parsed["kind"] == "none"
+    assert "not a patch list" in parsed["detail"]
+    parsed = _parse_l3_response('{"escalate": 42}')
+    assert parsed["kind"] == "none"
+    assert "not a question string" in parsed["detail"]
+
+
+def test_l3_retry_succeeds_after_apply_error() -> None:
+    """First patch invents /mappings/..., the retry fixes the pointer."""
+    bad = '[{"op": "replace", "path": "/mappings/total_amount", "value": "$.net_amount"}]'
+    good = (
+        '{"patch": [{"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", '
+        '"value": "$.net_amount"}], "rationale": "Same fix, addressed at the spec member."}'
+    )
+    seen: list[str] = []
+
+    def _frontier(messages: Any, **kwargs: Any) -> Completion:
+        _ = kwargs
+        seen.append(str(messages[1]["content"]))
+        return Completion(text=bad if len(seen) == 1 else good, usage=Usage(10, 10))
+
+    fake = FakeProvider(
+        responses={
+            "small": Completion(text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(4, 4)),
+            "frontier": _frontier,
+        }
+    )
+    climb = run_frontier_climb(
+        spec=_spec(),
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=fake,
+        budget=Budget(),
+        knowledge_cache=KnowledgeCache(),
+        fingerprint_delta=_delta(),
+        vendor="harbor",
+        scenario="gross_to_net",
+        validate_against=_harbor_ref(),
+    )
+    assert climb["proposal"] == [
+        {"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}
+    ]
+    assert climb["usage"]["frontier_calls"] == 2
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["retried"] is True
+    assert l3["retry_error"] and "/mappings/total_amount" in l3["retry_error"]
+    assert "retry proposed a patch" in l3["reason"]
+    # The retry prompt carries the rejection — the model is told what failed.
+    assert "/mappings/total_amount" in seen[1]
+
+
+def test_l3_escalate_answer_resolves_l4_with_model_question() -> None:
+    """An {"escalate": ...} answer is a valid L3 outcome: L4 carries the
+    model's question, labelled as the model's, instead of the generic one."""
+    from autobridge.repair.controller import RepairController
+
+    ctrl = RepairController(knowledge_cache=KnowledgeCache())
+    fake = FakeProvider(
+        responses={
+            "small": Completion(text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(4, 4)),
+            "frontier": Completion(
+                text='{"escalate": "Should total_amount track gross or net?", '
+                '"rationale": "Gross vs net is a business decision no evidence settles."}',
+                usage=Usage(10, 10),
+            ),
+        }
+    )
+    res = ctrl.handle(
+        spec=_spec(),
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=fake,
+        budget=Budget(),
+        fingerprint_delta=_delta(),
+        vendor="harbor",
+    )
+    assert res.decision == "escalate"
+    assert res.ladder_level_reached == 4
+    assert res.escalation_bundle is not None
+    assert res.escalation_bundle.question == "Should total_amount track gross or net?"
+    l3 = next(t for t in res.ladder_trace if t.get("level") == 3)
+    assert l3["action"] == "model_escalation"
+    l4 = next(t for t in res.ladder_trace if t.get("level") == 4)
+    assert "human decision" in l4["reason"]
+    assert "Should total_amount track gross or net?" in l4["reason"]
+
+
+def test_l3_prompt_names_spec_pointers_raw_sample_no_secret() -> None:
+    """The prompt states the patch target, lists exact JSON Pointers, shows
+    a redacted raw vendor record — and carries no secret value."""
+    from autobridge.repair import semantic as _sem
+
+    spec = {
+        "spec_version": 3,
+        "connector": {"id": "harbor", "vendor": "harbor"},
+        "entities": {
+            "Reservation": {
+                "key": "$.reservation_id",
+                "fields": {
+                    "reservation_id": {"path": "$.reservation_id"},
+                    "total_amount": {"path": "$.total_amount"},
+                },
+                "checks": [
+                    {"kind": "money_invariant", "field": "total_amount", "compare_to": "$.gross_sum"}
+                ],
+            },
+        },
+    }
+    summary = {
+        "outcome": "Degraded",
+        "unmet_criteria": ["money_invariant"],
+        "canonical_records": {
+            "Reservation": [{"reservation_id": "r1", "total_amount": "90.00"}],
+        },
+        "operation_results": {
+            "list_reservations": {
+                "raw_pages": [
+                    {
+                        "gross_sum": "300.00",
+                        "reservations": [
+                            {
+                                "reservation_id": "r1",
+                                "total_amount": 90.0,
+                                "gross_amount": 100.0,
+                                "api_token": "SECRET-XYZ-123",
+                                "guest_email": "guest@example.com",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    }
+    hyps, _ = _sem.enumerate_money_hypotheses(spec, source="s")
+    survivors = _sem.filter_wire_consistent(hyps, invariant_failed=True)
+    climbed, _ = _sem.select_climbed(survivors)
+    evidence = _sem.build_l3_evidence(spec, summary, climbed)
+    assert evidence["patch_target"]["document"] == "connector spec"
+    assert "/entities/Reservation/fields/total_amount/path" in evidence["patch_target"]["allowed_pointers"]
+    assert evidence["raw_records"][0]["gross_amount"] == 100.0
+    assert evidence["raw_records"][0]["api_token"] == "<redacted>"
+    fake = FakeProvider(
+        responses={
+            "small": Completion(text='["x"]', usage=Usage(1, 1)),
+            "frontier": Completion(
+                text='{"escalate": "Should total_amount track gross or net?", "rationale": "x"}',
+                usage=Usage(10, 10),
+            ),
+        }
+    )
+    climb = run_frontier_climb(
+        spec=spec,
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=[climbed],
+        enumerator_yield_count=1,
+        provider=fake,
+        budget=Budget(),
+        knowledge_cache=KnowledgeCache(),
+        fingerprint_delta=None,
+        vendor="harbor",
+        validate_against=spec,
+        evidence=evidence,
+    )
+    user_text = climb["l3_messages"][1]["content"]
+    assert "/entities/Reservation/fields/total_amount/path" in user_text
+    assert "gross_amount" in user_text
+    assert "SECRET-XYZ-123" not in user_text
+    assert "guest@example.com" not in user_text
+    assert "Answer with one JSON object" in user_text
+    assert climb["l3_messages"][0]["content"].startswith("You repair API connectors")
+    assert "Answer with one JSON object" in climb["l3_messages"][0]["content"]
+    assert climb["model_escalated"] is True
+
+
+def test_l3_envelope_replay_round_trip(tmp_path: Any) -> None:
+    """The new prompt shape replays: capture the prompt from a fake climb,
+    record an envelope answer for its hash, and replay the proposal."""
+    import json as _json
+
+    from autobridge.llm.provider import ReplayProvider, prompt_hash
+
+    fake = FakeProvider(
+        responses={
+            "small": Completion(text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(4, 4)),
+            "frontier": Completion(text="probe", usage=Usage(1, 1)),
+        }
+    )
+    probe = run_frontier_climb(
+        spec=_spec(),
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=fake,
+        budget=Budget(),
+        knowledge_cache=KnowledgeCache(),
+        fingerprint_delta=_delta(),
+        vendor="harbor",
+        scenario="gross_to_net",
+        validate_against=_harbor_ref(),
+    )
+    key = prompt_hash(probe["l3_messages"])
+    recording = {
+        "text": '{"patch": [{"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", '
+        '"value": "$.net_amount"}], "rationale": "Replayed capture."}',
+        "tool_calls": [],
+        "input_tokens": 1150,
+        "output_tokens": 60,
+        "model": "muse-spark-1.3",
+        "captured_at": "synthetic-test-fixture",
+    }
+    l2_messages = [
+        {
+            "role": "system",
+            "content": "You are a deterministic hypothesis ranker. Rank hypotheses by prior and evidence. Return JSON list of hypothesis ids in ranked order.",
+        },
+        {
+            "role": "user",
+            "content": "hypotheses: ['gross_is_canonical', 'net_is_canonical']; priors: [0.41, 0.39]",
+        },
+    ]
+    l2_recording = {
+        "text": '["gross_is_canonical", "net_is_canonical"]',
+        "tool_calls": [],
+        "input_tokens": 96,
+        "output_tokens": 12,
+        "model": "muse-spark-1.3",
+        "captured_at": "synthetic-test-fixture",
+    }
+    (tmp_path / "r.json").write_text(
+        _json.dumps({key: recording, prompt_hash(l2_messages): l2_recording}), encoding="utf-8"
+    )
+    replay = ReplayProvider(recordings_dir=str(tmp_path))
+    climb = run_frontier_climb(
+        spec=_spec(),
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=replay,
+        budget=Budget(),
+        knowledge_cache=KnowledgeCache(),
+        fingerprint_delta=_delta(),
+        vendor="harbor",
+        scenario="gross_to_net",
+        validate_against=_harbor_ref(),
+    )
+    assert climb["proposal"] == [
+        {"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.net_amount"}
+    ]
+    assert climb["model_rationale"] == "Replayed capture."

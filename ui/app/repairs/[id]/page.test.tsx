@@ -315,4 +315,21 @@ describe("RepairDetailPage", () => {
     expect(row).toHaveAttribute("data-run-id", "repair-abc-123");
     expect(row).toHaveAttribute("data-highlight", "true");
   });
+
+  it("labels the escalation question as the model's when L3 escalated explicitly", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [
+        { level: 3, action: "model_escalation", reason: "L3 asked for a human decision: Should total_amount track gross or net?", model_question: "Should total_amount track gross or net?" },
+        { level: 4, action: "escalate", reason: "L3 asked for a human decision (gross_to_net): Should total_amount track gross or net?" },
+      ],
+      escalation_bundle: { reason: "L3 asked for a human decision", question: "Should total_amount track gross or net?", suggested_action: "pick one" },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("decided-question")).toHaveTextContent("The model's question for you:");
+    expect(screen.getByTestId("decided-question")).toHaveTextContent("Should total_amount track gross or net?");
+  });
 });

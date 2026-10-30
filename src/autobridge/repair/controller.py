@@ -495,7 +495,19 @@ class RepairController:
             # It is never placed in candidate_patch: nothing here is released.
             l3_entry["proposal"] = list(climb["proposal"])
         scenario_name = scenario or drift_class
-        if l3_entry is not None and l3_entry.get("action") == "proposal_rejected":
+        model_question = str(climb.get("model_question") or "")
+        model_escalated = bool(climb.get("model_escalated"))
+        if l3_entry is not None and l3_entry.get("action") == "model_escalation" and model_question:
+            # REQ-044 item 3: the model explicitly asked for a human
+            # decision — its question resolves L4, labelled as the model's,
+            # and counts as a valid L3 outcome, not an error.
+            from autobridge.repair.ladder import normalize_model_question  # noqa: PLC0415
+
+            model_question = normalize_model_question(model_question)
+            l4_reason = (
+                f"L3 asked for a human decision ({scenario_name}): {model_question}"
+            )
+        elif l3_entry is not None and l3_entry.get("action") == "proposal_rejected":
             l4_reason = (
                 f"L3 proposal rejected: {l3_entry.get('reason', 'does not apply')} "
                 f"({scenario_name}); no patch released — one operator question"
@@ -518,7 +530,11 @@ class RepairController:
         bundle = escalation_for_no_fix(
             f"{scenario_name}: semantic drift, no verified fix",
             evidence_ids=_signal_evidence_ids(signals_list),
-            question=f"{scenario_name}: no verified fix for this semantic drift — which mapping is correct?",
+            question=(
+                model_question
+                if model_escalated and model_question
+                else f"{scenario_name}: no verified fix for this semantic drift — which mapping is correct?"
+            ),
         )
         model_usage = dict(climb.get("usage", {}))
         result = LadderResult(
@@ -827,7 +843,7 @@ def run_semantic_repair(
     )
     if l3_entry is None:
         info["l3_status"] = "skip: no L3 rung (no provider configured)"
-    elif l3_entry.get("action") in ("frontier_generate", "proposal_rejected"):
+    elif l3_entry.get("action") in ("frontier_generate", "proposal_rejected", "model_escalation"):
         info["l3_status"] = "attempt"
     else:
         info["l3_status"] = f"skip: {l3_entry.get('reason', 'L3 skipped')}"

@@ -116,50 +116,135 @@ def _is_patch_list(parsed: Any) -> bool:
     )
 
 
-def _parse_patch_response(text: str) -> tuple[list[dict[str, Any]] | None, str]:
-    """Extract a JSON Patch proposal from a frontier model's raw text.
-
-    Reasoning models often answer with prose around the patch (an
-    explanation plus a fenced `````json`` block), so the whole reply is
-    rarely bare JSON. Returns ``(proposal, detail)`` where *proposal* is
-    the patch list or ``None`` and *detail* is a one-line, secret-free
-    account of what the text contained (``"parsed"`` on success). The
-    caller records the detail on the rung so a live answer that yields no
-    patch is diagnosable instead of silently dropped (REQ-021 owner
-    check 2026-10-28: the frontier answered and the engine could not parse
-    it, then mislabelled the rung as skipped).
-    """
-    import json as _json  # noqa: PLC0415 - local to keep ladder import-light
+def _extract_json_candidates(stripped: str) -> list[str]:
+    """Whole text, fenced block, then largest ``{...}``/``[...]`` span."""
     import re as _re  # noqa: PLC0415
 
-    stripped = (text or "").strip()
-    if not stripped:
-        return None, "empty response: the model returned no text"
-    try:
-        parsed = _json.loads(stripped)
-    except Exception:
-        parsed = None
-    if _is_patch_list(parsed):
-        return [dict(op) for op in parsed], "parsed"
-    candidates: list[str] = []
+    candidates: list[str] = [stripped]
     fence = _re.search(r"```(?:json)?\s*\n?(.*?)```", stripped, _re.DOTALL)
     if fence:
         candidates.append(fence.group(1).strip())
-    start, end = stripped.find("["), stripped.rfind("]")
-    if start != -1 and end != -1 and end > start:
-        candidates.append(stripped[start : end + 1])
-    for candidate in candidates:
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start, end = stripped.find(opener), stripped.rfind(closer)
+        if start != -1 and end != -1 and end > start:
+            candidates.append(stripped[start : end + 1])
+    return candidates
+
+
+def _parse_l3_response(text: str) -> dict[str, Any]:
+    """Parse an L3 frontier reply (REQ-044).
+
+    The well-posed answer is one JSON object — either
+    ``{"patch": [...], "rationale": "<one sentence>"}`` or
+    ``{"escalate": "<the question for the human>", "rationale": "..."}`` —
+    tolerating a fenced block around it. A bare patch list (the pre-044
+    shape) still parses as a patch with an empty rationale, so old
+    recordings and callers keep working.
+
+    Returns ``{"kind", "patch", "rationale", "question", "detail"}`` where
+    *kind* is ``"patch"``, ``"escalate"`` or ``"none"`` and *detail* is a
+    one-line, secret-free account of what the text contained.
+    """
+    import json as _json  # noqa: PLC0415 - keep ladder import-light
+
+    stripped = (text or "").strip()
+    if not stripped:
+        return {
+            "kind": "none",
+            "patch": None,
+            "rationale": "",
+            "question": "",
+            "detail": "empty response: the model returned no text",
+        }
+    for candidate in _extract_json_candidates(stripped):
         try:
             parsed = _json.loads(candidate)
         except Exception:
             continue
+        if isinstance(parsed, dict):
+            patch = parsed.get("patch")
+            escalate = parsed.get("escalate")
+            rationale = parsed.get("rationale") or ""
+            if isinstance(patch, list) and _is_patch_list(patch):
+                return {
+                    "kind": "patch",
+                    "patch": [dict(op) for op in patch],
+                    "rationale": str(rationale),
+                    "question": "",
+                    "detail": "parsed",
+                }
+            if isinstance(patch, list):
+                return {
+                    "kind": "none",
+                    "patch": None,
+                    "rationale": str(rationale),
+                    "question": "",
+                    "detail": "response patch member is not a patch list (no op/path operations)",
+                }
+            if isinstance(escalate, str) and escalate.strip():
+                return {
+                    "kind": "escalate",
+                    "patch": None,
+                    "rationale": str(rationale),
+                    "question": escalate.strip(),
+                    "detail": "parsed",
+                }
+            if "escalate" in parsed:
+                return {
+                    "kind": "none",
+                    "patch": None,
+                    "rationale": str(rationale),
+                    "question": "",
+                    "detail": "response escalate member is not a question string",
+                }
+            return {
+                "kind": "none",
+                "patch": None,
+                "rationale": str(rationale),
+                "question": "",
+                "detail": "response JSON is neither a patch nor an escalation object",
+            }
         if _is_patch_list(parsed):
-            return [dict(op) for op in parsed], "extracted patch from prose wrapper"
-    if parsed is not None:
-        return None, "response JSON is not a patch list (no op/path operations)"
+            return {
+                "kind": "patch",
+                "patch": [dict(op) for op in parsed],
+                "rationale": "",
+                "question": "",
+                "detail": "parsed bare patch list (pre-044 shape)",
+            }
     if "[" in stripped or "{" in stripped:
-        return None, "response contains JSON-like content that does not parse as a patch"
-    return None, "no JSON Patch found in response"
+        return {
+            "kind": "none",
+            "patch": None,
+            "rationale": "",
+            "question": "",
+            "detail": "response contains JSON-like content that does not parse as a patch or escalation",
+        }
+    return {
+        "kind": "none",
+        "patch": None,
+        "rationale": "",
+        "question": "",
+        "detail": "no JSON patch or escalation found in response",
+    }
+def _parse_patch_response(text: str) -> tuple[list[dict[str, Any]] | None, str]:
+    """Extract a JSON Patch proposal from a frontier model's raw text.
+
+    Pre-044 compatibility wrapper over :func:`_parse_l3_response`: a bare
+    patch list parses as before; the ``{"patch": ...}`` envelope's patch
+    is returned with its rationale folded into the detail. An
+    ``{"escalate": ...}`` answer is not a patch (``None`` plus a detail
+    naming the escalation).
+    """
+    parsed = _parse_l3_response(text)
+    if parsed["kind"] == "patch":
+        detail = "parsed"
+        if parsed["rationale"]:
+            detail = f"parsed (model rationale: {parsed['rationale'][:200]})"
+        return parsed["patch"], detail
+    if parsed["kind"] == "escalate":
+        return None, f"model escalated instead of patching: {parsed['question'][:200]}"
+    return None, parsed["detail"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1463,6 +1548,159 @@ def run_ladder(
 L2_CONFIDENCE_THRESHOLD = 0.70
 
 
+#: System prompt for the L3 frontier call (REQ-044). It names the patch
+#: target (the connector spec document, never the vendor response), the
+#: allowed ops and members, and the one-JSON-object answer shape — patch
+#: or an explicit escalation — so the model is asked a well-posed
+#: question instead of guessing paths.
+L3_SYSTEM_PROMPT = (
+    "You repair API connectors. The fix is a JSON Patch (RFC 6902 list of "
+    "op/path/value objects) applied to the connector spec document described "
+    "below: every path in the patch addresses that document only, never a "
+    "JSONPath into a vendor response. You may use only the ops 'replace' and "
+    "'add', only on the listed patchable members, using only the "
+    "vocabulary's transforms by name. Answer with one JSON object and "
+    "nothing else: either {\"patch\": [...], \"rationale\": \"<one sentence>\"} "
+    "or, when the right mapping is a business decision the evidence does not "
+    "settle, {\"escalate\": \"<the one question for the human>\", "
+    "\"rationale\": \"<one sentence>\"}."
+)
+
+#: Fallback pointer shape when the climb carries no patch target (REQ-044).
+#: A semantic fix remaps a field's wire path or transform; anything outside
+#: ``/entities/<entity>/fields/<field>/(path|transform)`` is rejected before
+#: the verifier (the reported ``/mappings/...`` invention fails here, with
+#: one retry, instead of reaching the gate).
+_L3_FIELD_POINTER = __import__("re").compile(
+    r"^/entities/[^/]+/fields/[^/]+(?:/(?:path|transform))?$"
+)
+
+
+def _l3_user_message(
+    *,
+    drift_class: str,
+    ranked_ids: list[str],
+    evidence: dict[str, Any] | None,
+) -> str:
+    """User message for the L3 frontier call (REQ-044).
+
+    Drift class plus ranked hypotheses, then — when the climb carries
+    observed evidence — the patch target (document + allowed ops +
+    pointers), the patchable spec subtree with exact JSON Pointers, the
+    redacted raw vendor records, and the observed evidence, all as
+    untrusted data blocks. Ends with the answer-format reminder.
+    """
+    import json as _json  # noqa: PLC0415
+
+    parts = [
+        f"drift_class: {drift_class}; ranked hypotheses: {ranked_ids}",
+    ]
+    if evidence:
+        target = evidence.get("patch_target") if isinstance(evidence, dict) else None
+        subtree = evidence.get("spec_subtree") if isinstance(evidence, dict) else None
+        raw_records = evidence.get("raw_records") if isinstance(evidence, dict) else None
+        observed = (
+            {k: v for k, v in evidence.items() if k not in ("patch_target", "spec_subtree", "raw_records")}
+            if isinstance(evidence, dict)
+            else {}
+        )
+        if isinstance(target, dict) and target:
+            parts.append(
+                "The patch applies to this document (paths into it only): "
+                + _json.dumps(target, sort_keys=True, separators=(",", ":"), default=str)
+            )
+        if isinstance(subtree, dict) and subtree:
+            parts.append(
+                "Patchable spec subtree with exact JSON Pointers: "
+                + _json.dumps(subtree, sort_keys=True, separators=(",", ":"), default=str)
+            )
+        if isinstance(raw_records, list) and raw_records:
+            parts.append(
+                "Redacted raw vendor records for the entity "
+                "(field names and value shapes; money as strings): "
+                + _json.dumps(raw_records, sort_keys=True, separators=(",", ":"), default=str)
+            )
+        if observed:
+            parts.append(
+                "observed evidence (untrusted, redacted): "
+                + _json.dumps(observed, sort_keys=True, separators=(",", ":"), default=str)
+            )
+    else:
+        parts.append(
+            "No observed evidence was recorded (wire shape intact): the patch "
+            "applies to the connector spec document (/entities/... paths only); "
+            "propose nothing unless a hypothesis names an exact spec member."
+        )
+    parts.append(
+        'Answer with one JSON object: {"patch": [...], "rationale": "<one sentence>"} '
+        'or {"escalate": "<the one question for the human>", "rationale": "<one sentence>"}.'
+    )
+    return "\n".join(parts)
+
+
+def _l3_pointer_error(
+    proposal: list[dict[str, Any]],
+    *,
+    target_spec: dict[str, Any] | None,
+    evidence: dict[str, Any] | None,
+) -> str | None:
+    """Apply + allowed-pointer check for an L3 proposal (REQ-044).
+
+    Returns ``None`` when the patch applies to the spec and touches only
+    allowed pointers, else a one-line error for the single retry. The
+    allowed set is the evidence's listed patchable members when the climb
+    carries a patch target, else the ``/entities/.../fields/...`` shape.
+    """
+    allowed: set[str] | None = None
+    if isinstance(evidence, dict):
+        target = evidence.get("patch_target") or {}
+        pts = target.get("allowed_pointers") if isinstance(target, dict) else None
+        if pts:
+            allowed = {str(p) for p in pts}
+    for op in proposal:
+        path = op.get("path") if isinstance(op, dict) else None
+        if not isinstance(path, str) or not path:
+            return f"op has no string path: {str(op)[:120]}"
+        if allowed is not None:
+            if path not in allowed:
+                return f"patch touches '{path}', outside the listed patchable members"
+        elif not _L3_FIELD_POINTER.match(path):
+            return (
+                f"patch touches '{path}', outside "
+                "/entities/<entity>/fields/<field>/(path|transform)"
+            )
+    if target_spec is None:
+        return None
+    try:
+        from autobridge.spec.patch import apply_patch as _apply_patch  # noqa: PLC0415
+
+        _apply_patch(target_spec, proposal)
+    except Exception as exc:
+        return f"patch does not apply: {exc}"
+    return None
+
+
+def normalize_model_question(question: str, *, limit: int = 300) -> str:
+    """One-question form of a model's escalation text (REQ-044).
+
+    The escalation bundle holds exactly one question ending with ``?``;
+    take the text up to the first ``?`` (appending one when missing) and
+    truncate defense-in-depth. Empty input yields a generic fallback that
+    still satisfies the contract.
+    """
+    text = " ".join(str(question or "").split())
+    if "?" in text:
+        text = text[: text.index("?") + 1]
+    elif text and not text.endswith("?"):
+        text = text + "?"
+    if not text:
+        text = "Which mapping is correct for this semantic drift?"
+    if len(text) > limit:
+        cut = text[:limit].rsplit(" ", 1)[0] if " " in text[:limit] else text[:limit]
+        text = cut.rstrip(" ,;:") + "?"
+    return text
+
+
 def run_frontier_climb(
     *,
     spec: dict[str, Any],
@@ -1797,29 +2035,14 @@ def run_frontier_climb(
     }
     attempts.append(l3_entry)
     _emit()
-    l3_user = f"drift_class: {drift_class}; ranked hypotheses: {[getattr(h, 'id', str(h)) for h in ranked]}"
-    if evidence:
-        # Real observed evidence rides as untrusted data (never
-        # instructions): the frontier answers the wire, not the label.
-        import json as _json  # noqa: PLC0415
-
-        l3_user += "\nobserved evidence (untrusted, redacted): " + _json.dumps(
-            evidence, sort_keys=True, separators=(",", ":"), default=str
-        )
-        l3_entry["evidence_keys"] = sorted(str(k) for k in evidence)
+    ranked_ids = [getattr(h, "id", str(h)) for h in ranked]
+    l3_user = _l3_user_message(drift_class=drift_class, ranked_ids=ranked_ids, evidence=evidence)
     l3_messages = [
-        {
-            "role": "system",
-            "content": (
-                "You repair API connectors. Propose a JSON Patch (RFC 6902 list of "
-                "op/path/value objects) that fixes the drift. Answer with the patch only."
-            ),
-        },
-        {
-            "role": "user",
-            "content": l3_user,
-        },
+        {"role": "system", "content": L3_SYSTEM_PROMPT},
+        {"role": "user", "content": l3_user},
     ]
+    if evidence:
+        l3_entry["evidence_keys"] = sorted(str(k) for k in evidence)
     # REQ-039: the exact prompt rides on the rung (prompts carry no
     # credentials by construction — hypothesis ids and redacted evidence
     # only). `make record-frontier` replays these messages live to capture
@@ -1864,32 +2087,173 @@ def run_frontier_climb(
             "replay_missing": replay_missing,
             "replay_captured_at": replay_captured_at,
         }
-    l3_delta = {
-        "frontier_tokens": l3_result.usage.total_tokens,
-        "small_tokens": 0,
-        "calls": 1,
-        "frontier_calls": 1,
-        "small_calls": 0,
-        "frontier_input": l3_result.usage.input_tokens,
-        "frontier_output": l3_result.usage.output_tokens,
-        "frontier_reasoning": l3_result.usage.reasoning_tokens,
-        "small_input": 0,
-        "small_output": 0,
-        "small_reasoning": 0,
-    }
+    def _stamp_outcome(outcome: str) -> None:
+        # REQ-030 item 3: what each L3 call produced, on its ledger row —
+        # the model-call box reads this column, not the trace. Stamped per
+        # call (a retry stamps its own row), best-effort, never raising.
+        if session is not None and run_id is not None and budget is not None:
+            stamp_call_outcome(session, run_id=run_id, tier="frontier", outcome=outcome)
+
+    def _accumulate(result: Any) -> dict[str, Any]:
+        return {
+            "frontier_tokens": result.usage.total_tokens,
+            "small_tokens": 0,
+            "calls": 1,
+            "frontier_calls": 1,
+            "small_calls": 0,
+            "frontier_input": result.usage.input_tokens,
+            "frontier_output": result.usage.output_tokens,
+            "frontier_reasoning": result.usage.reasoning_tokens,
+            "small_input": 0,
+            "small_output": 0,
+            "small_reasoning": 0,
+        }
+
+    l3_delta = _accumulate(l3_result)
     usage = _merge_model_usage(usage, l3_delta)
     l3_entry["model_usage_delta"] = l3_delta
     l3_entry["reasoning_tokens"] = l3_result.usage.reasoning_tokens
     l3_text = l3_result.text or ""
-    proposal, parse_detail = _parse_patch_response(l3_text)
-    if proposal is not None:
+    parsed = _parse_l3_response(l3_text)
+    proposal: list[dict[str, Any]] | None = None
+    model_rationale = str(parsed.get("rationale") or "")
+    model_question = ""
+    model_escalated = False
+    if model_rationale:
+        # REQ-044 item 5: the repair page shows the model's rationale;
+        # one line, truncated defense-in-depth.
+        l3_entry["model_rationale"] = " ".join(model_rationale.split())[:300]
+    if parsed["kind"] == "escalate":
+        # An explicit escalation is a valid L3 outcome, not an error: the
+        # model names the business decision a human must make. No retry —
+        # the answer already says what L4 needs.
+        model_escalated = True
+        model_question = normalize_model_question(str(parsed.get("question") or ""))
+        l3_entry["action"] = "model_escalation"
+        l3_entry["model_question"] = model_question
+        l3_entry["reason"] = (
+            f"L3 asked for a human decision: {model_question}"
+            + (
+                f" (model rationale: {l3_entry['model_rationale']})"
+                if l3_entry.get("model_rationale")
+                else ""
+            )
+        )
+        _stamp_outcome("model_escalation")
+    elif parsed["kind"] == "patch":
+        proposal = parsed["patch"]
         l3_entry["proposal_ops"] = len(proposal)
+        changed = sorted({str(op.get("path", "")) for op in proposal if isinstance(op, dict)})
+        if changed:
+            l3_entry["proposal_pointers"] = changed
+            l3_entry["reason"] = (
+                f"L3 proposed a patch ({len(proposal)} ops: {', '.join(changed)})"
+                + (
+                    f" (model rationale: {l3_entry['model_rationale']})"
+                    if l3_entry.get("model_rationale")
+                    else ""
+                )
+            )
+        apply_error = _l3_pointer_error(proposal, target_spec=validate_against, evidence=evidence)
+        if apply_error is None:
+            l3_entry["proposal_validated"] = True
+            _stamp_outcome("proposal")
+        else:
+            # REQ-044 item 4: one retry with the apply error appended, then
+            # escalate. Both calls land on the ledger and the repair page.
+            _stamp_outcome("proposal_rejected")
+            retry_user = (
+                l3_user
+                + f"\nYour patch was rejected before the verifier: {apply_error}. "
+                "Answer again with one JSON object "
+                '({"patch": [...], "rationale": "..."} or '
+                '{"escalate": "<the one question for the human>", "rationale": "..."}).'
+            )
+            retry_messages = [
+                {"role": "system", "content": L3_SYSTEM_PROMPT},
+                {"role": "user", "content": retry_user},
+            ]
+            l3_entry["retry_error"] = apply_error
+            try:
+                retry_result = effective.complete(
+                    retry_messages,
+                    max_tokens=l3_cap,
+                    tier="frontier",
+                    purpose="l3-generate-patch-retry",
+                )
+            except ReplayMissing as exc:
+                proposal = None
+                replay_missing.append(exc.prompt_hash)
+                l3_entry["action"] = "proposal_rejected"
+                l3_entry["reason"] = (
+                    f"L3 proposal rejected: {apply_error}; retry has no replay recording "
+                    f"for prompt {exc.prompt_hash}"
+                )
+                l3_entry["raw_preview"] = l3_text.strip()[:300]
+            else:
+                retry_delta = _accumulate(retry_result)
+                usage = _merge_model_usage(usage, retry_delta)
+                l3_entry["retry_model_usage_delta"] = retry_delta
+                l3_entry["retry_reasoning_tokens"] = retry_result.usage.reasoning_tokens
+                retry_text = retry_result.text or ""
+                l3_entry["retry_text_preview"] = retry_text.strip()[:300]
+                retry_parsed = _parse_l3_response(retry_text)
+                if retry_parsed.get("rationale"):
+                    l3_entry["retry_rationale"] = " ".join(
+                        str(retry_parsed["rationale"]).split()
+                    )[:300]
+                if retry_parsed["kind"] == "escalate":
+                    proposal = None
+                    model_escalated = True
+                    model_question = normalize_model_question(str(retry_parsed.get("question") or ""))
+                    l3_entry["action"] = "model_escalation"
+                    l3_entry["model_question"] = model_question
+                    l3_entry["reason"] = (
+                        f"L3 retry asked for a human decision after {apply_error}: {model_question}"
+                    )
+                    _stamp_outcome("model_escalation")
+                elif retry_parsed["kind"] == "patch":
+                    candidate = retry_parsed["patch"]
+                    retry_error = _l3_pointer_error(
+                        candidate, target_spec=validate_against, evidence=evidence
+                    )
+                    if retry_error is None:
+                        proposal = candidate
+                        l3_entry["proposal_ops"] = len(proposal)
+                        l3_entry["proposal_pointers"] = sorted(
+                            {str(op.get("path", "")) for op in proposal if isinstance(op, dict)}
+                        )
+                        l3_entry["proposal_validated"] = True
+                        l3_entry["retried"] = True
+                        l3_entry["reason"] = (
+                            f"L3 retry proposed a patch after {apply_error} "
+                            f"({len(proposal)} ops: {', '.join(l3_entry['proposal_pointers'])})"
+                        )
+                        _stamp_outcome("proposal")
+                    else:
+                        proposal = None
+                        l3_entry["action"] = "proposal_rejected"
+                        l3_entry["reason"] = (
+                            f"L3 proposal rejected: {apply_error}; retry failed too: {retry_error}"
+                        )
+                        l3_entry["raw_preview"] = retry_text.strip()[:300]
+                        _stamp_outcome("proposal_rejected")
+                else:
+                    proposal = None
+                    l3_entry["action"] = "proposal_rejected"
+                    l3_entry["reason"] = (
+                        f"L3 proposal rejected: {apply_error}; "
+                        f"retry unparsable ({retry_parsed['detail']})"
+                    )
+                    l3_entry["raw_preview"] = retry_text.strip()[:300]
+                    _stamp_outcome("proposal_rejected")
     else:
         # No usable patch is a normal outcome, never an error: record what
         # the text contained plus a truncated preview so a live answer is
         # diagnosable (prompts carry no secrets; truncate defense-in-depth).
         # Name the reasoning spend explicitly: an empty message after a full
         # thinking budget is "thought hard, said nothing", not a skip.
+        parse_detail = parsed["detail"]
         l3_entry["parse_detail"] = parse_detail
         if l3_text.strip():
             l3_entry["raw_preview"] = l3_text.strip()[:300]
@@ -1901,29 +2265,10 @@ def run_frontier_climb(
             )
         else:
             l3_entry["reason"] = f"L3 returned an empty response ({parse_detail}); no patch proposed"
-    if proposal is not None and validate_against is not None:
-        try:
-            from autobridge.spec.patch import apply_patch as _apply_patch  # noqa: PLC0415
-
-            _apply_patch(validate_against, proposal)
-            l3_entry["proposal_validated"] = True
-        except Exception as exc:
-            proposal = None
-            l3_entry["action"] = "proposal_rejected"
-            l3_entry["reason"] = f"L3 proposal rejected: patch does not apply ({exc})"
-            l3_entry["raw_preview"] = l3_text.strip()[:300]
-    if session is not None and run_id is not None and budget is not None:
-        # REQ-030 item 3: what the L3 call produced, on the ledger row —
-        # the model-call box reads this column, not the trace.
-        if proposal is not None:
-            l3_outcome = "proposal"
-        elif l3_entry.get("action") == "proposal_rejected":
-            l3_outcome = "proposal_rejected"
-        elif l3_text.strip():
-            l3_outcome = "unparsable"
+        if l3_text.strip():
+            _stamp_outcome("unparsable")
         else:
-            l3_outcome = "no_patch"
-        stamp_call_outcome(session, run_id=run_id, tier="frontier", outcome=l3_outcome)
+            _stamp_outcome("no_patch")
     replay_captured_at = str(getattr(provider, "last_captured_at", "") or "")
     _emit()
     return {
@@ -1933,6 +2278,9 @@ def run_frontier_climb(
         "l3_text": l3_text,
         "l3_messages": [dict(m) for m in l3_messages],
         "proposal": proposal,
+        "model_rationale": model_rationale,
+        "model_question": model_question,
+        "model_escalated": model_escalated,
         "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
         "l2_confidence": l2_confidence,
         "replay_missing": replay_missing,

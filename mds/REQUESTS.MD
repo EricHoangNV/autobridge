@@ -4,46 +4,6 @@
 
 Owner priority (2026-10-30 12:30): **REQ-044, then REQ-045, then REQ-046** (REQ-046 must land before any benchmark rehearsal).
 
-### REQ-044 — Ask L3 a well-posed question: show the spec it patches, the raw record, and allow an explicit escalation (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 05:03)
-Owner run (2026-10-30, sandbox, `origin/main` 8750fad4, keyed): `make demo` 8/8, but step 4's live L3 call
-(`muse-spark-1.3`, 8,429 tokens, 8,234 reasoning) returned `patch does not apply: member 'mappings' not found in
-{'spec_version': 1, 'connector': …, 'source': …}`. The model is not weak; the question is ill-posed. Today's prompt
-(`repair/ladder.py` ~1736–1756, evidence from `repair/semantic.py` `build_l3_evidence`) is only: system "Propose a
-JSON Patch … that fixes the drift. Answer with the patch only." + user drift class, hypothesis ids, and evidence
-(entity, field, the **wire JSONPath** `$.total_amount`, money check, two key+amount rows, observed vs baseline sum).
-Three defects:
-1. **The patch target is never named or shown.** A JSON Patch needs paths into one document — the connector spec —
-   and the model never sees the spec or its layout, so it invents one (`/mappings/...`). The only "path" it sees is a
-   JSONPath into the vendor response, a different thing.
-2. **It cannot see the data it would need.** Sample rows are canonical key+amount only; it never sees the raw vendor
-   record, so it cannot know which fields (e.g. `gross_amount`) exist. Our own escalation question names
-   `$.gross_amount`, but the model is never shown it.
-3. **It is not allowed to say "this needs a human".** "Answer with the patch only" forces a guess even when the
-   honest answer is a business decision (gross vs net is one).
-Fix (L3 prompt and parsing only — no change to the gate, the verifier, or which drifts reach L3):
-1. Prompt states the patch applies to **the connector spec**, and includes the spec subtree it may change (the
-   entity's `fields`, its checks/transforms as relevant) **with the exact JSON Pointer of each patchable member**
-   (e.g. `/entities/Reservation/fields/total_amount/path`), plus the allowed ops (`replace`/`add` on those members;
-   the vocabulary's transforms by name). Secrets, base URLs and auth never enter the prompt (redaction as today).
-2. Prompt includes one or two **redacted raw vendor records** for the entity (field names and value shapes; money as
-   strings; PII/keys redacted by the existing redaction seam), so the model can see which wire fields exist.
-3. The answer is **one JSON object**, either `{"patch": [...], "rationale": "<one sentence>"}` or
-   `{"escalate": "<the question for the human>", "rationale": "..."}`. Parse both; tolerate a fenced block. An
-   `escalate` answer resolves L4 with the model's question shown on the repair page (as the escalation question,
-   labelled as the model's), counted as a valid L3 outcome, not an error.
-4. Before the verifier, check the patch applies to the spec and touches only allowed pointers; if not, **one**
-   retry with the apply error appended (both calls on the ledger and the repair page), then escalate.
-5. The repair page "what the engine did" shows the model's rationale (and for a patch, the pointer/value it changed).
-6. Replay: the prompt hash changes, so update the replay fixtures/tests; `make record-frontier` stays the owner's
-   capture step (note it in docs/demo.md). Update `docs/` where the L3 prompt is described.
-7. Tests: prompt contains the spec pointers and a raw-record sample and no secret; parse patch / escalate / fenced /
-   garbage; a non-applying patch → one retry with the error → escalate; an `escalate` answer → L4 with the model's
-   question; replay round-trip.
-8. Gates keyed and unkeyed: `make demo` 8/8 both ways. Owner check after: keyed step 4's L3 answer is either a
-   patch that applies to the spec (verifier verdict shown) or an explicit escalation with a sensible question —
-   never "does not apply"; report tokens (reasoning vs answer) and the answer.
-
 ### REQ-045 — Every model prompt lives in a file loaded at startup, and each one asks a well-posed, specific question (2026-10-30)
 Status: OPEN
 Owner audit (2026-10-30), after REQ-044 showed the L3 patch prompt was ill-posed: the other engine prompts have the
@@ -779,6 +739,48 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-044 — Ask L3 a well-posed question: show the spec it patches, the raw record, and allow an explicit escalation (2026-10-30)
+Status: DONE (sbx1 2026-10-30)
+Owner run (2026-10-30, sandbox, `origin/main` 8750fad4, keyed): `make demo` 8/8, but step 4's live L3 call
+(`muse-spark-1.3`, 8,429 tokens, 8,234 reasoning) returned `patch does not apply: member 'mappings' not found in
+{'spec_version': 1, 'connector': …, 'source': …}`. The model is not weak; the question is ill-posed. Today's prompt
+(`repair/ladder.py` ~1736–1756, evidence from `repair/semantic.py` `build_l3_evidence`) is only: system "Propose a
+JSON Patch … that fixes the drift. Answer with the patch only." + user drift class, hypothesis ids, and evidence
+(entity, field, the **wire JSONPath** `$.total_amount`, money check, two key+amount rows, observed vs baseline sum).
+Three defects:
+1. **The patch target is never named or shown.** A JSON Patch needs paths into one document — the connector spec —
+   and the model never sees the spec or its layout, so it invents one (`/mappings/...`). The only "path" it sees is a
+   JSONPath into the vendor response, a different thing.
+2. **It cannot see the data it would need.** Sample rows are canonical key+amount only; it never sees the raw vendor
+   record, so it cannot know which fields (e.g. `gross_amount`) exist. Our own escalation question names
+   `$.gross_amount`, but the model is never shown it.
+3. **It is not allowed to say "this needs a human".** "Answer with the patch only" forces a guess even when the
+   honest answer is a business decision (gross vs net is one).
+Fix (L3 prompt and parsing only — no change to the gate, the verifier, or which drifts reach L3):
+1. Prompt states the patch applies to **the connector spec**, and includes the spec subtree it may change (the
+   entity's `fields`, its checks/transforms as relevant) **with the exact JSON Pointer of each patchable member**
+   (e.g. `/entities/Reservation/fields/total_amount/path`), plus the allowed ops (`replace`/`add` on those members;
+   the vocabulary's transforms by name). Secrets, base URLs and auth never enter the prompt (redaction as today).
+2. Prompt includes one or two **redacted raw vendor records** for the entity (field names and value shapes; money as
+   strings; PII/keys redacted by the existing redaction seam), so the model can see which wire fields exist.
+3. The answer is **one JSON object**, either `{"patch": [...], "rationale": "<one sentence>"}` or
+   `{"escalate": "<the question for the human>", "rationale": "..."}`. Parse both; tolerate a fenced block. An
+   `escalate` answer resolves L4 with the model's question shown on the repair page (as the escalation question,
+   labelled as the model's), counted as a valid L3 outcome, not an error.
+4. Before the verifier, check the patch applies to the spec and touches only allowed pointers; if not, **one**
+   retry with the apply error appended (both calls on the ledger and the repair page), then escalate.
+5. The repair page "what the engine did" shows the model's rationale (and for a patch, the pointer/value it changed).
+6. Replay: the prompt hash changes, so update the replay fixtures/tests; `make record-frontier` stays the owner's
+   capture step (note it in docs/demo.md). Update `docs/` where the L3 prompt is described.
+7. Tests: prompt contains the spec pointers and a raw-record sample and no secret; parse patch / escalate / fenced /
+   garbage; a non-applying patch → one retry with the error → escalate; an `escalate` answer → L4 with the model's
+   question; replay round-trip.
+8. Gates keyed and unkeyed: `make demo` 8/8 both ways. Owner check after: keyed step 4's L3 answer is either a
+   patch that applies to the spec (verifier verdict shown) or an explicit escalation with a sensible question —
+   never "does not apply"; report tokens (reasoning vs answer) and the answer.
+Resolution: L3 prompt now names the connector-spec patch target with exact JSON Pointers per patchable member, shows redacted raw vendor records, and answers {patch|escalate}+rationale (one retry with the apply error, then escalate; a model escalation resolves L4 with the model's question, labelled on the repair page). Replay fixtures/tests updated (new prompt hashes). Gates: make test + lint/typecheck/openapi/ui-typecheck green, make demo 8/8 unkeyed (L3 explicit skip naming the new hash), matrix + test_05 e2e green live. Owner step: keyed step-4 run (live L3 answer is a spec-applying patch or an explicit escalation, never 'does not apply') + make record-frontier re-capture and commit.
+
 
 ### REQ-041 — Directive: §7 / P2.S6.1 — the REQ-032 repair-page restructure dropped the per-run model-usage chart, and `tests/e2e/test_s6_richer_ui.spec.ts` is red in both modes (2026-10-29)
 Status: DONE (sbx1 2026-10-30)

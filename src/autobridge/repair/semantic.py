@@ -50,6 +50,212 @@ _AMOUNT_TRANSFORMS: dict[str, dict[str, Any]] = {
 #: the wire filter drops them and the surviving (net) readings climb.
 HOLD_PREDICTING_STRATEGIES: frozenset[str] = frozenset({"gross", "tax_inclusive"})
 
+#: Key-name fragments whose values are never shown in an L3 prompt
+#: (REQ-044). Credentials and PII travel by shape only: the model sees the
+#: field names (so it knows which wire fields exist) but never the values.
+SENSITIVE_KEY_FRAGMENTS: tuple[str, ...] = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "credential",
+    "apikey",
+    "api_key",
+    "access_key",
+    "private_key",
+    "session_key",
+    "ssn",
+    "passport",
+    "cvv",
+    "card_number",
+    "cardnumber",
+    "email",
+    "e-mail",
+    "phone",
+    "telephone",
+    "mobile",
+)
+
+#: Patchable members of one spec field, as exact JSON Pointers (REQ-044).
+#: A semantic fix remaps a field's wire path (or its transform); nothing
+#: else in the spec is patchable at L3.
+PATCHABLE_FIELD_MEMBERS: tuple[str, ...] = ("path", "transform")
+
+#: Shape placeholders for redacted values (type shape only, never content).
+_SHAPE_PLACEHOLDERS: dict[str, Any] = {
+    "str": "<redacted>",
+    "int": 0,
+    "float": 0.0,
+    "bool": False,
+    "none": None,
+}
+
+
+def _shape_placeholder(value: Any) -> Any:
+    """Type shape of a redacted value (REQ-044: names stay, values go)."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return _SHAPE_PLACEHOLDERS["bool"]
+    if isinstance(value, int):
+        return _SHAPE_PLACEHOLDERS["int"]
+    if isinstance(value, float):
+        return _SHAPE_PLACEHOLDERS["float"]
+    if isinstance(value, str):
+        return _SHAPE_PLACEHOLDERS["str"]
+    if isinstance(value, dict):
+        return {str(k): _shape_placeholder(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_shape_placeholder(v) for v in list(value)[:2]]
+    return _SHAPE_PLACEHOLDERS["str"]
+
+
+def _is_sensitive_key(name: str) -> bool:
+    lowered = str(name).lower()
+    return any(frag in lowered for frag in SENSITIVE_KEY_FRAGMENTS)
+
+
+def redact_raw_record(rec: dict[str, Any], *, money_fields: set[str]) -> dict[str, Any]:
+    """Redact one raw vendor record for the L3 prompt (REQ-044).
+
+    Field names and value shapes stay (the model must see which wire
+    fields exist); credential/PII values become type-shape placeholders
+    via the existing redaction idea (names, never values, in the prompt);
+    money fields render as strings (Decimal end to end, never float).
+    Long strings truncate; nested shapes recurse with a two-item cap.
+    """
+    out: dict[str, Any] = {}
+    for key, value in rec.items():
+        name = str(key)
+        if _is_sensitive_key(name):
+            out[name] = _shape_placeholder(value)
+            continue
+        if name in money_fields:
+            out[name] = None if value is None else str(value)
+            continue
+        if isinstance(value, dict):
+            out[name] = {
+                str(k): (
+                    _shape_placeholder(v)
+                    if _is_sensitive_key(k)
+                    else (str(v)[:64] + "…" if isinstance(v, str) and len(v) > 64 else v)
+                )
+                for k, v in list(value.items())[:12]
+            }
+            continue
+        if isinstance(value, list):
+            out[name] = [
+                str(v)[:64] + "…" if isinstance(v, str) and len(v) > 64 else v
+                for v in value[:3]
+            ]
+            continue
+        if isinstance(value, str) and len(value) > 64:
+            out[name] = value[:64] + "…"
+            continue
+        out[name] = value
+    return out
+
+
+def raw_records_of_summary(
+    summary: dict[str, Any] | None,
+    *,
+    money_fields: set[str] | None = None,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    """First raw vendor items from the faulted sync's raw pages (REQ-044).
+
+    The sync summary's ``operation_results.<op>.raw_pages`` hold the actual
+    wire responses; the entity items live in the first list-of-dicts found
+    in each page (operations are visited in name order, pages in order, so
+    the sample is deterministic). At most *limit* records, redacted by
+    :func:`redact_raw_record`. Empty when the sync never reached the wire.
+    """
+    summary = summary if isinstance(summary, dict) else {}
+    op_results = summary.get("operation_results") or {}
+    if not isinstance(op_results, dict):
+        return []
+    money = set(money_fields or ())
+    found: list[dict[str, Any]] = []
+
+    def _first_item_lists(page: Any) -> list[list[dict[str, Any]]]:
+        if isinstance(page, dict):
+            return [v for k, v in sorted(page.items()) if isinstance(v, list) and v and all(isinstance(i, dict) for i in v)]
+        if isinstance(page, list) and page and all(isinstance(i, dict) for i in page):
+            return [page]
+        return []
+
+    ops = sorted(op_results) if isinstance(op_results, dict) else []
+    for op_name in ops:
+        pages = op_results.get(op_name)
+        raw_pages = pages.get("raw_pages") if isinstance(pages, dict) else getattr(pages, "raw_pages", None)
+        if not isinstance(raw_pages, list):
+            continue
+        for page in raw_pages:
+            for items in _first_item_lists(page):
+                for item in items:
+                    if isinstance(item, dict):
+                        found.append(redact_raw_record(item, money_fields=money))
+                        if len(found) >= limit:
+                            return found
+    return found
+
+
+def allowed_l3_pointers(spec: dict[str, Any], entity: str) -> list[str]:
+    """Exact JSON Pointers the L3 patch may touch (REQ-044).
+
+    One entry per patchable member of the climbed entity's fields —
+    e.g. ``/entities/Reservation/fields/total_amount/path`` — plus the
+    field object itself (replacing the object is the same change). Empty
+    when the entity has no fields in the spec.
+    """
+    entities = spec.get("entities") or {}
+    ent_spec = entities.get(entity) if isinstance(entities, dict) else None
+    if not isinstance(ent_spec, dict):
+        return []
+    fields = ent_spec.get("fields") or {}
+    if not isinstance(fields, dict):
+        return []
+    pointers: list[str] = []
+    for field_name in sorted(fields):
+        base = f"/entities/{entity}/fields/{field_name}"
+        pointers.append(base)
+        for member in PATCHABLE_FIELD_MEMBERS:
+            pointers.append(f"{base}/{member}")
+    return pointers
+
+
+def spec_subtree_for_entity(spec: dict[str, Any], entity: str) -> dict[str, Any]:
+    """The climbed entity's patchable spec subtree (REQ-044).
+
+    Field names with their exact JSON Pointer and current value, plus the
+    entity's checks/transforms as relevant — the model sees the layout it
+    is asked to patch, never the whole spec and never secrets, base URLs
+    or auth (source/auth are not part of the subtree by construction).
+    """
+    entities = spec.get("entities") or {}
+    ent_spec = entities.get(entity) if isinstance(entities, dict) else None
+    if not isinstance(ent_spec, dict):
+        return {"entity": entity, "fields": {}, "checks": []}
+    fields = ent_spec.get("fields") or {}
+    subtree_fields: dict[str, Any] = {}
+    if isinstance(fields, dict):
+        for field_name in sorted(fields):
+            field_spec = fields.get(field_name)
+            base = f"/entities/{entity}/fields/{field_name}"
+            subtree_fields[str(field_name)] = {
+                "pointer": base,
+                "path": field_spec.get("path") if isinstance(field_spec, dict) else None,
+                "transform": field_spec.get("transform") if isinstance(field_spec, dict) else None,
+            }
+    checks = ent_spec.get("checks") or []
+    return {
+        "entity": entity,
+        "key": ent_spec.get("key"),
+        "fields": subtree_fields,
+        "checks": list(checks) if isinstance(checks, list) else [],
+    }
+
 
 def money_fields_of_spec(spec: dict[str, Any]) -> dict[str, str]:
     """Entity -> money field for every money_invariant check in the spec."""
@@ -232,6 +438,14 @@ def build_l3_evidence(
     sample (first two rows, key + money field only, as strings) + the
     observed and baseline sums. Money values stay Decimal end to end;
     only the two sampled rows are rendered, as strings.
+
+    REQ-044: the evidence also names the patch target (the connector spec
+    document, with the exact JSON Pointer of every patchable member of the
+    climbed entity), the entity's spec subtree (fields with pointers and
+    current values, checks — never secrets, base URLs or auth), and one or
+    two redacted raw vendor records (field names and value shapes; money
+    as strings; credentials/PII by shape only) so the model sees which
+    wire fields exist instead of inventing paths.
     """
     summary = summary if isinstance(summary, dict) else {}
     if climbed is None or not climbed.field:
@@ -274,6 +488,7 @@ def build_l3_evidence(
             if isinstance(first, dict) and first.get("gross_sum") is not None:
                 baseline_sum = str(first["gross_sum"])
                 break
+    pointers = allowed_l3_pointers(spec, ent_name)
     return {
         "spec_excerpt": {
             "entity": ent_name,
@@ -286,4 +501,25 @@ def build_l3_evidence(
             "observed_sum": str(observed_sum),
             "baseline_gross_sum": baseline_sum,
         },
+        "patch_target": {
+            "document": "connector spec",
+            "entity": ent_name,
+            "allowed_ops": ["replace", "add"],
+            "allowed_pointers": pointers,
+            "transforms": [
+                "date_local",
+                "datetime_utc",
+                "money",
+                "enum_map",
+                "flatten",
+                "coalesce",
+                "const",
+                "concat",
+                "business_date",
+            ],
+        },
+        "spec_subtree": spec_subtree_for_entity(spec, ent_name),
+        "raw_records": raw_records_of_summary(
+            summary, money_fields={field}, limit=2
+        ),
     }

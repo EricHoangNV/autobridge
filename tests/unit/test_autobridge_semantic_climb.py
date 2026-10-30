@@ -124,3 +124,99 @@ def test_build_l3_evidence_redacted_sample() -> None:
     assert ev["records_sample"]["observed_sum"] == "270.00"
     assert ev["records_sample"]["baseline_gross_sum"] == "300.00"
     assert sem.build_l3_evidence(_harbor_like_spec(), _failed_summary(), None) == {}
+
+
+def test_allowed_l3_pointers_name_exact_members() -> None:
+    ptrs = sem.allowed_l3_pointers(_harbor_like_spec(), "Reservation")
+    assert "/entities/Reservation/fields/total_amount/path" in ptrs
+    assert "/entities/Reservation/fields/total_amount/transform" in ptrs
+    assert "/entities/Reservation/fields/reservation_id/path" in ptrs
+    # Nothing outside the entity's fields is patchable at L3.
+    assert all(p.startswith("/entities/Reservation/fields/") for p in ptrs)
+    assert sem.allowed_l3_pointers(_harbor_like_spec(), "Nope") == []
+    assert sem.allowed_l3_pointers({}, "Reservation") == []
+
+
+def test_spec_subtree_carries_no_source_or_auth() -> None:
+    spec = dict(_harbor_like_spec())
+    spec["source"] = {"base_url": "http://secret-host:8000", "auth": {"credential_ref": "X"}}
+    subtree = sem.spec_subtree_for_entity(spec, "Reservation")
+    assert subtree["entity"] == "Reservation"
+    assert subtree["fields"]["total_amount"]["pointer"] == (
+        "/entities/Reservation/fields/total_amount"
+    )
+    assert subtree["fields"]["total_amount"]["path"] == "$.total_amount"
+    assert subtree["checks"] == [
+        {"kind": "money_invariant", "field": "total_amount", "compare_to": "$.gross_sum"}
+    ]
+    dumped = str(subtree)
+    assert "secret-host" not in dumped and "credential_ref" not in dumped
+
+
+def test_raw_records_redact_credentials_and_pii_by_shape() -> None:
+    rec = {
+        "reservation_id": "r1",
+        "total_amount": 90.0,
+        "gross_amount": 100.0,
+        "api_token": "SECRET-XYZ",
+        "guest_email": "guest@example.com",
+        "note": "x" * 100,
+    }
+    out = sem.redact_raw_record(rec, money_fields={"total_amount"})
+    assert out["reservation_id"] == "r1"
+    assert out["total_amount"] == "90.0"
+    assert out["gross_amount"] == 100.0
+    assert out["api_token"] == "<redacted>"
+    assert out["guest_email"] == "<redacted>"
+    assert out["note"] == "x" * 64 + "…"
+
+
+def test_raw_records_of_summary_deterministic_and_capped() -> None:
+    summary = {
+        "operation_results": {
+            "b_op": {"raw_pages": [{"items": [{"a": 1}, {"a": 2}, {"a": 3}]}]},
+            "a_op": {"raw_pages": [{"rows": [{"b": 1}]}]},
+        }
+    }
+    recs = sem.raw_records_of_summary(summary, limit=2)
+    # Operations visit in name order: a_op first, capped at two records.
+    assert recs == [{"b": 1}, {"a": 1}]
+    assert sem.raw_records_of_summary({}, limit=2) == []
+    assert sem.raw_records_of_summary({"outcome": "Blocked"}, limit=2) == []
+
+
+def test_build_l3_evidence_has_patch_target_and_raw_records() -> None:
+    from autobridge.discovery.docs_reader import Provenance as _P
+    from autobridge.discovery.hypotheses import Hypothesis as _H
+
+    prov = (_P(source="s", line=1, snippet="x"),)
+    climbed = _H(
+        id="amount:total_amount:net", family="amount", claim="c",
+        candidate_mapping_fragment={"family": "amount"}, prior=0.34, evidence_for=prov, field="total_amount",
+    )
+    summary = dict(_failed_summary())
+    summary["operation_results"] = {
+        "list_reservations": {
+            "raw_pages": [
+                {
+                    "gross_sum": "300.00",
+                    "reservations": [
+                        {"reservation_id": "r1", "total_amount": 90.0, "gross_amount": 100.0,
+                         "api_token": "SECRET-XYZ"}
+                    ],
+                }
+            ]
+        }
+    }
+    ev = sem.build_l3_evidence(_harbor_like_spec(), summary, climbed)
+    assert ev["patch_target"]["document"] == "connector spec"
+    assert ev["patch_target"]["allowed_ops"] == ["replace", "add"]
+    assert "/entities/Reservation/fields/total_amount/path" in ev["patch_target"]["allowed_pointers"]
+    assert "money" in ev["patch_target"]["transforms"]
+    assert ev["spec_subtree"]["entity"] == "Reservation"
+    assert "total_amount" in ev["spec_subtree"]["fields"]
+    assert ev["raw_records"][0]["gross_amount"] == 100.0
+    assert ev["raw_records"][0]["api_token"] == "<redacted>"
+    # Old keys unchanged for existing callers.
+    assert ev["spec_excerpt"]["field"] == "total_amount"
+    assert ev["records_sample"]["observed_sum"] == "270.00"

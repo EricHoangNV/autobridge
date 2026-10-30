@@ -327,7 +327,10 @@ def test_running_row_visible_with_rung_l3_within_2s(
         worker.join(timeout=30.0)
     assert not worker.is_alive(), "background repair did not finish"
     assert not errors, errors
-    assert sleepy.calls == 1, "exactly one live model call"
+    # The decoy patch targets a valid member but the patched test spec is
+    # schema-invalid, so the climb rejects it, retries once with the error
+    # (REQ-044 item 4), and rejects again: two frontier calls, then escalate.
+    assert sleepy.calls == 2, "first L3 call plus the single apply-error retry"
 
     with factory() as s:
         runs = s.execute(select(RepairRun)).scalars().all()

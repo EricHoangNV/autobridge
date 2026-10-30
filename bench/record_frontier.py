@@ -118,8 +118,14 @@ def record_scenario(
     # 1. The live-stack prompt, exactly as the break's climb recorded it on
     # rung 3 (byte-exact: the capture replays for the live repair path).
     repair_id, _drift_class, messages = _live_l3_prompt(base)
+    from autobridge.config import frontier_max_tokens as _frontier_max_tokens  # noqa: PLC0415
+
+    try:
+        record_cap = _frontier_max_tokens()
+    except Exception:
+        record_cap = 131072
     out = live.complete(
-        messages, max_tokens=8192, tier="frontier", purpose="record-frontier-capture"
+        messages, max_tokens=record_cap, tier="frontier", purpose="record-frontier-capture"
     )
     captured[prompt_hash(messages)] = _entry(out, model)
 

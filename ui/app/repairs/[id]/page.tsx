@@ -416,6 +416,11 @@ export default function RepairDetailPage({ params }: PageProps) {
     const action = String(e["action"] ?? "");
     return action.includes("reject") || action.includes("fail");
   });
+  // REQ-044: an explicit model escalation carries the model's own question —
+  // label it as the model's instead of the engine's.
+  const modelAsked = (repair.ladder_trace ?? []).some(
+    (e) => String(e["action"] ?? "") === "model_escalation",
+  );
 
   const passedCount = repair.visible_test_results.filter((t) => {
     const v = t as Record<string, unknown>;
@@ -637,7 +642,10 @@ export default function RepairDetailPage({ params }: PageProps) {
         </p>
         {isEscalated && repair.escalation_bundle?.["question"] ? (
           <div data-testid="decided-question" className="mt-2 border border-rule px-3 py-2 text-sm">
-            <p>The engine&apos;s question: {String(repair.escalation_bundle["question"])}</p>
+            <p>
+              {modelAsked ? "The model's question for you: " : "The engine's question: "}
+              {String(repair.escalation_bundle["question"])}
+            </p>
             {repair.escalation_bundle["reason"] ? (
               <p className="mt-1 font-mono text-xs text-ink-2">{String(repair.escalation_bundle["reason"])}</p>
             ) : null}

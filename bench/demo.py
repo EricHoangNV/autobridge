@@ -1683,7 +1683,7 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
     ledger_calls = [c for a in (ledger.get("attempts") or []) for c in (a.get("calls") or [])]
     l3_attempted = (
         len(l3_entries) == 1
-        and l3_entries[0].get("action") in ("frontier_generate", "proposal_rejected")
+        and l3_entries[0].get("action") in ("frontier_generate", "proposal_rejected", "model_escalation")
         and len(ledger_calls) >= 1
     )
     l3_skipped = (
@@ -1975,7 +1975,7 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
     # means no call was made — the "skipped" wording is reserved for that
     # case (REQ-021 owner check 2026-10-28: a live answer that yields no
     # patch must say what happened, never "no frontier call available").
-    l3_called = l3_call is not None and l3_call.get("action") in ("frontier_generate", "proposal_rejected")
+    l3_called = l3_call is not None and l3_call.get("action") in ("frontier_generate", "proposal_rejected", "model_escalation")
     l3_skipped = not l3_called
     assert l3_attempts or climb.get("replay_missing") or provider is None, (
         f"demo climb must attempt or skip L3 explicitly: {attempts}"
@@ -2059,7 +2059,7 @@ def step4_hard_semantic_failure(seed: int, live: bool, base_url: str) -> dict[st
         if l3_call is not None and l3_call.get("action") == "proposal_rejected":
             no_patch_detail = str(l3_call.get("reason", "proposal rejected"))
         else:
-            no_patch_detail = str((l3_call or {}).get("parse_detail", "") or "no JSON Patch found in response")
+            no_patch_detail = str((l3_call or {}).get("parse_detail", "") or "no JSON patch or escalation found in response")
         rejection_reason = (
             f"L3 called {mode} ({l3_model}, {frontier_tokens:,} tokens{reasoning_note}): "
             f"response contained no applicable patch ({no_patch_detail}); "
