@@ -18,6 +18,12 @@ Owner review of the connector page (2026-10-30, Atlas). UI only, no new API.
    collapsible and **collapsed by default**, showing a one-line summary ("2 fingerprints · last change 09:09 PM").
 3. Must pass REQ-055's automated no-overlap/overflow check (add the connector page with a long spec and 30+ sync runs
    to it). Keep existing `data-testid`s.
+4. **Full value on hover, and labels for hashes** (owner, 2026-10-30): every truncated hash/id on the connector page
+   (sync run fingerprint `3520bd6c…`, run ids, release signature, release ids) shows its **full value in a tooltip**
+   on mouse-over (and is keyboard-focusable with the same tooltip). The Releases table's unlabeled trailing value
+   (`4a5aa12461c6…`, the release's HMAC-SHA256 spec signature, `ReleaseHistory.tsx` ~55) gets a column header
+   **"Signature"** and a tooltip saying what it is ("proves this release's spec is exactly the one that was verified
+   and approved"). Same for "Fingerprint" in Sync runs ("shape of the vendor's responses; a change means drift").
 Tests: grouping (same fingerprint merged, change starts a new group and links its drift), collapsed by default, spec
 viewer height + inner scroll + section jump.
 
