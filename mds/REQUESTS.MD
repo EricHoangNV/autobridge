@@ -2,7 +2,46 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 19:20): **REQ-053 next** (then REQ-054 when filed). Do not start REQ-051 or REQ-052 until the owner says so.
+Owner priority (2026-10-30 19:40): **REQ-053, then REQ-054.** Do not start REQ-051 or REQ-052 until the owner says so.
+
+### REQ-054 — Repair page rearranged around the story (UI only, no new API) (2026-10-30)
+Status: OPEN
+Owner design, read in place (local only, gitignored — **read it, never copy it into the repo, never edit it**):
+`/Volumes/OWC-Express-1M2/Development/autobridge/tmp/design/repair-flow/` — `PROPOSAL.md` (read first),
+`proposal.html` (static prototype), `app.css`; renders in
+`/Volumes/OWC-Express-1M2/Development/autobridge/tmp/design/shots/flow-r2/` (`1440-full*.png`). The look is unchanged
+(`tmp/design/DIRECTION.md`); **only order and grouping change**. **UI only: no new API endpoint, no schema change** —
+everything shown already comes from existing endpoints (repair, connector, release spec, verifier report, model usage).
+1. **New order** (`ui/app/repairs/[id]`): headline (the whole story in one sentence, from facts) + storyline
+   **1 happened → 2 did → 3 recommends** (each step links to its chapter; the yellow mark on step 3) → **1 What
+   happened** (4 facts · wire before → after · ▸ affected records and evidence) → **2 What the engine did** (ladder
+   L0–L4 with the rung that held lit · proof tiles: model calls, verifier, hypotheses/probes · ▸ model usage across
+   runs · ▸ evidence graph, both collapsed) → **3 What the engine recommends** (per-operation **Now → Proposed** table
+   grouped by operation · ▸ raw JSON Patch with copy, collapsed) → demo "inject fault" (dashed) at the bottom.
+2. **Decision rail (sticky on desktop):** Approve (release rN), what Approve does (merged from "What happens when you
+   click Approve"), Reject + what it does, ▸ roll back, "Approving as <name>". Below 1100 px it moves after chapter 3
+   with a sticky bottom bar (desktop is what gets demoed; narrow only must not break).
+3. **Facts only (owner decision): no lede sentences / per-drift-class templates.** Each chapter opens on its facts.
+4. **Each fact once:** model cost is a single tile (no repeated 0s); the patch appears once as the Now → Proposed table
+   (raw JSON collapsed). **Now values are read from the current active spec**, never placeholders.
+5. **Empty slots shrink:** unused rungs read "Not needed"; empty hypotheses/probes become one tile ("The rule needed
+   no enumeration"); empty evidence graph / per-run usage live collapsed in chapter 2.
+6. **Signature motion:** on load the storyline bars fill 1 → 2 → 3, then Approve pulses once; reduced motion → bars
+   drawn full, no pulse.
+7. **The other repair states use the same layout** (not in the prototype): **climbing** — storyline step 2 active, the
+   rail shows "repairing at <rung>…" (model, elapsed seconds, token counter from REQ-043) and no actions;
+   **escalated** — the rail shows the model's question and rationale, the **tested** proposal (REQ-049/053: label,
+   effect, dry-run result) with **Approve: <label>**, and **Deny: keep everything as-is, contact the vendor**; no
+   proposal → question only, Deny; **approved / rejected / rolled back** — the rail shows the outcome (who, when,
+   release) with actions disabled (REQ-053 item 4).
+8. **Keep list** (all still present): PROPOSAL.md § "Keep list". `data-testid`s move with their blocks
+   (`repair-section-approve` merges into the rail); update `tests/e2e/test_06_ui_journey.spec.ts` and the repair page
+   unit tests accordingly. Normalise the inline-`code` font sizes (PROPOSAL.md note).
+Tests: page tests for each state (propose, climbing, escalated with/without proposal, approved, rejected); Now values
+from the spec; each fact rendered once; reduced motion. Gates: ui tests + typecheck, e2e journey, `make demo` 8/8.
+Owner check after: Aside screenshots at 1440 of deck 3 (propose → approved) and deck 5 (climbing → escalated with
+proposal → approved).
+
 
 ### REQ-053 — First owner demo run (UI, keyed, 2026-10-30): fix what broke (2026-10-30)
 Status: OPEN
