@@ -41,6 +41,13 @@ proposal failed the dry-run, one retry, second passed ("tested on the current re
    table and raw JSON live in chapter 3 (see b). Safety net: `position: sticky; max-height: calc(100vh - <top>);
    overflow-y: auto` so a long question still stays pinned. Verify at 1440×900 and 1280×800 by scrolling the deck-5
    escalation page to the bottom: Approve stays visible.
+   (f) **No overlap or overflow anywhere** (owner, 2026-10-30: "make sure there are no overlap"). Evidence graph: the
+   drift node's box is fixed-width and its label `SEMANTIC_VALUE_DRIFT · 77b78e79` runs past the border — nodes size
+   to their content (or wrap/ellipsis with a title). Then add an **automated layout check** (Playwright) that loads the
+   connectors list, a connector page, the build page, the knowledge page, and the repair page in each state (propose,
+   climbing, escalated with proposal, approved) at 1440×900 and 1280×800 and fails on: text overflowing its box
+   (`scrollWidth > clientWidth` on bordered/fixed-width elements), sibling boxes whose rectangles intersect, and
+   one-word-per-line squeezes (an action link or label wrapping to > 3 lines). Fix everything it finds.
 Tests: migration upgrade from each revision then approve; dry-run marks a skipped check as failed; UI tests for (a)–(d).
 Gates unkeyed + `make demo` 8/8. **Owner check after (keyed, through the browser):** decks 4 → 5: break → tested
 proposal whose label matches what it does → Approve → verifying sync Complete → Harbor ● Working.
