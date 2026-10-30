@@ -2,7 +2,29 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 16:00): **REQ-048, then REQ-049.**
+Owner priority (2026-10-30 16:50): **REQ-049, then REQ-050.**
+
+### REQ-050 — Deck 6: build Meridian live — v1 refused because it has no POST, v2 connects (2026-10-30)
+Status: OPEN
+Owner decision (2026-10-30). Today `make demo-seed` builds Meridian twice behind the scenes (v1 refused, v2 release;
+`bench/demo_seed.py` ~181–205) and deck 6 only points at the result. The owner wants it built live in the UI, like
+Harbor in deck 4. The control API already takes `spec_vocabulary` per build (`control/routes/builds.py` ~176–192); the
+Build a connector page (`ui/app/connectors/new`) does not expose it. Scope is exactly:
+1. **Seed:** `make demo-seed` no longer creates MeridianPMS (opening frame: AtlasPMS and PABX edge; Harbor is already
+   out per REQ-049). `make demo` keeps working stand-alone (its Meridian step builds Meridian itself, as today).
+   Update connector-count wording everywhere.
+2. **Build page: choose the vocabulary version** for a build (v1 / v2 / v3, defaulting to the current default), with
+   each version's one-line release note (the Knowledge page's `RELEASE_NOTE`).
+3. **v1 build of the Meridian docs is refused on screen**, with the engine's existing named reason (request bodies /
+   POST not in ConnectorSpec v1); no release created; the attempt stays recorded on the connector page (as the seed
+   records it today).
+4. **v2 build of the same docs connects**: release r1, first sync `Complete`, MeridianPMS ● Working; the connector page
+   shows both attempts (v1 refused with its reason, v2 in use) and the Knowledge page lists Meridian under v2.
+5. Deck 6 has **no break** (`meridian_cursor_renamed` stays in the catalogue, not in the demo script). README and
+   `docs/demo.md` describe deck 6 as: build Meridian on v1 → refused (no POST) → build on v2 → connected.
+Tests: seed without Meridian; build page sends `spec_vocabulary`; v1 refusal shown with reason and no release; v2
+build connects; connector page shows both attempts. Gates unkeyed + `make demo` 8/8.
+
 
 ### REQ-049 — Deck 5 Green → Red → Green: Harbor built from its wiki carries the totals check; the model proposes "accept the vendor's change" for the human to approve (2026-10-30)
 Status: IN_PROGRESS (sbx1 since 2026-10-30 09:03)
