@@ -2,10 +2,45 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 06:00): **REQ-042 first, then REQ-040, then REQ-041.**
+Owner priority (2026-10-30 11:30): **REQ-043 next.**
+
+### REQ-043 — Show a repair while it is running: the repair row exists from the start of the climb (2026-10-30)
+Status: OPEN
+Owner run (2026-10-30, sandbox, fresh checkout of `origin/main` at 27e1bc6f with the owner's `.env` incl.
+`FRONTIER_API_KEY`): `make demo` 8/8 in 1m04s, and 8/8 with each step alone after `make demo-reset` — REQ-042's keyed
+owner step passes. But step 4's live L3 call (`muse-spark-1.3`) spent **8,190 of 8,192 output tokens on reasoning and
+returned no text**, so the climb escalated to L4 with "empty response". The owner raised the L3 cap to 131072
+(`090f19ea`, `L3_MAX_TOKENS` in `repair/ladder.py`; Muse bills tokens used, not the cap, and accepts 131072 live) and
+the demo now waits up to 5 min for a repair job. A long reasoning call can therefore take a minute or more.
+Problem: during that time the UI shows almost nothing. The connector reads `▲ Degrading · drift detected … ·
+repairing` (`control/connector_state.py`), but the `RepairRun` row is written only **after** the climb finishes
+(`repair/controller.py` ~212 and ~440), so the Repairs list is empty and the repair page — which already has a
+`climbing` view with a live token counter (`ui/app/repairs/[id]/page.tsx` ~345, `ModelUsageView pending`) — cannot
+be reached. The demo moment "break connector → open the Repairs page → watch it fix in real time" does not work.
+Fix:
+1. When the repair job starts, create the `RepairRun` row at once with a running state (e.g. `decision` null /
+   `"climbing"`, add a migration if a column is needed), linked to the drift and the job, and commit it. Update the
+   same row (commit after each rung, never holding a transaction across a model call — REQ-042 still holds) as the
+   climb moves: L0 → L1 → L2 → L3 "calling `<model>` · Ns" → decision. The final write fills the existing fields;
+   no second row (REQ-040's threaded `repair_run_id` stays the only link).
+2. Repairs list: the running repair appears at the top within one poll of the break, status **`repairing`** (add it
+   to `RepairStatus`), with the rung it is on. Connector row's activity links to it.
+3. Repair page for a running repair: "what happened" filled from the drift; "what the engine did" shows the rungs
+   so far, the current rung, and during a model call the model id, elapsed seconds and the live token counter; no
+   Approve/Reject until a decision exists. Switches to the final view without a reload when the climb ends.
+4. A job that crashes or times out leaves the row in a clear terminal state (`failed` with the reason), never stuck
+   at `repairing`; a control restart marks orphaned running rows failed.
+5. Make the L3 output cap configurable (`FRONTIER_MAX_TOKENS`, default 131072) and show reasoning vs answer tokens
+   for the call on the repair page (the ledger already records `reasoning_tokens`).
+6. Tests: fake provider that sleeps 30 s → the row exists and `GET /repairs` shows `repairing` with rung L3 within
+   2 s of the break; the page test for the running view; crash → `failed`; restart → orphan marked failed; the
+   connector-state and Repairs-list mappings.
+7. Gates keyed and unkeyed: `make demo` 8/8 both ways, each step alone too. Owner check after: keyed step 4 shows
+   the running repair live in the UI, and whether L3 with 131072 room now returns a patch (report tokens used and
+   the patch or rejection reason).
 
 ### REQ-042 — A model call must never run inside a request or a held transaction: keyed demo fails 3/8 (2026-10-30)
-Status: DONE (sbx1 2026-10-30 — code + full gates green unkeyed: deferred repair, background drain, commit-around-calls, demo step-4 polling, docs note; remaining OWNER STEP: keyed `make local-up && make demo-seed && make e2e && make e2e-ui && make demo` with FRONTIER_API_KEY (live L3 arrives seconds after the break), then unkeyed)
+Status: DONE (sbx1 2026-10-30 — code + full gates green unkeyed: deferred repair, background drain, commit-around-calls, demo step-4 polling, docs note; keyed owner step PASSED 2026-10-30: sandbox `make demo` 8/8 with FRONTIER_API_KEY, each step alone 8/8; follow-ups in REQ-043)
 Owner run (2026-10-30, sandbox, fresh checkout of `origin/main` at 57670155, the Cycle 5 PASS commit, **with the
 owner's `.env` incl. `FRONTIER_API_KEY`**): `make up && make demo-reset && make demo` → **steps 4, 7, 8 failed**:
 step 4 `POST /connectors/{id}/sync -> unreachable: "timed out"` (no `Degraded`, no drift row); steps 7 and 8
