@@ -180,6 +180,27 @@ when the verifier is unreachable. `render_ablation_table` prints the
 per-run table (rung that resolved it, model calls, small/frontier tokens,
 why it escalated comes from the ladder trace).
 
+Frontier quality (REQ-052, 2026-10-30): the harness must not grade
+itself. Every frontier arm gets the engine L3's output room
+(`FRONTIER_MAX_TOKENS`, default 131072, for the one-shot and the LLM
+fallback too); a cut-off answer (`finish_reason == "length"`, or a full
+cap with no parseable spec) is labelled `truncated`, never scored as a
+model failure. The agent row records the model the run itself reports
+(never a default label); a live run whose model differs from
+`FRONTIER_MODEL` fails as `model_mismatch`. All arms share one
+wall-clock (default 600 s; `--wall-clock` / `BENCH_WALL_CLOCK`);
+agent timeouts are labelled `timed_out`. Produced frontier specs go to
+the verifier like engine patches, so every arm x scenario row carries a
+verdict + failed checks or an explicit
+`truncated`/`timed_out`/`no_output`/`unverified` label; the summary adds
+per-arm fixable-fixed / unfixable-held-back / wrong-shipped counts plus
+label counts (`render_frontier_quality_table`, `summary["quality"]`,
+per-scenario `summary["frontier_detail"]`). The one-shot prices by the
+resolved model id from `MODEL_PRICES_PER_MILLION` (Spark $1.25/$4.25 per
+M). With `FRONTIER_API_KEY` set the learning curve uses the live agent
+driver (the fake driver raises there) and reports per-repeat agent
+verification.
+
 ```bash
 make bench-ablation   # all arms on the dev split + learning curve (REQ-024 B)
 make bench            # scorecard first, then all ablation arms, then the learning curve

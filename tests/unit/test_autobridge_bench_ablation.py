@@ -513,7 +513,17 @@ def test_render_ablation_table() -> None:
 
 
 def test_learning_curve_shape(tmp_path: Any) -> None:
-    result = run_learning_curve("page_to_cursor", repeats=3, provider=FakeProvider())
+    from autobridge.llm.provider import Usage
+
+    # Explicit fake driver: the shape test must not flip to the live agent
+    # when a frontier key happens to be set in the environment (REQ-052).
+    driver = FakeOpenCodeDriver(
+        default_usage=Usage(input_tokens=500, output_tokens=1500),
+        default_model="fake-opencode",
+    )
+    result = run_learning_curve(
+        "page_to_cursor", repeats=3, provider=FakeProvider(), driver=driver
+    )
     assert result["scenario_id"] == "page_to_cursor"
     assert len(result["rows"]) == 3
     # Agent pays every time; the engine derives the fix from wire evidence.

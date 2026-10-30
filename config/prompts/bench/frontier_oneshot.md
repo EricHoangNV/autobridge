@@ -3,7 +3,7 @@ id: frontier_oneshot
 version: "1"
 purpose: One-shot frontier baseline prompt with the same context the engine has (REQ-046). moved from the inline brief; schema, capabilities, a different-vendor example, vendor docs, visible tests.
 tier: frontier
-max_tokens: 4096
+max_tokens: 131072
 inputs:
   - scenario_id
   - trial

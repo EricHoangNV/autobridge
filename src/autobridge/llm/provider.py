@@ -70,6 +70,12 @@ class Completion:
     #: ``"synthetic-test-fixture"``). Shown in replay labels so a stand-in is
     #: never presented as a model capture.
     captured_at: str = ""
+    #: Provider stop reason (OpenAI ``finish_reason`` / Anthropic
+    #: ``stop_reason`` mapped to the OpenAI vocabulary: ``"length"`` means
+    #: the output cap cut the answer off). Empty when the provider did not
+    #: report one (fakes, replay). Bench arms treat ``"length"`` as
+    #: truncation (REQ-052), never as a model failure.
+    finish_reason: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +537,17 @@ class AnthropicProvider:
             input_tokens=int(getattr(usage_obj, "input_tokens", 0) or 0),
             output_tokens=int(getattr(usage_obj, "output_tokens", 0) or 0),
         )
-        return Completion(text="".join(text_parts), tool_calls=tool_calls, usage=usage)
+        # Anthropic stop reasons use a different vocabulary; map the cap-hit
+        # reason to the OpenAI one so bench truncation detection (REQ-052)
+        # has a single value to check.
+        raw_stop = str(getattr(resp, "stop_reason", "") or "")
+        finish_reason = "length" if raw_stop == "max_tokens" else raw_stop
+        return Completion(
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            usage=usage,
+            finish_reason=finish_reason,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +642,9 @@ def _parse_openai_chat_response(resp: Any) -> Completion:
         output_tokens=int(getattr(usage_obj, "completion_tokens", 0) or 0),
         reasoning_tokens=_reasoning_tokens(usage_obj),
     )
-    return Completion(text=text, tool_calls=tool_calls, usage=usage)
+    first = choices[0] if choices else None
+    finish_reason = str(getattr(first, "finish_reason", "") or "")
+    return Completion(text=text, tool_calls=tool_calls, usage=usage, finish_reason=finish_reason)
 
 
 class OpenAIProvider:

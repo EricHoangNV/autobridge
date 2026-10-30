@@ -3,7 +3,7 @@ id: frontier_agent
 version: "1"
 purpose: Coding-agent frontier baseline brief with the same context the engine has (REQ-046). The sandbox holds the same files; the brief names them.
 tier: frontier
-max_tokens: 4096
+max_tokens: 131072
 inputs:
   - scenario_id
   - trial

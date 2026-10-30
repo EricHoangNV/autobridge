@@ -199,7 +199,7 @@ def test_claude_cli_error_fields() -> None:
 def test_driver_defaults() -> None:
     d = ClaudeCodeDriver()
     assert d.cli_path == "claude"
-    assert d.timeout_s == 120.0
+    assert d.timeout_s == 600.0
 
 
 def test_driver_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

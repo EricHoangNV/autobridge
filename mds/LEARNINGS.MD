@@ -631,3 +631,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The build-time wire-shape probe (`probe_wire_shape`) exists exactly for this: it records the served keys (`observed_wire_keys`) so detection scopes `missing` to mappings the vendor actually served. Without the annotation, detection falls back to full spec-path coverage and phantom-fires.
 - The UI build form and `_live_build_and_poll` already probe; bare `POST /build` callers (test helpers, one-off scripts) silently skip it and get the phantom drift.
 - **Rule:** Every docs build — UI, demo, e2e helper or script — passes `probe_wire_shape: true` (the UI form already does); a test that builds without it and asserts Working is testing a configuration the product never ships.
+---
+
+## 70. A benchmark row with no verdict and no label reads as a model failure — label harness-side failures at the point of failure
+
+**Context:** REQ-052 benchmark-quality fix (sbx1 2026-10-30) — the frontier arms' quality numbers measured the harness: one-shot answers were cut off by a 4096-token cap (finish_reason never captured), agent rows carried a hardcoded `model=baseline-claude` default, CLI timeouts surfaced as fix failures, and every frontier row had null verdict/failed_checks.
+
+- A truncated answer, a timed-out agent, and a model that produced nothing are three different facts; all three looked identical (null verdict) in the scorecard, so the summary blamed the model for harness limits.
+- The fix labels each at the point it happens: `finish_reason` captured on `Completion` (Anthropic `max_tokens` mapped to OpenAI `length`), one-shot truncation → `outcome="truncated"` + `ran=False`, agent timeout → `timed_out`, empty answer → `no_output`, live model mismatch → `model_mismatch`; grading writes verdicts back onto the trial rows so no row ships without a verdict or a label.
+
+**Rule:** Any pipeline that grades attempts made by someone else must give every non-verdict row an explicit machine-readable reason at the point of failure — never leave the grading fields null and let the summary imply the attempt was judged.

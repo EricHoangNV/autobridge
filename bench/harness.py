@@ -97,7 +97,11 @@ DEFAULT_DOCS_VOLUME = "simulators/docs"
 DEFAULT_CREDENTIAL_REFS: tuple[str, ...] = ("ATLAS_API_KEY", "HARBOR_API_KEY")
 DEFAULT_VISIBLE_TESTS: tuple[str, ...] = ("baseline",)
 DEFAULT_TOKEN_CEILING = 20_000
-DEFAULT_WALL_CLOCK_S = 120.0
+#: REQ-052: the agent arm must have time to finish a real attempt, under
+#: the same budget rule as every other arm — one wall-clock for all, so
+#: the matched-budget self-test still holds. 600 s fits a live agent run;
+#: keyed runs that need more pass --wall-clock (or BENCH_WALL_CLOCK).
+DEFAULT_WALL_CLOCK_S = 600.0
 DEFAULT_CONTROL_API_URL = "http://control:8000"
 DEFAULT_CONTROL_API_URL_HOST = "http://localhost:8101"
 DEFAULT_VERIFIER_URL = "http://verifier:8000"
@@ -406,6 +410,15 @@ class ArmResult:
     # arm received. None on legacy/synthetic paths (unit tests).
     prompt: dict[str, str] | None = None
     context_hash: str | None = None
+    # REQ-052: explicit outcome label for rows with no verifier verdict —
+    # "truncated" (output cap cut the answer off), "timed_out" (wall-clock
+    # hit before a real attempt could finish), "no_output" (ran but
+    # produced no parseable spec), "model_mismatch" (live agent ran a
+    # different model than FRONTIER_MODEL). None means the row carries a
+    # verdict (or is an engine arm graded by decision). The scorecard
+    # counts labels per arm so quality numbers measure the model, never
+    # the harness.
+    outcome: str | None = None
 
     @property
     def total_tokens(self) -> int:
@@ -431,9 +444,10 @@ class ArmResult:
             "failed_checks": self.failed_checks,
             "error": self.error,
             "model": self.model,
-            "inputs_fingerprint": self.inputs.fingerprint(),
-            "prompt": dict(self.prompt) if self.prompt is not None else None,
-            "context_hash": self.context_hash,
+        "inputs_fingerprint": self.inputs.fingerprint(),
+        "prompt": dict(self.prompt) if self.prompt is not None else None,
+        "context_hash": self.context_hash,
+        "outcome": self.outcome,
         }
         # Include budget fields for audit
         d["budget"] = {
@@ -846,10 +860,17 @@ def run_baseline_arm(
     try:
         if driver is not None:
             try:
-                result = driver.run(prompt, cwd=cwd)
+                # REQ-052: the agent gets the same wall-clock budget as
+                # every other arm (inputs.wall_clock_s), so a real attempt
+                # has time to finish; a hit is labelled timed_out, never
+                # a failure to fix.
+                result = driver.run(prompt, cwd=cwd, timeout_s=inputs.wall_clock_s)
             except TypeError:
-                # Drivers whose run() takes no cwd (very old fakes).
-                result = driver.run(prompt)
+                try:
+                    # Drivers whose run() takes no timeout (very old fakes).
+                    result = driver.run(prompt, cwd=cwd)
+                except TypeError:
+                    result = driver.run(prompt)
             elapsed = (time.monotonic() - start) * 1000.0
             # Extract usage from ClaudeCliResult shape
             input_tokens = getattr(getattr(result, "usage", None), "input_tokens", 0) or 0
@@ -861,6 +882,30 @@ def run_baseline_arm(
                     cost = Decimal(str(cost))
                 except Exception:
                     cost = None
+            # REQ-052: record the model the run itself reports (driver
+            # result, then the driver's configured model, then its fake
+            # default) — never a hardcoded default label. "unknown" says
+            # the run reported nothing; the ablation fails a live run
+            # whose model differs from FRONTIER_MODEL.
+            actual_model = (
+                getattr(result, "model", None)
+                or getattr(driver, "model", None)
+                or getattr(driver, "default_model", None)
+                or "unknown"
+            )
+            # REQ-052 item 3: parse the agent's answer for grading — did it
+            # produce a spec at all? (The verifier judges it in
+            # grade_ablation_trial; here we only record what came back.)
+            produced_spec: dict[str, Any] | None = None
+            outcome: str | None = None
+            try:
+                from bench.one_shot import try_parse_spec_yaml  # noqa: PLC0415
+
+                produced_spec = try_parse_spec_yaml(getattr(result, "text", "") or "")
+            except Exception:
+                produced_spec = None
+            if produced_spec is None:
+                outcome = "no_output"
             return ArmResult(
                 arm=arm,  # type: ignore[arg-type]
                 inputs=inputs,
@@ -870,11 +915,13 @@ def run_baseline_arm(
                 output_tokens=output_tokens,
                 frontier_tokens=frontier,
                 cost_usd=cost,
-                model=getattr(result, "model", None) or "baseline-claude",
+                model=actual_model,
                 tool_calls=int(getattr(result, "tool_calls", 0) or 0),
                 model_calls=1,
                 prompt=prompt_ref,
                 context_hash=context_hash,
+                spec=produced_spec,
+                outcome=outcome,
             )
         elapsed = (time.monotonic() - start) * 1000.0
         return ArmResult(
@@ -887,17 +934,35 @@ def run_baseline_arm(
     except Exception as exc:
         elapsed = (time.monotonic() - start) * 1000.0
         err_msg = f"{type(exc).__name__}: {exc}"
+        timed_out = "timed out" in err_msg.lower() or "timeoutexpired" in err_msg.lower()
         return ArmResult(
             arm=arm,  # type: ignore[arg-type]
             inputs=inputs,
             ran=False,
             elapsed_ms=elapsed,
             error=err_msg[:1000],
+            outcome="timed_out" if timed_out else None,
         )
 
 
 # Fallback baseline via LLMProvider (plan §9: route through LLMProvider with
 # an equivalent agent loop when the CLI is unavailable).
+def _frontier_output_cap() -> int:
+    """Per-call output room shared by every frontier arm (REQ-052).
+
+    The engine's L3 cap (``FRONTIER_MAX_TOKENS``, default 131072) — the
+    one-shot and the LLM fallback get the same room, so a cut-off answer
+    measures the model, never our cap. Falls back to the default when
+    config is unavailable (unit tests).
+    """
+    try:
+        from autobridge.config import frontier_max_tokens  # noqa: PLC0415
+
+        return frontier_max_tokens()
+    except Exception:
+        return 131072
+
+
 def run_baseline_via_llm_provider(
     inputs: HarnessInputs,
     *,
@@ -984,7 +1049,7 @@ def run_baseline_via_llm_provider(
             purpose = "bench-baseline"
         comp = budgeted.complete(
             [{"role": "user", "content": prompt}],
-            max_tokens=min(inputs.token_ceiling, 4096),
+            max_tokens=min(inputs.token_ceiling, _frontier_output_cap()),
             tier="frontier",
             purpose=purpose,
         )
@@ -1474,6 +1539,19 @@ def main(argv: list[str] | None = None) -> int:
             cfg_kwargs["seed"] = int(env_seed)
         except ValueError:
             pass
+    # REQ-052: wall-clock / token ceiling env overrides (sandbox keyed runs).
+    env_wall = os.environ.get("BENCH_WALL_CLOCK", "").strip()
+    if env_wall and "wall_clock_s" not in cfg_kwargs:
+        try:  # noqa: SIM105
+            cfg_kwargs["wall_clock_s"] = float(env_wall)
+        except ValueError:
+            pass
+    env_ceiling = os.environ.get("BENCH_TOKEN_CEILING", "").strip()
+    if env_ceiling and "token_ceiling" not in cfg_kwargs:
+        try:  # noqa: SIM105
+            cfg_kwargs["token_ceiling"] = int(env_ceiling)
+        except ValueError:
+            pass
 
     # Env URL overrides (host/container aware)
     if os.environ.get("CONTROL_API_URL") and "control_api_url" not in cfg_kwargs:
@@ -1495,6 +1573,7 @@ def main(argv: list[str] | None = None) -> int:
     if arms_mode == "ablation":
         from bench.ablation import (  # noqa: PLC0415
             render_ablation_table,
+            render_frontier_quality_table,
             run_ablation_harness,
             write_ablation_results,
         )
@@ -1517,6 +1596,9 @@ def main(argv: list[str] | None = None) -> int:
             print("WARNING: some trials were not matched — harness bug", flush=True)
             return 1
         print(render_ablation_table(summary), flush=True)
+        # REQ-052 item 3: per-arm frontier quality (fixed / held back /
+        # truncated / timed_out / no_output) next to the rate table.
+        print(render_frontier_quality_table(summary), flush=True)
         return 0
 
     no_score = args.no_score or env_no_score.strip() == "1"

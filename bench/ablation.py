@@ -432,8 +432,15 @@ def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: Abla
     REQ-046: the brief is the file-based ``frontier_agent`` prompt over
     the shared context bundle, and the sandbox holds the same files the
     engine has (schema, capabilities, different-vendor example, vendor
-    docs, visible tests); the brief names them. *case* overrides the
-    scenario lookup (tests).
+    docs); the brief names them. *case* overrides the scenario lookup
+    (tests).
+
+    REQ-052: on a live run (``FRONTIER_API_KEY`` set) the recorded model
+    must be the model the run itself reports, and it must equal
+    ``FRONTIER_MODEL`` — otherwise the row fails loudly as
+    ``model_mismatch`` instead of scoring a different model under the
+    frontier arm's name. Offline (fake driver) rows keep their ``fake-*``
+    model labels and skip the check.
     """
     from bench.context import build_bench_context  # noqa: PLC0415
     from bench.harness import run_baseline_arm  # noqa: PLC0415
@@ -453,6 +460,31 @@ def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: Abla
             docs_ref=case_obj.docs_ref,
             visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
         )
+    res = run_baseline_arm(
+        inputs, driver=driver or frontier_agent_driver(), arm="frontier_agent", context=context
+    )
+    try:
+        from autobridge.config import frontier_api_key, frontier_model  # noqa: PLC0415
+
+        if frontier_api_key() and getattr(res, "ran", False):
+            expected = frontier_model()
+            actual = getattr(res, "model", None) or ""
+            if actual not in (expected, "unknown"):
+                import dataclasses as _dataclasses  # noqa: PLC0415
+
+                return _dataclasses.replace(
+                    res,
+                    ran=False,
+                    outcome="model_mismatch",
+                    error=(
+                        f"model mismatch: frontier_agent ran {actual!r}, "
+                        f"expected FRONTIER_MODEL={expected!r} "
+                        "(set OPENCODE_MODEL to the same provider/model)"
+                    )[:1000],
+                )
+    except Exception:
+        pass
+    return res
     return run_baseline_arm(
         inputs, driver=driver or frontier_agent_driver(), arm="frontier_agent", context=context
     )
@@ -1108,6 +1140,45 @@ class AblationGrade:
     cost_usd: float | None
     elapsed_ms: float
     model: str | None = None
+    # REQ-052 item 3: every frontier attempt graded with the reason.
+    produced: int = 0  # 1 iff the arm produced a spec/patch at all
+    applied: int = 0  # 1 iff it applied (patch applied / spec validated)
+    verdict: str | None = None  # "pass" | "fail" | None (no verifier / no output)
+    failed_checks: tuple[str, ...] = ()  # verifier failed-check names
+    outcome_label: str | None = None  # truncated|timed_out|no_output|unverified|error|None
+
+
+def _looks_like_full_spec(spec: Any) -> bool:
+    """A produced ConnectorSpec (not an engine candidate-patch payload)."""
+    return isinstance(spec, dict) and (
+        "operations" in spec or "spec_version" in spec or "connector" in spec
+    )
+
+
+def _spec_applies(spec: Any, case_spec: dict[str, Any] | None) -> int:
+    """1 iff the arm's output applied: patch applies, or spec validates."""
+    if not isinstance(spec, dict):
+        return 0
+    raw_patch = spec.get("candidate_patch")
+    if isinstance(raw_patch, list) and raw_patch:
+        if case_spec is None:
+            return 0
+        try:
+            from autobridge.spec.patch import apply_patch  # noqa: PLC0415
+
+            apply_patch(dict(case_spec), list(raw_patch))
+            return 1
+        except Exception:
+            return 0
+    if _looks_like_full_spec(spec):
+        try:
+            from autobridge.spec.models import ConnectorSpec  # noqa: PLC0415
+
+            ConnectorSpec(**spec)
+            return 1
+        except Exception:
+            return 0
+    return 0
 
 
 def grade_ablation_arm(
@@ -1116,6 +1187,9 @@ def grade_ablation_arm(
     outcome: Any | None,
     *,
     expected: str,
+    produced: int | None = None,
+    applied: int | None = None,
+    outcome_label: str | None = None,
 ) -> AblationGrade:
     """Grade one arm from its result plus the verifier outcome.
 
@@ -1125,22 +1199,47 @@ def grade_ablation_arm(
     (verifier-accepted patch), ``"no_patch"`` (escalate, backoff-only or
     refresh with no spec change released) or ``"degraded_question"``
     (Degraded with one operator question, no patch).
+
+    REQ-052: *produced* (did it produce a spec/patch at all), *applied*
+    (did it apply) and the verifier *verdict* + failed-check names land
+    on the grade, so every arm × scenario row has a verdict or an
+    explicit label (truncated/timed_out/no_output/unverified/error).
     """
     res: _ArmResult | None = trial.results.get(arm)
     verified = 0
     wrong_release = 0
+    verdict: str | None = None
+    failed_names: tuple[str, ...] = ()
     if outcome is not None and res is not None:
         passed = bool(getattr(outcome, "passed", False))
         regression_failed = bool(getattr(outcome, "regression_failed", False))
         verified = 1 if (res.ran and passed and not regression_failed) else 0
         wrong_release = 1 if (passed and regression_failed) else 0
+        verdict = "pass" if passed else "fail"
+        failed = getattr(outcome, "failed_checks", None)
+        if isinstance(failed, list):
+            failed_names = tuple(
+                str(f.get("name")) for f in failed if isinstance(f, dict) and f.get("name")
+            )
     patch: list[Any] = []
     arm_spec = getattr(res, "spec", None) if res is not None else None
     if isinstance(arm_spec, dict):
         raw_patch = arm_spec.get("candidate_patch")
         if isinstance(raw_patch, list) and raw_patch:
             patch = raw_patch
-    correct_esc = (1 if verified else 0) if expected == "repair" else (0 if patch else 1)
+    if produced is None:
+        produced = 1 if (patch or _looks_like_full_spec(arm_spec)) else 0
+    if applied is None:
+        case_spec: dict[str, Any] | None = None
+        try:
+            case_spec = dict(ablation_case_for_scenario(trial.scenario_id).spec)
+        except Exception:
+            case_spec = None
+        applied = _spec_applies(arm_spec, case_spec) if produced else 0
+    correct_esc = (1 if verified else 0) if expected == "repair" else (0 if produced else 1)
+    label = outcome_label or (res.outcome if res is not None else None)
+    if label is None and verdict is None:
+        label = "unverified" if (res is not None and res.ran) else "error"
     cost = float(res.cost_usd) if res is not None and res.cost_usd is not None else None
     return AblationGrade(
         arm=arm,
@@ -1154,17 +1253,30 @@ def grade_ablation_arm(
         cost_usd=cost,
         elapsed_ms=float(res.elapsed_ms) if res is not None else 0.0,
         model=res.model if res is not None else None,
+        produced=produced,
+        applied=applied,
+        verdict=verdict,
+        failed_checks=failed_names,
+        outcome_label=label,
     )
 
 
 def grade_ablation_trial(trial: AblationTrialResult, *, verifier_url: str | None = None) -> list[AblationGrade]:
     """Grade all arms of one trial (verifier-judged only, never guessed).
 
-    Arms that released a non-empty candidate patch are verified over HTTP
-    (patched spec = case spec + patch); every other arm gets outcome None.
-    A ``verifier_unreachable`` transport failure degrades that arm to
-    unverified rather than fail-guessed.
+    Engine arms that released a non-empty candidate patch are verified
+    over HTTP (patched spec = case spec + patch); frontier arms that
+    produced a full ConnectorSpec are verified directly (the produced
+    spec is what the verifier judges). Every other arm gets outcome
+    None. A ``verifier_unreachable`` transport failure degrades that arm
+    to unverified rather than fail-guessed.
+
+    REQ-052: the verdict + failed checks are written back onto the
+    trial's arm rows, so every arm × scenario row carries a verdict or
+    an explicit label (truncated/timed_out/no_output/unverified/error).
     """
+    import dataclasses as _dataclasses  # noqa: PLC0415
+
     from bench.scoring import normalize_verify_response, verify_via_http  # noqa: PLC0415
 
     case = None
@@ -1178,11 +1290,14 @@ def grade_ablation_trial(trial: AblationTrialResult, *, verifier_url: str | None
         res = trial.results.get(arm)
         outcome = None
         patch: list[Any] = []
+        full_spec: dict[str, Any] | None = None
         spec = getattr(res, "spec", None) if res is not None else None
         if isinstance(spec, dict):
             raw_patch = spec.get("candidate_patch")
             if isinstance(raw_patch, list) and raw_patch:
                 patch = raw_patch
+            elif _looks_like_full_spec(spec):
+                full_spec = spec
         if patch and case is not None and verifier_url:
             try:
                 from autobridge.spec.patch import apply_patch  # noqa: PLC0415
@@ -1195,7 +1310,31 @@ def grade_ablation_trial(trial: AblationTrialResult, *, verifier_url: str | None
                     outcome = normalize_verify_response(payload if isinstance(payload, dict) else {})
             except Exception:
                 outcome = None
+        elif full_spec is not None and verifier_url:
+            # REQ-052 item 3: the frontier attempt is graded like any
+            # other — the produced spec goes to the verifier, whose
+            # verdict + failed checks name why it passed or failed.
+            try:
+                payload = verify_via_http(full_spec, trial.scenario_id, verifier_url=verifier_url)
+                failed = payload.get("failed_checks") if isinstance(payload, dict) else None
+                names = [f.get("name") for f in failed] if isinstance(failed, list) else []
+                if not any(isinstance(n, str) and "verifier_unreachable" in n for n in names):
+                    outcome = normalize_verify_response(payload if isinstance(payload, dict) else {})
+            except Exception:
+                outcome = None
         grades.append(grade_ablation_arm(arm, trial, outcome, expected=expected))
+    # Write verdicts + labels back onto the trial rows (the JSONL row is
+    # what the per-scenario table reads; grades carry the aggregates).
+    for grade in grades:
+        res = trial.results.get(grade.arm)
+        if res is None:
+            continue
+        trial.results[grade.arm] = _dataclasses.replace(
+            res,
+            verdict=grade.verdict,
+            failed_checks=[{"name": name} for name in grade.failed_checks] or None,
+            outcome=grade.outcome_label or res.outcome,
+        )
     return grades
 
 
@@ -1238,6 +1377,35 @@ def run_ablation_harness(
     for trial in trials:
         grades.extend(grade_ablation_trial(trial, verifier_url=verifier_url))
     summary = summarize_ablation(grades)
+    # REQ-052 item 3: per-scenario table of what each frontier arm
+    # produced and why it failed or passed (verdict + failed checks, or
+    # the explicit truncated/timed_out/no_output label).
+    by_grade = {(g.arm, g.scenario_id, g.trial): g for g in grades}
+    detail: list[dict[str, Any]] = []
+    for trial in trials:
+        for name in FRONTIER_ARMS:
+            res = trial.results.get(name)
+            if res is None:
+                continue
+            grade = by_grade.get((name, trial.scenario_id, trial.trial))
+            detail.append(
+                {
+                    "scenario_id": trial.scenario_id,
+                    "trial": trial.trial,
+                    "arm": name,
+                    "model": getattr(res, "model", None),
+                    "ran": bool(getattr(res, "ran", False)),
+                    "produced": grade.produced if grade else None,
+                    "applied": grade.applied if grade else None,
+                    "verdict": grade.verdict if grade else None,
+                    "failed_checks": list(grade.failed_checks) if grade else [],
+                    "outcome_label": (grade.outcome_label if grade else None)
+                    or getattr(res, "outcome", None),
+                    "frontier_tokens": int(getattr(res, "frontier_tokens", 0) or 0),
+                    "error": getattr(res, "error", None),
+                }
+            )
+    summary["frontier_detail"] = detail
     summary["verifier_url"] = verifier_url
     summary["trials"] = len(trials)
     summary["skipped_scenarios"] = sorted(skipped)
@@ -1354,12 +1522,80 @@ def summarize_ablation(grades: list[AblationGrade]) -> dict[str, Any]:
         "overall": _block(grades),
         "min_trials_for_interval": MIN_TRIALS_FOR_INTERVAL,
         "arm_availability": describe_arm_availability(),
+        # REQ-052 item 3: per-arm quality — fixable fixed / unfixable
+        # held back / wrong patches shipped, plus truncated / timed_out /
+        # no_output counts, so the scorecard measures the model, not the
+        # harness. Expected classes come from the grading-only catalog
+        # (arms never see them).
+        "quality": {
+            arm: _quality_block([g for g in grades if g.arm == arm]) for arm in ABLATION_ARMS
+        },
     }
+
+
+def _quality_block(items: list[AblationGrade]) -> dict[str, Any]:
+    """Counts for one arm: fixed / held back / wrong + label counts."""
+    fixable = [g for g in items if _expected_for(g.scenario_id) == "repair"]
+    unfixable = [g for g in items if _expected_for(g.scenario_id) != "repair"]
+    labels = [g.outcome_label or "" for g in items]
+    return {
+        "fixable_total": len(fixable),
+        "fixable_fixed": sum(g.verified_completion for g in fixable),
+        "unfixable_total": len(unfixable),
+        "unfixable_held_back": sum(g.correct_escalation for g in unfixable),
+        "wrong_patches_shipped": sum(g.wrong_patch_released for g in items),
+        "produced": sum(g.produced for g in items),
+        "applied": sum(g.applied for g in items),
+        "truncated": sum(1 for label in labels if label == "truncated"),
+        "timed_out": sum(1 for label in labels if label == "timed_out"),
+        "no_output": sum(1 for label in labels if label == "no_output"),
+        "unverified": sum(1 for label in labels if label == "unverified"),
+        "error": sum(1 for label in labels if label in ("error", "budget_exhausted", "model_mismatch")),
+        "n": len(items),
+    }
+
+
+def _expected_for(scenario_id: str) -> str:
+    """Grading-only expected class; "no_patch" when the scenario is unknown."""
+    try:
+        return expected_outcome_for(scenario_id)
+    except (KeyError, ValueError, RuntimeError):
+        return "no_patch"
+
+
+def render_frontier_quality_table(summary: dict[str, Any]) -> str:
+    """Per-arm quality table (REQ-052 item 3): fixed / held back / labels."""
+    quality = summary.get("quality", {})
+    lines = [
+        "| arm | fixable fixed | unfixable held back | wrong shipped | produced | applied | truncated | timed_out | no_output |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for arm in ABLATION_ARMS:
+        block = quality.get(arm, {})
+        lines.append(
+            f"| {arm} | {block.get('fixable_fixed', '—')}/{block.get('fixable_total', '—')} | "
+            f"{block.get('unfixable_held_back', '—')}/{block.get('unfixable_total', '—')} | "
+            f"{block.get('wrong_patches_shipped', '—')} | {block.get('produced', '—')} | "
+            f"{block.get('applied', '—')} | {block.get('truncated', '—')} | "
+            f"{block.get('timed_out', '—')} | {block.get('no_output', '—')} |"
+        )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
 # Learning curve: same drift 5x in a row (REQ-024 B4)
 # ---------------------------------------------------------------------------
+
+
+def _is_fake_driver(driver: Any) -> bool:
+    """A rehearsal driver (never a live model call)."""
+    name = type(driver).__name__
+    if "Fake" in name:
+        return True
+    try:
+        return str(getattr(driver, "default_model", "") or "").startswith("fake-")
+    except Exception:
+        return False
 
 
 def run_learning_curve(
@@ -1370,6 +1606,7 @@ def run_learning_curve(
     seed: int = 42,
     verifier_url: str | None = None,
     verify: Any | None = None,
+    driver: Any | None = None,
 ) -> dict[str, Any]:
     """Inject the same drift ``repeats`` times; frontier tokens per repair.
 
@@ -1379,25 +1616,56 @@ def run_learning_curve(
     frontier tokens, the rung reached and the decision. Honest end-to-end
     (REQ-027 sub-step 2): the arms derive everything from observation.
     REQ-030 2b: proposing caches nothing, so cold repeats re-derive at L1
-    (0 model tokens each) until an approval teaches the fix — L0 hits only
-    after approval. Warm hits L0 from the start only when its dev-split
+    (0 model tokens each) until an approval teaches the fix — L0 hits
+    only after approval. Warm hits L0 from the start only when its dev-split
     fixes verified (``verifier_url`` or ``verify``); without a verifier it
     stays cold and the provenance says so.
     Returns the raw rows plus per-arm totals; :func:`write_learning_curve_md`
     renders the file. Fake-labelled rows are rehearsal, not publication
     numbers: rerun with ``FRONTIER_API_KEY`` set for live tokens.
+
+    REQ-052 item 4: with ``FRONTIER_API_KEY`` set the agent column comes
+    from the live agent driver (``frontier_agent_driver``), never the
+    fake — passing an explicit fake driver on a keyed run raises
+    ``RuntimeError``. Each repeat also records whether the agent's repair
+    verified (``verifier_url`` or ``verify``; ``"unverified"`` otherwise).
     """
+    from autobridge.config import frontier_api_key  # noqa: PLC0415
     from autobridge.llm.provider import Usage  # noqa: PLC0415
     from bench.baseline_coding_agent import FakeOpenCodeDriver  # noqa: PLC0415
     from bench.harness import HarnessConfig, make_trial_inputs  # noqa: PLC0415
 
     prov = provider or ablation_provider()
+    if driver is None:
+        driver = (
+            frontier_agent_driver()
+            if frontier_api_key()
+            else FakeOpenCodeDriver(
+                default_usage=Usage(input_tokens=500, output_tokens=1500),
+                default_model="fake-opencode",
+            )
+        )
+    elif frontier_api_key() and _is_fake_driver(driver):
+        raise RuntimeError(
+            "run_learning_curve: FRONTIER_API_KEY is set, so the agent column "
+            "must come from the live agent driver, not "
+            f"{type(driver).__name__} (rehearsal numbers would masquerade as live)"
+        )
+    verify_fn = verify
+    if verify_fn is None and verifier_url:
+        from bench.scoring import normalize_verify_response, verify_via_http  # noqa: PLC0415
+
+        def verify_fn(spec: Any, sid: str) -> bool:
+            payload = verify_via_http(spec, sid, verifier_url=verifier_url)
+            outcome = normalize_verify_response(payload if isinstance(payload, dict) else {})
+            failed = getattr(outcome, "failed_checks", None)
+            names = [f.get("name") for f in failed] if isinstance(failed, list) else []
+            return bool(getattr(outcome, "passed", False)) and not any(
+                isinstance(n, str) and "verifier_unreachable" in n for n in names
+            )
+
     case = ablation_case_for_scenario(scenario_id)
     cfg = HarnessConfig(seed=seed)
-    driver = FakeOpenCodeDriver(
-        default_usage=Usage(input_tokens=500, output_tokens=1500),
-        default_model="fake-opencode",
-    )
     from autobridge.repair.knowledge import KnowledgeCache  # noqa: PLC0415
 
     cold_cache: Any = KnowledgeCache()
@@ -1428,6 +1696,7 @@ def run_learning_curve(
                 {
                     "repeat": rep + 1,
                     "frontier_agent_frontier_tokens": int(agent_res.frontier_tokens),
+                    "frontier_agent_verified": _verify_agent_spec(agent_res, verify_fn, scenario_id),
                     "autobridge_cold_frontier_tokens": int(cold_res.frontier_tokens),
                     "autobridge_warm_frontier_tokens": int(warm_res.frontier_tokens),
                     "autobridge_cold_rung": _rung(cold_res),
@@ -1461,6 +1730,23 @@ def run_learning_curve(
     }
 
 
+def _verify_agent_spec(agent_res: Any, verify_fn: Any | None, scenario_id: str) -> Any:
+    """Whether the agent's produced spec verified: True/False/"unverified".
+
+    REQ-052 item 4 (quality first): the learning curve reports, per
+    repeat, whether the agent repair verified — never a bare token
+    count. ``"unverified"`` when no verifier is available or the agent
+    produced no spec.
+    """
+    spec = getattr(agent_res, "spec", None)
+    if not isinstance(spec, dict) or not spec or verify_fn is None:
+        return "unverified"
+    try:
+        return bool(verify_fn(spec, scenario_id))
+    except Exception:
+        return "unverified"
+
+
 def write_learning_curve_md(result: dict[str, Any], path: str | pathlib.Path) -> pathlib.Path:
     """Render the learning-curve result as ``experiments/learning_curve.md``."""
     out = pathlib.Path(path)
@@ -1478,7 +1764,10 @@ def write_learning_curve_md(result: dict[str, Any], path: str | pathlib.Path) ->
         f"(model `{prov.get('frontier_agent_model')}`); engine arms via "
         f"{prov.get('engine_provider')} (frontier `{prov.get('engine_frontier_model')}`). "
         "Fake-labelled rows are rehearsal, not publication numbers: rerun with",
-        "`FRONTIER_API_KEY` set for live tokens.",
+        "`FRONTIER_API_KEY` set for live tokens (the harness refuses the fake driver when a key is set).",
+        "",
+        "Quality first: the agent_verified column says whether each agent repair verified",
+        "(True/False; `unverified` when no verifier was available or no spec was produced).",
         "",
         "Expected (REQ-030 2b: proposing caches nothing): the agent pays",
         "model tokens on every repair (it has no memory across repairs).",
@@ -1487,13 +1776,14 @@ def write_learning_curve_md(result: dict[str, Any], path: str | pathlib.Path) ->
         "start only when its dev-split fixes verified (see provenance);",
         "without a verifier it repeats cold exactly.",
         "",
-        "| repeat | frontier_agent | autobridge_cold | autobridge_warm |",
-        "| --- | --- | --- | --- |",
+        "| repeat | frontier_agent | autobridge_cold | autobridge_warm | agent_verified |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for row in result["rows"]:
         lines.append(
             f"| {row['repeat']} | {row['frontier_agent_frontier_tokens']} | "
-            f"{row['autobridge_cold_frontier_tokens']} | {row['autobridge_warm_frontier_tokens']} |"
+            f"{row['autobridge_cold_frontier_tokens']} | {row['autobridge_warm_frontier_tokens']} | "
+            f"{row.get('frontier_agent_verified', 'unverified')} |"
         )
     lines += [
         "",
@@ -1513,6 +1803,12 @@ def write_learning_curve_md(result: dict[str, Any], path: str | pathlib.Path) ->
         "",
         "Totals: "
         + ", ".join(f"{arm}={total}" for arm, total in sorted(result["totals"].items())),
+        "",
+    ]
+    verified = sum(1 for row in result["rows"] if row.get("frontier_agent_verified") is True)
+    lines += [
+        f"Agent repairs verified: {verified}/{result['repeats']} "
+        "(`unverified` rows had no verifier or no produced spec).",
         "",
     ]
     out.parent.mkdir(parents=True, exist_ok=True)

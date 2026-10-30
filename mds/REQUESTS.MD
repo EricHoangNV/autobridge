@@ -262,7 +262,7 @@ proposal → approved).
 
 
 ### REQ-052 — Benchmark quality: the frontier arms must make real, complete, gradable attempts (2026-10-30)
-Status: IN_PROGRESS (sbx1 since 2026-10-30 20:29)
+Status: DONE (sbx1 2026-10-30 -- all 5 items code-done: L3-sized one-shot + truncation labels, agent model record/check + shared 600s wall-clock + timed_out, verifier-graded frontier attempts + quality table + frontier_detail, live-agent learning curve + verified column, Spark prices; full gates green unkeyed + 12/12 rehearsal; owner step: keyed BENCH_TRIALS=1 make bench-ablation, then close)
 Owner keyed run (2026-10-30, sandbox, `origin/main` 6cf0511b, `BENCH_TRIALS=1 make bench-ablation`, 16 min): engine
 arms are right (AutoBridge cold/warm: 6/6 fixable faults fixed, 6/6 unfixable held back, 0 wrong patches). The
 frontier arms' **quality** numbers are not trustworthy — they measure our harness, not the model. Owner: focus on

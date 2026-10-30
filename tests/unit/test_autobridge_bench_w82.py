@@ -135,7 +135,7 @@ def test_build_fake_codex_output_no_cost() -> None:
 def test_codex_driver_defaults() -> None:
     d = CodexCliDriver()
     assert d.cli_path == "codex"
-    assert d.timeout_s == 120.0
+    assert d.timeout_s == 600.0
     assert d.last_prompt is None
 
 

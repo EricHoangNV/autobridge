@@ -327,6 +327,13 @@ class OneShotResult:
     cost_usd: Decimal | None = None
     duration_ms: float = 0.0
     raw_output: str = ""
+    #: REQ-052: True when the answer was cut off by the output cap
+    #: (``finish_reason == "length"``, or the cap was reached with no
+    #: parseable spec). A truncated row is labelled, never silently
+    #: scored as a model failure.
+    truncated: bool = False
+    finish_reason: str = ""
+    truncation_reason: str = ""
 
     @property
     def total_tokens(self) -> int:
@@ -372,7 +379,7 @@ class OneShotGenerator:
         *,
         budget: Budget | None = None,
         tier: str = "frontier",
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         model: str | None = None,
         docs_loader: Any | None = None,
         bench_context: Any | None = None,
@@ -381,6 +388,14 @@ class OneShotGenerator:
             from autobridge.llm.provider import FakeProvider  # noqa: PLC0415
 
             provider = FakeProvider()
+        if max_tokens is None:
+            # REQ-052: the same output room as the engine's L3
+            # (FRONTIER_MAX_TOKENS, default 131072). The old 4096 cap made
+            # the reasoning model spend the budget thinking, then cut the
+            # spec off — every trial scored 0/6 on our cap, not the model.
+            from autobridge.config import frontier_max_tokens  # noqa: PLC0415
+
+            max_tokens = frontier_max_tokens()
         self.provider = provider
         self.budget = budget
         self.tier = tier
@@ -403,7 +418,10 @@ class OneShotGenerator:
 
     def _model_cost(self, usage: Usage) -> Decimal | None:
         try:
-            return estimate_cost(self.tier, usage)
+            # REQ-052 item 5: price by the resolved model id from the one
+            # published table (MODEL_PRICES_PER_MILLION), so a live Spark
+            # call costs $1.25/$4.25 per M — not the flat $15/M placeholder.
+            return estimate_cost(self.tier, usage, model=self._resolve_model())
         except Exception:
             return None
 
@@ -473,6 +491,24 @@ class OneShotGenerator:
             elapsed = (time.monotonic() - start) * 1000.0
             yaml_body = extract_spec_yaml(comp.text)
             spec_d = try_parse_spec_yaml(comp.text)
+            # REQ-052: detect truncation. finish_reason "length" is the
+            # provider saying the cap cut the answer off; a full cap with
+            # no parseable spec is the same failure through a provider
+            # that does not report a reason (fakes, replay).
+            finish_reason = str(getattr(comp, "finish_reason", "") or "")
+            truncated = finish_reason == "length"
+            truncation_reason = ""
+            if truncated:
+                truncation_reason = (
+                    f"finish_reason=length at max_tokens={self.max_tokens}: "
+                    "the output cap cut the answer off"
+                )
+            elif spec_d is None and comp.usage.output_tokens >= (self.max_tokens or 0) > 0:
+                truncated = True
+                truncation_reason = (
+                    f"output_tokens={comp.usage.output_tokens} reached "
+                    f"max_tokens={self.max_tokens} with no parseable spec"
+                )
             return OneShotResult(
                 text=comp.text,
                 spec_yaml=yaml_body,
@@ -482,6 +518,9 @@ class OneShotGenerator:
                 cost_usd=self._model_cost(comp.usage),
                 duration_ms=elapsed,
                 raw_output=comp.text,
+                truncated=truncated,
+                finish_reason=finish_reason,
+                truncation_reason=truncation_reason,
             )
         except Exception as exc:
             # Preserve BudgetExhausted semantics: surface so harness marks failure
@@ -529,7 +568,7 @@ def run_one_shot_arm(
     provider: Any | None = None,
     budget: Budget | None = None,
     tier: str = "frontier",
-    max_tokens: int = 4096,
+    max_tokens: int | None = None,
     model: str | None = None,
     docs_loader: Any | None = None,
     context: Any | None = None,
@@ -556,6 +595,15 @@ def run_one_shot_arm(
     """
     from bench.harness import ArmResult  # noqa: PLC0415
 
+    # REQ-052: the one-shot gets the same output room as the engine's L3
+    # (FRONTIER_MAX_TOKENS); an explicit max_tokens still wins (tests).
+    if max_tokens is None:
+        try:
+            from autobridge.config import frontier_max_tokens  # noqa: PLC0415
+
+            max_tokens = frontier_max_tokens()
+        except Exception:
+            max_tokens = 131072
     # Default budget from harness inputs when caller did not supply one
     if budget is None:
         try:
@@ -603,10 +651,22 @@ def run_one_shot_arm(
         spec_payload: dict[str, Any] | None = None
         if result.spec_dict is not None:
             spec_payload = result.spec_dict
+        # REQ-052: a truncated answer is labelled, never silently scored
+        # as a model failure; a ran arm with no parseable spec is
+        # no_output. Grading counts both per arm.
+        outcome: str | None = None
+        ran = True
+        error: str | None = None
+        if result.truncated:
+            outcome = "truncated"
+            ran = False
+            error = result.truncation_reason or "truncated: output cap cut the answer off"
+        elif spec_payload is None:
+            outcome = "no_output"
         return ArmResult(
             arm="one_shot",
             inputs=inputs,
-            ran=True,
+            ran=ran,
             elapsed_ms=elapsed,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
@@ -618,6 +678,8 @@ def run_one_shot_arm(
                 model_calls=1,
                 prompt=prompt_ref,
                 context_hash=context_hash,
+                outcome=outcome,
+                error=error,
             )
     except Exception as exc:
         elapsed = (time.monotonic() - start) * 1000.0
@@ -634,6 +696,7 @@ def run_one_shot_arm(
                     elapsed_ms=elapsed,
                     error=f"{type(cause).__name__}: {cause}",
                     model=model or tier,
+                    outcome="budget_exhausted",
                 )
         return ArmResult(
             arm="one_shot",

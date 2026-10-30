@@ -89,3 +89,44 @@ asserts engine + both frontier arms share one context hash per case.
 Scenario set, metrics, budgets, hypothesis and the no-reroll rule are
 unchanged; only the frontier arms' inputs are fixed from starved to
 fair, in the engine's favor to remove, not add, an excuse.
+
+## Amendment (REQ-052, 2026-10-30): frontier quality — the numbers measure the model, not the harness
+
+What changed and why (published, not hidden): the keyed rehearsal
+(`origin/main` 6cf0511b, `BENCH_TRIALS=1 make bench-ablation`, 16 min)
+showed the engine arms right (cold/warm 6/6 fixable fixed, 6/6
+unfixable held back, 0 wrong patches) but the frontier arms' numbers
+measured the harness. Five fixes, all in `bench/` + one provider field
+(no engine, verifier or simulator change; scenario set, metrics,
+hypothesis and the no-reroll rule unchanged):
+
+1. **Output room.** The one-shot (and the LLM fallback) used a 4096-token
+   cap while the engine's L3 uses `FRONTIER_MAX_TOKENS` (default 131072):
+   the reasoning model spent the budget thinking, then the spec was cut
+   off — 0/6 fixed measured our cap. Every frontier arm now gets the same
+   output room as L3. A cut-off answer is detected (`finish_reason ==
+   "length"`, new `Completion.finish_reason` field, or a full cap with no
+   parseable spec) and the row is labelled `truncated` — never silently
+   scored as a model failure.
+2. **Agent identity + time.** The agent row carried `model=baseline-claude`
+   (a default, not the run) and died at the 120 s CLI timeout. It now
+   records the model the run itself reports, runs under the shared
+   wall-clock (default 600 s for every arm — same budget rule, self-test
+   still holds; `--wall-clock` / `BENCH_WALL_CLOCK` to change it), and a
+   live run whose model differs from `FRONTIER_MODEL` fails loudly as
+   `model_mismatch`. Timeouts are labelled `timed_out`, not failures.
+3. **Every attempt graded.** Produced specs (one-shot text, agent answer
+   text) go to the verifier like engine patches; each arm x scenario row
+   carries the verdict + failed checks, or an explicit
+   `truncated`/`timed_out`/`no_output`/`unverified` label. The summary
+   reports per arm: fixable fixed, unfixable held back, wrong patches
+   shipped, plus label counts (`render_frontier_quality_table`, and a
+   per-scenario `frontier_detail` list in the summary JSON).
+4. **Learning curve.** With `FRONTIER_API_KEY` set the agent column comes
+   from the live agent driver — passing the fake driver then raises
+   instead of publishing rehearsal numbers as live. Each repeat reports
+   whether the agent repair verified.
+5. **Cost.** The one-shot prices by the resolved model id from the one
+   published table (`MODEL_PRICES_PER_MILLION`: Spark $1.25/$4.25 per M);
+   the $15/M flat placeholder is gone. (Agent-arm cost still comes from
+   the CLI report; out of scope here.)

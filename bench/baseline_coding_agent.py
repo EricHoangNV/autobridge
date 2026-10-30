@@ -217,7 +217,7 @@ class ClaudeCodeDriver:
         self,
         *,
         cli_path: str | None = None,
-        timeout_s: float = 120.0,
+        timeout_s: float = 600.0,
         model: str | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
@@ -435,7 +435,7 @@ class CodexCliDriver:
         self,
         *,
         cli_path: str | None = None,
-        timeout_s: float = 120.0,
+        timeout_s: float = 600.0,
         model: str | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
@@ -693,7 +693,7 @@ class OpenCodeCliDriver:
         self,
         *,
         cli_path: str | None = None,
-        timeout_s: float = 120.0,
+        timeout_s: float = 600.0,
         model: str | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
@@ -1019,7 +1019,7 @@ class BaselineLLMDriver:
         *,
         budget: Any | None = None,
         tier: str = "frontier",
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         model: str | None = None,
     ) -> None:
         # Lazy import to avoid cycle
@@ -1027,6 +1027,15 @@ class BaselineLLMDriver:
             from autobridge.llm.provider import FakeProvider  # noqa: PLC0415
 
             provider = FakeProvider()
+        if max_tokens is None:
+            # REQ-052: same output room as the engine's L3 (never the old
+            # 4096 cap that truncated reasoning models).
+            try:
+                from autobridge.config import frontier_max_tokens  # noqa: PLC0415
+
+                max_tokens = frontier_max_tokens()
+            except Exception:
+                max_tokens = 131072
         self.provider = provider
         self.budget = budget
         self.tier = tier
@@ -1099,7 +1108,7 @@ def get_baseline_driver(
     *,
     provider: Any | None = None,
     cli_path: str | None = None,
-    timeout_s: float = 120.0,
+    timeout_s: float = 600.0,
     model: str | None = None,
 ) -> Any:
     """Factory returning a baseline driver by *kind*.
