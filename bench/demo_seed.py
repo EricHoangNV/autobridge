@@ -38,7 +38,6 @@ from bench.demo import (
     _check_connector_address,
     _connector_id_from_calls,
     _control_call,
-    _control_get_raw,
     _live_build_and_poll,
     _live_ensure_connector,
     _live_knowledge,
@@ -269,6 +268,10 @@ def verify_end_state(base_url: str, calls: list[dict[str, Any]]) -> dict[str, An
     _assert_live(calls, "knowledge starts empty (learning happens on approve, REQ-030 2b)",
                  isinstance(entries, list) and len(entries) == 0,
                  f"knowledge entries: {entries}")
+    decisions = knowledge.get("decisions")
+    _assert_live(calls, "no recorded decisions after reset (they clear like the rest)",
+                 decisions is None or (isinstance(decisions, list) and len(decisions) == 0),
+                 f"knowledge decisions: {decisions}")
     state["knowledge_entries"] = 0 if isinstance(entries, list) else entries
     return state
 

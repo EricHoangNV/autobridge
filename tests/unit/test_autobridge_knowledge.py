@@ -116,7 +116,7 @@ def test_knowledge_empty_initially(tmp_path: pathlib.Path) -> None:
     try:
         r = client.get("/knowledge")
         assert r.status_code == 200, r.text
-        assert r.json() == {"entries": [], "connectors": [], "counts": {"entries": 0, "reuses": 0, "tokens_saved": 0}}
+        assert r.json() == {"entries": [], "connectors": [], "counts": {"entries": 0, "reuses": 0, "tokens_saved": 0}, "decisions": []}
         r = client.get("/capabilities")
         assert r.status_code == 200, r.text
         body = r.json()

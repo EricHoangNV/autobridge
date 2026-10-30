@@ -37,9 +37,13 @@ approval — nothing auto-applies, so every transition stays on screen.
 
 - **Deck 1 — What AutoBridge knows.** Point at `/knowledge` (top bar): vocabulary
   v1, v2, v3 rows each list "used by" their seed connector (atlaspms v1
-  with no refusal, meridianpms v2 with v1 refused, PABX edge v3), and the
+  with no refusal, meridianpms v2 with v1 refused, PABX edge v3), the
   right-hand column fills with learned fixes as repairs are approved
-  ("learned from approval … by …", "reused N×").
+  ("learned from approval … by …", "reused N×"), and the Decisions
+  section below lists every operator decision newest first (approvals
+  with whether they were learned, business decisions, denies, rollbacks —
+  each with when, who, connector, the one-line summary and repair/release
+  links).
 - **Deck 2 — Reusable artifact.** On `/connectors`, AtlasPMS ● Working with
   0 model tokens: the reference release from step 1 below, healed
   through the ladder, not rebuilt.

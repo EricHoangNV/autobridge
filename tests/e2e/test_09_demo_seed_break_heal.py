@@ -78,6 +78,7 @@ def test_seed_end_state(e2e_stack: str) -> None:
     assert usage["total_calls"] == 0, usage
     knowledge = _control("GET", "/knowledge")
     assert knowledge["entries"] == []
+    assert knowledge.get("decisions", []) == []
 
 
 @pytest.mark.live

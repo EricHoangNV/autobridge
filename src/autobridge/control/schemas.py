@@ -653,10 +653,35 @@ class KnowledgeConnectorOut(BaseModel):
     last_built_at: UtcDatetime | None = None
 
 
+class KnowledgeDecisionOut(BaseModel):
+    """One operator decision (REQ-049 item 9).
+
+    Source of truth is the existing approval/rejection/rollback rows —
+    no second store, so a reset clears them like everything else.
+    ``business_decision`` marks an approved model proposal on an
+    escalated repair (never a verified fix, never learned); ``learned``
+    marks an approved fix that entered L0 knowledge.
+    """
+
+    id: str
+    at: UtcDatetime | None = None
+    actor: str = ""
+    kind: str = ""  # approve | reject | rollback
+    business_decision: bool = False
+    learned: bool = False
+    connector_id: str = ""
+    connector_name: str = ""
+    repair_run_id: str = ""
+    from_release_id: str | None = None
+    to_release_id: str | None = None
+    summary: str = ""
+
+
 class KnowledgeOut(BaseModel):
     entries: list[KnowledgeEntryOut] = Field(default_factory=list)
     connectors: list[KnowledgeConnectorOut] = Field(default_factory=list)
     counts: dict[str, int] = Field(default_factory=dict)
+    decisions: list[KnowledgeDecisionOut] = Field(default_factory=list)
 
 
 class ModelUsageEntry(BaseModel):

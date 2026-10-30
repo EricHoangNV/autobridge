@@ -554,3 +554,11 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The rule is per-render hook-count stability, so the bug is invisible whenever the first render already has data — exactly what mocked SWR tests produce.
 - The fix is placement (all hooks before any early return), and the guard is a test that renders loading first, then rerenders with data.
 - **Rule:** Any new hook in a component with early returns goes with the other hooks above them, plus a loading-then-data rerender test; never trust a hooks change that only ever rendered loaded state.
+
+## 61. The replay prompt hash covers prompt text and the allowed-pointer list — rekey fixtures, never loosen the test
+
+**Context:** REQ-049 changed `config/prompts/l3_patch.md` (proposal option) and widened `allowed_l3_pointers` (money-check `compare_to`); three replay tests failed with L3 "skipped: no replay recording for prompt \<new hash\>".
+
+- `prompt_hash` covers the fully rendered L3 messages, so both the prompt file text and the evidence blocks (which carry `patch_target.allowed_pointers`) rotate the key. The fixture `tests/fixtures/replay/gross_to_net.json` is keyed by that hash, and its own note documents the rotation procedure ("an edited prompt file changes the hash").
+- Fix: render the same three input sets (l2 pair, matrix pair-no-evidence, demo single+evidence) through the loader with old then new prompts, verify the old hashes match the committed keys (sanity), and swap in the new keys keeping the synthetic payloads byte-identical. The old demo key did NOT match a naive replication — the evidence change (new pointers) was the second hash input, which is exactly why the fixture note says re-capture rather than hand-edit.
+- **Rule:** when a replay test fails on a hash miss after a prompt or evidence change, re-render the recorded inputs and rekey; never delete the test, never invent a recording, and always verify old-hash == committed-key first so a genuinely changed input (not just the prompt) is caught.

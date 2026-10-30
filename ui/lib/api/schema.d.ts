@@ -1949,6 +1949,66 @@ export interface components {
              */
             vocabulary: string;
         };
+        /**
+         * KnowledgeDecisionOut
+         * @description One operator decision (REQ-049 item 9).
+         *
+         *     Source of truth is the existing approval/rejection/rollback rows —
+         *     no second store, so a reset clears them like everything else.
+         *     ``business_decision`` marks an approved model proposal on an
+         *     escalated repair (never a verified fix, never learned); ``learned``
+         *     marks an approved fix that entered L0 knowledge.
+         */
+        KnowledgeDecisionOut: {
+            /**
+             * Actor
+             * @default
+             */
+            actor: string;
+            /** At */
+            at?: string | null;
+            /**
+             * Business Decision
+             * @default false
+             */
+            business_decision: boolean;
+            /**
+             * Connector Id
+             * @default
+             */
+            connector_id: string;
+            /**
+             * Connector Name
+             * @default
+             */
+            connector_name: string;
+            /** From Release Id */
+            from_release_id?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /**
+             * Learned
+             * @default false
+             */
+            learned: boolean;
+            /**
+             * Repair Run Id
+             * @default
+             */
+            repair_run_id: string;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /** To Release Id */
+            to_release_id?: string | null;
+        };
         /** KnowledgeEntryOut */
         KnowledgeEntryOut: {
             /**
@@ -2042,6 +2102,8 @@ export interface components {
             counts?: {
                 [key: string]: number;
             };
+            /** Decisions */
+            decisions?: components["schemas"]["KnowledgeDecisionOut"][];
             /** Entries */
             entries?: components["schemas"]["KnowledgeEntryOut"][];
         };

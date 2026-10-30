@@ -92,7 +92,9 @@ command, then watch (deck order, `docs/demo.md`):
 
 - **Deck 1 — What AutoBridge knows.** Open `/knowledge` (top bar): vocabulary
   v1/v2/v3 with "used by" per version, and any learned fixes with
-  "reused N×". Back on `/connectors`, AtlasPMS is the reusable
+  "reused N×". The Decisions section below lists every operator decision
+  newest first (approvals, business decisions, denies, rollbacks).
+  Back on `/connectors`, AtlasPMS is the reusable
   artifact: Working, 0 tokens.
 - **Deck 2 — Reusable artifact.** AtlasPMS stays Working through its
   break-and-heal cycle without a rebuild (the ladder reuses the

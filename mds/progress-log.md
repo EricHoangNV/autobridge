@@ -3764,3 +3764,26 @@ Model-escalation labels fixed end to end across bench/demo.py (step-4 in-process
 **Notes for next iteration:**
 - Compose-stack e2e and keyed runs are owner steps (no FRONTIER_API_KEY / Compose in sandbox). `make demo 8/8` unkeyed passed on the local stack; live `demo-break gross_to_net/harbor` verified `frontier_budget: 131072` on row + ledger and Harbor `error`/`needs your decision`.
 - Owner VERIFY for REQ-048: Aside run + screenshots (repair top, Connectors header, Repairs list during call).
+
+## REQ-049 — Deck 5 Green → Red → Green (model proposal + Approve/Deny + Decisions)
+**Date:** 2026-10-30
+**Ref:** mds/REQUESTS.MD REQ-049 (owner decision 2026-10-30 + item 9 amendment)
+
+**What was done:**
+- Harbor wiki + `simulators/docs/harborpms.md` document page-level `meta.gross_sum`; discovery adds `money_invariant` vs `$.gross_sum` only when docs describe a money total (generic detector + build-page line + trace), never guessed.
+- `demo-seed` drops Harbor (Atlas/Meridian/PABX edge); step 4 builds Harbor from its wiki docs (deck 4, asserts totals check + baseline Complete, heal-first for reruns), breaks it (deck 5), and approves a valid model proposal as a business decision (r2 → verifying Complete → Working → retired, no learning, decisions-listed) or stays Red when the model proposes nothing / the gate refuses.
+- L3 answers `escalate+proposal` (generic prompt, no scenario words; apply + allowed-pointer check with one retry; malformed dropped/labelled; engine never synthesises); allowed pointers now include money-check `compare_to`s.
+- `POST /repairs/{id}/approve-proposal` (verifier-gated r2, fail-closed 422, no double-approve) + preview business-decision lines; repair page Approve:`<label>`/Deny + effect + diff + "Business decision by X"; Deny = reject (stays Error, drift open).
+- Knowledge Decisions section (approve learned/not, business decision, deny, rollback; newest first; from approval rows; reset clears); demo asserts Harbor's decision listed.
+- Replay fixture re-keyed for new prompt/pointer hashes; README/docs/demo.md deck 1–8; test_08/test_09 updated for 3-connector seed + docs-built Harbor.
+
+**Key decisions:**
+- Converging accept-shape is a check retarget (per-record validation stays, gross comparison dropped); widening pointers to money checks is safe because semantic proposals never auto-apply and the verifier trap still rejects engine-applied decoys.
+- Business label derived from escalate+approve (no migration); double-approve rejected (duplicate releases).
+
+**Files changed:**
+- `simulators/docs/harbor.md`, `simulators/docs/harborpms.md`, `src/autobridge/discovery/bootstrap.py`, `config/prompts/l3_patch.md`, `config/prompts/l3_patch_retry.md`, `src/autobridge/repair/ladder.py`, `src/autobridge/repair/semantic.py`, `src/autobridge/repair/escalation.py`, `src/autobridge/repair/controller.py`, `src/autobridge/engine/releases.py`, `src/autobridge/control/routes/repairs.py`, `src/autobridge/control/routes/capabilities.py`, `src/autobridge/control/schemas.py`, `bench/demo.py`, `bench/demo_seed.py`, `tests/unit/test_autobridge_req049_proposal.py`, `tests/fixtures/replay/gross_to_net.json`, `tests/unit/test_autobridge_demo.py`, `tests/unit/test_autobridge_knowledge.py`, `tests/unit/test_autobridge_semantic_climb.py`, `tests/e2e/test_08_recording_journey.spec.ts`, `tests/e2e/test_09_demo_seed_break_heal.py`, `ui/components/RepairActions.tsx`, `ui/app/repairs/[id]/page.tsx`, `ui/app/knowledge/page.tsx`, `ui/components/NewConnectorForm.tsx` (+ tests), `ui/lib/api/schema.d.ts`, `ui/openapi.json`, `README.md`, `docs/demo.md`, `mds/LEARNINGS.MD` (#61)
+
+**Notes for next iteration:**
+- Keyed owner check outstanding: deck 4→5 x3 + Aside run + `make record-frontier SCENARIO=gross_to_net` (new l3_patch v2 hash).
+- Next: REQ-050 (Meridian/PABX live builds; seed drops Meridian — do not start before REQ-049 merges).

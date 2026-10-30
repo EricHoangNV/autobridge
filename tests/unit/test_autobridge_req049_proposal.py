@@ -251,7 +251,7 @@ def _evidence_for(paths: list[str]) -> dict[str, Any]:
 
 
 def _frontier_fake(first: str, retry: str) -> FakeProvider:
-    def _answer(messages: Any, **kw: Any) -> Completion:
+    def _answer(_messages: Any, **kw: Any) -> Completion:
         purpose = str(kw.get("purpose") or "")
         text = retry if purpose == "l3-generate-patch-retry" else first
         return Completion(text=text, usage=Usage(10, 10))
@@ -551,18 +551,16 @@ def test_approve_business_decision_rejects_non_escalate(tmp_path: pathlib.Path, 
         s.add(run)
         s.commit()
         run_id = run.id
-    with factory() as s:
-        with pytest.raises(ReleaseError, match="not escalate"):
-            approve_business_decision(s, repair_run_id=run_id, actor="operator")
+    with factory() as s, pytest.raises(ReleaseError, match="not escalate"):
+        approve_business_decision(s, repair_run_id=run_id, actor="operator")
 
 
 def test_approve_business_decision_needs_a_proposal(tmp_path: pathlib.Path) -> None:
     factory = _session_factory(tmp_path)
     ids = _connector_with_release(factory)
     run_id = _escalated_repair(factory, ids, proposal=None)
-    with factory() as s:
-        with pytest.raises(ReleaseError, match="no proposal|carries no proposal"):
-            approve_business_decision(s, repair_run_id=run_id, actor="operator")
+    with factory() as s, pytest.raises(ReleaseError, match="no proposal|carries no proposal"):
+        approve_business_decision(s, repair_run_id=run_id, actor="operator")
 
 
 def test_approve_business_decision_rejects_non_applying_patch(tmp_path: pathlib.Path) -> None:
@@ -577,9 +575,8 @@ def test_approve_business_decision_rejects_non_applying_patch(tmp_path: pathlib.
             "patch": [{"op": "replace", "path": "/entities/Nope/fields/x/path", "value": "$.y"}],
         },
     )
-    with factory() as s:
-        with pytest.raises(ReleaseError, match="does not apply|invalid spec"):
-            approve_business_decision(s, repair_run_id=run_id, actor="operator")
+    with factory() as s, pytest.raises(ReleaseError, match="does not apply|invalid spec"):
+        approve_business_decision(s, repair_run_id=run_id, actor="operator")
 
 
 # ---------------------------------------------------------------------------
@@ -806,3 +803,169 @@ def test_deny_keeps_error_and_drift_open(route_client: Any) -> None:
     assert len(releases) == 1, "deny creates no release"
     drift = client.get(f"/drift?connector_id={ids['connector_id']}").json()
     assert any(isinstance(d, dict) and d.get("status") == "open" for d in drift), "drift stays open"
+
+
+# ---------------------------------------------------------------------------
+# Knowledge Decisions section (REQ-049 item 9)
+# ---------------------------------------------------------------------------
+
+
+def _approve_fix(factory: Any, ids: dict[str, Any]) -> str:  # type: ignore[no-untyped-def]
+    """A propose repair with rule + candidate, approved (learned)."""
+    from autobridge.engine.releases import approve_release, create_release_from_patch  # noqa: PLC0415
+
+    patch = [{"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.total_amount"}]
+    with factory() as s:
+        run = RepairRun(
+            drift_event_ids=[ids["drift_id"]],
+            decision="propose",
+            model_usage={"frontier_tokens": 0, "small_tokens": 0},
+            vendor="harbor",
+            drift_class="PAGINATION_CHANGE",
+            drift_signature="sig-1",
+            fingerprint_delta={"pagination": {"strategy": {"old": "page", "new": "cursor"}}},
+            candidate_patch=patch,
+            rule_id="page_to_cursor",
+        )
+        s.add(run)
+        s.commit()
+        candidate = create_release_from_patch(
+            s,
+            connector_id=ids["connector_id"],
+            base_release_id=ids["release_id"],
+            patch=patch,
+            provenance_repair_run_id=run.id,
+        )
+        s.commit()
+        approval = approve_release(
+            s,
+            repair_run_id=run.id,
+            actor="operator",
+            from_release_id=ids["release_id"],
+            to_release_id=candidate.id,
+            connector_id=ids["connector_id"],
+        )
+        s.commit()
+        return approval.id
+
+
+def test_knowledge_lists_approve_fix_as_learned(tmp_path: pathlib.Path) -> None:
+    from autobridge.control.routes.capabilities import knowledge_payload  # noqa: PLC0415
+
+    factory = _session_factory(tmp_path)
+    ids = _connector_with_release(factory)
+    approval_id = _approve_fix(factory, ids)
+    with factory() as s:
+        payload = knowledge_payload(s)
+    assert len(payload["entries"]) == 1
+    by_id = {d["id"]: d for d in payload["decisions"]}
+    decision = by_id[approval_id]
+    assert decision["kind"] == "approve"
+    assert decision["business_decision"] is False
+    assert decision["learned"] is True
+    assert decision["actor"] == "operator"
+    assert decision["connector_name"] == "harborpms"
+    assert decision["repair_run_id"]
+    assert "page_to_cursor" in decision["summary"] and "r2" in decision["summary"]
+
+
+def test_knowledge_lists_business_decision_unlearned(tmp_path: pathlib.Path) -> None:
+    from autobridge.control.routes.capabilities import knowledge_payload  # noqa: PLC0415
+
+    factory = _session_factory(tmp_path)
+    ids = _connector_with_release(factory)
+    run_id = _escalated_repair(
+        factory,
+        ids,
+        proposal={"label": "Accept net", "effect": "Retarget the totals check.", "patch": _accept_net_proposal()},
+    )
+    with factory() as s:
+        approve_business_decision(s, repair_run_id=run_id, actor="operator")
+        s.commit()
+        payload = knowledge_payload(s)
+    # A business decision never appears as learned knowledge ...
+    assert payload["entries"] == []
+    business = [d for d in payload["decisions"] if d["business_decision"]]
+    assert len(business) == 1
+    assert business[0]["kind"] == "approve"
+    assert business[0]["learned"] is False
+    assert business[0]["summary"].startswith("Business decision:")
+    assert "Retarget the totals check." in business[0]["summary"]
+    assert business[0]["connector_name"] == "harborpms"
+
+
+def test_knowledge_lists_deny_and_rollback(tmp_path: pathlib.Path) -> None:
+    from autobridge.control.routes.capabilities import knowledge_payload  # noqa: PLC0415
+    from autobridge.engine.releases import reject_release, rollback_release  # noqa: PLC0415
+
+    factory = _session_factory(tmp_path)
+    ids = _connector_with_release(factory)
+    run_id = _escalated_repair(factory, ids, proposal=None)
+    with factory() as s:
+        reject_release(s, repair_run_id=run_id, actor="op", from_release_id=None, to_release_id=None)
+        s.commit()
+        r2 = create_release(s, connector_id=ids["connector_id"], spec=_harbor_like_spec(),
+                            parent_release_id=ids["release_id"])
+        s.commit()
+        conn = s.get(Connector, ids["connector_id"])
+        assert conn is not None
+        conn.active_release_id = r2.id
+        s.commit()
+        rollback_release(
+            s, connector_id=ids["connector_id"], target_release_id=ids["release_id"],
+            actor="op2", repair_run_id=run_id,
+        )
+        s.commit()
+        payload = knowledge_payload(s)
+    by_kind = {d["kind"]: d for d in payload["decisions"]}
+    assert by_kind["reject"]["summary"].startswith("Denied:")
+    assert by_kind["rollback"]["summary"] == "Rolled back r2 → r3"
+    assert by_kind["rollback"]["actor"] == "op2"
+    # Newest first: the rollback (created last) leads.
+    assert payload["decisions"][0]["kind"] == "rollback"
+
+
+def test_knowledge_decision_connector_falls_back_to_release(tmp_path: pathlib.Path) -> None:
+    """An approval on a drift-less repair still names the connector (via the release)."""
+    from autobridge.control.routes.capabilities import knowledge_payload  # noqa: PLC0415
+    from autobridge.engine.releases import approve_release, create_release_from_patch  # noqa: PLC0415
+
+    factory = _session_factory(tmp_path)
+    ids = _connector_with_release(factory)
+    with factory() as s:
+        run = RepairRun(drift_event_ids=[], decision="propose", model_usage={})
+        s.add(run)
+        s.commit()
+        candidate = create_release_from_patch(
+            s, connector_id=ids["connector_id"], base_release_id=ids["release_id"],
+            patch=[{"op": "replace", "path": "/entities/Reservation/fields/total_amount/path", "value": "$.x"}],
+            provenance_repair_run_id=run.id,
+        )
+        s.commit()
+        approve_release(
+            s, repair_run_id=run.id, actor="op", from_release_id=ids["release_id"],
+            to_release_id=candidate.id, connector_id=ids["connector_id"],
+        )
+        s.commit()
+        payload = knowledge_payload(s)
+    assert len(payload["decisions"]) == 1
+    assert payload["decisions"][0]["connector_name"] == "harborpms"
+
+
+def test_knowledge_decision_plain_reject_summary(tmp_path: pathlib.Path) -> None:
+    from autobridge.control.routes.capabilities import knowledge_payload  # noqa: PLC0415
+    from autobridge.engine.releases import reject_release  # noqa: PLC0415
+
+    factory = _session_factory(tmp_path)
+    ids = _connector_with_release(factory)
+    with factory() as s:
+        run = RepairRun(
+            drift_event_ids=[ids["drift_id"]], decision="propose", model_usage={},
+            rule_id="page_to_cursor", candidate_patch=[{"op": "replace", "path": "/a", "value": "b"}],
+        )
+        s.add(run)
+        s.commit()
+        reject_release(s, repair_run_id=run.id, actor="op", from_release_id=None, to_release_id=None)
+        s.commit()
+        payload = knowledge_payload(s)
+    assert payload["decisions"][0]["summary"] == "Rejected the proposed patch"

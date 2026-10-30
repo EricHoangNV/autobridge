@@ -1504,6 +1504,15 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
     if connector_id is None:
         _assert_live(calls, "connector harborpms id", False, "no connector id from ensure calls")
         return {"connector_id": None}
+    # Deck 4 needs a clean vendor for its baseline: clear any leftover
+    # gross_to_net fault from an earlier take (idempotent reruns — the
+    # reset the recording starts from already cleared it on fresh takes).
+    calls.append(
+        _control_call(
+            base_url, "POST", "/demo/reset",
+            {"sims_only": True, "targets": ["sim-harbor"]},
+        )
+    )
     # Deck 4: Harbor from its wiki. The build must carry the documented
     # totals check (REQ-049 item 2) and baseline-sync Complete.
     built_release_id = _step_live_ensure_active_release(
@@ -1751,6 +1760,23 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
             )
             approval_leg["knowledge_entries_before"] = n_before
             approval_leg["knowledge_entries_after"] = n_after
+            # REQ-049 item 9: the decision is recorded and shown — the
+            # Knowledge page lists the business decision separately.
+            decisions = knowledge_after.get("decisions")
+            ours = [
+                d for d in (decisions if isinstance(decisions, list) else [])
+                if isinstance(d, dict) and d.get("repair_run_id") == repair_row.get("id")
+            ]
+            _assert_live(
+                calls, "the business decision is listed on /knowledge (not as learned knowledge)",
+                len(ours) == 1
+                and ours[0].get("kind") == "approve"
+                and ours[0].get("business_decision") is True
+                and ours[0].get("learned") is False
+                and str(ours[0].get("summary", "")).startswith("Business decision:"),
+                f"knowledge decisions for this repair: {ours}",
+            )
+            approval_leg["knowledge_decision"] = ours[0] if ours else None
         else:
             # The gate refused the model's change (fail-closed, 422): the
             # repair stays a plain escalation — assert red-with-question.
@@ -1761,7 +1787,7 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
                 calls, "gate-refused proposal leaves the escalation standing (red with the question)",
                 isinstance(rep_after_gate, dict)
                 and rep_after_gate.get("decision") == "escalate"
-                and bool(((rep_after_gate.get("escalation_bundle") or {}).get("question"))),
+                and bool((rep_after_gate.get("escalation_bundle") or {}).get("question")),
                 f"repair after refused approve: {rep_after_gate}",
             )
     return {

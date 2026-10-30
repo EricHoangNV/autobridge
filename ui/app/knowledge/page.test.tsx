@@ -99,4 +99,48 @@ describe("KnowledgePage", () => {
     expect(screen.getByTestId("knowledge-vocabulary-loading")).toBeInTheDocument();
     expect(screen.getByTestId("knowledge-learned-loading")).toBeInTheDocument();
   });
+
+  it("lists every human decision separately from learned knowledge (REQ-049 item 9)", () => {
+    mockBoth(CAPABILITIES, {
+      ...KNOWLEDGE,
+      decisions: [
+        {
+          id: "ap-9", at: "2026-10-30T10:00:00Z", actor: "alice", kind: "approve",
+          business_decision: true, learned: false, connector_id: "c-h", connector_name: "HarborPMS",
+          repair_run_id: "rep-9", from_release_id: "r1", to_release_id: "r2",
+          summary: "Business decision: accept net totals going forward",
+        },
+        {
+          id: "ap-8", at: "2026-10-30T09:00:00Z", actor: "alice", kind: "approve",
+          business_decision: false, learned: true, connector_id: "c1", connector_name: "AtlasPMS",
+          repair_run_id: "rep-8", from_release_id: "r1", to_release_id: "r2",
+          summary: "Approved page_to_cursor → r2 (learned)",
+        },
+        {
+          id: "ap-7", at: "2026-10-30T08:00:00Z", actor: "alice", kind: "reject",
+          business_decision: false, learned: false, connector_id: "c-h", connector_name: "HarborPMS",
+          repair_run_id: "rep-7", from_release_id: null, to_release_id: null,
+          summary: "Denied: kept everything as-is, contact the vendor",
+        },
+      ],
+    });
+    render(<KnowledgePage />);
+    expect(screen.getByTestId("knowledge-decisions-title")).toHaveTextContent("Decisions");
+    expect(screen.getByTestId("knowledge-decision-0")).toHaveTextContent("Business decision");
+    expect(screen.getByTestId("knowledge-decision-0")).toHaveTextContent("accept net totals going forward");
+    expect(screen.getByTestId("knowledge-decision-0")).toHaveTextContent("HarborPMS");
+    expect(screen.getByTestId("knowledge-decision-0")).toHaveTextContent("alice");
+    expect(screen.getByTestId("knowledge-decision-0").querySelector('a[href="/repairs/rep-9"]')).toBeInTheDocument();
+    expect(screen.getByTestId("knowledge-decision-1")).toHaveTextContent("Approved (learned)");
+    expect(screen.getByTestId("knowledge-decision-1")).toHaveTextContent("page_to_cursor");
+    expect(screen.getByTestId("knowledge-decision-2")).toHaveTextContent("Denied");
+    // Learned entries stay their own section.
+    expect(screen.getByTestId("knowledge-entry-0")).toBeInTheDocument();
+  });
+
+  it("shows the empty decisions state when nobody decided yet", () => {
+    mockBoth(CAPABILITIES, { ...KNOWLEDGE, decisions: [] });
+    render(<KnowledgePage />);
+    expect(screen.getByTestId("knowledge-decisions-empty")).toBeInTheDocument();
+  });
 });

@@ -333,6 +333,107 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
             }
         )
 
+    # REQ-049 item 9: every human decision, newest first — sourced from
+    # the existing approval/rejection/rollback rows (no second store, so
+    # a reset clears them like everything else).
+    learned_approval_ids = {
+        str(e["learned_from"]["approval_id"]) for e in entries if e.get("learned_from", {}).get("approval_id")
+    }
+    run_by_id: dict[str, Any] = {r.id: r for r in runs}
+    conn_by_id: dict[str, Any] = {
+        c.id: c for c in db.execute(select(Connector)).scalars().all()
+    }
+    release_by_id: dict[str, Any] = {}
+    release_ids = {
+        rid
+        for a in approvals
+        for rid in (a.from_release_id, a.to_release_id)
+        if rid
+    }
+    if release_ids:
+        for rel in db.execute(
+            select(ConnectorRelease).where(ConnectorRelease.id.in_(sorted(release_ids)))
+        ).scalars().all():
+            release_by_id[rel.id] = rel
+    drift_conn: dict[str, str] = {}
+    need_drift_ids = set()
+    for a in approvals:
+        dec_run_any: Any = run_by_id.get(a.repair_run_id)
+        if dec_run_any is not None:
+            for did in list(dec_run_any.drift_event_ids or []):
+                need_drift_ids.add(did)
+    if need_drift_ids:
+        for drift in db.execute(
+            select(DriftEvent).where(DriftEvent.id.in_(sorted(need_drift_ids)))
+        ).scalars().all():
+            drift_conn[drift.id] = drift.connector_id
+
+    def _release_version(rid: Any) -> str:
+        rel_any: Any = release_by_id.get(str(rid)) if rid else None
+        return f"r{rel_any.version}" if rel_any is not None and rel_any.version is not None else "?"
+
+    decisions: list[dict[str, Any]] = []
+    for approval in sorted(approvals, key=lambda a: (a.created_at, a.id), reverse=True):
+        dec_run: Any = run_by_id.get(approval.repair_run_id)
+        connector_id = ""
+        if dec_run is not None:
+            for did in list(dec_run.drift_event_ids or []):
+                if did in drift_conn:
+                    connector_id = drift_conn[did]
+                    break
+        if not connector_id:
+            for rid in (approval.to_release_id, approval.from_release_id):
+                dec_rel: Any = release_by_id.get(str(rid)) if rid else None
+                if dec_rel is not None:
+                    connector_id = dec_rel.connector_id
+                    break
+        conn = conn_by_id.get(connector_id)
+        connector_name = conn.name if conn is not None else ""
+        kind = str(approval.decision or "")
+        business = kind == "approve" and dec_run is not None and dec_run.decision == "escalate"
+        learned = approval.id in learned_approval_ids
+        if kind == "approve" and business:
+            effect = ""
+            label = ""
+            bundle = dec_run.escalation_bundle if dec_run is not None and isinstance(dec_run.escalation_bundle, dict) else {}
+            raw_proposal = bundle.get("proposal") if isinstance(bundle, dict) else None
+            if isinstance(raw_proposal, dict):
+                effect = str(raw_proposal.get("effect") or "")
+                label = str(raw_proposal.get("label") or "")
+            summary = f"Business decision: {effect or label or 'accepted the proposed change'}"
+        elif kind == "approve":
+            rule = (dec_run.rule_id if dec_run is not None and dec_run.rule_id else "") or (
+                dec_run.drift_class if dec_run is not None and dec_run.drift_class else "fix"
+            )
+            summary = f"Approved {rule} → {_release_version(approval.to_release_id)}"
+            if learned:
+                summary += " (learned)"
+        elif kind == "reject":
+            if dec_run is not None and dec_run.decision == "escalate":
+                summary = "Denied: kept everything as-is, contact the vendor"
+            else:
+                summary = "Rejected the proposed patch"
+        elif kind == "rollback":
+            summary = f"Rolled back {_release_version(approval.from_release_id)} → {_release_version(approval.to_release_id)}"
+        else:
+            summary = f"{kind or 'decision'} recorded"
+        decisions.append(
+            {
+                "id": approval.id,
+                "at": approval.created_at,
+                "actor": approval.actor or "",
+                "kind": kind,
+                "business_decision": business,
+                "learned": learned,
+                "connector_id": connector_id,
+                "connector_name": connector_name,
+                "repair_run_id": approval.repair_run_id or "",
+                "from_release_id": approval.from_release_id,
+                "to_release_id": approval.to_release_id,
+                "summary": summary,
+            }
+        )
+
     connectors: list[dict[str, Any]] = []
     for conn in db.execute(select(Connector).order_by(Connector.created_at)).scalars().all():
         builds = (
@@ -405,12 +506,13 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
             "reuses": sum(e["times_reused"] for e in entries),
             "tokens_saved": sum(e["tokens_saved"] for e in entries),
         },
+        "decisions": decisions,
     }
 
 
 @router.get("/knowledge", response_model=KnowledgeOut)
 def get_knowledge(db: Session = Depends(get_db)) -> KnowledgeOut:
-    from autobridge.control.schemas import KnowledgeEntryOut  # noqa: PLC0415
+    from autobridge.control.schemas import KnowledgeDecisionOut, KnowledgeEntryOut  # noqa: PLC0415
 
     payload = knowledge_payload(db)
     return KnowledgeOut(
@@ -422,4 +524,5 @@ def get_knowledge(db: Session = Depends(get_db)) -> KnowledgeOut:
         ],
         connectors=[KnowledgeConnectorOut(**c) for c in payload["connectors"]],
         counts=dict(payload["counts"]),
+        decisions=[KnowledgeDecisionOut(**d) for d in payload["decisions"]],
     )

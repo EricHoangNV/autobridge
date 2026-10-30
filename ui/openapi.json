@@ -1741,6 +1741,94 @@
         "title": "KnowledgeConnectorOut",
         "type": "object"
       },
+      "KnowledgeDecisionOut": {
+        "description": "One operator decision (REQ-049 item 9).\n\nSource of truth is the existing approval/rejection/rollback rows \u2014\nno second store, so a reset clears them like everything else.\n``business_decision`` marks an approved model proposal on an\nescalated repair (never a verified fix, never learned); ``learned``\nmarks an approved fix that entered L0 knowledge.",
+        "properties": {
+          "actor": {
+            "default": "",
+            "title": "Actor",
+            "type": "string"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "business_decision": {
+            "default": false,
+            "title": "Business Decision",
+            "type": "boolean"
+          },
+          "connector_id": {
+            "default": "",
+            "title": "Connector Id",
+            "type": "string"
+          },
+          "connector_name": {
+            "default": "",
+            "title": "Connector Name",
+            "type": "string"
+          },
+          "from_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Release Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "",
+            "title": "Kind",
+            "type": "string"
+          },
+          "learned": {
+            "default": false,
+            "title": "Learned",
+            "type": "boolean"
+          },
+          "repair_run_id": {
+            "default": "",
+            "title": "Repair Run Id",
+            "type": "string"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          },
+          "to_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Release Id"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "KnowledgeDecisionOut",
+        "type": "object"
+      },
       "KnowledgeEntryOut": {
         "properties": {
           "approvals": {
@@ -1871,6 +1959,13 @@
             },
             "title": "Counts",
             "type": "object"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeDecisionOut"
+            },
+            "title": "Decisions",
+            "type": "array"
           },
           "entries": {
             "items": {

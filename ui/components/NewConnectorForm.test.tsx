@@ -438,8 +438,10 @@ describe("NewConnectorForm", () => {
     fireEvent.click(screen.getByTestId("submit-build"));
 
     await waitFor(() => expect(screen.getByTestId("build-progress")).toBeInTheDocument());
-    expect(screen.getByTestId("build-stage-draft")).toHaveTextContent(
-      "check added from the docs: totals must match meta.gross_sum",
+    await waitFor(() =>
+      expect(screen.getByTestId("build-stage-draft")).toHaveTextContent(
+        "check added from the docs: totals must match meta.gross_sum",
+      ),
     );
   });
 });

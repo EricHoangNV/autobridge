@@ -343,6 +343,19 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
             else:
                 conn["builds"].append({"spec_vocabulary": vocab or "v1", "success": True})
                 rel = _new_release(conn)
+                if conn["name"] == "harborpms":
+                    # REQ-049 deck 4: the wiki-built release carries the
+                    # documented totals check the demo asserts on.
+                    rel["spec"] = {
+                        "entities": {
+                            "Reservation": {"checks": [
+                                {"kind": "money_invariant", "field": "total_amount", "compare_to": "$.gross_sum"},
+                            ]},
+                            "FolioCharge": {"checks": [
+                                {"kind": "money_invariant", "field": "amount", "compare_to": "$.gross_sum"},
+                            ]},
+                        }
+                    }
                 jobs[jid] = {"success": True, "release_id": rel["id"], "connector_id": cid}
             return {"method": method, "path": path, "status": 200,
                     "body": {"job_id": jid, "build_run_id": "b-1", "state": "queued", "connector_id": cid}}
@@ -496,6 +509,16 @@ def test_live_mode_attaches_redacted_control_calls(monkeypatch: Any) -> None:
                     conn["releases"].append({"id": f"rel-{rid}", "provenance_repair_run_id": rid})
                 return {"method": method, "path": path, "status": 200, "body": list(reversed(atlas_repairs))}
             return {"method": method, "path": path, "status": 200, "body": []}
+        if path.startswith("/releases/") and method == "GET":
+            # REQ-049 deck 4: the demo reads the built release back to
+            # assert the documented totals check is on it.
+            rid = path.split("/")[2] if len(path.split("/")) > 2 else ""
+            for c in connectors.values():
+                for r in c["releases"]:
+                    if isinstance(r, dict) and r.get("id") == rid:
+                        return {"method": method, "path": path, "status": 200, "body": dict(r)}
+            return {"method": method, "path": path, "status": 404,
+                    "body": {"detail": f"Release {rid!r} not found"}}
         if path.startswith("/connectors/"):
             parts = path.split("/")
             cid = parts[2] if len(parts) > 2 else ""

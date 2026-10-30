@@ -65,10 +65,26 @@ type KnowledgeConnector = {
   last_built_at: string | null;
 };
 
+type KnowledgeDecision = {
+  id: string;
+  at: string | null;
+  actor: string;
+  kind: string;
+  business_decision: boolean;
+  learned: boolean;
+  connector_id: string;
+  connector_name: string;
+  repair_run_id: string;
+  from_release_id?: string | null;
+  to_release_id?: string | null;
+  summary: string;
+};
+
 type Knowledge = {
   entries: KnowledgeEntry[];
   connectors: KnowledgeConnector[];
   counts: Record<string, number>;
+  decisions?: KnowledgeDecision[];
 };
 
 type Vocabulary = Capabilities["versions"][string];
@@ -263,6 +279,71 @@ export default function KnowledgePage() {
           ) : null}
         </section>
       </div>
+
+      {/* REQ-049 item 9: every human decision, newest first — sourced from
+          the approval/rejection/rollback rows, separate from learned
+          knowledge. A reset clears them like everything else. */}
+      <section aria-label="Decisions" className="mt-10">
+        <h2 className="sec" data-testid="knowledge-decisions-title">
+          Decisions
+        </h2>
+        {knowledgeError ? (
+          <p data-testid="knowledge-decisions-error" className="text-sm text-stop">
+            Decisions unavailable.
+          </p>
+        ) : !knowledge ? (
+          <p data-testid="knowledge-decisions-loading" className="text-sm text-ink-2" aria-busy="true">
+            Loading decisions…
+          </p>
+        ) : (knowledge.decisions ?? []).length === 0 ? (
+          <p data-testid="knowledge-decisions-empty" className="text-sm text-ink-2">
+            No operator decisions yet. Approve or reject a repair and it lands here.
+          </p>
+        ) : (
+          <div data-testid="knowledge-decisions">
+            {(knowledge.decisions ?? []).map((decision, i) => (
+              <div
+                key={decision.id}
+                data-testid={`knowledge-decision-${i}`}
+                className="border-b border-rule py-3 first:border-t"
+              >
+                <p className="text-[15px]">
+                  <span className="font-bold">
+                    {decision.kind === "approve" && decision.business_decision
+                      ? "Business decision"
+                      : decision.kind === "approve"
+                        ? `Approved${decision.learned ? " (learned)" : ""}`
+                        : decision.kind === "reject"
+                          ? "Denied"
+                          : decision.kind === "rollback"
+                            ? "Rolled back"
+                            : decision.kind}
+                  </span>{" "}
+                  <span className="text-ink-2">{decision.summary}</span>
+                </p>
+                <p className="mt-1 font-mono text-xs text-ink-2">
+                  {decision.at ? new Date(decision.at).toLocaleString() : "—"} · by {decision.actor || "operator"}
+                  {decision.connector_name ? ` · ${decision.connector_name}` : ""}{" "}
+                  <a className="underline hover:text-ink" href={`/repairs/${encodeURIComponent(decision.repair_run_id)}`}>
+                    repair {decision.repair_run_id.slice(0, 8)}
+                  </a>
+                  {decision.to_release_id ? (
+                    <>
+                      {" "}·{" "}
+                      <a
+                        className="underline hover:text-ink"
+                        href={`/connectors/${encodeURIComponent(decision.connector_id)}`}
+                      >
+                        release {decision.to_release_id.slice(0, 8)}
+                      </a>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
