@@ -2,7 +2,37 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 12:30): **REQ-044, then REQ-045, then REQ-046** (REQ-046 must land before any benchmark rehearsal).
+Owner priority (2026-10-30 14:10): **REQ-047 next.**
+
+### REQ-047 — When the model escalates, every label must say so: reason line, question, verifier line (2026-10-30)
+Status: OPEN
+Owner run (2026-10-30, sandbox, `origin/main` 28de2ffe, keyed): `make demo` 8/8 (41 s) and 8/8 per step. Step 4's
+live L3 (`muse-spark-1.3`, prompt from `config/prompts/l3_patch.md`) now answers well — 4,321 tokens (2,983
+reasoning), $0.015:
+`{"escalate": "Should Reservation.total_amount map to the vendor net `amount` or remain defined as gross
+`$.gross_sum`?", "rationale": "Observed amounts sum to 900.00 versus gross baseline 1000.00 so choosing net versus
+gross for total_amount is a business decision the evidence does not settle."}`
+The rung entry is right (`model_escalation: L3 asked for a human decision`), but the labels around it contradict it:
+1. **Reason line is wrong.** `why_escalated` / `rejection_reason` (demo output, per-run usage table, and wherever the
+   repair page and connector activity get their reason text) read *"L3 called live (…): response contained no
+   applicable patch (no JSON patch or escalation found in response); raw response: {"escalate": …}"*. The message
+   builder predates REQ-044 and does not know the escalate answer. Expected e.g. *"L3 called live (muse-spark-1.3,
+   4,321 tokens, 2,983 reasoning): the model asked for a human decision"*.
+2. **Wrong question shown.** `escalation_question` is still the engine's canned text ("Harbor totals now read net
+   instead of gross — should total_amount track $.gross_amount …"), not the model's question. When the model
+   escalates, its question is the escalation question (labelled "The model's question for you:" as REQ-044 asked),
+   with the rationale beneath; the canned question is used only when no model question exists.
+3. **Verifier line looks false.** `checked_by: live verifier verdict=fail failed=['invalid_patch_trap']` although no
+   patch was proposed. Find what the verifier actually checked on this path. If nothing was proposed, say "no patch
+   to verify (the model escalated)" and do not show a fail verdict; if a check genuinely ran on something, label what.
+4. Step 4's title "gross_to_net rejected, escalated" and docs/demo.md describe the new truth: the model saw the
+   evidence and asked for a business decision (and, when it proposes a patch instead, the verifier verdict decides).
+Fix all four across `bench/demo.py`, the repair controller / rung ledger, the repair page (`ui/app/repairs/[id]`,
+`ModelCallBox`, decision section), connector activity, and docs. Tests: escalate answer → reason line, question,
+rationale, and verifier label as above (unit + UI component); patch answer → unchanged behaviour; no answer → the
+existing "no applicable patch" wording. Gates keyed-shaped (fake provider returning the escalate JSON above) and
+unkeyed: `make demo` 8/8. Owner check after: keyed step 4 + screenshots of the repair page.
+
 
 ### REQ-046 — Fair benchmark: frontier arms get the same context the engine has, prompts in files (2026-10-30)
 Status: DONE (sbx1 2026-10-30 -- fair context bundle + file prompts + scorecard provenance + docs/prereg amendment, full gates green unkeyed + BENCH_TRIALS=1 rehearsal 12/12 matched; owner step: keyed BENCH_TRIALS=1 make bench-ablation for live frontier numbers, then close)
