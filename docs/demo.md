@@ -128,7 +128,10 @@ approval — nothing auto-applies, so every transition stays on screen.
   docs: on `/connectors/new` pick the Meridian docs, keep vocabulary v1
   and Build — the vocabulary check refuses on screen with the engine's
   named reason (no POST with a body in ConnectorSpec v1) and creates no
-  connector; 0 model calls, the attempt recorded by name. Switch to v2
+  connector; 0 model calls, the attempt recorded by name. "Download
+  capability request" drafts the gap (needed vs v1, the docs' operations,
+  acceptance tests) as a Markdown file shaped for the build loop — no
+  model used. Switch to v2
   (one click): the one Meridian connector is created, release r1, first
   sync Complete, MeridianPMS ● Working. The connector page shows both
   attempts (v1 refused with its reason, v2 in use), `/knowledge`

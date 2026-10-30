@@ -2926,6 +2926,24 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** VocabularyCheckOperation */
+        VocabularyCheckOperation: {
+            /**
+             * Method
+             * @description HTTP method, or EVENT for pushed feeds
+             */
+            method: string;
+            /**
+             * Operation Id
+             * @description Operation id read from the docs
+             */
+            operation_id: string;
+            /**
+             * Path
+             * @description Path or feed name read from the docs
+             */
+            path: string;
+        };
         /**
          * VocabularyCheckRequest
          * @description Pre-creation vocabulary gate (REQ-053 item 7): the check runs before
@@ -2959,15 +2977,55 @@ export interface components {
         /** VocabularyCheckResponse */
         VocabularyCheckResponse: {
             /**
+             * Auth Kind
+             * @description Auth kind the docs describe
+             */
+            auth_kind?: string | null;
+            /**
+             * Doc Type
+             * @description Parsed docs kind (openapi | markdown)
+             */
+            doc_type?: string | null;
+            /**
+             * Has Body Fields
+             * @description True when the docs describe JSON-body fields
+             */
+            has_body_fields?: boolean | null;
+            /**
+             * Has Event Feeds
+             * @description True when the docs describe pushed event feeds
+             */
+            has_event_feeds?: boolean | null;
+            /**
+             * Operations
+             * @description Operations/records the docs describe (capped)
+             */
+            operations?: components["schemas"]["VocabularyCheckOperation"][] | null;
+            /**
              * Reason
              * @description Refusal reason (deterministic, 0 model calls)
              */
             reason?: string | null;
             /**
+             * Record Types
+             * @description Schema/record names the docs define (capped)
+             */
+            record_types?: string[] | null;
+            /**
              * Refused
              * @description True when the vocabulary cannot express the docs: no connector was created
              */
             refused: boolean;
+            /**
+             * Refused Methods
+             * @description Docs methods no vocabulary operation can express (POST-guard refusals)
+             */
+            refused_methods?: string[] | null;
+            /**
+             * Refused Protocol
+             * @description Docs protocol no vocabulary feed can express (event-guard refusals)
+             */
+            refused_protocol?: string | null;
             /**
              * Suggested Vocabulary
              * @description Vocabulary to build with instead, when refused

@@ -343,11 +343,28 @@ class VocabularyCheckRequest(BaseModel):
     spec_vocabulary: Literal["v1", "v2", "v3"] | None = Field(default=None)
 
 
+class VocabularyCheckOperation(BaseModel):
+    operation_id: str = Field(description="Operation id read from the docs")
+    method: str = Field(description="HTTP method, or EVENT for pushed feeds")
+    path: str = Field(description="Path or feed name read from the docs")
+
+
 class VocabularyCheckResponse(BaseModel):
     refused: bool = Field(description="True when the vocabulary cannot express the docs: no connector was created")
     reason: str | None = Field(default=None, description="Refusal reason (deterministic, 0 model calls)")
     vocabulary: str = Field(description="Vocabulary that was checked")
     suggested_vocabulary: str | None = Field(default=None, description="Vocabulary to build with instead, when refused")
+    # REQ-058: the refused build's facts, so the UI can draft the capability
+    # request deterministically (no model call, no new endpoint). All are
+    # None when the check passes.
+    refused_methods: list[str] | None = Field(default=None, description="Docs methods no vocabulary operation can express (POST-guard refusals)")
+    refused_protocol: str | None = Field(default=None, description="Docs protocol no vocabulary feed can express (event-guard refusals)")
+    doc_type: str | None = Field(default=None, description="Parsed docs kind (openapi | markdown)")
+    auth_kind: str | None = Field(default=None, description="Auth kind the docs describe")
+    operations: list[VocabularyCheckOperation] | None = Field(default=None, description="Operations/records the docs describe (capped)")
+    record_types: list[str] | None = Field(default=None, description="Schema/record names the docs define (capped)")
+    has_body_fields: bool | None = Field(default=None, description="True when the docs describe JSON-body fields")
+    has_event_feeds: bool | None = Field(default=None, description="True when the docs describe pushed event feeds")
 
 
 class BuildResponse(BaseModel):

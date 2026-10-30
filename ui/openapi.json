@@ -3770,6 +3770,32 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VocabularyCheckOperation": {
+        "properties": {
+          "method": {
+            "description": "HTTP method, or EVENT for pushed feeds",
+            "title": "Method",
+            "type": "string"
+          },
+          "operation_id": {
+            "description": "Operation id read from the docs",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "path": {
+            "description": "Path or feed name read from the docs",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "method",
+          "path"
+        ],
+        "title": "VocabularyCheckOperation",
+        "type": "object"
+      },
       "VocabularyCheckRequest": {
         "description": "Pre-creation vocabulary gate (REQ-053 item 7): the check runs before\nany connector is created. A refused build creates no connector; the\nattempt is recorded by name so the later connector shows it as history.",
         "properties": {
@@ -3839,6 +3865,69 @@
       },
       "VocabularyCheckResponse": {
         "properties": {
+          "auth_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Auth kind the docs describe",
+            "title": "Auth Kind"
+          },
+          "doc_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parsed docs kind (openapi | markdown)",
+            "title": "Doc Type"
+          },
+          "has_body_fields": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "True when the docs describe JSON-body fields",
+            "title": "Has Body Fields"
+          },
+          "has_event_feeds": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "True when the docs describe pushed event feeds",
+            "title": "Has Event Feeds"
+          },
+          "operations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/VocabularyCheckOperation"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Operations/records the docs describe (capped)",
+            "title": "Operations"
+          },
           "reason": {
             "anyOf": [
               {
@@ -3851,10 +3940,52 @@
             "description": "Refusal reason (deterministic, 0 model calls)",
             "title": "Reason"
           },
+          "record_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Schema/record names the docs define (capped)",
+            "title": "Record Types"
+          },
           "refused": {
             "description": "True when the vocabulary cannot express the docs: no connector was created",
             "title": "Refused",
             "type": "boolean"
+          },
+          "refused_methods": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Docs methods no vocabulary operation can express (POST-guard refusals)",
+            "title": "Refused Methods"
+          },
+          "refused_protocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Docs protocol no vocabulary feed can express (event-guard refusals)",
+            "title": "Refused Protocol"
           },
           "suggested_vocabulary": {
             "anyOf": [

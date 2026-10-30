@@ -22,6 +22,13 @@ const BASE_URL_SUGGESTIONS = [
 
 // Same-origin /api base (REQ-018): the rewrite + middleware forward to control.
 import { apiBaseUrl as getBaseUrl } from "@/lib/api/base";
+import {
+  buildCapabilityRequestMarkdown,
+  capabilityRequestFilename,
+  type CapabilityRequestFacts,
+  type CapabilityVersionFacts,
+  type RefusedOperationFact,
+} from "@/lib/capability-request";
 
 export type CreateConnectorPayload = {
   name: string;
@@ -352,19 +359,22 @@ export function NewConnectorForm() {
       // REQ-053 items 8/9: starting from a simulator's docs fills in what
       // make demo sends for it — base URL, credential ref and entities —
       // so a UI build connects like the demo build instead of Blocked.
+      // REQ-058 item 3: every pick resets EVERY field the picker fills
+      // (docs, base URL, credential, vendor name, default vocabulary).
+      // Values typed by hand for the previous simulator are kept only
+      // until the next pick — nothing leaks across simulators.
+      const docsSource = body.docs_source || row?.docs_source || "";
+      const pickedFias =
+        id.toLowerCase().includes("fias") || docsSource.toLowerCase().includes("fias-pabx");
       const suggestedCred = row?.suggested_credential_ref;
       if (typeof suggestedCred === "string" && suggestedCred.trim()) {
         setUseCustomCredential(false);
         setCredentialRef(suggestedCred.trim());
+      } else {
+        setUseCustomCredential(false);
+        setCredentialRef("ATLAS_API_KEY");
       }
       const suggestedEntities = row?.suggested_target_entities;
-      if (Array.isArray(suggestedEntities) && suggestedEntities.length) {
-        const known = suggestedEntities.filter((e) => (ENTITY_OPTIONS as readonly string[]).includes(e));
-        if (known.length) setTargetEntities(known);
-      }
-      const docsSource = body.docs_source || row?.docs_source || "";
-      const pickedFias =
-        id.toLowerCase().includes("fias") || docsSource.toLowerCase().includes("fias-pabx");
       if (pickedFias) {
         // REQ-050 item 6: no base-URL typing for the PABX on camera. The
         // relay address is fixed and the engine runs the connector on the
@@ -372,10 +382,23 @@ export function NewConnectorForm() {
         // The PABX posts charges only, and event docs need v3 to compile.
         setBaseUrl(EDGE_RELAY_BASE_URL);
         setTargetEntities(["FolioCharge"]);
-        setVocabulary((v) => (v === "v1" ? "v3" : v));
-        if (!name.trim()) setName("PABX edge");
-      } else if (!baseUrl.trim() && row?.developers_url) {
-        setBaseUrl(row.developers_url.replace(/\/developers\/?$/, ""));
+        setVocabulary("v3");
+        setName("PABX edge");
+      } else {
+        if (row?.developers_url) {
+          setBaseUrl(row.developers_url.replace(/\/developers\/?$/, ""));
+        } else {
+          setBaseUrl("");
+        }
+        if (Array.isArray(suggestedEntities) && suggestedEntities.length) {
+          const known = suggestedEntities.filter((e) => (ENTITY_OPTIONS as readonly string[]).includes(e));
+          setTargetEntities(known.length ? known : ["Reservation"]);
+        } else {
+          setTargetEntities(["Reservation"]);
+        }
+        setVocabulary("v1");
+        if (row?.display_name?.trim()) setName(row.display_name.trim());
+        else setName(id);
       }
     } catch (err) {
       setSimDocsError(err instanceof Error ? err.message : String(err));
@@ -391,16 +414,36 @@ export function NewConnectorForm() {
     simDocsId.toLowerCase().includes("fias") ||
     (simDocsInfo?.docs_source ?? "").toLowerCase().includes("fias-pabx");
 
+  // REQ-058 item 4: the picked simulator's developers portal, one glance
+  // away from the picker. Plain facts from the simulator row — no fetch.
+  const pickedSimRow = simRows.find((r) => r.id === simDocsId) ?? null;
+
   // UI state
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // REQ-053 item 7: the vocabulary gate runs before any connector is
   // created — a refused build creates no connector, and the page shows
   // the headline with a one-click rebuild on the suggested vocabulary.
+  // REQ-058: the refusal also carries the refused build's facts (the
+  // trace's vocabulary_guard entry + the parsed docs shape) plus GET
+  // /capabilities, so the page can draft the capability request as a
+  // deterministic Markdown download — no model call.
   const [refused, setRefused] = useState<{
     vocabulary: string;
     reason: string;
     suggested: string;
+    refusedMethods: string[] | null;
+    refusedProtocol: string | null;
+    docType: string | null;
+    authKind: string | null;
+    operations: RefusedOperationFact[];
+    recordTypes: string[];
+    hasBodyFields: boolean | null;
+    hasEventFeeds: boolean | null;
+    docsSource: string;
+    docsChars: number;
+    docsSent: string;
+    capabilities: Record<string, CapabilityVersionFacts> | null;
   } | null>(null);
   const [result, setResult] = useState<{
     connectorId: string;
@@ -459,6 +502,42 @@ export function NewConnectorForm() {
     setTargetEntities((prev) => (prev.includes(entity) ? prev.filter((e) => e !== entity) : [...prev, entity]));
   }
 
+  // REQ-058: draft the capability request as a Markdown download —
+  // deterministic from the refused build's facts, no model call.
+  // Only the credential_ref NAME is included, never a value.
+  function downloadCapabilityRequest() {
+    if (!refused) return;
+    const facts: CapabilityRequestFacts = {
+      vendorName: name.trim() || "Unnamed vendor",
+      vocabulary: refused.vocabulary,
+      suggestedVocabulary: refused.suggested,
+      reason: refused.reason,
+      refusedMethods: refused.refusedMethods,
+      refusedProtocol: refused.refusedProtocol,
+      docType: refused.docType,
+      authKind: refused.authKind,
+      operations: refused.operations,
+      recordTypes: refused.recordTypes,
+      hasBodyFields: refused.hasBodyFields,
+      hasEventFeeds: refused.hasEventFeeds,
+      docsSource: refused.docsSource,
+      docsChars: refused.docsChars,
+      docsText: refused.docsSent,
+      credentialRef: effectiveCredentialRef || "ATLAS_API_KEY",
+      capabilities: refused.capabilities,
+      refusedDate: new Date().toISOString().slice(0, 10),
+    };
+    const blob = new Blob([buildCapabilityRequestMarkdown(facts)], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = capabilityRequestFilename(facts.vendorName, facts.vocabulary);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleSubmit(e: FormEvent, forcedVocabulary?: "v1" | "v2" | "v3") {
     e.preventDefault();
     setErrorMsg(null);
@@ -499,15 +578,49 @@ export function NewConnectorForm() {
         reason?: string;
         vocabulary?: string;
         suggested_vocabulary?: string | null;
+        refused_methods?: string[] | null;
+        refused_protocol?: string | null;
+        doc_type?: string | null;
+        auth_kind?: string | null;
+        operations?: RefusedOperationFact[] | null;
+        record_types?: string[] | null;
+        has_body_fields?: boolean | null;
+        has_event_feeds?: boolean | null;
       };
       if (check.refused) {
         const suggested = typeof check.suggested_vocabulary === "string" && check.suggested_vocabulary
           ? check.suggested_vocabulary
           : "v2";
+        // REQ-058: the same payload the check ran on, so the download
+        // drafts from facts already on the page (no second send).
+        const docsSent = fileContent ?? (docsText.trim() || "");
+        const docsSource = (fileName ? `file:${fileName}` : "") || docsUrl.trim() || simDocsInfo?.docs_source || "inline";
+        let capVersions: Record<string, CapabilityVersionFacts> | null = null;
+        try {
+          const capRes = await fetch(`${base}/capabilities`);
+          if (capRes.ok) {
+            const capBody = (await capRes.json()) as { versions?: Record<string, CapabilityVersionFacts> };
+            if (capBody && typeof capBody === "object" && capBody.versions) capVersions = capBody.versions;
+          }
+        } catch {
+          capVersions = null;
+        }
         setRefused({
           vocabulary: String(check.vocabulary ?? vocab),
           reason: String(check.reason ?? "the vocabulary cannot express these docs"),
           suggested,
+          refusedMethods: Array.isArray(check.refused_methods) ? check.refused_methods : null,
+          refusedProtocol: typeof check.refused_protocol === "string" ? check.refused_protocol : null,
+          docType: typeof check.doc_type === "string" ? check.doc_type : null,
+          authKind: typeof check.auth_kind === "string" ? check.auth_kind : null,
+          operations: Array.isArray(check.operations) ? check.operations : [],
+          recordTypes: Array.isArray(check.record_types) ? check.record_types : [],
+          hasBodyFields: typeof check.has_body_fields === "boolean" ? check.has_body_fields : null,
+          hasEventFeeds: typeof check.has_event_feeds === "boolean" ? check.has_event_feeds : null,
+          docsSource,
+          docsChars: docsSent.length,
+          docsSent,
+          capabilities: capVersions,
         });
         setSubmitState("idle");
         return;
@@ -655,6 +768,19 @@ export function NewConnectorForm() {
             {simDocsInfo ? (
               <p data-testid="sim-docs-info" className="font-mono text-xs text-ink-2">
                 {simDocsInfo.characters} chars from {simDocsInfo.display_name} developers portal
+              </p>
+            ) : null}
+            {pickedSimRow?.developers_url ? (
+              <p className="font-mono text-xs">
+                <a
+                  data-testid="sim-docs-link"
+                  href={pickedSimRow.developers_url}
+                  target="_blank"
+                  rel="noopener"
+                  className="link"
+                >
+                  {pickedSimRow.display_name} developers portal
+                </a>
               </p>
             ) : null}
             <div className="flex items-center gap-2.5">
@@ -943,7 +1069,7 @@ export function NewConnectorForm() {
             {refused.reason}
           </p>
           <p className="mt-1 text-sm text-ink-2">No connector was created.</p>
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap gap-3">
             <button
               type="button"
               data-testid="build-with-suggested"
@@ -958,6 +1084,14 @@ export function NewConnectorForm() {
               className="btn !px-4 !py-2.5 !text-[15px]"
             >
               Build with {refused.suggested}
+            </button>
+            <button
+              type="button"
+              data-testid="download-capability-request"
+              onClick={downloadCapabilityRequest}
+              className="btn quiet !px-4 !py-2.5 !text-[15px]"
+            >
+              Download capability request
             </button>
           </div>
         </div>

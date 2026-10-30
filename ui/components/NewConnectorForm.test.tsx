@@ -686,3 +686,252 @@ describe("NewConnectorForm", () => {
     expect(buildBody.probe_wire_shape).toBe(true);
   });
 });
+
+describe("NewConnectorForm REQ-058", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const ATLAS_DOCS = "# AtlasPMS OpenAPI";
+  const FIAS_DOCS = "# FIAS PABX interface";
+  const HARBOR_DOCS = "# HarborPMS API (messy wiki)";
+
+  function simsWithDefaults() {
+    return {
+      match: "/demo/simulators",
+      json: {
+        simulators: [
+          {
+            id: "sim-atlas",
+            display_name: "AtlasPMS",
+            docs_source: "simulators/docs/atlas-openapi.yaml",
+            developers_url: "http://localhost:8105/developers",
+            suggested_credential_ref: "ATLAS_API_KEY",
+            suggested_target_entities: ["Reservation"],
+          },
+          {
+            id: "sim-fias-pabx",
+            display_name: "FIAS PABX",
+            docs_source: "simulators/docs/fias-pabx.md",
+            developers_url: "http://localhost:8118/developers",
+            suggested_credential_ref: "EDGE_TOKEN",
+            suggested_target_entities: ["FolioCharge"],
+          },
+          {
+            id: "sim-harbor",
+            display_name: "HarborPMS",
+            docs_source: "simulators/docs/harbor.md",
+            developers_url: "http://localhost:8106/developers",
+            suggested_credential_ref: "HARBOR_API_KEY",
+            suggested_target_entities: ["Reservation", "FolioCharge"],
+          },
+        ],
+      },
+    };
+  }
+
+  function docsFor(target: string, displayName: string, docsSource: string, text: string) {
+    return {
+      match: `target=${target}`,
+      json: { target, display_name: displayName, docs_source: docsSource, characters: text.length, docs_text: text },
+    };
+  }
+
+  function vocab(v: "v1" | "v2" | "v3"): boolean {
+    return (screen.getByTestId(`radio-vocabulary-${v}`) as HTMLInputElement).checked;
+  }
+
+  it("a simulator pick resets every field it fills (Atlas → PABX → Atlas → Harbor)", async () => {
+    mockResponses([
+      simsWithDefaults(),
+      docsFor("sim-atlas", "AtlasPMS", "simulators/docs/atlas-openapi.yaml", ATLAS_DOCS),
+      docsFor("sim-fias-pabx", "FIAS PABX", "simulators/docs/fias-pabx.md", FIAS_DOCS),
+      docsFor("sim-harbor", "HarborPMS", "simulators/docs/harbor.md", HARBOR_DOCS),
+    ]);
+
+    render(<NewConnectorForm />);
+    await waitFor(() => expect(screen.getByTestId("input-sim-docs")).toBeInTheDocument());
+    const pick = (id: string) => fireEvent.change(screen.getByTestId("input-sim-docs"), { target: { value: id } });
+
+    pick("sim-atlas");
+    await waitFor(() => expect(screen.getByTestId("sim-docs-info")).toBeInTheDocument());
+    expect((screen.getByTestId("input-name") as HTMLInputElement).value).toBe("AtlasPMS");
+    expect((screen.getByTestId("input-base-url") as HTMLInputElement).value).toBe("http://localhost:8105");
+    expect((screen.getByTestId("input-credential-ref") as HTMLSelectElement).value).toBe("ATLAS_API_KEY");
+    expect((screen.getByTestId("checkbox-entity-Reservation") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId("checkbox-entity-FolioCharge") as HTMLInputElement).checked).toBe(false);
+    expect(vocab("v1")).toBe(true);
+
+    // Hand-typed values for Atlas are kept only until the next pick.
+    typeInto(screen.getByTestId("input-name"), "My Atlas");
+    typeInto(screen.getByTestId("input-base-url"), "http://custom:9999");
+
+    pick("sim-fias-pabx");
+    await waitFor(() => expect(screen.getByTestId("edge-runtime-note")).toBeInTheDocument());
+    expect((screen.getByTestId("input-name") as HTMLInputElement).value).toBe("PABX edge");
+    expect(screen.queryByTestId("input-base-url")).not.toBeInTheDocument();
+    expect((screen.getByTestId("input-credential-ref") as HTMLSelectElement).value).toBe("EDGE_TOKEN");
+    expect((screen.getByTestId("checkbox-entity-Reservation") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByTestId("checkbox-entity-FolioCharge") as HTMLInputElement).checked).toBe(true);
+    expect(vocab("v3")).toBe(true);
+    expect((screen.getByTestId("input-docs-text") as HTMLTextAreaElement).value).toBe(FIAS_DOCS);
+
+    pick("sim-atlas");
+    await waitFor(() => expect(screen.getByTestId("input-base-url")).toBeInTheDocument());
+    // The PABX values are gone: name, base URL, credential, entities, vocabulary.
+    expect((screen.getByTestId("input-name") as HTMLInputElement).value).toBe("AtlasPMS");
+    expect((screen.getByTestId("input-base-url") as HTMLInputElement).value).toBe("http://localhost:8105");
+    expect((screen.getByTestId("input-credential-ref") as HTMLSelectElement).value).toBe("ATLAS_API_KEY");
+    expect((screen.getByTestId("checkbox-entity-Reservation") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId("checkbox-entity-FolioCharge") as HTMLInputElement).checked).toBe(false);
+    expect(vocab("v1")).toBe(true);
+    expect((screen.getByTestId("input-docs-text") as HTMLTextAreaElement).value).toBe(ATLAS_DOCS);
+
+    pick("sim-harbor");
+    await waitFor(() =>
+      expect((screen.getByTestId("input-docs-text") as HTMLTextAreaElement).value).toBe(HARBOR_DOCS),
+    );
+    expect((screen.getByTestId("input-name") as HTMLInputElement).value).toBe("HarborPMS");
+    expect((screen.getByTestId("input-base-url") as HTMLInputElement).value).toBe("http://localhost:8106");
+    expect((screen.getByTestId("input-credential-ref") as HTMLSelectElement).value).toBe("HARBOR_API_KEY");
+    expect((screen.getByTestId("checkbox-entity-Reservation") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId("checkbox-entity-FolioCharge") as HTMLInputElement).checked).toBe(true);
+    expect(vocab("v1")).toBe(true);
+  });
+
+  it("shows the simulator developers portal link the moment it is picked", async () => {
+    mockResponses([
+      simsWithDefaults(),
+      docsFor("sim-atlas", "AtlasPMS", "simulators/docs/atlas-openapi.yaml", ATLAS_DOCS),
+      docsFor("sim-fias-pabx", "FIAS PABX", "simulators/docs/fias-pabx.md", FIAS_DOCS),
+    ]);
+
+    render(<NewConnectorForm />);
+    await waitFor(() => expect(screen.getByTestId("input-sim-docs")).toBeInTheDocument());
+    expect(screen.queryByTestId("sim-docs-link")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId("input-sim-docs"), { target: { value: "sim-atlas" } });
+    await waitFor(() => expect(screen.getByTestId("sim-docs-link")).toBeInTheDocument());
+    const atlasLink = screen.getByTestId("sim-docs-link") as HTMLAnchorElement;
+    expect(atlasLink).toHaveAttribute("href", "http://localhost:8105/developers");
+    expect(atlasLink).toHaveAttribute("target", "_blank");
+    expect(atlasLink.getAttribute("rel") ?? "").toContain("noopener");
+    expect(atlasLink.textContent).toContain("AtlasPMS developers portal");
+
+    fireEvent.change(screen.getByTestId("input-sim-docs"), { target: { value: "sim-fias-pabx" } });
+    await waitFor(() =>
+      expect(screen.getByTestId("sim-docs-link")).toHaveAttribute("href", "http://localhost:8118/developers"),
+    );
+    expect(screen.getByTestId("sim-docs-link").textContent).toContain("FIAS PABX developers portal");
+  });
+
+  it("a refused build offers a deterministic capability-request download (Meridian on v1)", async () => {
+    const meridianDocs = "# Meridian POST API";
+    mockResponses([
+      simsRoute(),
+      {
+        match: "/connectors/vocabulary-check",
+        json: {
+          refused: true,
+          reason: "operations need POST with a JSON body and body-field auth; not expressible in ConnectorSpec v1",
+          vocabulary: "v1",
+          suggested_vocabulary: "v2",
+          refused_methods: ["POST"],
+          refused_protocol: null,
+          doc_type: "openapi",
+          auth_kind: "body_fields",
+          operations: [{ operation_id: "searchAvailability", method: "POST", path: "/search" }],
+          record_types: ["Reservation"],
+          has_body_fields: true,
+          has_event_feeds: false,
+        },
+      },
+      {
+        match: "/capabilities",
+        json: {
+          versions: {
+            v1: {
+              methods: ["GET"],
+              auth_types: ["api_key_header", "basic", "bearer"],
+              pagination_strategies: ["cursor"],
+              protocols: ["http"],
+              joins: false,
+              body_templates: false,
+              event_feeds: false,
+              command_templates: false,
+            },
+            v2: {
+              methods: ["POST"],
+              auth_types: ["body_fields"],
+              pagination_strategies: ["body_cursor"],
+              protocols: [],
+              joins: true,
+              body_templates: true,
+              event_feeds: false,
+              command_templates: false,
+            },
+          },
+        },
+      },
+    ]);
+
+    const blobs: Blob[] = [];
+    const urlGlobal = URL as unknown as Record<string, unknown>;
+    const origCreate = urlGlobal.createObjectURL;
+    const origRevoke = urlGlobal.revokeObjectURL;
+    urlGlobal.createObjectURL = (b: Blob) => {
+      blobs.push(b);
+      return "blob:capability";
+    };
+    urlGlobal.revokeObjectURL = () => {};
+    let clicked: HTMLAnchorElement | null = null;
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        clicked = this;
+      });
+    try {
+    render(<NewConnectorForm />);
+    typeInto(screen.getByTestId("input-name"), "MeridianPMS");
+    typeInto(screen.getByTestId("input-base-url"), "http://localhost:8116");
+    selectOption(screen.getByTestId("input-credential-ref"), "MERIDIAN_API_KEY");
+    typeInto(screen.getByTestId("input-docs-text"), meridianDocs);
+    fireEvent.click(screen.getByTestId("submit-build"));
+
+      await waitFor(() => expect(screen.getByTestId("vocabulary-refused")).toBeInTheDocument());
+      const download = screen.getByTestId("download-capability-request");
+      expect(download.textContent).toContain("Download capability request");
+      fireEvent.click(download);
+
+      expect(blobs).toHaveLength(1);
+      const md = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(blobs[0]);
+      });
+      expect(md).toContain("### Capability request: MeridianPMS docs cannot be expressed in ConnectorSpec v1");
+      expect(md).toContain("| Capability | Needed by these docs | Available in ConnectorSpec v1 |");
+      expect(md).toContain("searchAvailability — POST /search");
+      expect(md).toContain("1. The same docs build on v2 and the first sync is Complete.");
+      expect(md).toContain("3. The refusal on v1 stays (refuse safely).");
+      expect(md).toContain("Drafted by AutoBridge from a refused build on ");
+      expect(md).toContain("; no model was used.");
+      expect(md).toContain("credential MERIDIAN_API_KEY (name only");
+      expect(md).not.toContain("sk-");
+      expect(clicked).not.toBeNull();
+      expect((clicked as unknown as HTMLAnchorElement).download).toBe("capability-request-meridianpms-v1.md");
+    } finally {
+      if (origCreate === undefined) delete urlGlobal.createObjectURL;
+      else urlGlobal.createObjectURL = origCreate;
+      if (origRevoke === undefined) delete urlGlobal.revokeObjectURL;
+      else urlGlobal.revokeObjectURL = origRevoke;
+    }
+  });
+});

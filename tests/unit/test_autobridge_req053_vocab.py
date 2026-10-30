@@ -264,3 +264,40 @@ def test_simulators_endpoint_serves_build_defaults(route_client: Any) -> None:
     assert meridian["suggested_target_entities"] == ["Reservation", "FolioCharge"]
     fias = by_id["sim-fias-pabx"]
     assert fias["suggested_credential_ref"] == "EDGE_TOKEN"
+
+
+def test_vocabulary_check_refusal_carries_capability_request_facts(route_client: Any) -> None:
+    """REQ-058: a refused build's facts ride the check response (no new endpoint)."""
+    client, _factory = route_client
+    meridian = client.post(
+        "/connectors/vocabulary-check",
+        json={"name": "meridianpms", "docs_text": _meridian_docs(), "spec_vocabulary": "v1"},
+    )
+    assert meridian.status_code == 200, meridian.text
+    mbody = meridian.json()
+    assert mbody["refused"] is True
+    assert mbody["refused_methods"] == ["POST"]
+    assert mbody["refused_protocol"] is None
+    assert mbody["doc_type"] == "openapi"
+    assert mbody["auth_kind"] == "body_fields"
+    assert mbody["operations"], "the vendor spec names its operations"
+    assert all({"operation_id", "method", "path"} <= set(op) for op in mbody["operations"])
+    assert mbody["has_body_fields"] is True
+
+
+def test_vocabulary_check_event_refusal_carries_protocol_facts(route_client: Any) -> None:
+    """REQ-058: the PABX-on-v2 refusal names the protocol, not methods."""
+    client, _factory = route_client
+    fias_docs = (REPO_ROOT / "simulators" / "docs" / "fias-pabx.md").read_text(encoding="utf-8")
+    rec = client.post(
+        "/connectors/vocabulary-check",
+        json={"name": "pabx edge", "docs_text": fias_docs, "spec_vocabulary": "v2"},
+    )
+    assert rec.status_code == 200, rec.text
+    body = rec.json()
+    assert body["refused"] is True
+    assert body["refused_protocol"] == "fias_tcp"
+    assert body["refused_methods"] is None
+    assert body["suggested_vocabulary"] == "v3"
+    assert body["operations"], "framed docs describe event feeds"
+    assert body["has_event_feeds"] is True

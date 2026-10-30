@@ -26,6 +26,7 @@ from autobridge.control.schemas import (
     BuildResponse,
     SyncRequest,
     SyncResponse,
+    VocabularyCheckOperation,
     VocabularyCheckRequest,
     VocabularyCheckResponse,
 )
@@ -201,6 +202,16 @@ def vocabulary_check(body: VocabularyCheckRequest, db: Session = Depends(get_db)
         )
     reason = str(result.degradation_reason or guard.get("reason") or "vocabulary cannot express these docs")
     suggested = "v3" if guard.get("protocol") else "v2"
+    # REQ-058: carry the refused build's facts for the capability-request
+    # draft (deterministic, from the parsed docs only). Capped lists.
+    iface = getattr(result, "iface", None)
+    classification = getattr(result, "classification", None)
+    ops = list(getattr(iface, "operations", None) or [])[:50]
+    schemas = list(getattr(iface, "schemas", None) or [])[:50]
+    auth = getattr(classification, "auth", None)
+    refused_methods = guard.get("refused_methods")
+    refused_protocol = guard.get("protocol")
+
     # One row per (name, vocabulary): a repeated refusal replaces the old one.
     db.query(RefusedBuildAttempt).filter(
         RefusedBuildAttempt.connector_name == name,
@@ -217,6 +228,21 @@ def vocabulary_check(body: VocabularyCheckRequest, db: Session = Depends(get_db)
     db.commit()
     return VocabularyCheckResponse(
         refused=True, reason=reason, vocabulary=spec_vocabulary, suggested_vocabulary=suggested,
+        refused_methods=list(refused_methods) if isinstance(refused_methods, list) else None,
+        refused_protocol=str(refused_protocol) if refused_protocol is not None else None,
+        doc_type=getattr(iface, "doc_type", None),
+        auth_kind=getattr(auth, "kind", None),
+        operations=[
+            VocabularyCheckOperation(
+                operation_id=str(getattr(op, "operation_id", "") or ""),
+                method=str(getattr(op, "method", "") or ""),
+                path=str(getattr(op, "path", "") or ""),
+            )
+            for op in ops
+        ] or None,
+        record_types=[str(getattr(s, "name", "") or "") for s in schemas if getattr(s, "name", "")] or None,
+        has_body_fields=bool(any(getattr(op, "body_fields", None) or getattr(op, "body_required", None) for op in ops)),
+        has_event_feeds=bool(any(str(getattr(op, "method", "") or "").upper() == "EVENT" for op in ops)),
     )
 
 

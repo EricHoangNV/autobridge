@@ -467,6 +467,28 @@ test.describe("REQ-055 item 3f layout: no overlap or overflow", () => {
         ]);
       if (url.includes("/runs/")) return ok({ kind: "sync", payload: { sync_run: { id: "sync-layout-32", release_id: "rel-2", started_at: new Date(Date.now() - 3000).toISOString(), finished_at: new Date().toISOString(), records_observed: { Reservation: 30 }, records_emitted: { Reservation: 27 }, outcome: "Degraded", unmet_criteria: ["money_invariant"] } } });
       if (url.match(/\/connectors\/[^/?]+\/sync-runs/)) return ok(syncRuns());
+      // REQ-058: the refused build's facts ride the vocabulary check, so
+      // the page can draft the capability request with no model call.
+      // (Before the generic connector-detail match: /vocabulary-check
+      // would match /connectors/<id>.)
+      if (url.includes("/connectors/vocabulary-check"))
+        return ok({
+          refused: true,
+          reason: "operations need POST with a JSON body and body-field auth; not expressible in ConnectorSpec v1",
+          vocabulary: "v1",
+          suggested_vocabulary: "v2",
+          refused_methods: ["POST"],
+          refused_protocol: null,
+          doc_type: "openapi",
+          auth_kind: "body_fields",
+          operations: [
+            { operation_id: "searchAvailability", method: "POST", path: "/searchAvailabilityWithAVeryLongPathNameForWrapping" },
+            { operation_id: "createReservation", method: "POST", path: "/reservations" },
+          ],
+          record_types: ["Reservation", "Availability"],
+          has_body_fields: true,
+          has_event_feeds: false,
+        });
       if (url.match(/\/connectors\/[^/?]+$/)) return ok(connectorDetail);
       if (url.includes("/connectors")) return ok(connectorsList);
       if (url.includes("/capabilities")) return ok({ transforms: ["money", "enum_map"], versions: { v1: { methods: ["GET"], auth_types: ["api_key"], pagination_strategies: ["page"], protocols: ["http"], transforms: ["money"], checks: ["money_invariant"], joins: false, body_templates: false, event_feeds: false, command_templates: false }, v2: { methods: ["GET", "POST"], auth_types: ["api_key", "bearer"], pagination_strategies: ["page", "cursor"], protocols: ["http"], transforms: ["money"], checks: ["money_invariant"], joins: true, body_templates: true, event_feeds: false, command_templates: false }, v3: { methods: ["GET", "POST"], auth_types: ["edge"], pagination_strategies: ["cursor"], protocols: ["event_feed"], transforms: ["money"], checks: ["money_invariant"], joins: false, body_templates: false, event_feeds: true, command_templates: false } }, rules: [{ id: "page_to_cursor", fixes: "paging", confidence: 0.9 }] });
@@ -547,6 +569,21 @@ test.describe("REQ-055 item 3f layout: no overlap or overflow", () => {
         await expect(page.getByTestId("input-docs-text")).toHaveValue(/# AtlasPMS developer docs/);
       }
       await expectClean(page, "/connectors/new", vp);
+    });
+
+    test(`build page refused (capability request) clean @ ${vp.width}x${vp.height}`, async ({ page }) => {
+      await page.goto(`${UI_BASE}/connectors/new`);
+      if (mocked) {
+        // The vocabulary check refuses (mocked above): the refused box
+        // with "Build with v2" + "Download capability request" renders.
+        await page.getByTestId("input-name").fill("MeridianPMS with a very long vendor name for wrapping");
+        await page.getByTestId("input-base-url").fill("http://localhost:8116");
+        await page.getByTestId("input-docs-text").fill("# Meridian POST API");
+        await page.getByTestId("submit-build").click();
+        await expect(page.getByTestId("vocabulary-refused")).toBeVisible();
+        await expect(page.getByTestId("download-capability-request")).toBeVisible();
+      }
+      await expectClean(page, "/connectors/new [refused]", vp);
     });
 
     test(`knowledge page clean @ ${vp.width}x${vp.height}`, async ({ page }) => {
