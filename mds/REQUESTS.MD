@@ -2,7 +2,37 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 22:30): **REQ-055, then REQ-056, then REQ-057.** Do not start REQ-051 or REQ-052 until the owner says so.
+Owner priority (2026-10-30 23:00): **REQ-055, then REQ-056, then REQ-057, then REQ-058.** Do not start REQ-051 or REQ-052 until the owner says so.
+
+### REQ-058 — Refused build → "Download capability request": the engine drafts the gap for the build loop (2026-10-30)
+Status: OPEN
+Owner (2026-10-30): when a vocabulary refuses the docs, the product should draft the capability request itself (the
+gap, the vendor's spec, acceptance tests) so "refused → new language version" needs no human writing in between,
+only an approval of the result. For now: **prove the point with a download**; handing it to a coding-agent loop is
+roadmap (deck 6 says so). UI only, **no new API and no model call** — everything comes from the refused build's
+result/trace, the docs text already on the page, and `GET /capabilities`.
+1. On the build page, when a build is refused by the vocabulary check (REQ-053 item 7 headline), show a secondary
+   action **"Download capability request"** next to "Build with vN+1". It downloads a Markdown file
+   `capability-request-<vendor>-<vocab>.md`, assembled deterministically from facts:
+   - **Title & summary:** "<Vendor> docs cannot be expressed in ConnectorSpec <vN>: <refusal reason>".
+   - **The gap:** what the docs need vs what <vN> can express — from the trace's `vocabulary_guard` entry
+     (`refused_methods`, `protocol`, …) and `GET /capabilities` for <vN> (methods, auth, pagination, protocols, joins,
+     body templates, event feeds, command templates): a two-column "needed / available in vN" table.
+   - **The vendor's spec:** source (docs target / file name), size, and the operations/records the docs describe
+     (names, methods, paths/record types), plus the full docs text in a collapsed appendix (secrets never included —
+     credential names only, as today).
+   - **Acceptance tests (generic, from the facts):** the same docs build on the new version and the first sync is
+     `Complete`; every connector on <vN> keeps a byte-identical spec signature (the REQ-020 regression rule); the
+     refusal on <vN> stays (refuse safely); the verifier's checks pass on the new release; a drift on the new
+     connector heals on the ladder like any other.
+   - **Format:** the same shape as an entry in `mds/REQUESTS.MD` (title, context, numbered fix items, tests), so it
+     can be dropped into the build loop's queue as-is. Footer: "Drafted by AutoBridge from a refused build on <date>;
+     no model was used."
+2. Same for every refusal kind (POST bodies on v1, event feeds over TCP on v1/v2). Unit tests: the Markdown for the
+   Meridian-on-v1 and PABX-on-v2 refusals contains the gap table, the operations, the acceptance tests, and no secret;
+   deterministic (same input → same file). Must pass REQ-055's no-overlap check.
+Owner check after: deck 6 — v1 refused → Download capability request → open the file → it reads like REQ-020.
+
 
 ### REQ-057 — Connector page: spec viewer with a fixed height, fingerprints grouped and collapsed (2026-10-30)
 Status: OPEN
