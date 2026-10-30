@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 16:00): **REQ-048, then REQ-049.**
 
 ### REQ-049 — Deck 5 Green → Red → Green: Harbor built from its wiki carries the totals check; the model proposes "accept the vendor's change" for the human to approve (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 09:03)
 Deck order (owner, 2026-10-30): 1 knowledge · 2 Atlas reusable · 3 Atlas zero-token fix · **4 build Harbor from its wiki · 5 break Harbor right after** · 6 Meridian · 7 PABX · 8 proof. Use this numbering in README/docs/demo.md.
 Owner decision (2026-10-30). Today deck 5's totals check comes from the **hand-written** Harbor reference spec
 (`generated/connectors/harborpms/reference/spec.yaml` ~127, `money_invariant` vs `$.gross_sum`) loaded by
