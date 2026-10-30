@@ -53,4 +53,11 @@ describe("SyncRunsTable", () => {
     render(<SyncRunsTable syncRuns={[run]} />);
     expect(screen.queryByTestId("fingerprint-s1")).not.toBeInTheDocument();
   });
+
+  it("labels the fingerprint column and shows full values on hover", () => {
+    const run = mkSyncRun({ id: "sync-full-id-1", fingerprint_id: "fp-xyz-789-full" });
+    render(<SyncRunsTable syncRuns={[run]} />);
+    expect(screen.getByText("Fingerprint").getAttribute("title")).toContain("a change means drift");
+    expect(screen.getByTestId("fingerprint-sync-full-id-1").getAttribute("title")).toBe("fp-xyz-789-full");
+  });
 });

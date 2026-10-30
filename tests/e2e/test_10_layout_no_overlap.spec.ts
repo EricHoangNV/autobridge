@@ -518,8 +518,23 @@ test.describe("REQ-055 item 3f layout: no overlap or overflow", () => {
     test(`connector page (long spec, 30+ runs) clean @ ${vp.width}x${vp.height}`, async ({ page }) => {
       await page.goto(`${UI_BASE}/connectors/${CONN_ID}`);
       if (mocked) {
+        // Fingerprints are grouped and collapsed by default (REQ-057): the
+        // summary is visible, entries only after opening + expanding.
+        await expect(page.getByTestId("fingerprints-summary")).toBeVisible();
+        await expect(page.getByTestId("fingerprint-group-0")).toContainText("32 syncs");
+        await page.getByTestId("fingerprints-summary").click();
+        await page.getByTestId("fingerprint-group-toggle-0").click();
         await expect(page.getByTestId("fingerprint-entry-sync-layout-00")).toBeVisible();
-        await expect(page.getByText("fp-same-3520bd6c").first()).toBeVisible();
+        // Truncated on screen, full value on hover (REQ-057 item 4).
+        await expect(page.locator('[data-testid="fingerprint-group-0"] code').first()).toHaveAttribute(
+          "title",
+          "fp-same-3520bd6c",
+        );
+        // The clicks above scrolled the page; measure from the top like a
+        // reviewer sees on load (the tall sync-runs table's unclipped rect
+        // would otherwise paint false overlaps mid-page).
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.waitForTimeout(400);
       }
       await expectClean(page, `/connectors/${CONN_ID}`, vp);
     });

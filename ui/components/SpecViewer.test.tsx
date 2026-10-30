@@ -58,4 +58,29 @@ describe("SpecViewer", () => {
     render(<SpecViewer spec={{ x: 1 } as Record<string, unknown>} />);
     expect(screen.getByText("Spec (YAML)")).toBeInTheDocument();
   });
+
+  it("keeps a fixed height with its own scroll and anchors per top-level section", () => {
+    render(<SpecViewer spec={{ connector: { id: "a" }, operations: { get: 1 } } as Record<string, unknown>} />);
+    const viewer = screen.getByTestId("spec-viewer");
+    expect(viewer.className).toContain("spec-viewer-box");
+    const yaml = screen.getByTestId("spec-yaml");
+    expect(yaml.className).toContain("spec-yaml-scroll");
+    expect(yaml.textContent).toContain("connector:");
+    expect(yaml.textContent).toContain("operations:");
+    expect(document.getElementById("spec-sec-connector")).not.toBeNull();
+    expect(document.getElementById("spec-sec-operations")).not.toBeNull();
+  });
+
+  it("shows the full release id and signature on hover when given", () => {
+    render(
+      <SpecViewer
+        spec={{ x: 1 } as Record<string, unknown>}
+        title="Spec — r1 (rel-1)"
+        titleTooltip="Release rel-1 · Signature abc — proves this release's spec is exactly the one that was verified and approved"
+      />,
+    );
+    const title = screen.getByText("Spec — r1 (rel-1)");
+    expect(title.getAttribute("title")).toContain("rel-1");
+    expect(title.getAttribute("title")).toContain("Signature");
+  });
 });

@@ -159,6 +159,41 @@ describe("ConnectorDetailPage", () => {
     expect(screen.getByTestId("sync-run-row-sync-2")).toBeInTheDocument();
   });
 
+  it("groups fingerprints, collapsed by default with a one-line summary", async () => {
+    mockedUseSWR
+      .mockReturnValueOnce({ data: mockDetail, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: mockSyncRuns, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+
+    const { fireEvent } = await import("@testing-library/react");
+    render(<ConnectorDetailPage params={{ id: "conn-abc-123" }} />);
+    // Two distinct fingerprints → two groups, collapsed: no per-run entries.
+    expect(screen.getByTestId("fingerprints-section")).toBeInTheDocument();
+    expect(screen.getByTestId("fingerprints-summary")).toHaveTextContent("2 fingerprints");
+    expect(screen.getByTestId("fingerprint-group-0")).toHaveTextContent("1 sync");
+    expect(screen.queryByTestId("fingerprint-entry-sync-1")).not.toBeInTheDocument();
+    // Expand the first group: run ids appear with full values on hover.
+    fireEvent.click(screen.getByTestId("fingerprint-group-toggle-0"));
+    const entry = screen.getByTestId("fingerprint-entry-sync-1");
+    expect(entry).toBeInTheDocument();
+    expect(entry.querySelector("code")).toHaveAttribute("title", "sync-1");
+  });
+
+  it("spec viewer shows full release id and signature on hover; toc jumps inside it", async () => {
+    mockedUseSWR
+      .mockReturnValueOnce({ data: mockDetail, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: mockSyncRuns, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+
+    const { fireEvent } = await import("@testing-library/react");
+    render(<ConnectorDetailPage params={{ id: "conn-abc-123" }} />);
+    const viewerTitle = screen.getByText("Spec — r2 (rel-1)");
+    expect(viewerTitle.title).toContain("rel-1");
+    expect(viewerTitle.title).toContain("Signature");
+    expect(screen.getByTestId("release-selector").getAttribute("title")).toContain("rel-1");
+    // Toc buttons scroll inside the fixed-height viewer (no throw without layout).
+    fireEvent.click(screen.getByTestId("spec-toc-name"));
+    expect(screen.getByTestId("spec-yaml")).toBeInTheDocument();
+  });
+
   it("shows error when connector not found", () => {
     mockedUseSWR
       .mockReturnValueOnce({ data: undefined, error: new Error("404 not found"), isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)

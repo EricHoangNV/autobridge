@@ -41,6 +41,12 @@ export function ReleaseHistory({ releases, activeReleaseId, onActivate, activati
       <p className="rels-head">
         <span>Release</span>
         <span>Approved by</span>
+        <span
+          tabIndex={0}
+          title="The release's HMAC-SHA256 spec signature — proves this release's spec is exactly the one that was verified and approved."
+        >
+          Signature
+        </span>
       </p>
       <ol data-testid="release-history-table" className="rels num">
         {sorted.map((r) => {
@@ -48,11 +54,17 @@ export function ReleaseHistory({ releases, activeReleaseId, onActivate, activati
           const isCandidate = !isActive && r === sorted[0];
           return (
             <li key={r.id} data-testid={`release-row-${r.id}`} className={isCandidate ? "cand" : undefined}>
-              <span className="id">r{r.version}</span>
+              <span className="id" tabIndex={0} title={`Release ${r.id}`}>
+                r{r.version}
+              </span>
               <span className="t">
                 {isActive ? "Live" : isCandidate ? "Candidate" : `v${r.version}`} · {formatDate(r.created_at)}
               </span>
-              <span className="k" title={r.signature}>
+              <span
+                className="k"
+                tabIndex={0}
+                title={`${r.signature} — the release's HMAC-SHA256 spec signature: proves this release's spec is exactly the one that was verified and approved.`}
+              >
                 {r.signature.slice(0, 12)}…
               </span>
               <span className="s">

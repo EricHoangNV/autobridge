@@ -88,4 +88,15 @@ describe("ReleaseHistory", () => {
     render(<ReleaseHistory releases={[r1, r2]} activeReleaseId="rel-1" onActivate={() => {}} />);
     expect(screen.queryByTestId("release-activate-rel-2")).not.toBeInTheDocument();
   });
+
+  it("labels the signature column and shows full values on hover", () => {
+    const r1 = mkRelease({ id: "rel-1", version: 1, signature: "sig-aaa-111-full-signature" });
+    render(<ReleaseHistory releases={[r1]} activeReleaseId="rel-1" />);
+    const header = screen.getByText("Signature");
+    expect(header.getAttribute("title")).toContain("verified and approved");
+    const row = screen.getByTestId("release-row-rel-1");
+    const sig = row.querySelector(".k");
+    expect(sig?.getAttribute("title")).toContain("sig-aaa-111-full-signature");
+    expect(sig?.textContent).toContain("…");
+  });
 });

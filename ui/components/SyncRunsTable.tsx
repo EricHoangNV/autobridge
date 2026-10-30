@@ -45,14 +45,23 @@ export function SyncRunsTable({ syncRuns }: Props) {
             <th>Outcome</th>
             <th className="hide-s">Unmet criterion</th>
             <th className="r">Records</th>
-            <th className="r">Fingerprint</th>
+            <th
+              className="r"
+              tabIndex={0}
+              title="Shape of the vendor's responses; a change means drift."
+            >
+              Fingerprint
+            </th>
           </tr>
         </thead>
         <tbody>
           {syncRuns.map((run) => (
             <tr key={run.id} data-testid={`sync-run-row-${run.id}`}>
               <td>
-                {run.id.slice(0, 8)} · {formatDate(run.started_at)}
+                <span tabIndex={0} title={run.id}>
+                  {run.id.slice(0, 8)}
+                </span>{" "}
+                · {formatDate(run.started_at)}
               </td>
               <td>
                 <SyncOutcomeBadge outcome={run.outcome} />
@@ -69,7 +78,7 @@ export function SyncRunsTable({ syncRuns }: Props) {
               <td className="r">{recordsTotal(run)}</td>
               <td className="r">
                 {run.fingerprint_id ? (
-                  <span data-testid={`fingerprint-${run.id}`} title={run.fingerprint_id}>
+                  <span data-testid={`fingerprint-${run.id}`} tabIndex={0} title={run.fingerprint_id}>
                     <code>
                       {run.fingerprint_id.slice(0, 8)}…
                     </code>

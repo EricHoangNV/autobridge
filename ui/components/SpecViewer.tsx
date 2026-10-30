@@ -74,14 +74,49 @@ export function specToYamlString(spec: Record<string, unknown>): string {
   return specToYaml(spec);
 }
 
+/** Anchor id for a top-level spec section (the viewer's toc scrolls to these). */
+export function specSectionAnchor(key: string): string {
+  return `spec-sec-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+/** Split our own YAML output into per-top-level-key chunks for section anchors. */
+export function splitYamlSections(yaml: string): { key: string; text: string }[] {
+  const lines = yaml.split("\n");
+  const sections: { key: string; text: string }[] = [];
+  let current: string[] | null = null;
+  let currentKey = "";
+  for (const line of lines) {
+    const top = line.match(/^([^\s][^:]*):$/);
+    if (top && current !== null) {
+      sections.push({ key: currentKey, text: current.join("\n") });
+      current = null;
+    }
+    if (top && current === null) {
+      currentKey = top[1];
+      current = [line];
+    } else if (current !== null) {
+      current.push(line);
+    } else {
+      // Leading lines before the first top-level key (should not happen).
+      currentKey = "";
+      current = [line];
+    }
+  }
+  if (current !== null) sections.push({ key: currentKey, text: current.join("\n") });
+  return sections;
+}
+
 type Props = {
   spec: Record<string, unknown> | null | undefined;
   title?: string;
+  /** Full-value tooltip for the (possibly truncated) title, e.g. release id + signature. */
+  titleTooltip?: string;
 };
 
-export function SpecViewer({ spec, title }: Props) {
+export function SpecViewer({ spec, title, titleTooltip }: Props) {
   const [copied, setCopied] = useState(false);
   const yaml = useMemo(() => (spec ? specToYaml(spec as Record<string, unknown>) : ""), [spec]);
+  const sections = useMemo(() => splitYamlSections(yaml), [yaml]);
 
   if (!spec || Object.keys(spec).length === 0) {
     return (
@@ -102,9 +137,15 @@ export function SpecViewer({ spec, title }: Props) {
   }
 
   return (
-    <div data-testid="spec-viewer">
+    <div data-testid="spec-viewer" className="spec-viewer-box">
       <div className="mb-2 flex items-center justify-between gap-4">
-        <span className="text-sm text-ink-2">{title ?? "Spec (YAML)"}</span>
+        <span
+          className="text-sm text-ink-2"
+          tabIndex={titleTooltip ? 0 : undefined}
+          title={titleTooltip}
+        >
+          {title ?? "Spec (YAML)"}
+        </span>
         <button
           data-testid="spec-copy-btn"
           onClick={handleCopy}
@@ -115,9 +156,14 @@ export function SpecViewer({ spec, title }: Props) {
       </div>
       <pre
         data-testid="spec-yaml"
-        className="cyaml"
+        className="cyaml spec-yaml-scroll"
       >
-        {yaml}
+        {sections.map((s, i) => (
+          <span key={s.key || "top"} id={s.key ? specSectionAnchor(s.key) : undefined}>
+            {s.text}
+            {i < sections.length - 1 ? "\n" : ""}
+          </span>
+        ))}
       </pre>
       <details className="mt-2">
         <summary data-testid="spec-json-toggle" className="cursor-pointer text-sm text-ink-2 hover:text-ink">

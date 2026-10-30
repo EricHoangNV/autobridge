@@ -3,7 +3,12 @@
 import { useState, useEffect } from "react";
 import useSWR from "swr";
 import Link from "next/link";
-import { SpecViewer } from "@/components/SpecViewer";
+import { SpecViewer, specSectionAnchor } from "@/components/SpecViewer";
+import {
+  FingerprintGroups,
+  fingerprintSummary,
+  groupSyncRunsByFingerprint,
+} from "@/components/FingerprintGroups";
 import { ReleaseHistory } from "@/components/ReleaseHistory";
 import { SyncRunsTable } from "@/components/SyncRunsTable";
 import { DependencyList } from "@/components/DependencyList";
@@ -217,6 +222,33 @@ export default function ConnectorDetailPage({ params }: PageProps) {
   const waiting = waitingRepairs(myRepairs);
   const waitingRepair = waiting[0] ?? null;
 
+  // Sync-run id → open drift (+ its repair) for the fingerprint change notes.
+  const repairByDriftId = new Map<string, string>();
+  for (const r of myRepairs) {
+    for (const id of r.drift_event_ids ?? []) {
+      if (!repairByDriftId.has(id)) repairByDriftId.set(id, r.id);
+    }
+  }
+  const driftBySyncRunId = new Map<
+    string,
+    { driftId: string; driftClass: string; repairId?: string }
+  >();
+  for (const d of openDrift) {
+    if (d.source_sync_run_id && !driftBySyncRunId.has(d.source_sync_run_id)) {
+      driftBySyncRunId.set(d.source_sync_run_id, {
+        driftId: d.id,
+        driftClass: d.drift_class,
+        repairId: repairByDriftId.get(d.id),
+      });
+    }
+  }
+  const syncRunList = syncRuns ?? (detail.last_sync ? [detail.last_sync as SyncRunOut] : []);
+  const fingerprintGroups = groupSyncRunsByFingerprint(syncRunList);
+
+  function scrollSpecSection(key: string) {
+    document.getElementById(specSectionAnchor(key))?.scrollIntoView?.({ block: "start" });
+  }
+
   const maxVersion = detail.releases?.length
     ? Math.max(...detail.releases.map((r) => r.version))
     : null;
@@ -385,7 +417,16 @@ export default function ConnectorDetailPage({ params }: PageProps) {
 
       <section className="spec" aria-labelledby="spec-t">
         <div>
-          <h2 className="sec" id="spec-t">
+          <h2
+            className="sec"
+            id="spec-t"
+            tabIndex={specRelease ? 0 : undefined}
+            title={
+              specRelease
+                ? `Release ${specRelease.id} · Signature ${specRelease.signature} — proves this release's spec is exactly the one that was verified and approved`
+                : undefined
+            }
+          >
             Spec{specRelease ? `, r${specRelease.version}` : ""}
           </h2>
           {detail.releases?.length ? (
@@ -395,9 +436,18 @@ export default function ConnectorDetailPage({ params }: PageProps) {
               onChange={(e) => setSelectedReleaseId(e.target.value || null)}
               className="mb-3 border border-rule bg-band px-2 py-1 text-sm"
               aria-label="Select release for spec viewer"
+              title={
+                specRelease
+                  ? `Release ${specRelease.id} · Signature ${specRelease.signature} — proves this release's spec is exactly the one that was verified and approved`
+                  : undefined
+              }
             >
               {(detail.releases ?? []).map((r) => (
-                <option key={r.id} value={r.id}>
+                <option
+                  key={r.id}
+                  value={r.id}
+                  title={`Release ${r.id} · Signature ${r.signature} — proves this release's spec is exactly the one that was verified and approved`}
+                >
                   r{r.version} — {r.id.slice(0, 8)}{r.id === detail.active_release_id ? " (active)" : ""}
                 </option>
               ))}
@@ -409,14 +459,25 @@ export default function ConnectorDetailPage({ params }: PageProps) {
                   .slice(0, 8)
                   .map((key) => (
                     <li key={key}>
-                      <a href="#spec-t">{key}</a>
+                      <button
+                        type="button"
+                        data-testid={`spec-toc-${key}`}
+                        onClick={() => scrollSpecSection(key)}
+                        className="link"
+                      >
+                        {key}
+                      </button>
                     </li>
                   ))
               : null}
           </ul>
         </div>
         {specRelease ? (
-          <SpecViewer spec={specRelease.spec as Record<string, unknown>} title={`Spec — r${specRelease.version} (${specRelease.id.slice(0, 8)})`} />
+          <SpecViewer
+            spec={specRelease.spec as Record<string, unknown>}
+            title={`Spec — r${specRelease.version} (${specRelease.id.slice(0, 8)})`}
+            titleTooltip={`Release ${specRelease.id} · Signature ${specRelease.signature} — proves this release's spec is exactly the one that was verified and approved`}
+          />
         ) : (
           <div data-testid="spec-viewer-empty" className="border border-rule px-4 py-6 text-sm text-ink-2">
             No releases yet. Build a connector to see its spec.
@@ -426,23 +487,25 @@ export default function ConnectorDetailPage({ params }: PageProps) {
 
       <section className="foot">
         <div>
-          <h2 className="sec">Fingerprint</h2>
-          {(syncRuns ?? []).length > 0 || detail.last_sync?.fingerprint_id ? (
-            <div data-testid="fingerprints-section">
-              <dl className="fp num">
-                {(syncRuns ?? (detail.last_sync ? [detail.last_sync] : [])).map(
-                  (run: SyncRunOut | typeof detail.last_sync) =>
-                    run?.fingerprint_id ? (
-                      <div key={run.id} className="contents" data-testid={`fingerprint-entry-${run.id}`}>
-                        <dt>{run.id.slice(0, 8)}</dt>
-                        <dd>
-                          {run.fingerprint_id} <span className="font-normal text-ink-2">({run.outcome})</span>
-                        </dd>
-                      </div>
-                    ) : null,
-                )}
-              </dl>
-            </div>
+          <h2
+            className="sec"
+            tabIndex={0}
+            title="Shape of the vendor's responses; a change means drift."
+          >
+            Fingerprint
+          </h2>
+          {syncRunList.length > 0 || detail.last_sync?.fingerprint_id ? (
+            <details data-testid="fingerprints-section">
+              <summary
+                data-testid="fingerprints-summary"
+                className="cursor-pointer text-sm text-ink-2 hover:text-ink"
+              >
+                {fingerprintSummary(fingerprintGroups)}
+              </summary>
+              <div className="mt-2">
+                <FingerprintGroups groups={fingerprintGroups} driftBySyncRunId={driftBySyncRunId} />
+              </div>
+            </details>
           ) : (
             <p className="text-sm text-ink-2">No fingerprints recorded yet.</p>
           )}
