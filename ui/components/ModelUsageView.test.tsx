@@ -38,9 +38,10 @@ describe("ModelUsageView", () => {
     expect(screen.queryByTestId("model-usage-raw-toggle")).not.toBeInTheDocument();
   });
 
-  it("shows cost when present", () => {
+  it("shows no dollar amounts when cost is present (REQ-055 item 5)", () => {
     render(<ModelUsageView modelUsage={{ frontier_tokens: 10, small_tokens: 0, calls: 1, total_cost: "0.002" }} />);
-    expect(screen.getByTestId("model-usage-cost")).toHaveTextContent("0.002");
+    expect(screen.queryByTestId("model-usage-cost")).not.toBeInTheDocument();
+    expect(screen.getByTestId("model-usage-view")).not.toHaveTextContent("$");
   });
 
   it("hides the zero badge and shows the live counter while pending", () => {

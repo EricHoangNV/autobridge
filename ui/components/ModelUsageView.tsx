@@ -47,6 +47,20 @@ function formatInt(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+/** Omit cost keys from the raw dump (REQ-055 item 5: no $ in the UI). */
+function stripCostKeys(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(stripCostKeys);
+  if (v !== null && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (k.toLowerCase().includes("cost")) continue;
+      out[k] = stripCostKeys(val);
+    }
+    return out;
+  }
+  return v;
+}
+
 export function ModelUsageView({ modelUsage, title, compact, budget = null, liveFrontierTokens = null, pending = false }: Props) {
   if (!modelUsage || Object.keys(modelUsage).length === 0) {
     return (
@@ -73,7 +87,9 @@ export function ModelUsageView({ modelUsage, title, compact, budget = null, live
   const totalInput = toNumber(modelUsage.total_input_tokens);
   const totalOutput = toNumber(modelUsage.total_output_tokens);
   const wallSeconds = toNumber((modelUsage as Record<string, unknown>)["wall_seconds"]);
-  const totalCost = modelUsage.total_cost != null ? String(modelUsage.total_cost) : null;
+  // REQ-055 item 5: no dollar amounts in the UI — calls and tokens only.
+  // The raw dump below strips cost keys for the same reason; the API and
+  // ledger keep their cost fields unchanged.
 
   const totalTokens = frontierTokens + smallTokens;
   // The big counter is the L3 tick: it holds at 0 through L0–L2 and only
@@ -113,11 +129,6 @@ export function ModelUsageView({ modelUsage, title, compact, budget = null, live
         {wallSeconds > 0 ? (
           <span>
             Wall <b>{wallSeconds} s</b>
-          </span>
-        ) : null}
-        {totalCost != null && totalCost !== "0" ? (
-          <span>
-            Est. <b data-testid="model-usage-cost">${totalCost}</b>
           </span>
         ) : null}
       </p>
@@ -180,13 +191,13 @@ export function ModelUsageView({ modelUsage, title, compact, budget = null, live
             ) : null}
           </dl>
 
-          {/* Raw JSON toggle */}
+          {/* Raw JSON toggle (cost keys stripped — see above) */}
           <details className="border border-rule px-3 py-2">
             <summary data-testid="model-usage-raw-toggle" className="cursor-pointer text-xs text-ink-2 hover:text-ink">
               Show raw model_usage
             </summary>
             <pre data-testid="model-usage-raw" className="mt-2 max-h-60 overflow-auto bg-ground p-3 font-mono text-xs text-ink-2">
-              {JSON.stringify(modelUsage, null, 2)}
+              {JSON.stringify(stripCostKeys(modelUsage), null, 2)}
             </pre>
           </details>
         </div>

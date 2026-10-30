@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 vi.mock("swr", () => ({
   default: vi.fn(),
@@ -555,15 +555,55 @@ describe("RepairDetailPage", () => {
       },
     });
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    // Question once, first, in the rail — plus the proposal's effect and diff.
+    // Question once, first, in the rail — plus the proposal's effect and dry-run.
+    // REQ-055 item 3e: the rail keeps only the decision — the full Now →
+    // Proposed table lives in chapter 3, not in the rail.
     expect(screen.getByTestId("escalation-question-top")).toHaveTextContent("Should the new behaviour stand?");
     expect(screen.getByTestId("escalation-proposal-top")).toHaveTextContent("Retarget the totals check");
-    expect(screen.getByTestId("escalation-proposal-top")).toHaveTextContent("/entities/Reservation/checks/2/compare_to");
+    expect(screen.getByTestId("escalation-proposal-top")).not.toHaveTextContent("/entities/Reservation/checks/2/compare_to");
+    expect(screen.getByTestId("patch-diff")).toHaveTextContent("checks/2/compare_to");
+    expect(screen.getByTestId("patch-diff")).toHaveTextContent('"$.total"');
     // Two actions only: Approve with the model's label, and Deny.
     expect(screen.getByTestId("repair-approve-proposal-btn")).toHaveTextContent("Approve: Accept net");
     expect(screen.getByTestId("repair-deny-btn")).toHaveTextContent(/Deny: keep everything as-is/);
     expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
     expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
+  });
+
+  it("slim pinned rail: one-line question, no patch table, consequences collapsed (REQ-055 item 3e)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "escalate",
+      verifier_report_id: null,
+      candidate_patch: [],
+      ladder_trace: [
+        { level: 3, action: "model_escalation", reason: "L3 asked for a human decision", model_question: "Should the new behaviour stand?" },
+        { level: 4, action: "escalate", reason: "L3 asked for a human decision (gross_to_net)" },
+      ],
+      escalation_bundle: {
+        reason: "gross_to_net: semantic drift, no verified fix",
+        question: "Should the new behaviour stand?",
+        suggested_action: "manual review",
+        proposal: {
+          label: "Accept net",
+          effect: "Retarget the totals check to the page total.",
+          patch: [{ op: "replace", path: "/entities/Reservation/checks/2/compare_to", value: "$.total" }],
+        },
+      },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    const rail = screen.getByTestId("repair-section-approve");
+    // The question reads as one line; the full text rides the tooltip.
+    expect(screen.getByTestId("escalation-question-top")).toHaveAttribute("title", "Should the new behaviour stand?");
+    // No patch table in the rail — chapter 3 owns it.
+    expect(within(rail).queryByTestId("patch-diff")).not.toBeInTheDocument();
+    expect(within(rail).queryByTestId("patch-raw")).not.toBeInTheDocument();
+    expect(screen.getByTestId("patch-diff")).toBeInTheDocument();
+    // Consequences collapsed behind ▸.
+    const consequences = screen.getByTestId("rail-consequences");
+    expect(consequences.tagName.toLowerCase()).toBe("details");
+    expect(consequences).not.toHaveAttribute("open");
+    expect(within(consequences).getByTestId("approve-preview-loading")).toBeInTheDocument();
   });
 
   it("escalation without a proposal keeps Deny and no Approve (REQ-054)", () => {

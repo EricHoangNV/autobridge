@@ -56,4 +56,21 @@ describe("EvidenceGraph", () => {
     expect(screen.getByTestId("evidence-graph")).toBeInTheDocument();
     expect(container.querySelectorAll('[data-testid="evidence-graph-edge"]').length).toBeGreaterThan(0);
   });
+
+  it("sizes nodes to their content so long labels never overflow (REQ-055 item 3f)", () => {
+    const { container } = render(
+      <EvidenceGraph
+        driftEvents={[{ id: "drift-long", connector_id: "c", drift_class: "SEMANTIC_VALUE_DRIFT", evidence_ids: [] }]}
+      />,
+    );
+    const svg = container.querySelector("svg")!;
+    // "SEMANTIC_VALUE_DRIFT · drift-long" needs more than the 180px minimum.
+    expect(Number(svg.getAttribute("width"))).toBeGreaterThan(16 * 2 + 180);
+    const node = screen.getByTestId("evidence-graph-node-drift-long");
+    const rect = node.querySelector("rect")!;
+    const labelChars = "SEMANTIC_VALUE_DRIFT · drift-long".length;
+    expect(Number(rect.getAttribute("width"))).toBeGreaterThanOrEqual(16 + labelChars * 6 - 8);
+    // Full text rides the tooltip.
+    expect(node.querySelector("title")?.textContent).toContain("SEMANTIC_VALUE_DRIFT");
+  });
 });

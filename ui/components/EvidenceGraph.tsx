@@ -35,13 +35,20 @@ type GraphEdge = {
 };
 
 const ROW_H = 46;
-const COL_W = 220;
-const NODE_W = 180;
+const NODE_W_MIN = 180;
 const NODE_H = 30;
 const PAD = 16;
+/** Monospace advance, px per char, for the two label sizes below. */
+const LABEL_PX = 6.6;
+const SUB_PX = 6.0;
+const COL_GAP = 40;
 
 /** Deterministic layered layout: depth = longest path from a root (BFS). */
-function layout(nodes: GraphNode[], edges: GraphEdge[]): Map<string, { x: number; y: number; depth: number }> {
+function layout(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  colW: number,
+): Map<string, { x: number; y: number; depth: number }> {
   const incoming = new Map<string, string[]>();
   for (const n of nodes) incoming.set(n.id, []);
   for (const e of edges) {
@@ -72,7 +79,7 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]): Map<string, { x: number
   const pos = new Map<string, { x: number; y: number; depth: number }>();
   for (const [d, ids] of [...byDepth.entries()].sort((a, b) => a[0] - b[0])) {
     ids.forEach((id, i) => {
-      pos.set(id, { x: PAD + d * COL_W, y: PAD + i * ROW_H, depth: d });
+      pos.set(id, { x: PAD + d * colW, y: PAD + i * ROW_H, depth: d });
     });
   }
   return pos;
@@ -148,12 +155,21 @@ export function EvidenceGraph({ driftEvents, evidenceRecords, loading, maxNodes 
   const visibleIds = new Set(visibleNodes.map((n) => n.id));
   const visibleEdges = edges.filter((e) => visibleIds.has(e.from) && visibleIds.has(e.to));
 
-  const pos = layout(visibleNodes, visibleEdges);
+  // REQ-055 item 3f: nodes size to their content (a fixed-width box clips
+  // labels like `SEMANTIC_VALUE_DRIFT · 77b78e79`). One uniform width for
+  // every node — the widest label — and columns spaced to fit it, so no
+  // box overflows and no siblings overlap. Full text rides <title>.
+  const nodeW = Math.max(
+    NODE_W_MIN,
+    ...visibleNodes.map((n) => Math.ceil(16 + Math.max(n.label.length * LABEL_PX, n.sub.length * SUB_PX))),
+  );
+  const colW = nodeW + COL_GAP;
+  const pos = layout(visibleNodes, visibleEdges, colW);
   const maxDepth = Math.max(...[...pos.values()].map((p) => p.depth), 0);
   const perDepth = new Map<number, number>();
   for (const p of pos.values()) perDepth.set(p.depth, (perDepth.get(p.depth) ?? 0) + 1);
   const tallestColumn = Math.max(...perDepth.values(), 1);
-  const width = PAD * 2 + maxDepth * COL_W + NODE_W;
+  const width = PAD * 2 + maxDepth * colW + nodeW;
   const height = PAD * 2 + tallestColumn * ROW_H;
 
   const nodeFill = (kind: GraphNode["kind"]) =>
@@ -172,7 +188,7 @@ export function EvidenceGraph({ driftEvents, evidenceRecords, loading, maxNodes 
           const a = pos.get(e.from);
           const b = pos.get(e.to);
           if (!a || !b) return null;
-          const x1 = a.x + NODE_W;
+          const x1 = a.x + nodeW;
           const y1 = a.y + NODE_H / 2;
           const x2 = b.x;
           const y2 = b.y + NODE_H / 2;
@@ -193,10 +209,11 @@ export function EvidenceGraph({ driftEvents, evidenceRecords, loading, maxNodes 
           if (!p) return null;
           return (
             <g key={n.id} data-testid={`evidence-graph-node-${shortId(n.id)}`} data-node-kind={n.kind}>
+              <title>{`${n.label} ${n.sub}`}</title>
               <rect
                 x={p.x}
                 y={p.y}
-                width={NODE_W}
+                width={nodeW}
                 height={NODE_H}
                 fill={nodeFill(n.kind)}
                 stroke={n.kind === "drift" ? "var(--live)" : "var(--rule)"}

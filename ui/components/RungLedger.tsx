@@ -101,8 +101,7 @@ export function RungLedger({ repairId }: { repairId: string }) {
                   <tr className="text-left text-ink-2">
                     <th className="pr-3 font-normal">tier</th>
                     <th className="pr-3 font-normal">purpose</th>
-                    <th className="pr-3 text-right font-normal">tokens</th>
-                    <th className="text-right font-normal">cost</th>
+                    <th className="text-right font-normal">tokens</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -110,11 +109,10 @@ export function RungLedger({ repairId }: { repairId: string }) {
                     <tr key={j} className="border-t border-rule">
                       <td className="py-1 pr-3">{call.tier}</td>
                       <td className="py-1 pr-3">{call.purpose || "—"}</td>
-                      <td className="py-1 pr-3 text-right">
+                      <td className="py-1 text-right">
                         {formatInt(call.input_tokens + call.output_tokens)}
                         {call.reasoning_tokens ? ` (${formatInt(call.reasoning_tokens)} reasoning)` : ""}
                       </td>
-                      <td className="py-1 text-right">${call.cost}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -127,7 +125,7 @@ export function RungLedger({ repairId }: { repairId: string }) {
       </ol>
       <p className="mt-3 font-mono text-xs text-ink-2" data-testid="rung-ledger-totals">
         resolved at L{ledger.resolved_rung} · {ledger.total_calls} calls · {formatInt(ledger.small_tokens)}{" "}
-        small / {formatInt(ledger.frontier_tokens)} frontier tokens · ${ledger.total_cost}
+        small / {formatInt(ledger.frontier_tokens)} frontier tokens
       </p>
     </div>
   );

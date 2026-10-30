@@ -547,9 +547,12 @@ with the scheduler ticking.
    detecting sync + outcome + unmet criterion, wire before/after from the
    fingerprint delta, ▸ affected records and evidence); "2 What the engine
    did" (rung timeline L0–L4 from the ledger with the rung that held lit
-   and unused rungs reading "Not needed", proof tiles — one model-cost
-   tile, verifier verdict, hypotheses/probes with "The rule needed no
-   enumeration" when empty — per-call ledger rows only when calls landed,
+   and unused rungs reading "Not needed", proof tiles — one token-counts
+   tile (calls and tokens only, no dollar amounts, REQ-055 item 5),
+   verifier verdict, hypotheses/probes with "The rule needed no
+   enumeration" when empty — per-call ledger rows with each call's proposal
+   and dry-run verdict ("passed dry-run" / "rejected by dry-run", REQ-055
+   item 4b) only when calls landed,
    hypothesis funnel stages from the derivation record, probes,
    ▸ model usage across runs, ▸ evidence graph); "3 What the engine
    recommends" (one-line decision, per-operation Now → Proposed table
@@ -558,7 +561,13 @@ with the scheduler ticking.
    proposals; never the escalation question). The rail merges Approve
    (release rN), what Approve does (from
    `GET /repairs/{id}/approve-preview`), Reject + what it does, ▸ roll
-   back, and "Approving as …"; climbing rails show "repairing at L<n>"
+   back, and "Approving as …"; the rail keeps only the decision (the
+   question on one line with its full text in the tooltip, the proposal
+   label + dry-run result, Approve / Deny, rollback) with the
+   Now → Proposed table and raw JSON living in chapter 3, the "If you
+   click Approve / Deny" consequences collapsed behind ▸, and the rail
+   itself pinned while scrolling (`position: sticky` with a viewport-capped
+   scroll, REQ-055 item 3e); climbing rails show "repairing at L<n>"
    with model/elapsed/token counter and no actions; escalated rails show
    the question + rationale and the tested proposal with Approve: \<label\>
    / Deny (question only + Deny without a proposal); terminal rails show
@@ -574,7 +583,8 @@ with the scheduler ticking.
    `GET /metrics/model-usage` `entries[].by_run`, repair-linked runs
    highlighted) and an evidence graph (`EvidenceGraph`, SVG nodes for drift
    events + evidence records with drift→evidence and evidence→parent edges,
-   dangling parents as stub nodes). REQ-021 item 3 adds the rung ledger
+   dangling parents as stub nodes; nodes size to their content with the
+   full label in a tooltip, REQ-055 item 3f). REQ-021 item 3 adds the rung ledger
    section (`RungLedger` from `GET /repairs/{id}/ledger`).
 5. `/knowledge` — "What AutoBridge knows" (REQ-021 item 6): vocabulary per
    version plus learned knowledge (entries with reuse counts, connector

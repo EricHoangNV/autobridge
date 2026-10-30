@@ -258,7 +258,15 @@ def test_live_semantic_break_climbs_with_funnel_and_l3_attempt(monkeypatch: Any)
         assert {c.tier for c in calls} == {"frontier"}
         assert {c.mode for c in calls} == {"live"}
         # Initial attempt and retry both ended rejected (dry-run).
-        assert {c.outcome for c in calls} == {"proposal_rejected"}
+        # REQ-055 item 4b: the outcome names the gate, not the code.
+        assert {c.outcome for c in calls} == {"rejected by dry-run"}
+        # REQ-055 item 4b: the rung carries each call's proposal and its
+        # verdict — call 1 rejected, call 2 (retry) rejected too here.
+        proposals = l3.get("proposals")
+        assert isinstance(proposals, list) and len(proposals) == 2
+        assert all(p["passed"] is False for p in proposals)
+        assert all("dry-run" in str(p["error"]) for p in proposals)
+        assert all(isinstance(p["patch"], list) and p["patch"] for p in proposals)
         # The dry-run drop is recorded as evidence, never raised — the
         # escalation stands with its operator question.
         verifs = [

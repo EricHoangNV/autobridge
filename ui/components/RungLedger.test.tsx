@@ -41,6 +41,8 @@ describe("RungLedger", () => {
     expect(screen.getByTestId("rung-calls-L3").textContent).toContain("150");
     expect(screen.getByTestId("rung-ledger-totals").textContent).toContain("resolved at L4");
     expect(screen.getByTestId("rung-ledger-totals").textContent).toContain("150 frontier tokens");
+    // REQ-055 item 5: no dollar amounts anywhere in the ledger view.
+    expect(screen.getByTestId("rung-ledger").textContent).not.toContain("$");
   });
 
   it("shows the reasoning split when a call spent its budget thinking", async () => {

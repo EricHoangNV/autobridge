@@ -599,11 +599,20 @@ class RungCallOut(BaseModel):
     prompt_hash: str = ""
 
 
+class RungProposalOut(BaseModel):
+    """One L3 call's proposal and dry-run verdict (REQ-055 item 4b)."""
+
+    patch: list[dict[str, Any]] = Field(default_factory=list)
+    passed: bool = False
+    error: str = ""
+
+
 class RungAttemptOut(BaseModel):
     rung: int
     action: str
     reason: str
     calls: list[RungCallOut] = Field(default_factory=list)
+    proposals: list[RungProposalOut] = Field(default_factory=list)
 
 
 class RungLedgerOut(BaseModel):

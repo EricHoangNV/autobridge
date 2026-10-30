@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "../tests/e2e",
-  testMatch: ["test_06_ui_journey.spec.ts", "test_s6_richer_ui.spec.ts"],
+  testMatch: ["test_06_ui_journey.spec.ts", "test_s6_richer_ui.spec.ts", "test_10_layout_no_overlap.spec.ts"],
   timeout: 30_000,
   expect: { timeout: 5000 },
   fullyParallel: false,

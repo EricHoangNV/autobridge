@@ -45,7 +45,7 @@ describe("ModelCallBox", () => {
     expect(screen.getByTestId("model-call-box-empty")).toHaveTextContent("0 model calls");
   });
 
-  it("lists every call with rung, model, live/replay, tokens, cost, outcome", () => {
+  it("lists every call with rung, model, live/replay, tokens, outcome — and no dollar amounts (REQ-055 item 5)", () => {
     render(
       <ModelCallBox
         attempts={[
@@ -60,7 +60,7 @@ describe("ModelCallBox", () => {
                 model: "muse-spark-1.3",
                 mode: "replay",
                 captured_at: "2026-10-28",
-                outcome: "proposal_rejected",
+                outcome: "rejected by dry-run",
                 input_tokens: 1000,
                 output_tokens: 200,
                 reasoning_tokens: 50,
@@ -76,8 +76,66 @@ describe("ModelCallBox", () => {
     expect(row).toHaveTextContent("muse-spark-1.3");
     expect(row).toHaveTextContent("replayed 2026-10-28");
     expect(row).toHaveTextContent("1,000/200/50");
-    expect(row).toHaveTextContent("proposal_rejected");
+    expect(row).toHaveTextContent("rejected by dry-run");
+    expect(screen.getByTestId("model-call-box")).not.toHaveTextContent("$");
     expect(screen.getByTestId("model-call-box-total")).toHaveTextContent("1 call");
+    expect(screen.getByTestId("model-call-box-total")).not.toHaveTextContent("$");
+  });
+
+  it("shows each L3 call's proposal and dry-run verdict (REQ-055 item 4b)", () => {
+    render(
+      <ModelCallBox
+        attempts={[
+          {
+            rung: 3,
+            action: "frontier_generate",
+            reason: "L3 invoked",
+            calls: [
+              {
+                tier: "frontier",
+                purpose: "l3-generate-patch",
+                model: "muse-spark-1.3",
+                mode: "live",
+                outcome: "rejected by dry-run",
+                input_tokens: 100,
+                output_tokens: 20,
+                cost: "0",
+              },
+              {
+                tier: "frontier",
+                purpose: "l3-generate-patch-retry",
+                model: "muse-spark-1.3",
+                mode: "live",
+                outcome: "passed dry-run",
+                input_tokens: 120,
+                output_tokens: 25,
+                cost: "0",
+              },
+            ],
+            proposals: [
+              {
+                patch: [{ op: "replace", path: "/entities/Reservation/checks/3/compare_to", value: "$.net_sum" }],
+                passed: false,
+                error: "`$.net_sum` is not a field in the response; available: `total` (number of records on this page)",
+              },
+              {
+                patch: [{ op: "replace", path: "/entities/Reservation/checks/3/compare_to", value: "$.gross_sum" }],
+                passed: true,
+                error: "",
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByTestId("model-call-proposal-op-0-0")).toHaveTextContent(
+      "replace /entities/Reservation/checks/3/compare_to →",
+    );
+    expect(screen.getByTestId("model-call-proposal-op-0-0")).toHaveTextContent('"$.net_sum"');
+    expect(screen.getByTestId("model-call-verdict-0")).toHaveTextContent("rejected by dry-run");
+    expect(screen.getByTestId("model-call-verdict-0")).toHaveTextContent("number of records on this page");
+    expect(screen.getByTestId("model-call-proposal-op-1-0")).toHaveTextContent('"$.gross_sum"');
+    expect(screen.getByTestId("model-call-verdict-1")).toHaveTextContent("passed dry-run");
   });
 
   it("shows the prompt id and version next to the call (REQ-045)", () => {

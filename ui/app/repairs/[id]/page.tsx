@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import useSWR from "swr";
-import { PatchDiff } from "@/components/PatchDiff";
 import { ModelCallBox, type LedgerAttempt } from "@/components/ModelCallBox";
 import { ModelUsageChart } from "@/components/ModelUsageChart";
 import { DriftEvidenceSection } from "@/components/DriftEvidenceSection";
@@ -1226,7 +1225,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                 </p>
               ) : null}
               {escalationQuestion ? (
-                <div data-testid="escalation-question-top" className="escalation">
+                <div data-testid="escalation-question-top" className="escalation rail-question" title={escalationQuestion}>
                   <p>
                     {modelAsked ? "The model's question for you: " : "The engine's question: "}
                     <b>{escalationQuestion}</b>
@@ -1248,9 +1247,9 @@ export default function RepairDetailPage({ params }: PageProps) {
                       {modelProposal.dryRun}
                     </p>
                   ) : null}
-                  <div className="mt-2">
-                    <PatchDiff candidatePatch={modelProposal.patch as never} title="Proposed change" fieldNotes={modelProposal.fieldNotes} />
-                  </div>
+                  <p className="sub">
+                    The full change is in <a className="underline hover:text-ink" href="#recommends">chapter 3</a>.
+                  </p>
                 </div>
               ) : (
                 <p className="sub">
@@ -1277,7 +1276,14 @@ export default function RepairDetailPage({ params }: PageProps) {
                   onActionComplete={() => mutateRepair()}
                 />
               </div>
-              <ApprovePreviewSection repairId={repair.id} />
+              <details data-testid="rail-consequences" className="mt-3 border-t border-rule">
+                <summary className="cursor-pointer py-2 text-xs text-ink-2 hover:text-ink hover:underline">
+                  ▸ If you click Approve / Deny…
+                </summary>
+                <div className="pb-2">
+                  <ApprovePreviewSection repairId={repair.id} />
+                </div>
+              </details>
               <AfterApproveTracker repairId={repair.id} connectorId={primaryConnectorId} />
             </div>
           ) : isTerminal ? (
@@ -1310,7 +1316,14 @@ export default function RepairDetailPage({ params }: PageProps) {
                   onActionComplete={() => mutateRepair()}
                 />
               </div>
-              <ApprovePreviewSection repairId={repair.id} />
+              <details data-testid="rail-consequences" className="mt-3 border-t border-rule">
+                <summary className="cursor-pointer py-2 text-xs text-ink-2 hover:text-ink hover:underline">
+                  ▸ If you click Approve / Deny…
+                </summary>
+                <div className="pb-2">
+                  <ApprovePreviewSection repairId={repair.id} />
+                </div>
+              </details>
               <AfterApproveTracker repairId={repair.id} connectorId={primaryConnectorId} />
             </div>
           ) : (
@@ -1333,7 +1346,14 @@ export default function RepairDetailPage({ params }: PageProps) {
                   onActionComplete={() => mutateRepair()}
                 />
               </div>
-              <ApprovePreviewSection repairId={repair.id} />
+              <details data-testid="rail-consequences" className="mt-3 border-t border-rule">
+                <summary className="cursor-pointer py-2 text-xs text-ink-2 hover:text-ink hover:underline">
+                  ▸ If you click Approve / Deny…
+                </summary>
+                <div className="pb-2">
+                  <ApprovePreviewSection repairId={repair.id} />
+                </div>
+              </details>
               <AfterApproveTracker repairId={repair.id} connectorId={primaryConnectorId} />
             </div>
           )}

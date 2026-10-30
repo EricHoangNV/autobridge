@@ -2632,6 +2632,8 @@ export interface components {
             action: string;
             /** Calls */
             calls?: components["schemas"]["RungCallOut"][];
+            /** Proposals */
+            proposals?: components["schemas"]["RungProposalOut"][];
             /** Reason */
             reason: string;
             /** Rung */
@@ -2719,6 +2721,26 @@ export interface components {
              * @default 0
              */
             total_cost: string;
+        };
+        /**
+         * RungProposalOut
+         * @description One L3 call's proposal and dry-run verdict (REQ-055 item 4b).
+         */
+        RungProposalOut: {
+            /**
+             * Error
+             * @default
+             */
+            error: string;
+            /**
+             * Passed
+             * @default false
+             */
+            passed: boolean;
+            /** Patch */
+            patch?: {
+                [key: string]: unknown;
+            }[];
         };
         /**
          * SchedulerPauseRequest

@@ -1544,6 +1544,10 @@ dl.fp dd {
 .rd-rail {
   position: sticky;
   top: 24px;
+  /* REQ-055 item 3e: the slim rail stays pinned while scrolling — a long
+     question still fits because the rail scrolls inside itself. */
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
   align-self: start;
   grid-column: 2;
   margin-top: 64px;
@@ -1583,6 +1587,16 @@ dl.fp dd {
   background: var(--ground);
   padding: 12px 14px;
   font-size: 14px;
+}
+/* REQ-055 item 3e: the rail keeps only the decision — the question reads
+   as one line (full text in the title tooltip) so Approve stays pinned. */
+.rd-rail .rail-question > p:first-child {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
 }
 /* Demo foot: dashed, at the bottom. */
 .rd-demo-foot {

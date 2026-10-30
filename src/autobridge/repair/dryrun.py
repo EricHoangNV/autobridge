@@ -135,6 +135,147 @@ def _available_keys(raw_first_page: Any) -> list[str]:
     return []
 
 
+def _pointer_key(pointer: Any) -> str | None:
+    """Top-level response key for a ``$.key...`` pointer, else None."""
+    if not isinstance(pointer, str) or not pointer.startswith("$."):
+        return None
+    key = pointer[2:].split(".")[0].split("[")[0]
+    return key or None
+
+
+def _pagination_field_roles(spec: dict[str, Any]) -> dict[str, str]:
+    """Wire-key roles from the spec's pagination config (REQ-055 item 4a).
+
+    The spec was built from the vendor docs, so its pagination config
+    documents what the page-control fields mean — generically, for any
+    vendor: cursor/limit/offset/page params and next/items paths.
+    """
+    roles: dict[str, str] = {}
+    ops = spec.get("operations") if isinstance(spec, dict) else {}
+    if not isinstance(ops, dict):
+        return roles
+    for op in ops.values():
+        if not isinstance(op, dict):
+            continue
+        pag = op.get("pagination")
+        if not isinstance(pag, dict):
+            continue
+        for param_key, role in (
+            ("cursor_param", "page cursor"),
+            ("limit_param", "page size"),
+            ("offset_param", "page offset"),
+            ("page_param", "page number"),
+        ):
+            name = pag.get(param_key)
+            if isinstance(name, str) and name and name not in roles:
+                roles[name] = role
+        for path_key, role in (
+            ("next_path", "next-page cursor"),
+            ("items_path", "the records on this page"),
+        ):
+            key = _pointer_key(pag.get(path_key))
+            if key and key not in roles:
+                roles[key] = role
+    return roles
+
+
+def _spec_field_notes(spec: dict[str, Any]) -> dict[str, list[str]]:
+    """Wire-key notes from the spec's own mappings and checks (REQ-055 4a).
+
+    A field the spec maps (``entities.<E>.fields.<f>.path``) or compares
+    (``compare_to``) is documented by that use — the meaning the docs gave
+    it when the connector was built, in generic words.
+    """
+    notes: dict[str, list[str]] = {}
+    entities = spec.get("entities") if isinstance(spec, dict) else {}
+    if not isinstance(entities, dict):
+        return notes
+    for ent_name, ent in entities.items():
+        if not isinstance(ent, dict):
+            continue
+        fields = ent.get("fields")
+        if isinstance(fields, dict):
+            for fname, fspec in fields.items():
+                key = _pointer_key(fspec.get("path") if isinstance(fspec, dict) else None)
+                if key:
+                    notes.setdefault(key, []).append(f"maps to {ent_name}.{fname}")
+        checks = ent.get("checks")
+        if isinstance(checks, list):
+            for chk in checks:
+                if not isinstance(chk, dict):
+                    continue
+                key = _pointer_key(chk.get("compare_to"))
+                if not key:
+                    continue
+                kind = str(chk.get("kind") or "check")
+                field = str(chk.get("field") or ent_name)
+                notes.setdefault(key, []).append(f"compared by the {kind} check on `{field}`")
+    return notes
+
+
+def field_meanings_for_retry(
+    spec: dict[str, Any],
+    fault: dict[str, Any] | None,
+) -> dict[str, str]:
+    """Meaning of each available wire field, for the L3 retry (REQ-055 4a).
+
+    Built from the connector's own spec (pagination roles, field mappings,
+    check references — the documented meaning from the docs it was built
+    from) plus the observed response (a record count that matches the page
+    size, else the value and its shape). Generic: no vendor or scenario
+    names anywhere; unknown keys fall back to what was observed.
+    """
+    meanings: dict[str, str] = {}
+    if not isinstance(spec, dict):
+        return meanings
+    roles = _pagination_field_roles(spec)
+    documented = _spec_field_notes(spec)
+    raw_pages = fault.get("raw_first_pages") if isinstance(fault, dict) else {}
+    first: dict[str, Any] = {}
+    if isinstance(raw_pages, dict):
+        for page in raw_pages.values():
+            if isinstance(page, dict) and page:
+                first = page
+                break
+    page_sizes = {len(v) for v in first.values() if isinstance(v, list)}
+    keys = set(roles) | set(documented) | set(_available_keys(first))
+    for key in sorted(keys):
+        parts: list[str] = []
+        if key in roles:
+            parts.append(roles[key])
+        parts.extend(documented.get(key, []))
+        value = first.get(key, None) if isinstance(first, dict) else None
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and page_sizes
+            and value in page_sizes
+            and "number of records on this page" not in parts
+        ):
+            parts.append("number of records on this page")
+        if not parts:
+            parts.append(f"`{_short_json(value)}` in the current response ({_value_shape(value)})")
+        meanings[key] = "; ".join(parts)
+    return meanings
+
+
+def _available_fields_note(spec: dict[str, Any], raw_first_page: Any) -> str:
+    """``; available: `k` (meaning); …`` for the retry (REQ-055 item 4a)."""
+    keys = _available_keys(raw_first_page)
+    if not keys:
+        return ""
+    try:
+        meanings = field_meanings_for_retry(spec, {"raw_first_pages": {"op": raw_first_page}})
+    except Exception:
+        meanings = {}
+    bits = []
+    for key in keys:
+        meaning = meanings.get(key)
+        bits.append(f"`{key}` ({meaning})" if meaning else f"`{key}`")
+    note = "; available: " + "; ".join(bits)
+    return note if len(note) <= 1200 else note[:1199] + "…"
+
+
 def _short_json(value: Any, limit: int = 40) -> str:
     try:
         import json as _json
@@ -367,8 +508,11 @@ def dry_run_proposal(
             if found is None:
                 if not is_new:
                     continue
-                available = _available_keys(raw_first)
-                avail = f"; available: {', '.join(available)}" if available else ""
+                # REQ-055 item 4a: names alone steer the model wrong (a
+                # record count looks like a net total). List each available
+                # field with its documented meaning from the spec the
+                # connector was built from — generic, no scenario names.
+                avail = _available_fields_note(spec, raw_first)
                 return False, f"`{ptr}` is not a field in the response{avail}"
             # REQ-055 item 2: a money check pointed at a value that is not
             # a money sum (e.g. a record count) cannot evaluate — the totals

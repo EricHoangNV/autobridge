@@ -855,14 +855,28 @@ def rung_ledger(
         level = entry.get("level")
         if not isinstance(level, int) or isinstance(level, bool):
             continue
-        attempts.append(
-            {
-                "rung": level,
-                "action": str(entry.get("action", "")),
-                "reason": str(entry.get("reason", "")),
-                "calls": [],
-            }
-        )
+        attempt: dict[str, Any] = {
+            "rung": level,
+            "action": str(entry.get("action", "")),
+            "reason": str(entry.get("reason", "")),
+            "calls": [],
+        }
+        # REQ-055 item 4b: each L3 call's proposal and dry-run verdict ride
+        # the ledger so chapter 2 shows call → proposal → verdict.
+        proposals = entry.get("proposals")
+        if isinstance(proposals, list) and proposals:
+            attempt["proposals"] = [
+                {
+                    "patch": [dict(op) for op in p.get("patch", [])]
+                    if isinstance(p, dict) and isinstance(p.get("patch"), list)
+                    else [],
+                    "passed": bool(p.get("passed")) if isinstance(p, dict) else False,
+                    "error": str(p.get("error", "")) if isinstance(p, dict) else "",
+                }
+                for p in proposals
+                if isinstance(p, dict)
+            ]
+        attempts.append(attempt)
     for call in model_calls or []:
         tier = str(_call_field(call, "tier", ""))
         purpose = str(_call_field(call, "purpose", "") or "")
@@ -2086,11 +2100,11 @@ def _retry_escalation_proposal(
         )
     except ReplayMissing as exc:
         l3_entry["retry_replay_missing"] = exc.prompt_hash
-        _stamp_outcome("proposal_rejected")
+        # No retry call landed: call 1 keeps the verdict stamp the caller
+        # recorded before the retry (REQ-055 item 4b).
         return None
     except Exception as exc:
         l3_entry["retry_error"] = f"retry call failed: {exc}"[:200]
-        _stamp_outcome("proposal_rejected")
         return None
     retry_delta = _accumulate(retry_result)
     l3_entry["retry_reasoning_tokens"] = retry_result.usage.reasoning_tokens
@@ -2611,6 +2625,31 @@ def run_frontier_climb(
             "small_reasoning": 0,
         }
 
+    # REQ-055 item 4b: per-call proposals for the repair page — call 1 →
+    # its proposal → the dry-run verdict; call 2 (the one retry) → its
+    # proposal → its verdict. A fault parcel riding the climb means the
+    # dry-run gate actually ran (bench paths without one skip it).
+    _dry_judged = dry_run_fault is not None and validate_against is not None
+    l3_entry["proposals"] = []
+
+    def _record_proposal(patch: Any, *, passed: bool, error: str = "") -> None:
+        ops = [dict(op) for op in patch] if isinstance(patch, list) else []
+        assert isinstance(l3_entry["proposals"], list)
+        l3_entry["proposals"].append({"patch": ops, "passed": passed, "error": error})
+
+    def _stamp_proposal_outcome(*, adopted: bool, dry_error: str | None) -> None:
+        # REQ-055 item 4b: the model-call table reads what the dry-run
+        # gate did — "passed dry-run" / "rejected by dry-run" — and
+        # "no proposal" when the call produced nothing to judge. Stamps
+        # the newest frontier row, so call 1 is stamped before the retry
+        # call lands and the retry stamps its own row after.
+        if adopted:
+            _stamp_outcome("passed dry-run" if _dry_judged else "proposal")
+        elif dry_error:
+            _stamp_outcome("rejected by dry-run")
+        else:
+            _stamp_outcome("proposal_rejected")
+
     l3_delta = _accumulate(l3_result)
     usage = _merge_model_usage(usage, l3_delta)
     l3_entry["model_usage_delta"] = l3_delta
@@ -2643,19 +2682,22 @@ def run_frontier_climb(
                 else ""
             )
         )
-        _stamp_outcome("model_escalation")
         # REQ-049 item 4: an escalation may carry the change the operator
         # could approve. The proposal patch passes the same apply +
         # allowed-pointer check as a direct patch (one retry on error, as
         # REQ-044); a malformed or still-invalid proposal is dropped and
         # labelled, and the repair stays a plain escalation. The engine
-        # never synthesises a proposal itself.
-        if parsed.get("proposal"):
+        # never synthesises a proposal itself. Call 1 is stamped here,
+        # before the retry call lands (the retry stamps its own row).
+        if not parsed.get("proposal"):
+            _stamp_outcome("no proposal")
+        else:
             _proposal_adopted, _proposal_error = _validate_escalation_proposal(
                 list(parsed["proposal"]),
                 validate_against=validate_against,
                 evidence=evidence,
             )
+            _proposal_dry_error: str | None = None
             if _proposal_adopted is not None:
                 # REQ-053 item 6: an apply-valid proposal is judged on the
                 # faulted records before it is offered — one retry with the
@@ -2664,6 +2706,7 @@ def run_frontier_climb(
                 if _dry_error is not None:
                     _proposal_adopted = None
                     _proposal_error = _dry_error
+                    _proposal_dry_error = _dry_error
             if _proposal_adopted is not None:
                 proposal = _proposal_adopted
                 proposal_label = str(parsed.get("proposal_label") or "")
@@ -2678,11 +2721,17 @@ def run_frontier_climb(
                 l3_entry["proposal_validated"] = True
                 if dry_run_note:
                     l3_entry["dry_run"] = dry_run_note
+                _record_proposal(proposal, passed=True)
+                _stamp_proposal_outcome(adopted=True, dry_error=None)
             else:
                 l3_entry["proposal_dropped"] = (
                     f"L3 escalation proposal dropped: {_proposal_error}; "
                     "the escalation stands on the question alone"
                 )
+                # REQ-055 item 4b: call 1's verdict lands before the retry
+                # call exists (stamps hit the newest row).
+                _record_proposal(list(parsed["proposal"]), passed=False, error=_proposal_error)
+                _stamp_proposal_outcome(adopted=False, dry_error=_proposal_dry_error)
                 _proposal_retry = _retry_escalation_proposal(
                     _proposal_error,
                     drift_class=str(drift_class),
@@ -2713,7 +2762,8 @@ def run_frontier_climb(
                                 f"L3 retry proposal dropped ({_retry_dry}); "
                                 "the escalation stands on the question alone"
                             )
-                            _stamp_outcome("proposal_rejected")
+                            _record_proposal(list(_retry_parsed["patch"]), passed=False, error=_retry_dry)
+                            _stamp_proposal_outcome(adopted=False, dry_error=_retry_dry)
                         else:
                             l3_entry["action"] = "frontier_generate"
                             l3_entry["proposal"] = [dict(op) for op in proposal]
@@ -2725,6 +2775,8 @@ def run_frontier_climb(
                             l3_entry["retried"] = True
                             if dry_run_note:
                                 l3_entry["dry_run"] = dry_run_note
+                            _record_proposal(proposal, passed=True)
+                            _stamp_proposal_outcome(adopted=True, dry_error=None)
                     elif _retry_parsed["kind"] == "escalate":
                         _retry_question = normalize_model_question(
                             str(_retry_parsed.get("question") or "")
@@ -2738,11 +2790,13 @@ def run_frontier_climb(
                                 validate_against=validate_against,
                                 evidence=evidence,
                             )
+                            _retry_dry_error: str | None = None
                             if _retry_adopted is not None:
                                 _retry_dry = _dry_judge(_retry_adopted)
                                 if _retry_dry is not None:
                                     _retry_adopted = None
                                     _retry_error = _retry_dry
+                                    _retry_dry_error = _retry_dry
                             if _retry_adopted is not None:
                                 proposal = _retry_adopted
                                 proposal_label = str(_retry_parsed.get("proposal_label") or "")
@@ -2758,11 +2812,17 @@ def run_frontier_climb(
                                 l3_entry["retried"] = True
                                 if dry_run_note:
                                     l3_entry["dry_run"] = dry_run_note
+                                _record_proposal(proposal, passed=True)
+                                _stamp_proposal_outcome(adopted=True, dry_error=None)
                             else:
                                 l3_entry["proposal_dropped"] = (
                                     f"L3 retry proposal dropped ({_retry_error}); "
                                     "the escalation stands on the question alone"
                                 )
+                                _record_proposal(
+                                    list(_retry_parsed["proposal"]), passed=False, error=_retry_error
+                                )
+                                _stamp_proposal_outcome(adopted=False, dry_error=_retry_dry_error)
                         elif _retry_parsed.get("proposal") is not None:
                             # Malformed retry proposal: dropped and labelled.
                             l3_entry["proposal_dropped"] = (
@@ -2770,9 +2830,17 @@ def run_frontier_climb(
                                 f"({_retry_parsed.get('detail', 'malformed proposal')}); "
                                 "the escalation stands on the question alone"
                             )
+                            _record_proposal([], passed=False, error="malformed retry proposal")
+                            _stamp_outcome("no proposal")
+                        else:
+                            # The retry asked its own question with no
+                            # proposal to judge.
+                            _stamp_outcome("no proposal")
                     else:
-                        # No retry ran (no retry prompt file, missing replay
-                        # recording, or a failed call): the drop stands, named.
+                        # The retry answered nothing usable (neither a patch
+                        # nor an escalation): its call produced no proposal.
+                        _record_proposal([], passed=False, error="retry produced no proposal")
+                        _stamp_outcome("no proposal")
                         _retry_note = str(
                             l3_entry.get("retry_replay_missing")
                             or l3_entry.get("retry_error")
@@ -2797,6 +2865,7 @@ def run_frontier_climb(
                 )
             )
         apply_error = _l3_pointer_error(proposal, target_spec=validate_against, evidence=evidence)
+        _apply_dry_error: str | None = None
         if apply_error is None:
             # REQ-053 item 6: judge the apply-valid proposal on the faulted
             # records before offering it — the retry below gets the exact
@@ -2804,18 +2873,22 @@ def run_frontier_climb(
             _dry_error = _dry_judge(proposal if isinstance(proposal, list) else None)
             if _dry_error is not None:
                 apply_error = _dry_error
+                _apply_dry_error = _dry_error
         if apply_error is None:
             l3_entry["proposal_validated"] = True
             if dry_run_note:
                 l3_entry["dry_run"] = dry_run_note
-            _stamp_outcome("proposal")
+            _record_proposal(proposal, passed=True)
+            _stamp_proposal_outcome(adopted=True, dry_error=None)
         else:
             # REQ-044 item 4: one retry with the apply error, then escalate.
             # REQ-045: the retry renders config/prompts/l3_patch_retry.md —
             # same question plus the rejection as data. Both calls land on
             # the ledger and the repair page. Without the optional retry
-            # file the retry is skipped explicitly (never invented).
-            _stamp_outcome("proposal_rejected")
+            # file the retry is skipped explicitly (never invented). Call 1
+            # is stamped here, before the retry call lands.
+            _record_proposal(proposal, passed=False, error=apply_error)
+            _stamp_proposal_outcome(adopted=False, dry_error=_apply_dry_error)
             try:
                 retry_template = _get_prompt("l3_patch_retry")
                 retry_ref = _prompt_ref("l3_patch_retry")
@@ -2879,18 +2952,21 @@ def run_frontier_climb(
                         l3_entry["reason"] = (
                             f"L3 retry asked for a human decision after {apply_error}: {model_question}"
                         )
-                        _stamp_outcome("model_escalation")
+                        _record_proposal([], passed=False, error="retry asked for a human decision")
+                        _stamp_outcome("no proposal")
                     elif retry_parsed["kind"] == "patch":
                         candidate = retry_parsed["patch"]
                         retry_error = _l3_pointer_error(
                             candidate, target_spec=validate_against, evidence=evidence
                         )
+                        _retry_dry_error2: str | None = None
                         if retry_error is None:
                             # REQ-053 item 6: the retry is the one retry —
                             # judge it on the faulted records too.
                             _retry_dry = _dry_judge(candidate if isinstance(candidate, list) else None)
                             if _retry_dry is not None:
                                 retry_error = _retry_dry
+                                _retry_dry_error2 = _retry_dry
                         if retry_error is None:
                             proposal = candidate
                             l3_entry["proposal_ops"] = len(proposal)
@@ -2905,7 +2981,8 @@ def run_frontier_climb(
                                 f"L3 retry proposed a patch after {apply_error} "
                                 f"({len(proposal)} ops: {', '.join(l3_entry['proposal_pointers'])})"
                             )
-                            _stamp_outcome("proposal")
+                            _record_proposal(proposal, passed=True)
+                            _stamp_proposal_outcome(adopted=True, dry_error=None)
                         else:
                             proposal = None
                             l3_entry["action"] = "proposal_rejected"
@@ -2913,7 +2990,8 @@ def run_frontier_climb(
                                 f"L3 proposal rejected: {apply_error}; retry failed too: {retry_error}"
                             )
                             l3_entry["raw_preview"] = retry_text.strip()[:300]
-                            _stamp_outcome("proposal_rejected")
+                            _record_proposal(candidate, passed=False, error=retry_error)
+                            _stamp_proposal_outcome(adopted=False, dry_error=_retry_dry_error2)
                     else:
                         proposal = None
                         l3_entry["action"] = "proposal_rejected"
@@ -2922,7 +3000,8 @@ def run_frontier_climb(
                             f"retry unparsable ({retry_parsed['detail']})"
                         )
                         l3_entry["raw_preview"] = retry_text.strip()[:300]
-                        _stamp_outcome("proposal_rejected")
+                        _record_proposal([], passed=False, error="retry produced no proposal")
+                        _stamp_outcome("no proposal")
     else:
         # No usable patch is a normal outcome, never an error: record what
         # the text contained plus a truncated preview so a live answer is
@@ -2941,10 +3020,9 @@ def run_frontier_climb(
             )
         else:
             l3_entry["reason"] = f"L3 returned an empty response ({parse_detail}); no patch proposed"
-        if l3_text.strip():
-            _stamp_outcome("unparsable")
-        else:
-            _stamp_outcome("no_patch")
+        # REQ-055 item 4b: the call produced no proposal to judge.
+        _record_proposal([], passed=False, error="no proposal in the response")
+        _stamp_outcome("no proposal")
     replay_captured_at = str(getattr(provider, "last_captured_at", "") or "")
     _emit()
     return {

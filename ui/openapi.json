@@ -3058,6 +3058,13 @@
             "title": "Calls",
             "type": "array"
           },
+          "proposals": {
+            "items": {
+              "$ref": "#/components/schemas/RungProposalOut"
+            },
+            "title": "Proposals",
+            "type": "array"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -3213,6 +3220,31 @@
           "resolved_rung"
         ],
         "title": "RungLedgerOut",
+        "type": "object"
+      },
+      "RungProposalOut": {
+        "description": "One L3 call's proposal and dry-run verdict (REQ-055 item 4b).",
+        "properties": {
+          "error": {
+            "default": "",
+            "title": "Error",
+            "type": "string"
+          },
+          "passed": {
+            "default": false,
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "patch": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Patch",
+            "type": "array"
+          }
+        },
+        "title": "RungProposalOut",
         "type": "object"
       },
       "SchedulerPauseRequest": {

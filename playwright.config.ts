@@ -25,7 +25,7 @@ export default defineConfig({
   // frame (`make demo-seed`; skips otherwise), while the later specs adapt
   // to whatever rows exist (test_06), need post-demo state (test_027) or
   // s6-shaped rows that only the mocks provide (test_s6 live branch).
-  testMatch: ["test_08_recording_journey.spec.ts", "test_06_ui_journey.spec.ts", "test_s6_richer_ui.spec.ts", "test_027_knowledge.spec.ts"],
+  testMatch: ["test_08_recording_journey.spec.ts", "test_06_ui_journey.spec.ts", "test_s6_richer_ui.spec.ts", "test_027_knowledge.spec.ts", "test_10_layout_no_overlap.spec.ts"],
   timeout: 30_000,
   expect: { timeout: 5000 },
   fullyParallel: false,
