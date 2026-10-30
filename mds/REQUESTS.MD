@@ -5,7 +5,7 @@
 Owner priority (2026-10-30 15:20): **REQ-048 next.**
 
 ### REQ-048 — Deck 5 on screen: an escalation reads as a question, not a disabled Approve (2026-10-30)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-30 08:29)
 Owner UI run (2026-10-30, host `make local-up` keyed, `origin/main` 6b677b2d, Aside at 1440×900): `make demo-reset &&
 make demo-seed`, then `make demo-break SCENARIO=gross_to_net TARGET=harbor`. The flow works (running repair on top
 within ~2 s, "Repairing at L3 … calling muse-spark-1.3 · 4 s so far", then the model's question + rationale, prompt
