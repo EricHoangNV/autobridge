@@ -5,7 +5,7 @@
 Owner priority (2026-10-31 09:30): **REQ-061 next** (benchmark agent arm; the keyed benchmark re-runs after it). Do not start REQ-051 until the owner says so.
 
 ### REQ-061 — Benchmark: the frontier agent arm runs the same model and returns gradable output (2026-10-31)
-Status: IN_PROGRESS (sbx1 since 2026-10-31 03:28)
+Status: DONE (sbx1 2026-10-31 -- all 4 items code-done: derived meta/<FRONTIER_MODEL> model (always -m), stdin=DEVNULL on all CLI drivers, exit-1 reason from stdout error events + tail, live preflight gating agent rows; 10 new/updated unit tests, full gates green; live check: preflight ok (meta/muse-spark-1.3, 17878 tokens) + page_to_cursor agent row ran=True same model 43467/1648/4917 tokens with real page->cursor patch; owner step: keyed BENCH_TRIALS=1 make bench-ablation re-run)
 Keyed run 2026-10-31 on `d9317e15` (after REQ-060): `frontier_oneshot` is valid (5/6 fixable fixed, 2/6 held back,
 0 wrong shipped), but `frontier_agent` produced nothing on 12/12 rows:
 - Every row: `OpenCodeCliError: opencode CLI failed with exit 1:` after ~3 s, stderr empty. The driver

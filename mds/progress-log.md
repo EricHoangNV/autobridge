@@ -3966,3 +3966,30 @@ Scope: `d2d9c9d2..8f1b2dca` (89 commits, REQ-040…REQ-059) against DIRECTIVES �
 
 ## 2026-10-31 02:10 UTC — REQ-060 DONE (sbx1; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Benchmark fairness fix, all 6 items: (1) frontier arms get the engine's repair task — pre-drift spec + faulted-sync evidence in the shared bundle (new `bench/evidence.py`, cached per inputs), v2 prompts, `bench/repair_answer.py` parser; (2) symmetric grading — patches verify, escalations held-back/not-fixed, `escalated` label; (3) `token_ceiling` 0 = no limit (Budget normalizes 0→None), per-row input/output/reasoning + per-arm min/median/max totals; (4) agent CLI parsing fixed against a captured live `opencode run` stream — text/usage/cost/error shapes plus model+totals from the session DB, fixture-pinned; (5) learning-curve `default_model` crash fixed; (6) `docs/benchmark.md` rewritten. Tests: 26 new + 4 updated; `make test` 2928/134/409 + UI 295 green, coverage 90.11/91.49/90.48; lint/typecheck green; unkeyed rehearsal 12/12 matched with `context_matched: True`. Owner step: keyed re-run in the sandbox. Learning #71 recorded (pin CLI parsers with captured fixtures).
+
+## REQ-061 — Frontier agent arm runs the same model and returns gradable output
+**Date:** 2026-10-31
+**Ref:** mds/REQUESTS.MD REQ-061 (benchmark agent arm; keyed re-runs gated on it)
+
+**What was done:**
+- `config.opencode_model()` derives `meta/<FRONTIER_MODEL>` when `OPENCODE_MODEL` is unset; explicit value wins, qualified values pass through. Driver always passes `-m`.
+- `stdin=subprocess.DEVNULL` in opencode/claude/codex CLI drivers; `OpenCodeCliError` on exit-1 carries stderr + parsed stdout error events + stdout tail.
+- `preflight_frontier_agent()` gates `run_ablation_harness`: one live run must return text, model id, token usage, else RuntimeError with the reason. Skipped for fake drivers.
+- 10 new/updated unit tests; `.env.example` + `docs/benchmark.md` document derivation, stdin fix, error surfacing, preflight.
+- Live check: preflight ok (meta/muse-spark-1.3, 17878 tokens); page_to_cursor agent row ran=True, same model, 43467/1648/4917 tokens, real page→cursor patch.
+
+**Key decisions:**
+- Derivation lives in `config.opencode_model` (the config layer, keeping model ids out of driver code); `meta/` prefix per the repo's `opencode.json` provider.
+- Preflight only for live `OpenCodeCliDriver`; other kinds/fakes skip so offline rehearsal is untouched.
+- Error message includes stdout tail (no secrets: bench prompts carry credential_refs only).
+
+**Files changed:**
+- `src/autobridge/config.py` — derived `opencode_model()`
+- `bench/baseline_coding_agent.py` — stdin DEVNULL ×3, richer exit-1 message, docstring
+- `bench/ablation.py` — `preflight_frontier_agent()` + harness call + availability row model
+- `tests/unit/test_autobridge_bench_agents.py`, `tests/unit/test_autobridge_bench_ablation.py` — 10 tests
+- `.env.example`, `docs/benchmark.md` — documented
+
+**Notes for next iteration:**
+- Owner step: keyed `BENCH_TRIALS=1 make bench-ablation` in the sandbox, then close REQ-061/052/028/060 verify items.
+- One full-suite run showed a transient DNS-guard ERROR (`gateway.docker.internal`); isolated pass + next full run green. If it recurs, suspect sandbox DNS flake, not bench code.
