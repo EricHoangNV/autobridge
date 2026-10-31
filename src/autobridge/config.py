@@ -49,11 +49,13 @@ DEFAULT_FRONTIER_BASE_URL = "https://api.meta.ai/v1"
 DEFAULT_FRONTIER_MODEL = "muse-spark-1.3"
 
 #: Published prices per million tokens: model id -> (input, output) USD.
-#: (REQ-021 item 5: Spark $1.25 / $4.25, Wonder $4 / $20 per M. Cached-input
-#: rates exist but :class:`Usage` does not track cached tokens, so uncached
-#: input pricing applies to all input tokens.)
+#: (REQ-021 item 5: Spark $1.25 / $4.25, Wonder $4 / $20 per M; Spark
+#: Contributor tier $0.10 / $0.20, same model. Cached-input rates exist but
+#: :class:`Usage` does not track cached tokens, so uncached input pricing
+#: applies to all input tokens.)
 MODEL_PRICES_PER_MILLION: dict[str, tuple[str, str]] = {
     "muse-spark-1.3": ("1.25", "4.25"),
+    "muse-spark-1.3-contributor": ("0.10", "0.20"),
     "muse-wonder-1.0": ("4", "20"),
 }
 
