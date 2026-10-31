@@ -2,7 +2,55 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-31 14:40): **REQ-062 next** (beacon evaluation harness; the real freeze waits for it). Do not start REQ-051 until the owner says so.
+Owner priority (2026-10-31 18:30): **REQ-063 next** (beacon grading; the real freeze waits for it). Do not start REQ-051 until the owner says so.
+
+### REQ-063 — Beacon grading: no-drift runs complete, escalation questions count, answer keys match what the connector reads (2026-10-31)
+Status: OPEN
+Owner rehearsal 2 on `441efe7f` (after REQ-062): `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` in the
+sandbox (keyed). Output in `tmp/beacon-rehearsal-6599930-r2/` (gitignored; read it in place from the main checkout).
+REQ-062 holds: every row is gradable with a stated reason. Results: frontier_agent verified 5/12, frontier_oneshot 3/12,
+autobridge_cold/warm 2/12, engine_no_knowledge 1/12, wrong shipped 0 for every arm. Three grading problems remain
+(owner reproduced instances 0, 3, 5, 7, 10 in-process with `bench.faults.beacon_sync_pair`, faulted vs baseline
+canonical records, eval seed from `summary.json`):
+
+1. **No drift detected is graded as an escalation.** Instance 10 (`atlas`/`transport_auth`, `retry_after`, expected
+   `no_patch`): the faulted sync is Complete and its canonical records equal the baseline, the detector reports 0
+   signals, yet the engine arms record `detected UNKNOWN (0 signals) -> escalate at L4 (no rule)` and are graded
+   `Blocked`. In production a sync with no drift signals simply completes; no repair run opens. frontier_agent gets
+   credit for the same behaviour ("no_patch: complete without a patch").
+2. **Escalation questions are lost.** Engine L4 escalations record `question=False`. frontier_agent escalations carry a
+   question (`question=True`) but are reported `Blocked`, and `grade_arm_outcome` only accepts `degraded_question` as
+   `Degraded` + question, so a no-patch escalation with one operator question can never pass a `degraded_question`
+   instance (instance 3, frontier_agent).
+3. **Answer keys expect a repair where the connector's output does not change.** Instance 0 (`atlas`/`dates`,
+   `cutoff_hour 5`, expected `repair`): the faulted and baseline canonical records are identical under the pre-drift
+   Atlas spec (30/30 reservations, 66/66 folios equal). Instance 3 (`meridian`/`semantic` decoy `netTotal`, expected
+   `degraded_question`): records identical as well, the connector ignores the decoy field and stays correct.
+
+Items:
+1. When the detector reports no drift signals and the faulted sync is Complete, every engine arm reports `Complete`, no
+   patch, no question (as production does), and the row says "no drift detected". The ladder is not called. On a
+   repair instance this still fails, and the row must still read as a silent miss, never hidden.
+2. An escalation (any arm) that carries an operator question reports `operator_question=True`; the engine's L4
+   escalation carries the question the ladder wrote (if the ladder writes none, the row says so; do not invent one).
+   `grade_arm_outcome` accepts a no-patch escalation with one operator question for `degraded_question`, whether it is
+   reported `Degraded` or `Blocked`. `escalate` instances keep passing with or without a question.
+3. Find the root cause of instance 0: is the cutoff fault not reaching the Atlas served records (generator/serving
+   bug: fix it so the fault changes what the connector reads), or a no-op by design for that vendor (then its expected
+   class is `no_patch`)? For the semantic decoy family, `Complete` with no patch is also accepted (the connector output is
+   correct), alongside `degraded_question`. Add a bench-side sanity report, run on every rehearsal, that lists each
+   instance whose faulted canonical output under the pre-drift spec equals the baseline while its key expects `repair`;
+   such an instance is a generator bug (fail the rehearsal loudly). Keep the verifier free of engine imports (the check
+   lives in `bench/`).
+
+Out of scope (owner decides separately, do not change): engine detection misses on instance 5 (`atlas`/`rename`, every
+folio `business_date` becomes empty, sync still Complete), instance 7 (`legacystay` `minor_major`, every amount ×100,
+sync Complete), instance 4 (`fias_layout`), and the ladder going to L4 without trying L3 for detected classes with no L1
+rule. Do not change engine detection or the ladder in this request.
+
+Tests: unit tests per item (no-signal engine arm → Complete/no patch; question carried and graded both ways; the
+sanity report flags an unchanged-output repair instance). The owner reruns the rehearsal on round 6599930 to close. Do
+not freeze, tag `eval-freeze`, or commit anything under `experiments/beacon/` except labelled rehearsals.
 
 ### REQ-062 — Beacon evaluation: every arm really attempts every instance, and every row is gradable (2026-10-31)
 Status: DONE (sbx1 2026-10-31 -- all 6 items code-done: shared beacon repair context + file prompts for frontier arms, PABX in-process spec + feed serving/derive, /beacon/records fail-closed (judge_error) never 500, wrong_patch only on released+failed with patch/checks named, per-tier token accounting + input/output/reasoning rows, Blocked rows name the step; 16 new/updated unit tests, full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 in the sandbox, then close)
