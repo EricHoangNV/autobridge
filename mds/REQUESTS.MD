@@ -2,7 +2,36 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-31 05:30): **REQ-060 next** (benchmark fairness; the keyed benchmark re-runs after it). Do not start REQ-051 until the owner says so.
+Owner priority (2026-10-31 09:30): **REQ-061 next** (benchmark agent arm; the keyed benchmark re-runs after it). Do not start REQ-051 until the owner says so.
+
+### REQ-061 — Benchmark: the frontier agent arm runs the same model and returns gradable output (2026-10-31)
+Status: OPEN
+Keyed run 2026-10-31 on `d9317e15` (after REQ-060): `frontier_oneshot` is valid (5/6 fixable fixed, 2/6 held back,
+0 wrong shipped), but `frontier_agent` produced nothing on 12/12 rows:
+- Every row: `OpenCodeCliError: opencode CLI failed with exit 1:` after ~3 s, stderr empty. The driver
+  (`bench/baseline_coding_agent.py:OpenCodeCliDriver.run`) raises with stderr only, so the reason (likely on stdout,
+  `--format json` error events) is lost.
+- `OPENCODE_MODEL` is unset, so `-m` is omitted and `opencode run` falls back to its default model. In the sandbox that
+  default is an OpenAI model with no valid key (`invalid_api_key`, `api.openai.com/v1/responses`); this explains the
+  earlier 12/12 `no_output` rows. The repo's `opencode.json` declares provider `meta` with `muse-spark-1.3`.
+- Owner probe: `opencode run --format json ...` launched from Python `subprocess.run(capture_output=True)` in the
+  sandbox hung past 90 s even for "Reply with ok" (with and without `-m meta/muse-spark-1.3`), while the same command
+  from bash returned. Likely waiting on an inherited stdin; check.
+
+Items:
+1. **Same model.** When `OPENCODE_MODEL` is unset, the bench derives it from `FRONTIER_MODEL` in the `provider/model`
+   form opencode accepts (`meta/muse-spark-1.3`); the agent arm's recorded model must equal the one-shot's (the existing
+   `model_mismatch` guard stays). Document it in `.env.example` and `docs/benchmark.md`.
+2. **No hang.** The driver runs `opencode` with `stdin=subprocess.DEVNULL` (and whatever else the probe shows is
+   needed, e.g. the cwd having the provider config), so it never waits on input.
+3. **Failures show their reason.** `OpenCodeCliError` carries the stdout tail and the parsed `error` events; the
+   ablation row's `error` names the actual cause. Find and fix the exit-1 cause seen on `d9317e15`.
+4. **Live preflight.** Before the ablation's agent rows, one live `opencode run` must return text, the model id and
+   token usage; if not, the run stops with the reason (no 12 empty rows).
+5. Tests: unit tests for 1-4 (fake CLI script for exit-1 + stdout error, stdin closed, model derivation). Live check in
+   the sandbox: the preflight passes and one agent scenario (`page_to_cursor`) returns a gradable row.
+Owner step: keyed `BENCH_TRIALS=1 make bench-ablation` re-run in the sandbox.
+
 
 ### REQ-060 — Benchmark: the frontier arms get the engine's repair task, no token limit, agent arm and learning curve fixed (2026-10-31)
 Status: DONE (sbx1 2026-10-31 -- all 6 items code-done: repair-task context + patch/escalate grading, 0 = no limit + token stats, live-CLI parsing via session row + fixture, learning-curve live fix, docs; full gates green + BENCH_TRIALS=1 rehearsal 12/12 matched; owner step: keyed re-run in the sandbox)
