@@ -5,7 +5,7 @@
 Owner priority (2026-11-01 01:30): **REQ-066, then REQ-067** (the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
 
 ### REQ-066 — Beacon protocol pins the frontier model (2026-11-01)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-31 18:04)
 The owner switched every frontier call to Muse Spark 1.3 Contributor (`.env` `FRONTIER_MODEL=muse-spark-1.3-contributor`,
 price entry in `cca4eb70`). The frozen beacon protocol (`experiments/beacon/protocol.md`, written by `freeze()` in
 `bench/beacon_run.py`) names the round, faults, arms and rules but not the model, so the freeze cannot prove the model
