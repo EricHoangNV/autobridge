@@ -5,7 +5,7 @@
 Owner priority (2026-10-31 14:40): **REQ-062 next** (beacon evaluation harness; the real freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-062 — Beacon evaluation: every arm really attempts every instance, and every row is gradable (2026-10-31)
-Status: IN_PROGRESS (sbx1 since 2026-10-31 07:33)
+Status: DONE (sbx1 2026-10-31 -- all 6 items code-done: shared beacon repair context + file prompts for frontier arms, PABX in-process spec + feed serving/derive, /beacon/records fail-closed (judge_error) never 500, wrong_patch only on released+failed with patch/checks named, per-tier token accounting + input/output/reasoning rows, Blocked rows name the step; 16 new/updated unit tests, full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 in the sandbox, then close)
 Owner rehearsal 2026-10-31 on `afd0283a`: `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` in the sandbox
 (keyed). Output copied to `tmp/beacon-rehearsal-6599930/` (gitignored; read it in place from the main checkout:
 `protocol.md`, `instances.json`, `grades.jsonl`, `summary.json`). This is the first beacon rehearsal ever run; the real

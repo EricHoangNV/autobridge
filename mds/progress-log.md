@@ -3993,3 +3993,32 @@ Benchmark fairness fix, all 6 items: (1) frontier arms get the engine's repair t
 **Notes for next iteration:**
 - Owner step: keyed `BENCH_TRIALS=1 make bench-ablation` in the sandbox, then close REQ-061/052/028/060 verify items.
 - One full-suite run showed a transient DNS-guard ERROR (`gateway.docker.internal`); isolated pass + next full run green. If it recurs, suspect sandbox DNS flake, not bench code.
+
+## REQ-062 — Beacon evaluation: every arm really attempts every instance
+**Date:** 2026-10-31
+**Ref:** REQUESTS.MD REQ-062 (owner rehearsal 2026-10-31 on `afd0283a`, round 6599930)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Frontier arms on beacon instances now receive the engine's repair task: new `beacon_bench_context()` (pre-drift spec YAML + faulted-sync evidence from the public descriptor + public seed only) rendered through the same file-based bench prompts; `run_frontier_oneshot_arm` / `run_frontier_agent_arm` accept a prebuilt `context` kwarg.
+- Engine arms reuse their single derive observation for the ladder and attach `beacon_diagnostics` to the result; `BeaconArmGrade` gains `blocked_step` (detection vs ladder, with reason), `patch_summary`, `records_failed_checks`, and input/output/reasoning token fields.
+- `wrong_patch_released` counts only patches that reached a release (records verified) and failed the outcome grade; frontier escalate answers map to Blocked+question.
+- Per-tier token accounting (frontier input no longer lands in `small_tokens`); summary adds per-arm min/median/max total tokens; beacon default stays the dev 200k ceiling with env/CLI overrides.
+- PABX: docs-built v3 in-process spec, in-process feed serving with live-alias semantics, announced-vs-mapped derive producing ladder-consumable `keys_changed` wire evidence.
+- Verifier: `judge_produced_records` fails closed with bounded `judge_error`; grading errors map to 400, never 500.
+
+**Key decisions:**
+- Did not redesign detection for beacon-only shapes (renames of unchecked fields sync Complete → honestly Blocked with a stated reason); rows must attempt and explain, not fix everything.
+- FIAS candidate verification is the in-process feed sync (same serving code as live), documented as the framed-transport records gate; the verifier still judges the outcome class.
+- Pure-addition FIAS layouts (mapping intact) block at detection — patching a working connector would be the wrong answer.
+
+**Files changed:**
+- `bench/beacon_run.py` — grade fields, shared context, grading semantics, ceiling/parity plumbing
+- `bench/ablation.py` — optional prebuilt-context kwargs on both frontier runners
+- `bench/faults.py` — FIAS beacon serving (`beacon_fias_layout`, feed rows, sync pair)
+- `config/beacon_vendors.yaml` — fias-pabx spec (docs/v3) + docs ref
+- `verifier/beacon.py`, `verifier/app.py` — fail-closed judge + `judge_error` bound
+- `docs/benchmark.md` — beacon grading/task/accounting rewrite
+- Tests: `test_autobridge_beacon_run{,_extra}.py`, `test_verifier_beacon_endpoints.py`
+
+**Tests:** 16 new/updated unit tests; `make test` 2951 + 136 + 409 passed (90.13% / 91.00% / 90.48%), UI 295 passed, lint + typecheck green. Owner step: keyed `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` in the sandbox.

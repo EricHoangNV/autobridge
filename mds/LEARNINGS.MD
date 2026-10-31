@@ -653,3 +653,12 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The model id is nowhere in the stream; the CLI records it in its session database (`~/.local/share/opencode/opencode.db`, `session.model` = `{"id","providerID"}` plus authoritative totals) — the only "from the run itself" source.
 - The fix ships the capture as a fixture (`tests/fixtures/opencode/opencode_run_sample.jsonl`, no secrets) with a test pinning text/usage/session parsing, and the driver resolves model+totals from the session row, raising loudly on error-only streams.
 - **Rule:** Any parser for a third-party CLI's machine output ships with a captured-output fixture from the real binary at a pinned version, and a test asserting every field the pipeline consumes (answer, model id, token usage); doc-shaped unit tests alone always drift from the wire.
+
+## 72. A silent fallback path that answers a different question invalidates the comparison
+
+**Context:** REQ-062 beacon fix (sbx1 2026-10-31) — on beacon instances the frontier arms produced whole specs from docs while the engine repaired a pre-drift spec: the scoreboard compared two different tasks. Root cause was not the frontier code but dispatch: `_run_arm` called the ablation frontier runners without a case, and the runners' `case is None` branch silently took the legacy whole-spec path (no spec, no fault evidence, no file prompt, no context hash) instead of failing loudly.
+
+- The rehearsal symptom looked like model failure (0 verified, `patch=False` rows) but was harness starvation: the arms never received the task. Same signature as learning 71 (null-looking rows blamed the model), one level up — the row shape was valid, the question was wrong.
+- The fix routes both sides through one shared builder (`beacon_bench_context`, from public descriptor + public seed only) and pins parity with a test: both frontier result hashes equal the shared context hash, whose spec is byte-identical to the engine's pre-drift spec.
+
+**Rule:** When two arms must answer the same question, build the question once and hand the identical object to both — never let each arm resolve its own inputs with a silent legacy fallback. A test must assert the shared input's hash across arms, not just that each arm ran.
