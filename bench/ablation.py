@@ -201,9 +201,18 @@ _FORBIDDEN_CASE_KEYS = frozenset(
 )
 
 #: Derived drift classes that justify a model climb (phase 2). Deterministic
-#: first (plan §2.5): every other class — structural, auth, transport,
-#: capability, duplicate, unknown-with-nothing-observed — runs the
-#: deterministic ladder only, with zero model calls.
+#: first (plan §2.5): the climb runs only when the deterministic ladder
+#: produced no patch. REQ-064 B2: L3 runs for every detected drift class
+#: with no deterministic fix — not only semantic ambiguity — with the
+#: same repair context and prompt shape (config/prompts/l3_patch.md).
+#: Transport, auth and capability classes never climb (no spec fix exists
+#: for them); the verifier gate still decides every proposal. The set
+#: The semantic-ambiguity subset (engine-enumerated money hypotheses).
+#: Every other eligible class climbs with no hypotheses (L2 skipped, L3
+#: directly) but with the generic detected-evidence repair context. The
+#: eligible set lives in :mod:`autobridge.repair.controller`
+#: (``_L3_CLIMB_CLASSES`` — one source of truth for the bench and the
+#: live repair path).
 _MODEL_AMBIGUITY_CLASSES = frozenset({"SEMANTIC_VALUE_DRIFT"})
 
 #: Case data lives in config/ablation_cases.yaml (vendor names stay out of
@@ -578,6 +587,13 @@ class DerivedDiagnostics:
     # Complete, production opens no repair run — the arm reports Complete
     # with no patch (the ladder is never called).
     faulted_outcome: str = ""
+    # REQ-064 B2: the repair context for an L3 attempt when no
+    # deterministic rule fits — generic L3 evidence (affected entity's
+    # spec subtree, redacted raw records, observed detector facts) and the
+    # fault parcel the dry-run gate judges proposals against. Built from
+    # the same two observations as the signals above, never from labels.
+    l3_evidence: dict[str, Any] | None = None
+    dry_run_fault: dict[str, Any] | None = None
 
 
 def derive_from_summaries(
@@ -611,15 +627,32 @@ def derive_from_summaries(
     # repair itself still runs on the unannotated equal-input spec.
     detection_spec = spec_with_baseline_wire_keys(spec, baseline_summary.get("operation_results", {}))
     signals = signals_from_sync(
-        faulted_summary, spec=detection_spec, previous_fingerprint=prev_fp, current_fingerprint=curr_fp
+        faulted_summary, spec=detection_spec, previous_fingerprint=prev_fp, current_fingerprint=curr_fp,
+        baseline_summary=baseline_summary,
     )
     classification = classify(signals)
+    # REQ-064 B2: the L3 repair context, derived from the same two
+    # observations (never labels) — the ladder climbs from it when no
+    # deterministic rule fits.
+    from autobridge.repair import semantic as _semantic  # noqa: PLC0415
+    from autobridge.repair.dryrun import build_dry_run_fault as _build_dry_run_fault  # noqa: PLC0415
+
+    try:
+        l3_evidence = _semantic.build_detected_l3_evidence(spec, faulted_summary, list(signals)) or None
+    except Exception:
+        l3_evidence = None
+    try:
+        dry_run_fault = _build_dry_run_fault(faulted_summary)
+    except Exception:
+        dry_run_fault = None
     return DerivedDiagnostics(
         drift_class=classification.drift_class,
         fingerprint_delta=delta,
         signals=tuple(signals),
         classification_reason=classification.reason,
         faulted_outcome=str(faulted_summary.get("outcome", "")),
+        l3_evidence=l3_evidence,
+        dry_run_fault=dry_run_fault,
     )
 
 
@@ -824,16 +857,28 @@ def run_engine_arm(
         )
         # Phase 1: deterministic ladder first (never a model call).
         result = ctrl.handle(provider=None, hypotheses=None, enumerator_yield_count=None, **common)
-        # Phase 2: model climb only for derived semantic ambiguity with
-        # engine-enumerated hypotheses (deterministic first, models last).
-        if result.decision != "propose" and diag.drift_class in _MODEL_AMBIGUITY_CLASSES:
-            hyps = enumerate_hypotheses(docs_ref=case.docs_ref, scenario_id=case.scenario_id)
-            if hyps:
+        # Phase 2: REQ-064 B2 — when no deterministic rule produced a
+        # patch, the ladder tries L3 before escalating, for every
+        # detected class with a possible spec fix (models last). The
+        # semantic path keeps its engine-enumerated hypotheses; every
+        # other class climbs straight to L3 with the generic
+        # detected-evidence repair context from the same observations.
+        from autobridge.repair.controller import _L3_CLIMB_CLASSES  # noqa: PLC0415
+
+        if result.decision != "propose" and diag.drift_class in _L3_CLIMB_CLASSES:
+            if diag.drift_class in _MODEL_AMBIGUITY_CLASSES:
+                hyps = enumerate_hypotheses(docs_ref=case.docs_ref, scenario_id=case.scenario_id)
+            else:
+                hyps = ()
+            if hyps or diag.drift_class not in _MODEL_AMBIGUITY_CLASSES:
                 active_provider = provider or ablation_provider()
                 result = ctrl.handle(
                     provider=active_provider,
                     hypotheses=list(hyps),
                     enumerator_yield_count=len(hyps),
+                    evidence=getattr(diag, "l3_evidence", None),
+                    validate_against=dict(case.spec),
+                    dry_run_fault=getattr(diag, "dry_run_fault", None),
                     **common,
                 )
         elapsed_ms = (time.monotonic() - start) * 1000.0

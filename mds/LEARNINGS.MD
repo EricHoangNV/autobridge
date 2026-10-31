@@ -662,3 +662,12 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The fix routes both sides through one shared builder (`beacon_bench_context`, from public descriptor + public seed only) and pins parity with a test: both frontier result hashes equal the shared context hash, whose spec is byte-identical to the engine's pre-drift spec.
 
 **Rule:** When two arms must answer the same question, build the question once and hand the identical object to both — never let each arm resolve its own inputs with a silent legacy fallback. A test must assert the shared input's hash across arms, not just that each arm ran.
+
+## 73. A present-but-empty wire key is a different drift from a missing one — and keys are not evidence siblings
+
+**Context:** REQ-064 B1 (sbx1 2026-10-31) — two beacon silent corruptions (rename leaving the old path blank-but-present; minor/major ×100 with identical wire shape) synced `Complete` with 0 drift signals. The first fix attempt fired the new `mapped_field_emptied` signal on 3 dev scenarios that already classified correctly.
+
+- Root cause: the observer counted fully-absent keys (the existing `keys_changed` rename shape owns those) and measured "populated before" on canonical records (always populated — the wrong level). It also fired on join-path prefixes (`$._joined`) and counted the entity id key as a "populated sibling".
+- The split that holds: `keys_changed` owns keys gone from every record; `mapped_field_emptied` owns keys that still arrive (present in ≥10% of rows) but are empty/missing in ≥90% — with the baseline measured on the same wire key in the baseline's wire rows, or (no baseline) a populated non-key sibling mapped field on the same rows. Id keys prove nothing about feed liveness.
+- Verified by construction: the 3 previously-firing dev scenarios went silent while the beacon rename (100% blank, 100% populated before) still fires — then pinned with a dev-12 silence sweep run before/after.
+- **Rule:** A new detector signal must name the exact wire shape the existing signals do not cover, measure "before" at the same level it measures "now" (wire vs wire, never canonical-vs-wire), and ship with a before/after silence sweep over the existing scenario catalog — a signal that fires anywhere old signals already fire is redundancy that will page someone at 3 AM.

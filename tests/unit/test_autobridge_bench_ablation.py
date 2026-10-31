@@ -276,7 +276,11 @@ def test_engine_arm_handle_kwargs_carry_no_case_diagnostics(monkeypatch: pytest.
         fresh = ab.derive_diagnostics(case.spec, scenario_id=sid, connector_id=conn, seed=inputs.seed)
         for call in seen:
             assert call["drift_class"] == fresh.drift_class, sid
-            assert "validate_against" not in call, sid
+            # REQ-064 B2: the climb may carry the pre-drift spec as its
+            # apply-check target — the same equal input as ``spec``, never a
+            # post-drift reference. Anything else is still smuggling.
+            if "validate_against" in call:
+                assert call["validate_against"] == call["spec"], sid
             assert call["extra"] == {}, sid
             if call.get("hypotheses") is not None:
                 fresh_hyps = ab.enumerate_hypotheses(docs_ref=case.docs_ref, scenario_id=sid)

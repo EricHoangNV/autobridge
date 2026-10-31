@@ -20,6 +20,9 @@ Design principles (plan §1):
 3. **Deterministic first, models last** — ladder L0 → L1 → L2 → L3 → L4;
    every model call goes through `LLMProvider` + `Budget` and lands in
    `ModelCall`; known repair patterns use L0/L1 only (`frontier_tokens == 0`).
+   L3 runs whenever a drift is detected and no deterministic rule fits
+   (any detected class — not only semantic/unknown — with the same
+   patch-or-escalate prompt; transport/auth/capability never climb).
 4. **Success is not a 200** — every `SyncRun` ends `Complete | Degraded |
    Blocked` with the unmet criterion named.
 5. **Money is `Decimal`, dates are property-local business dates** end to end.

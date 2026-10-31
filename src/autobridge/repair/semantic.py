@@ -547,3 +547,111 @@ def build_l3_evidence(
             summary, money_fields={field}, limit=2
         ),
     }
+
+
+#: Closed transform set the L3 patch may name (same list as
+#: :func:`build_l3_evidence`; the ladder never invents transforms).
+_L3_TRANSFORMS: tuple[str, ...] = (
+    "date_local",
+    "datetime_utc",
+    "money",
+    "enum_map",
+    "flatten",
+    "coalesce",
+    "const",
+    "concat",
+    "business_date",
+)
+
+
+def _detected_entity_field(signals: list[Any] | tuple[Any, ...] | None) -> tuple[str | None, str | None]:
+    """Best (entity, canonical field) for a detected drift's L3 evidence.
+
+    Prefers the silent-corruption and wire signals that name both, then
+    any signal carrying an entity. ``(None, None)`` when nothing names an
+    entity — the L3 prompt still runs on the drift class alone.
+    """
+    ordered: list[Any] = list(signals or [])
+    by_kind: dict[str, list[Any]] = {}
+    for sig in ordered:
+        kind = sig.kind if not isinstance(sig, dict) else sig.get("kind")
+        if isinstance(kind, str):
+            by_kind.setdefault(kind, []).append(sig)
+
+    def _details(sig: Any) -> dict[str, Any]:
+        raw = sig.get("details") if isinstance(sig, dict) else getattr(sig, "details", None)
+        return raw if isinstance(raw, dict) else {}
+
+    for kind in ("mapped_field_emptied", "money_scale_shift", "unknown_enum", "keys_changed"):
+        for sig in by_kind.get(kind, []):
+            det = _details(sig)
+            entity = det.get("entity")
+            if not isinstance(entity, str) or not entity:
+                if kind == "unknown_enum":
+                    continue
+                entity = sig.entity if not isinstance(sig, dict) else sig.get("entity")
+                if not isinstance(entity, str) or not entity:
+                    continue
+            field: Any = None
+            if kind == "mapped_field_emptied":
+                cfs = det.get("canonical_fields")
+                field = cfs[0] if isinstance(cfs, list) and cfs and isinstance(cfs[0], str) else det.get("wire_key")
+            elif kind == "money_scale_shift":
+                field = det.get("money_field")
+            elif kind == "unknown_enum":
+                field = det.get("field") or (sig.entity if not isinstance(sig, dict) else sig.get("entity"))
+            if not isinstance(field, str) or not field:
+                field = None
+            return entity, field
+    for sig in ordered:
+        entity = sig.entity if not isinstance(sig, dict) else sig.get("entity")
+        if isinstance(entity, str) and entity:
+            return entity, None
+    return None, None
+
+
+def build_detected_l3_evidence(
+    spec: dict[str, Any],
+    summary: dict[str, Any] | None,
+    signals: list[Any] | tuple[Any, ...] | None,
+) -> dict[str, Any]:
+    """Redacted L3 evidence for a detected drift with no deterministic fix (REQ-064 B2).
+
+    The generic counterpart of :func:`build_l3_evidence` (which is
+    money-climb specific): the affected entity's patchable spec subtree
+    with exact JSON Pointers, one or two redacted raw vendor records, and
+    the observed detector facts (signal kinds + one-line messages). Never
+    secrets, base URLs or auth (the subtree carries fields only), never
+    instance parameters or answer keys — only the detector's signals and
+    the faulted sync's own records. ``{}`` when no signal names an
+    entity; the L3 prompt then renders "(none recorded)" blocks.
+    """
+    if not isinstance(spec, dict):
+        return {}
+    entity, field = _detected_entity_field(signals)
+    if entity is None:
+        return {}
+    signal_facts: list[dict[str, str]] = []
+    for sig in list(signals or [])[:8]:
+        kind = sig.get("kind") if isinstance(sig, dict) else getattr(sig, "kind", "?")
+        message = sig.get("message") if isinstance(sig, dict) else getattr(sig, "message", "")
+        signal_facts.append(
+            {"kind": str(kind), "message": str(message or "")[:300]}
+        )
+    money_fields = {field} if field else set()
+    return {
+        "detected": {
+            "entity": entity,
+            **({"field": field} if field else {}),
+            "signals": signal_facts,
+        },
+        "patch_target": {
+            "document": "connector spec",
+            "entity": entity,
+            "allowed_ops": ["replace", "add"],
+            "allowed_pointers": allowed_l3_pointers(spec, entity),
+            "transforms": list(_L3_TRANSFORMS),
+        },
+        "spec_subtree": spec_subtree_for_entity(spec, entity),
+        "raw_records": raw_records_of_summary(summary, money_fields=money_fields, limit=2),
+    }

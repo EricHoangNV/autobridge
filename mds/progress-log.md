@@ -4032,3 +4032,6 @@ format excludes baseline, meridian rename exclusions, fias_layout renames >=1) +
 budget). Reverted one approach (moving posted_at broke inverse_canonicalize). Full gates:
 2958+138+413 passed, 90.14/91.04/90.42%, UI 295, lint/typecheck green. Owner step: keyed
 `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1`, then close.
+
+## 2026-10-31 12:51–14:00 UTC — REQ-064 DONE (sbx1, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Engine catches silent corruption and tries L3 before escalating: B1a emptied-mapped-field → SCHEMA_RENAME, B1b exact power-of-ten money shift → SEMANTIC_VALUE_DRIFT (both fire on r3 instances 5/7, silent on baselines + all 12 dev scenarios with and without baseline); B2 provider-wired climb attempts L3 with l3_patch context for every detected class with no rule (structural proposals become verifier-gated candidates, ambiguity escalates with the question) across bench arms, live deferral and repair jobs; docs updated. Full gates: 2984+138+413 passed (90.10/91.04/90.42%), UI 295, lint/typecheck green; unkeyed arm behaviour identical (stash-compare). Owner step: keyed rehearsal-4 run, then close.

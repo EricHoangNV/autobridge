@@ -699,3 +699,55 @@ def test_reason_and_details_present() -> None:
     assert result.reason
     assert "matched_by" in result.details
     assert "signal_counts" in result.details
+
+
+# ---------------------------------------------------------------------------
+# REQ-064 B1: silent-corruption classification (existing classes, no new one)
+# ---------------------------------------------------------------------------
+
+
+def test_mapped_field_emptied_classifies_schema_rename() -> None:
+    """REQ-064 B1a: a mapped wire key gone dark is a SCHEMA_RENAME for the
+    ladder (L1's rename rule, then L3) — never a silent Complete."""
+    sig = _sig(
+        "mapped_field_emptied",
+        operation="list_folios",
+        entity="FolioCharge",
+        details={
+            "entity": "FolioCharge",
+            "wire_key": "businessDate",
+            "canonical_fields": ["business_date"],
+            "empty_count": 84,
+            "total_count": 84,
+        },
+    )
+    result = classify([sig])
+    assert result.drift_class == "SCHEMA_RENAME"
+    assert result.supporting_signal_kinds == ["mapped_field_emptied"]
+
+
+def test_money_scale_shift_classifies_semantic() -> None:
+    """REQ-064 B1b: an exact power-of-ten money move with identical keys
+    and counts is a minor/major-units SEMANTIC_VALUE_DRIFT."""
+    sig = _sig(
+        "money_scale_shift",
+        entity="Reservation",
+        details={
+            "entity": "Reservation",
+            "money_field": "total_amount",
+            "factor": "100",
+            "matched_pairs": 30,
+            "shifted_pairs": 30,
+        },
+    )
+    result = classify([sig])
+    assert result.drift_class == "SEMANTIC_VALUE_DRIFT"
+    assert result.supporting_signal_kinds == ["money_scale_shift"]
+
+
+def test_silent_corruption_uses_existing_classes_only() -> None:
+    """Both REQ-064 shapes land in the 12 canonical classes (still 12)."""
+    from autobridge.drift.classifier import DRIFT_CLASSES as _classes
+
+    assert len(_classes) == 12
+    assert "SCHEMA_RENAME" in _classes and "SEMANTIC_VALUE_DRIFT" in _classes

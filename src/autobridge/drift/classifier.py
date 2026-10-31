@@ -388,6 +388,29 @@ def _match_wire_schema_rename(
     )
 
 
+def _match_emptied_field(grouped: dict[str, list[DriftSignal]]) -> tuple[str, list[str], str] | None:
+    """A spec-mapped wire key gone dark (REQ-064 B1a).
+
+    The rename that leaves the old path empty: the vendor renamed the
+    dataset field, the serializer still emits the old wire key, but blank
+    across ~all rows while the field was populated before (or populated
+    siblings prove the feed is alive). A mapped source that went dark is
+    a schema rename for the ladder — L1's rename rule, then L3 — never a
+    silent Complete.
+    """
+    if "mapped_field_emptied" not in grouped:
+        return None
+    first = grouped["mapped_field_emptied"][0]
+    details = first.details if isinstance(first.details, dict) else {}
+    wire_key = details.get("wire_key", "?")
+    entity = details.get("entity") or "entity"
+    return (
+        "SCHEMA_RENAME",
+        ["mapped_field_emptied"],
+        f"Mapped wire key {wire_key} went dark for {entity} ({first.message[:160]})",
+    )
+
+
 def _match_schema_from_types(
     grouped: dict[str, list[DriftSignal]], signals: list[DriftSignal]
 ) -> tuple[str, list[str], str] | None:
@@ -419,7 +442,12 @@ def _match_schema_from_types(
 
 
 def _match_semantic(grouped: dict[str, list[DriftSignal]]) -> tuple[str, list[str], str] | None:
-    # SEMANTIC_VALUE_DRIFT is schema-valid but invariant fails (money, date, counts).
+    # SEMANTIC_VALUE_DRIFT is schema-valid but values changed meaning
+    # (money, dates, counts, units). REQ-064 B1b: an exact power-of-ten
+    # money shift with identical keys and counts is a minor/major-units
+    # confusion — schema-valid, values wrong.
+    if "money_scale_shift" in grouped:
+        return ("SEMANTIC_VALUE_DRIFT", ["money_scale_shift"], "Money values shifted by a power of ten (minor/major units)")
     if "invariant_failure" in grouped:
         return ("SEMANTIC_VALUE_DRIFT", ["invariant_failure"], "Invariant failure indicates semantic drift")
     if "no_loss" in grouped:
@@ -459,6 +487,7 @@ _MATCHERS: list[Callable[..., tuple[str, list[str], str] | None]] = [
     _match_transient,
     _match_pagination_change,
     _match_wire_schema_rename,
+    _match_emptied_field,
     _match_schema_from_types,
     _match_semantic,
 ]

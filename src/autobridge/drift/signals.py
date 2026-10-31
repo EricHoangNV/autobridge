@@ -48,6 +48,9 @@ SignalKind = Literal[
     "invariant_failure",
     "canary_failed",
     "canary_pagination_regression",
+    # REQ-064 B1: silent-corruption shapes (Complete sync, values wrong).
+    "mapped_field_emptied",
+    "money_scale_shift",
 ]
 
 Severity = Literal["low", "medium", "high", "critical"]
@@ -165,9 +168,9 @@ def _severity_for_kind(kind: str) -> Severity:
         return "critical"
     if kind in {"outcome_degraded", "no_loss", "repeated_cursor", "pagination_changed"}:
         return "high"
-    if kind in {"keys_changed", "types_changed", "fingerprint_changed"}:
+    if kind in {"keys_changed", "types_changed", "fingerprint_changed", "mapped_field_emptied"}:
         return "medium"
-    if kind in {"zero_records", "checkpoint_stale", "invariant_failure"}:
+    if kind in {"money_scale_shift", "zero_records", "checkpoint_stale", "invariant_failure"}:
         return "high"
     if kind == "rate_limited":
         return "medium"
@@ -727,6 +730,397 @@ def _observe_wire_schema(
     return signals
 
 
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Silent-corruption evidence (REQ-064 B1).
+#
+# Both shapes below keep a Complete sync honest: the vendor serves data
+# that maps cleanly (no invariant fails) but is wrong. They derive from
+# the pre-drift spec and the run's own observations only — never from
+# instance parameters, answer keys or the verifier.
+#
+# Thresholds are conservative on purpose: a mapped field that goes dark
+# across ~all rows while its siblings stay populated, and money values
+# that move by an exact power of ten across ~all rows, are not shapes a
+# healthy vendor produces. Verified silent on the dev ablation's 12
+# scenarios (where no signal fired before), the demo decks and the
+# blank-slate demo.
+# ---------------------------------------------------------------------------
+
+#: A mapped field counts as dark only when this fraction (or more) of the
+#: entity's wire rows leave it empty or missing ("most rows").
+_EMPTIED_EMPTY_RATE = 0.9
+#: ... over at least this many wire rows (small entities never fire).
+_EMPTIED_MIN_ROWS = 10
+#: A mapped field counts as dark only when the wire key still arrives
+#: (present in at least this fraction of rows). A key gone from every
+#: record is the existing ``keys_changed`` rename shape, never this one —
+#: this also excludes synthetic path prefixes (joins) that never arrive
+#: on the wire at all.
+_EMPTIED_PRESENT_RATE = 0.1
+#: With a baseline to compare against, the same wire key must have been
+#: populated in at least this fraction of baseline wire rows.
+_EMPTIED_BASELINE_POPULATED_RATE = 0.8
+#: Without a baseline, at least one sibling mapped key must be populated
+#: in at least this fraction of the same rows (a fully-dark entity is not
+#: evidence — it may be an idle feed, see the zero_records rule).
+_EMPTIED_SIBLING_POPULATED_RATE = 0.9
+
+#: A money field counts as scale-shifted only when this fraction (or more)
+#: of the matched non-zero row pairs moves by the same exact power of ten.
+_SCALE_MATCH_RATE = 0.9
+#: ... over at least this many matched non-zero pairs.
+_SCALE_MIN_PAIRS = 5
+#: Minor/major-unit confusions move by 10^1..10^3; anything larger is not
+#: a units shift (and anything smaller than 10^1 is not a power-of-ten
+#: shift at all).
+_SCALE_MAX_EXPONENT = 3
+
+
+def _wire_value_empty(value: Any) -> bool:
+    """Whether a wire value counts as empty (missing data, not zero).
+
+    ``0``/``0.00``/``False`` are real values and never empty; only
+    ``None``, missing keys and blank strings are.
+    """
+    if value is None:
+        return True
+    return bool(isinstance(value, str) and not value.strip())
+
+
+def _entity_key_top_key(spec: Any, entity: str) -> str | None:
+    """Top-level wire key of an entity's join key (identifiers, not values)."""
+    if not isinstance(spec, dict):
+        return None
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return None
+    ent_spec = entities.get(entity)
+    if not isinstance(ent_spec, dict):
+        return None
+    key_path = ent_spec.get("key")
+    if isinstance(key_path, str) and key_path.startswith("$.") and len(key_path) > 2:
+        return key_path[2:].split(".")[0]
+    return None
+
+
+def _canonical_fields_for_wire_key(spec: Any, entity: str, wire_key: str) -> list[str]:
+    """Canonical field names whose path top key is *wire_key*."""
+    out: list[str] = []
+    if not isinstance(spec, dict):
+        return out
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return out
+    ent_spec = entities.get(entity)
+    if not isinstance(ent_spec, dict):
+        return out
+    fields = ent_spec.get("fields")
+    if not isinstance(fields, dict):
+        return out
+    for fname, fm in fields.items():
+        if not isinstance(fname, str) or not isinstance(fm, dict):
+            continue
+        paths: list[Any] = []
+        if fm.get("path") is not None:
+            paths.append(fm.get("path"))
+        extra_paths = fm.get("paths")
+        if isinstance(extra_paths, list):
+            paths.extend(extra_paths)
+        for path in paths:
+            if (
+                isinstance(path, str)
+                and path.startswith("$.")
+                and len(path) > 2
+                and path[2:].split(".")[0] == wire_key
+            ):
+                out.append(fname)
+                break
+    return out
+
+
+def _spec_money_fields(spec: Any) -> dict[str, list[str]]:
+    """Canonical money fields per entity (``money`` transform in the spec)."""
+    out: dict[str, dict[str, bool]] = {}
+    if not isinstance(spec, dict):
+        return {}
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return {}
+    for ent_name, ent_spec in entities.items():
+        if not isinstance(ent_name, str) or not isinstance(ent_spec, dict):
+            continue
+        fields = ent_spec.get("fields")
+        if not isinstance(fields, dict):
+            continue
+        for fname, fm in fields.items():
+            if not isinstance(fname, str) or not isinstance(fm, dict):
+                continue
+            transforms = fm.get("transform")
+            if not isinstance(transforms, list):
+                continue
+            for tr in transforms:
+                name: Any = None
+                if isinstance(tr, str):
+                    name = tr
+                elif isinstance(tr, dict):
+                    name = tr.get("name")
+                if name == "money":
+                    out.setdefault(ent_name, {})[fname] = True
+                    break
+    return {ent: sorted(names) for ent, names in out.items()}
+
+
+def _canonical_key_of(rec: dict[str, Any]) -> str | None:
+    """Join key for matching canonical rows (same fallback as fingerprints)."""
+    for kf in ("reservation_id", "charge_id", "id", "key"):
+        if kf in rec and rec[kf] is not None:
+            return str(rec[kf])
+    if rec:
+        return str(next(iter(rec.values())))
+    return None
+
+
+def _decimal_of(value: Any) -> Any | None:
+    """Best-effort Decimal coercion for money comparison (None when unparseable)."""
+    from decimal import Decimal as _Decimal  # noqa: PLC0415
+
+    try:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, _Decimal):
+            return value
+        if isinstance(value, int):
+            return _Decimal(value)
+        if isinstance(value, float):
+            return None
+        if isinstance(value, str):
+            text = value.strip().replace(",", "")
+            if not text:
+                return None
+            return _Decimal(text)
+    except Exception:
+        return None
+    return None
+
+
+def _observe_wire_emptied_fields(
+    spec: Any,
+    operation_results: dict[str, Any],
+    baseline_operation_results: dict[str, Any] | None = None,
+    *,
+    source_run_id: str | None = None,
+) -> list[DriftSignal]:
+    """Emit ``mapped_field_emptied`` for spec-mapped wire keys gone dark.
+
+    A mapped wire key that still arrives but is empty or missing in >= 90%
+    of an entity's wire rows (>= 10 rows) while it was populated before is
+    the rename that leaves the old path empty: the vendor renamed the
+    dataset field, the serializer still emits the old key, but blank. With
+    a baseline (bench/beacon derive path) "populated before" is measured
+    on the same wire key in the baseline's wire rows (>= 80%); without one
+    (live sync) a populated sibling mapped key on the same rows stands in
+    (>= 90% populated — a healthy vendor does not blank one documented
+    field across ~all rows while its neighbours stay populated). A key
+    gone from every record is the existing ``keys_changed`` rename shape
+    and never fires here.
+    """
+    signals: list[DriftSignal] = []
+    if not isinstance(spec, dict) or not isinstance(operation_results, dict):
+        return signals
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return signals
+    baseline_results = (
+        baseline_operation_results if isinstance(baseline_operation_results, dict) else None
+    )
+    for entity in entities:
+        if not isinstance(entity, str):
+            continue
+        op_name, wire_records = _wire_records_for_entity(spec, operation_results, entity)
+        if len(wire_records) < _EMPTIED_MIN_ROWS:
+            continue
+        covered = _spec_field_top_keys(spec, entity)
+        if not covered:
+            continue
+        total = len(wire_records)
+        present_rate: dict[str, float] = {}
+        empty_rate: dict[str, float] = {}
+        for key in covered:
+            present = sum(1 for rec in wire_records if isinstance(rec, dict) and key in rec)
+            empty = sum(
+                1
+                for rec in wire_records
+                if isinstance(rec, dict) and _wire_value_empty(rec.get(key))
+            )
+            present_rate[key] = present / total
+            empty_rate[key] = empty / total
+        populated_rate: dict[str, float] = {
+            key: 1.0 - empty_rate[key] for key in covered
+        }
+        _, baseline_wire = (
+            _wire_records_for_entity(spec, baseline_results, entity)
+            if baseline_results is not None
+            else (None, [])
+        )
+        for key in sorted(covered):
+            if empty_rate[key] < _EMPTIED_EMPTY_RATE:
+                continue
+            if present_rate[key] < _EMPTIED_PRESENT_RATE:
+                # Gone from (almost) every record: the keys_changed
+                # observer owns fully-absent keys (and synthetic path
+                # prefixes that never arrive on the wire).
+                continue
+            canonical_fields = _canonical_fields_for_wire_key(spec, entity, key)
+            baseline_rate: float | None = None
+            if baseline_wire:
+                populated = sum(
+                    1
+                    for rec in baseline_wire
+                    if isinstance(rec, dict) and not _wire_value_empty(rec.get(key))
+                )
+                baseline_rate = populated / len(baseline_wire)
+                if baseline_rate < _EMPTIED_BASELINE_POPULATED_RATE:
+                    # Not populated before (a legitimately sparse field or
+                    # a key the baseline never carried): not drift evidence.
+                    continue
+                evidence = f"baseline populated {baseline_rate:.0%}, now empty {empty_rate[key]:.0%}"
+            else:
+                siblings = [
+                    k
+                    for k in covered
+                    if k != key and populated_rate.get(k, 0.0) >= _EMPTIED_SIBLING_POPULATED_RATE
+                    # The entity key is an identifier, not a measured
+                    # value: a feed carrying only ids with every value
+                    # blank is an idle shape, not drift evidence.
+                    and k != _entity_key_top_key(spec, entity)
+                ]
+                if not siblings:
+                    continue
+                evidence = (
+                    f"empty {empty_rate[key]:.0%} of {total} rows; "
+                    f"sibling {sorted(siblings)[0]} populated"
+                )
+            signals.append(
+                DriftSignal(
+                    kind="mapped_field_emptied",
+                    operation=op_name,
+                    entity=entity,
+                    severity="medium",
+                    message=(
+                        f"Mapped field {key} went dark for {entity}: "
+                        f"{evidence} (the mapped source no longer carries values)"
+                    ),
+                    details={
+                        "entity": entity,
+                        "wire_key": key,
+                        "canonical_fields": canonical_fields,
+                        "empty_count": sum(
+                            1
+                            for rec in wire_records
+                            if isinstance(rec, dict) and _wire_value_empty(rec.get(key))
+                        ),
+                        "total_count": total,
+                        "wire_evidence": "records",
+                        **(
+                            {"baseline_populated_rate": baseline_rate}
+                            if baseline_rate is not None
+                            else {}
+                        ),
+                    },
+                    source_run_id=source_run_id,
+                )
+            )
+    return signals
+
+
+def _observe_money_scale_shift(
+    spec: Any,
+    canonical_records: dict[str, list[dict[str, Any]]] | None,
+    baseline_canonical: dict[str, list[dict[str, Any]]] | None,
+    *,
+    source_run_id: str | None = None,
+) -> list[DriftSignal]:
+    """Emit ``money_scale_shift`` for exact power-of-ten money moves.
+
+    Compares the faulted canonical records against the baseline's: same
+    record count and same record keys, but a money field's values shifted
+    by the same exact power of ten (10^1..10^3, minor/major units) across
+    >= 90% of the matched non-zero pairs (>= 5 pairs). Without a baseline
+    there is nothing to compare a shift against, so this observer stays
+    silent — a single sync cannot tell minor from major units.
+    """
+    signals: list[DriftSignal] = []
+    if baseline_canonical is None or not isinstance(canonical_records, dict):
+        return signals
+    from decimal import Decimal as _Decimal  # noqa: PLC0415
+
+    money_fields = _spec_money_fields(spec)
+    if not money_fields:
+        return signals
+    factors = [_Decimal(10) ** n for n in range(1, _SCALE_MAX_EXPONENT + 1)]
+    for entity, fields in money_fields.items():
+        cur_rows = [r for r in (canonical_records.get(entity) or []) if isinstance(r, dict)]
+        base_rows = [r for r in (baseline_canonical.get(entity) or []) if isinstance(r, dict)]
+        if len(cur_rows) < _SCALE_MIN_PAIRS or len(cur_rows) != len(base_rows):
+            continue
+        cur_by_key: dict[str, dict[str, Any]] = {}
+        for r in cur_rows:
+            k = _canonical_key_of(r)
+            if k is not None and k not in cur_by_key:
+                cur_by_key[k] = r
+        base_by_key: dict[str, dict[str, Any]] = {}
+        for r in base_rows:
+            k = _canonical_key_of(r)
+            if k is not None and k not in base_by_key:
+                base_by_key[k] = r
+        if set(cur_by_key) != set(base_by_key):
+            # Keys changed: not a pure units shift (another drift owns it).
+            continue
+        for money_field in fields:
+            matched = 0
+            hits: dict[str, int] = {}
+            for k in cur_by_key:
+                cur_v = _decimal_of(cur_by_key[k].get(money_field))
+                base_v = _decimal_of(base_by_key[k].get(money_field))
+                if cur_v is None or base_v is None or cur_v == 0 or base_v == 0:
+                    continue
+                matched += 1
+                for factor in factors:
+                    if cur_v == base_v * factor or base_v == cur_v * factor:
+                        hits[str(factor)] = hits.get(str(factor), 0) + 1
+                        break
+            if matched < _SCALE_MIN_PAIRS:
+                continue
+            best = max(hits.values()) if hits else 0
+            if best / matched < _SCALE_MATCH_RATE:
+                continue
+            best_factor = next(f for f, c in hits.items() if c == best)
+            signals.append(
+                DriftSignal(
+                    kind="money_scale_shift",
+                    entity=entity,
+                    severity="high",
+                    message=(
+                        f"Money field {money_field} shifted by x{best_factor} for {entity}: "
+                        f"{best}/{matched} rows (same keys and counts — minor/major units)"
+                    ),
+                    details={
+                        "entity": entity,
+                        "money_field": money_field,
+                        "factor": best_factor,
+                        "matched_pairs": matched,
+                        "shifted_pairs": best,
+                        "wire_evidence": "canonical",
+                    },
+                    source_run_id=source_run_id,
+                )
+            )
+    return signals
+
+
 def spec_with_baseline_wire_keys(
     spec: Any,
     baseline_operation_results: Any,
@@ -784,6 +1178,7 @@ def signals_from_sync(
     previous_fingerprint: Fingerprint | dict[str, Any] | str | None = None,
     current_fingerprint: Fingerprint | dict[str, Any] | None = None,
     source_run_id: str | None = None,
+    baseline_summary: dict[str, Any] | None = None,
 ) -> list[DriftSignal]:
     """Extract drift signals from a sync run summary.
 
@@ -796,6 +1191,14 @@ def signals_from_sync(
     *previous_fingerprint* and *current_fingerprint* enable fingerprint-drift
     signals (when both supplied, a :class:`FingerprintDelta` is computed).
     *source_run_id* is stored as provenance.
+    *baseline_summary* (REQ-064 B1) is a second sync summary of the same
+    spec against the un-faulted shape (the bench/beacon derive path holds
+    both). It feeds the silent-corruption observers: a mapped field that
+    was populated there and is now empty/missing, and money values that
+    moved by an exact power of ten. Callers without a baseline (live
+    syncs) omit it: the emptied-field observer falls back to the
+    populated-sibling shape, and the scale-shift observer stays silent
+    (a single sync cannot tell minor from major units).
     """
     signals: list[DriftSignal] = []
     if not isinstance(sync_summary, dict):
@@ -1021,6 +1424,41 @@ def signals_from_sync(
     )
     signals.extend(
         _observe_wire_schema(spec, operation_results, source_run_id=source_run_id)
+    )
+
+    # Silent-corruption evidence (REQ-064 B1): a mapped field gone dark and
+    # exact power-of-ten money moves. Both derive from the spec and the
+    # run's own observations; the baseline comes from *baseline_summary*
+    # when the caller holds one (bench/beacon derive path).
+    baseline_canonical: dict[str, list[dict[str, Any]]] | None = None
+    baseline_operation_results: dict[str, Any] | None = None
+    if isinstance(baseline_summary, dict):
+        baseline_raw = baseline_summary.get("canonical_records")
+        if isinstance(baseline_raw, dict):
+            baseline_canonical = {
+                ent: [r for r in rows if isinstance(r, dict)]
+                for ent, rows in baseline_raw.items()
+                if isinstance(ent, str) and isinstance(rows, list)
+            }
+        baseline_ops = baseline_summary.get("operation_results")
+        if isinstance(baseline_ops, dict):
+            baseline_operation_results = baseline_ops
+    signals.extend(
+        _observe_wire_emptied_fields(
+            spec,
+            operation_results,
+            baseline_operation_results,
+            source_run_id=source_run_id,
+        )
+    )
+    faulted_canonical = sync_summary.get("canonical_records")
+    signals.extend(
+        _observe_money_scale_shift(
+            spec,
+            faulted_canonical if isinstance(faulted_canonical, dict) else None,
+            baseline_canonical,
+            source_run_id=source_run_id,
+        )
     )
 
     # Fingerprint delta signals (when caller supplies both fingerprints)

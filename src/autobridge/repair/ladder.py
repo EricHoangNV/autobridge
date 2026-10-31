@@ -4,8 +4,15 @@ Levels:
   L0 KnowledgeLookup   profile cache keyed by vendor + fingerprint delta
   L1 RuleRegistry      match(evidence) → candidate patch(es) + required verification level
   L2 SmallModel        rank/complete candidates, propose hypotheses     [budgeted]
-  L3 FrontierModel     hypothesis generation for UNKNOWN / SEMANTIC      [budgeted]
+  L3 FrontierModel     patch-or-escalate when no deterministic rule fits [budgeted]
   L4 Escalate          evidence bundle + precise question for a human
+
+  REQ-064 B2: L3 runs whenever a drift is detected and no deterministic
+  rule fits — any climb class (structural, ambiguous, unknown), with the
+  same repair context and prompt shape (config/prompts/l3_patch.md). For
+  structural breaks a valid proposal becomes a candidate through the
+  verifier gate; ambiguity still escalates with the question. Transport,
+  auth and capability classes never reach L3 (no spec fix exists).
 
 Special handling (W4.4 spec):
   - RATE_LIMIT / TRANSIENT (429/503) → no patch, backoff only
@@ -696,6 +703,10 @@ def _call_frontier_generate(
     docs_excerpt: str | None = None,
 ) -> tuple[list[Any], dict[str, Any], dict[str, Any]]:
     """L3: frontier model generates hypotheses for UNKNOWN/SEMANTIC (REQ-045).
+
+    (The older hypothesis-generation shape. The patch-or-escalate climb
+    in :func:`run_frontier_climb` also uses L3 for every other detected
+    class with no deterministic fix — REQ-064 B2.)
 
     Asserts enumerator yielded fewer than two hypotheses (plan §2.6). The
     model sees the drift class, wire signals, observed evidence, the spec
@@ -2181,7 +2192,14 @@ def run_frontier_climb(
     # still applies.
     dry_run_fault: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then stop (REQ-021).
+    """Climb L0 -> L1 -> L2 -> L3 for a detected drift, then stop (REQ-021, REQ-064 B2).
+
+    Originally the semantic climb; now the general before-escalate climb:
+    L0 consults learned knowledge, L1 tries deterministic rules, L2 ranks
+    the competing hypotheses with the small model (skipped with fewer
+    than two) and L3 calls the frontier model for a patch proposal with
+    the same repair context and prompt shape for every class
+    (config/prompts/l3_patch.md: patch or escalate with one question).
 
     Unlike :func:`run_ladder` (L3-before-L2 per plan §2.6), this orchestrates
     the demonstration order the hard-semantic scenario needs: L0 consults

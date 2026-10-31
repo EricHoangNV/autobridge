@@ -4,46 +4,6 @@
 
 Owner priority (2026-10-31 18:20): **REQ-064 next** (engine: silent corruption detection + L3 before L4; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
-### REQ-064 — Engine: catch silent corruption, and try L3 before escalating when no rule fits (2026-10-31)
-Status: IN_PROGRESS (sbx1 since 2026-10-31 12:51)
-Owner rehearsal 3 on `5d6d3977` (after REQ-063): `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1`, keyed, in
-the sandbox. Output in `tmp/beacon-rehearsal-6599930-r3/` (gitignored; read in place from the main checkout). Grading is
-now clean. Verified: frontier_agent 6/12 (~77k tokens/fault), frontier_oneshot 5/12, autobridge_cold/warm 4/12 (~330),
-engine_no_knowledge 3/12; wrong shipped 0 for every arm. The engine loses on two patterns (per-row `grade_reason`):
-
-- **Silent corruption, reported Complete** (no arm fixes these):
-  - instance 5 (`atlas`/`rename` folio `business_date` -> `totalNet`): every folio's canonical `business_date`
-    becomes `""`, 0 drift signals.
-  - instance 7 (`legacystay`/`semantic` `minor_major` factor 0.5): every reservation `total_amount` and folio `amount`
-    is ×100 (e.g. 174.69 -> 17469.00), 0 drift signals.
-- **Detected, but escalated at L4 without trying L3:** instances 0 (SEMANTIC_VALUE_DRIFT after an L2 call), 1 and 8
-  (ENUM_NEW_VALUE), 2 (SCHEMA_TYPE_CHANGE), 4 and 9 (`fias-pabx` SCHEMA_RENAME), 6 (PAGINATION_CHANGE): "no rule
-  matched X at L4, escalated without a patch". Both frontier arms verified 4 and 9.
-
-Items:
-1. **Detection (B1).** Raise drift signals for both silent-corruption shapes, from the pre-drift spec and the run's own
-   observations (no instance parameters, no answer keys, no verifier imports):
-   a. a field the spec maps that was populated in the baseline/previous observations and is now empty or missing in
-      most rows (the rename that leaves the old path empty);
-   b. a money field whose values shift by a power of ten across most rows while record keys and counts stay the same
-      (minor/major units).
-   Each signal is classified into an existing drift class (or a new one if none fits; say which) so the ladder climbs.
-   Thresholds documented and conservative: no new signal on the dev ablation's 12 scenarios where none fired before,
-   the demo decks, or the blank-slate demo (existing tests stay green; add a regression test for each).
-2. **L3 before L4 (B2).** When a drift class is detected and no L0/L1 rule produces a patch (L2 included where it runs
-   today), the ladder calls L3 with the same repair context and prompt shape as today (`config/prompts/l3_patch.md`:
-   patch or escalate with one question), within the existing budget/ceiling, before escalating. The verifier gate is
-   unchanged: an L3 patch reaches a release only if it passes; otherwise the run escalates with the question. Record
-   on the row which rung produced the outcome and its tokens. Unfixable dev scenarios must still be held back with 0
-   wrong patches shipped.
-3. Update the ladder description wherever the docs say L3 runs only for UNKNOWN/SEMANTIC (plan cross-refs, docs/,
-   knowledge page copy), to: "L3 runs when a drift is detected and no deterministic rule fits".
-
-Tests: unit tests for both detection shapes (fires on the faulted shape, silent on the baseline and on dev scenarios),
-L3 called for a detected class with no rule (fake provider), and L3 not called when L1 fixes it. Full gates green. The
-owner reruns `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` (rehearsal 4) to close. Do not freeze, tag
-`eval-freeze`, or commit anything under `experiments/beacon/` except labelled rehearsals.
-
 ### REQ-063 — Beacon grading: no-drift runs complete, escalation questions count, answer keys match what the connector reads (2026-10-31)
 Status: DONE (sbx1 2026-10-31 -- all 3 items code-done: no-signal Complete + question carried/graded both ways + generator fixes with sanity gate; full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 in the sandbox, then close)
 Owner rehearsal 2 on `441efe7f` (after REQ-062): `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` in the
@@ -1282,6 +1242,47 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-064 — Engine: catch silent corruption, and try L3 before escalating when no rule fits (2026-10-31)
+Status: DONE (sbx1 2026-10-31 -- all 3 items code-done: B1a/B1b silent-corruption signals + existing drift classes, B2 L3-before-L4 with l3_patch context on live/bench/job paths + ladder docs; 26 new + 1 updated tests, full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 in the sandbox (rehearsal 4), then close)
+Owner rehearsal 3 on `5d6d3977` (after REQ-063): `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1`, keyed, in
+the sandbox. Output in `tmp/beacon-rehearsal-6599930-r3/` (gitignored; read in place from the main checkout). Grading is
+now clean. Verified: frontier_agent 6/12 (~77k tokens/fault), frontier_oneshot 5/12, autobridge_cold/warm 4/12 (~330),
+engine_no_knowledge 3/12; wrong shipped 0 for every arm. The engine loses on two patterns (per-row `grade_reason`):
+
+- **Silent corruption, reported Complete** (no arm fixes these):
+  - instance 5 (`atlas`/`rename` folio `business_date` -> `totalNet`): every folio's canonical `business_date`
+    becomes `""`, 0 drift signals.
+  - instance 7 (`legacystay`/`semantic` `minor_major` factor 0.5): every reservation `total_amount` and folio `amount`
+    is ×100 (e.g. 174.69 -> 17469.00), 0 drift signals.
+- **Detected, but escalated at L4 without trying L3:** instances 0 (SEMANTIC_VALUE_DRIFT after an L2 call), 1 and 8
+  (ENUM_NEW_VALUE), 2 (SCHEMA_TYPE_CHANGE), 4 and 9 (`fias-pabx` SCHEMA_RENAME), 6 (PAGINATION_CHANGE): "no rule
+  matched X at L4, escalated without a patch". Both frontier arms verified 4 and 9.
+
+Items:
+1. **Detection (B1).** Raise drift signals for both silent-corruption shapes, from the pre-drift spec and the run's own
+   observations (no instance parameters, no answer keys, no verifier imports):
+   a. a field the spec maps that was populated in the baseline/previous observations and is now empty or missing in
+      most rows (the rename that leaves the old path empty);
+   b. a money field whose values shift by a power of ten across most rows while record keys and counts stay the same
+      (minor/major units).
+   Each signal is classified into an existing drift class (or a new one if none fits; say which) so the ladder climbs.
+   Thresholds documented and conservative: no new signal on the dev ablation's 12 scenarios where none fired before,
+   the demo decks, or the blank-slate demo (existing tests stay green; add a regression test for each).
+2. **L3 before L4 (B2).** When a drift class is detected and no L0/L1 rule produces a patch (L2 included where it runs
+   today), the ladder calls L3 with the same repair context and prompt shape as today (`config/prompts/l3_patch.md`:
+   patch or escalate with one question), within the existing budget/ceiling, before escalating. The verifier gate is
+   unchanged: an L3 patch reaches a release only if it passes; otherwise the run escalates with the question. Record
+   on the row which rung produced the outcome and its tokens. Unfixable dev scenarios must still be held back with 0
+   wrong patches shipped.
+3. Update the ladder description wherever the docs say L3 runs only for UNKNOWN/SEMANTIC (plan cross-refs, docs/,
+   knowledge page copy), to: "L3 runs when a drift is detected and no deterministic rule fits".
+
+Tests: unit tests for both detection shapes (fires on the faulted shape, silent on the baseline and on dev scenarios),
+L3 called for a detected class with no rule (fake provider), and L3 not called when L1 fixes it. Full gates green. The
+owner reruns `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` (rehearsal 4) to close. Do not freeze, tag
+`eval-freeze`, or commit anything under `experiments/beacon/` except labelled rehearsals.
+Resolution: engine detects both silent-corruption shapes (mapped_field_emptied wire-key-gone-dark → SCHEMA_RENAME; money_scale_shift exact power-of-ten with same keys/counts → SEMANTIC_VALUE_DRIFT, baseline-compared) and climbs L3 with the same repair context/prompt before escalating (structural proposals become verifier-gated candidates; ambiguity still escalates with the question); unkeyed engine-arm behaviour byte-identical on all 12 dev scenarios; docs say L3 runs when a drift is detected and no deterministic rule fits.
 
 ### REQ-053 — First owner demo run (UI, keyed, 2026-10-30): fix what broke (2026-10-30)
 Status: DONE (sbx1 2026-10-30)

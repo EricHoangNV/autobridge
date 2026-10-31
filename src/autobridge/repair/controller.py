@@ -195,6 +195,45 @@ def _finalize_repair_row(
     return run
 
 
+#: Drift classes where a valid L3 proposal becomes a repair candidate
+#: (REQ-064 B2). These are well-understood structural breaks: the ladder
+#: tried every deterministic rule, the model named an exact spec member,
+#: and the proposal passed the apply + dry-run gates — so it flows
+#: through the normal verifier gate and operator approval like a rule
+#: patch. Ambiguous classes (``SEMANTIC_VALUE_DRIFT``, ``UNKNOWN``) never
+#: release a model patch: the run escalates with the model's question and
+#: the tested proposal rides the bundle for the human. Transport, auth
+#: and capability classes never reach L3 at all (no spec fix exists).
+_L3_PROPOSE_CLASSES: frozenset[str] = frozenset(
+    {
+        "SCHEMA_RENAME",
+        "SCHEMA_REMOVED",
+        "SCHEMA_TYPE_CHANGE",
+        "PAGINATION_CHANGE",
+        "ENUM_NEW_VALUE",
+    }
+)
+
+#: Classes that never climb to L3, even live (no spec fix exists for
+#: them; the ladder must not burn frontier budget trying).
+_L3_NEVER_CLASSES: frozenset[str] = frozenset(
+    {
+        "CAPABILITY_REMOVED",
+        "AUTH_REVOKED",
+        "AUTH_EXPIRED",
+        "RATE_LIMIT",
+        "TRANSIENT",
+    }
+)
+
+#: Every detected class that may attempt L3 once no deterministic rule
+#: fits (REQ-064 B2): the structural propose-classes plus the ambiguous
+#: ones (which escalate with the question instead of releasing).
+_L3_CLIMB_CLASSES: frozenset[str] = _L3_PROPOSE_CLASSES | frozenset(
+    {"SEMANTIC_VALUE_DRIFT", "UNKNOWN"}
+)
+
+
 class RepairController:
     """Deterministic repair orchestration (L0/L1 for W4.4)."""
 
@@ -427,15 +466,21 @@ class RepairController:
         existing_repair_run_id: str | None = None,
         dry_run_fault: dict[str, Any] | None = None,
     ) -> LadderResult:
-        """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then escalate.
+        """Climb L0 -> L1 -> L2 -> L3 for a drift with a wired provider, then decide.
 
         Wraps :func:`run_frontier_climb` so the controller path records the
         same full climb the demo and the matrix pin ([0, 1, 2, 3, 4]): every
         rung tried with its one-line reason, the L3 frontier call in the
-        usage ledger, and an L4 escalation with one operator question. An
-        L3 proposal is never released here — it is recorded on the rung and
-        left for the caller (verifier/trap check), never placed in
-        ``candidate_patch``.
+        usage ledger, and one operator question when nobody can fix it.
+        Originally the semantic climb (REQ-021/REQ-039): for
+        ``SEMANTIC_VALUE_DRIFT`` (and ``UNKNOWN``) an L3 proposal is never
+        released — it is recorded on the rung and left for the caller
+        (verifier/trap check), never placed in ``candidate_patch``.
+        REQ-064 B2 extends the same climb to every other detected class
+        with no deterministic fix: a valid L3 proposal for a
+        structural break (rename, type change, pagination, enum) becomes a
+        repair candidate (``propose``) through the normal verifier gate
+        and approval; otherwise the run escalates with the question.
         """
         import uuid as _uuid  # noqa: PLC0415 - keep module import cost down
 
@@ -544,6 +589,62 @@ class RepairController:
             }
             if not model_proposal["label"] or not model_proposal["effect"]:
                 model_proposal = None
+        # REQ-064 B2: a valid L3 proposal for a well-understood structural
+        # break is a repair candidate — the ladder tried every deterministic
+        # rule first, the proposal names exact spec members, and it passed
+        # the apply + dry-run gates. It flows through the normal verifier
+        # gate and operator approval like a rule patch (never silent: the
+        # row records rung 3 and its tokens). An explicit model escalation
+        # is respected even here — the model asked for a human decision.
+        proposal_patch: list[dict[str, Any]] | None = None
+        if isinstance(climb.get("proposal"), list) and climb.get("proposal"):
+            proposal_patch = [dict(op) for op in climb["proposal"] if isinstance(op, dict)]
+        model_usage = dict(climb.get("usage", {}))
+        if (
+            proposal_patch
+            and drift_class in _L3_PROPOSE_CLASSES
+            and not (model_escalated and model_question)
+        ):
+            trace.append(
+                {
+                    "level": 3,
+                    "action": "propose",
+                    "reason": (
+                        f"L3 proposed a patch for {drift_class} after no deterministic "
+                        f"rule fit ({scenario_name}); verifier gate and approval decide"
+                    ),
+                    "rule_id": "l3_frontier",
+                    "drift_class": drift_class,
+                    "patch": proposal_patch,
+                }
+            )
+            result = LadderResult(
+                decision="propose",
+                ladder_level_reached=3,
+                candidate_patch=proposal_patch,
+                rule_id="l3_frontier",
+                verification_level="visible",
+                model_usage=model_usage,
+                evidence_ids=_signal_evidence_ids(signals_list),
+                ladder_trace=trace,
+                backoff_only=False,
+                escalation_reason=None,
+                requires_release=True,
+                confidence=0.70,
+            )
+            if session is not None:
+                run = _finalize_repair_row(
+                    session,
+                    result=result,
+                    existing_repair_run_id=existing_repair_run_id,
+                    drift_event_ids=list(drift_event_ids or []),
+                    vendor=vendor_val,
+                    fingerprint_delta=fingerprint_delta,
+                    drift_class=drift_class,
+                    hypotheses=surviving,
+                )
+                result = _replace(result, repair_run_id=run.id)
+            return result
         if l3_entry is not None and l3_entry.get("action") == "model_escalation" and model_question:
             # REQ-044 item 3: the model explicitly asked for a human
             # decision — its question resolves L4, labelled as the model's,
@@ -561,24 +662,45 @@ class RepairController:
                 f"({scenario_name}); no patch released — one operator question"
             )
         elif l3_entry is not None and (climb.get("proposal") or l3_entry.get("proposal_ops")):
-            l4_reason = (
-                f"L3 proposed a patch for {scenario_name} with no independent "
-                "evidence; semantic drift is never auto-patched — one operator question"
-            )
+            if drift_class in _L3_PROPOSE_CLASSES:
+                l4_reason = (
+                    f"L3 proposed a patch for {scenario_name} but the model escalated "
+                    f"for a human decision instead ({drift_class}); one operator question"
+                )
+            else:
+                l4_reason = (
+                    f"L3 proposed a patch for {scenario_name} with no independent "
+                    "evidence; semantic drift is never auto-patched — one operator question"
+                )
         elif l3_entry is not None and l3_entry.get("action") == "l3_skipped":
             l4_reason = f"{l3_entry.get('reason', 'L3 skipped')} ({scenario_name}); escalate"
         else:
-            l4_reason = (
-                f"No verified fix for {scenario_name} below L4 "
-                "(semantic drift needs the operator)"
-            )
+            if drift_class in ("SEMANTIC_VALUE_DRIFT", "UNKNOWN"):
+                l4_reason = (
+                    f"No verified fix for {scenario_name} below L4 "
+                    "(semantic drift needs the operator)"
+                )
+            else:
+                l4_reason = (
+                    f"No verified fix for {scenario_name} below L4 "
+                    f"({drift_class}: no rule fit and L3 produced no patch)"
+                )
         trace.append(
             {"level": 4, "action": "escalate", "reason": l4_reason, "drift_class": drift_class}
         )
         # REQ-047 item 2: the model's question IS the escalation question,
         # with its rationale beneath (in the bundle reason the repair page
         # renders under the question); the canned text is the fallback only.
-        _bundle_reason = f"{scenario_name}: semantic drift, no verified fix"
+        if drift_class in ("SEMANTIC_VALUE_DRIFT", "UNKNOWN"):
+            _bundle_reason = f"{scenario_name}: semantic drift, no verified fix"
+            _fallback_question = (
+                f"{scenario_name}: no verified fix for this semantic drift — which mapping is correct?"
+            )
+        else:
+            _bundle_reason = f"{scenario_name}: {drift_class}, no verified fix"
+            _fallback_question = (
+                f"{scenario_name}: no verified fix for this {drift_class} drift — which mapping is correct?"
+            )
         if model_escalated and model_rationale:
             _bundle_reason += f"; model rationale: {model_rationale}"
         bundle = escalation_for_no_fix(
@@ -587,7 +709,7 @@ class RepairController:
             question=(
                 model_question
                 if model_escalated and model_question
-                else f"{scenario_name}: no verified fix for this semantic drift — which mapping is correct?"
+                else _fallback_question
             ),
             proposal=model_proposal,
         )
@@ -801,6 +923,57 @@ def prepare_semantic_inputs(
         "siblings": list(siblings),
         "stages": stages,
         "evidence": evidence or {},
+    }
+
+
+def prepare_detected_inputs(
+    *,
+    spec: dict[str, Any],
+    signals: list[Any],
+    summary: dict[str, Any] | None,
+    sync_run_id: str | None,
+) -> dict[str, Any]:
+    """Derive a detected (non-semantic) climb's inputs from the wire (REQ-064 B2).
+
+    Generic counterpart of :func:`prepare_semantic_inputs` for a drift
+    class with no deterministic fix (rename, type change, pagination,
+    enum, unknown): the affected entity's redacted L3 repair context, the
+    fault parcel the dry-run gate judges proposals against, and one
+    "detected" funnel stage (the detector named the break; no hypotheses
+    were enumerated). Pure and fast: no provider, no model call, no DB
+    write — the sync path runs this inline, then either climbs immediately
+    (replay / no-provider) or queues it for the background repair job
+    (live).
+    """
+    from autobridge.repair import semantic as _semantic  # noqa: PLC0415
+
+    source = f"sync_runs:{sync_run_id}" if sync_run_id else "live-sync"
+    try:
+        evidence = _semantic.build_detected_l3_evidence(spec, summary, list(signals or []))
+    except Exception:
+        evidence = {}
+    try:
+        from autobridge.repair.dryrun import build_dry_run_fault  # noqa: PLC0415
+
+        dry_run_fault = build_dry_run_fault(summary if isinstance(summary, dict) else None)
+    except Exception:
+        dry_run_fault = None
+    kinds: list[str] = []
+    for sig in list(signals or []):
+        kind = sig.get("kind") if isinstance(sig, dict) else getattr(sig, "kind", None)
+        if isinstance(kind, str) and kind not in kinds:
+            kinds.append(kind)
+    return {
+        "stages": [
+            {
+                "name": "detected",
+                "count": len(kinds),
+                "ids": kinds,
+                "source": f"detector signals on {source}; no deterministic rule fit, L3 attempted",
+            }
+        ],
+        "evidence": evidence or {},
+        "dry_run_fault": dry_run_fault,
     }
 
 
@@ -1457,18 +1630,124 @@ def _run_repair_climb(
             )
     else:
         info = {}
-        result = controller.handle(
-            spec=spec,
-            drift_class=drift_class,
-            signals=payload.get("signals"),
-            fingerprint_delta=payload.get("fingerprint_delta"),
-            extra=payload.get("extra"),
-            vendor=vendor,
-            drift_event_ids=drift_ids,
-            session=ctx.session,
-            on_rung=on_rung,
-            existing_repair_run_id=running_row_id,
-        )
+        if drift_class in _L3_CLIMB_CLASSES and payload.get("hypotheses_json") is not None:
+            # REQ-064 B2: a deferred detected climb — detect_after_sync
+            # queued it when no deterministic rule fit and a live call was
+            # wanted (parcel shape above). Rebuild the parcelled signals
+            # and climb with the provider (background job: REQ-042 holds).
+            # Without a provider this is the deterministic path below.
+            from autobridge.drift.signals import signal_from_json  # noqa: PLC0415
+            from autobridge.llm.provider import (  # noqa: PLC0415
+                Budget,
+                resolve_frontier_provider,
+            )
+
+            detected_signals: list[Any] = []
+            for raw_sig in payload.get("signals_json") or []:
+                try:
+                    detected_signals.append(
+                        signal_from_json(raw_sig) if isinstance(raw_sig, dict) else raw_sig
+                    )
+                except Exception:
+                    continue
+            try:
+                detected_provider, detected_mode = resolve_frontier_provider()
+            except Exception:
+                detected_provider, detected_mode = None, "off"
+            if detected_provider is not None:
+                result = controller.handle(
+                    spec=spec,
+                    drift_class=drift_class,
+                    signals=list(detected_signals),
+                    fingerprint_delta=payload.get("fingerprint_delta"),
+                    vendor=vendor,
+                    drift_event_ids=drift_ids,
+                    session=ctx.session,
+                    hypotheses=[],
+                    enumerator_yield_count=0,
+                    provider=detected_provider,
+                    budget=Budget(max_frontier_tokens=repair_frontier_budget()),
+                    scenario=payload.get("scenario"),
+                    validate_against=spec,
+                    evidence=payload.get("l3_evidence") or None,
+                    hypothesis_stages=payload.get("hypothesis_stages"),
+                    on_rung=on_rung,
+                    existing_repair_run_id=running_row_id,
+                    dry_run_fault=payload.get("dry_run_fault") or None,
+                )
+                info = {"provider_mode": detected_mode}
+                detected_l3 = next(
+                    (
+                        e
+                        for e in (result.ladder_trace or [])
+                        if isinstance(e, dict) and e.get("level") == 3
+                    ),
+                    None,
+                )
+                if detected_l3 is None:
+                    info["l3_status"] = "skip: no L3 rung (no provider configured)"
+                elif detected_l3.get("action") in (
+                    "frontier_generate",
+                    "proposal_rejected",
+                    "model_escalation",
+                    "propose",
+                ):
+                    info["l3_status"] = "attempt"
+                else:
+                    info["l3_status"] = f"skip: {detected_l3.get('reason', 'L3 skipped')}"
+                if result.decision == "propose" and result.candidate_patch:
+                    # The L3 patch becomes a candidate through the normal
+                    # verifier gate (never released by the job itself).
+                    from autobridge.engine.detect_repair import (  # noqa: PLC0415
+                        _finalize_proposal,
+                    )
+
+                    job_connector_id = payload.get("connector_id")
+                    job_release_id = payload.get("release_id")
+                    if isinstance(job_connector_id, str) and isinstance(job_release_id, str):
+                        candidate_id, gate_error = _finalize_proposal(
+                            ctx.session,
+                            connector_id=job_connector_id,
+                            release_id=job_release_id,
+                            repair_run_id=result.repair_run_id,
+                            result=result,
+                            verifier_url=None,
+                        )
+                    else:
+                        candidate_id, gate_error = (
+                            None,
+                            "job parcel names no connector/release: candidate not created",
+                        )
+                    out_candidate_id: str | None = candidate_id
+                    out_gate_error: str | None = gate_error
+                    info["candidate_release_id"] = out_candidate_id
+                    info["gate_error"] = out_gate_error
+            else:
+                result = controller.handle(
+                    spec=spec,
+                    drift_class=drift_class,
+                    signals=list(detected_signals),
+                    fingerprint_delta=payload.get("fingerprint_delta"),
+                    extra=payload.get("extra"),
+                    vendor=vendor,
+                    drift_event_ids=drift_ids,
+                    session=ctx.session,
+                    on_rung=on_rung,
+                    existing_repair_run_id=running_row_id,
+                )
+        else:
+            result = controller.handle(
+                spec=spec,
+                drift_class=drift_class,
+                signals=payload.get("signals"),
+                fingerprint_delta=payload.get("fingerprint_delta"),
+                extra=payload.get("extra"),
+                vendor=vendor,
+                drift_event_ids=drift_ids,
+                session=ctx.session,
+                on_rung=on_rung,
+                existing_repair_run_id=running_row_id,
+            )
 
     # Build job result
     out: dict[str, Any] = {
@@ -1487,6 +1766,10 @@ def _run_repair_climb(
         out["provider_mode"] = info["provider_mode"]
     if info.get("l3_status"):
         out["l3_status"] = info["l3_status"]
+    if info.get("candidate_release_id"):
+        out["candidate_release_id"] = info["candidate_release_id"]
+    if info.get("gate_error"):
+        out["gate_error"] = info["gate_error"]
     # The RepairRun row this climb persisted, threaded through
     # LadderResult — never re-fetched as "the newest row" (concurrent
     # repairs would cross-link, REQ-040/REQ-042).
