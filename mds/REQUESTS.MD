@@ -2,7 +2,51 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-30 23:45): **REQ-055 (remaining items), then REQ-056, REQ-057, REQ-058, REQ-059, then REQ-052** (benchmark quality; must be done before tonight's validation and keyed benchmark). Do not start REQ-051 until the owner says so.
+Owner priority (2026-10-31 05:30): **REQ-060 next** (benchmark fairness; the keyed benchmark re-runs after it). Do not start REQ-051 until the owner says so.
+
+### REQ-060 — Benchmark: the frontier arms get the engine's repair task, no token limit, agent arm and learning curve fixed (2026-10-31)
+Status: OPEN
+Keyed run 2026-10-31 on `03a02f55` (`BENCH_TRIALS=1 make bench-ablation`, sandbox) after REQ-052. Owner review of the
+prompts and data sent to the models found the frontier arms were asked a different question from the engine:
+- `config/prompts/bench/frontier_oneshot.md` and `frontier_agent.md` say "Write the ConnectorSpec": a whole spec from the
+  docs. They never receive the pre-drift spec (`bench/context.py:build_bench_context` uses it only to pick the
+  vocabulary version) nor any evidence of the fault (failed sync, served wire). The docs describe the pre-drift API, so
+  a repair is impossible: one-shot 0/6 fixable (its 2 verifier passes are `rate_limit_429`/`transient_503`, where the
+  wire never changed).
+- The only answer format is a spec, so a frontier arm cannot hold back: one-shot "unfixable held back" is 0/6 by
+  construction; the agent's 6/6 comes only from producing nothing.
+- `docs/benchmark.md` ("both frontier arms receive exactly the context the engine has") is not true today.
+- Cutoffs: the 20000 shared ceiling counts input + output; the input alone is ~10.3k tokens, a whole spec + reasoning
+  is 4-7k more, and Meridian's longer docs pushed 4/12 one-shot rows to `budget_exhausted` before or during the call.
+- `frontier_agent`: 12/12 rows `no_output`, model `unknown`, 0 tokens, although `opencode` ran 25-160 s each.
+- Learning curve crashed: `AttributeError: 'OpenCodeCliDriver' object has no attribute 'default_model'`; the table in
+  `experiments/learning_curve.md` is still the fake driver's.
+
+Items:
+1. **Same task as the engine.** Both frontier arms get, in addition to today's bundle (schema, capabilities, a
+   different-vendor example, the case's docs): the pre-drift spec the engine arms sync, and the evidence of the
+   faulted sync the engine's detector sees (outcome, unmet criteria / failed checks, the served response sample for the
+   affected operation(s)), nothing more (no drift class, delta, hypotheses, `expected`, or anything under `verifier/`).
+   The answer is what L3 may answer: a JSON Patch on that spec, or an escalation with one question (optionally a
+   proposal). The agent keeps its tools and the sandbox URL. A unit test asserts the frontier arms and the engine arms
+   receive the same spec + evidence (content hash), and the prompt files stay in `config/prompts/bench/`.
+2. **Graded the same way.** A frontier patch is applied to the pre-drift spec and goes to the verifier like an engine
+   patch (fixable fixed / wrong shipped); an escalation on an unfixable scenario counts as held back; an escalation on a
+   fixable one counts as not fixed. The split table and quality table keep their columns.
+3. **No token limit for now (owner 2026-10-31).** `token_ceiling` (and `BENCH_TOKEN_CEILING`) **0 = no limit**, and 0 is
+   the default for every arm: `Budget` skips the token check when its limit is 0, `HarnessInputs` accepts 0, and
+   nothing is ever `budget_exhausted` on tokens. The per-call output cap stays `FRONTIER_MAX_TOKENS` (131072; the API
+   needs a value). The wall clock stays. Record per row input, output and reasoning tokens (when the provider reports
+   them) so the owner can pick a limit from the results; the summary adds per-arm min / median / max total tokens.
+4. **Agent arm produces gradable output.** Find why `OpenCodeCliDriver` returns no output, model `unknown` and 0
+   tokens under the live `opencode` CLI in the sandbox, and fix the parsing (answer, model id, token usage). A unit test
+   on a captured real `opencode run` output (stored as a fixture, no secrets) pins it.
+5. **Learning curve runs live.** Fix the `default_model` crash; the live run writes `experiments/learning_curve.md`
+   with the agent's real tokens per repeat, or fails loudly.
+6. Docs: `docs/benchmark.md` describes exactly what each arm receives and the no-limit default.
+Tests: unit tests for items 1-5; unkeyed `BENCH_TRIALS=1 make bench-ablation` rehearsal 12/12 matched. Owner step:
+keyed re-run in the sandbox.
+
 
 ### REQ-059 — Blank-slate demo: the seed creates no connectors; every connector is built live from its docs (2026-10-30)
 Status: DONE (sbx1 2026-10-30 -- blank seed + readiness checks, demo step-1 builds Atlas itself, UI empty states, docs deck order; make demo 8/8 from blank, test_09 5/5, test_08 five legs green live, full gates green; owner check: Aside run of the blank-slate decks)
