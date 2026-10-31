@@ -4038,3 +4038,6 @@ Engine catches silent corruption and tries L3 before escalating: B1a emptied-map
 
 ## 2026-10-31 14:40–15:30 UTC — REQ-065 DONE (sbx1, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Removed REQ-064 B2, kept B1: ladder/controller/job/live/bench back to semantic-only L3 ("deterministic first, models last"); silent-corruption detection (`mapped_field_emptied` -> SCHEMA_RENAME, `money_scale_shift` -> SEMANTIC_VALUE_DRIFT) unchanged. `repair/`+`engine/` diff vs `5d6d3977` empty; bench diff is the one B1 hunk; docs note the tried-and-removed L3. Full gates: 2976+138+413 passed (90.11/91.04/90.42%), UI 295, lint/typecheck green. Owner step: keyed rehearsal-5 bench-beacon run, then close.
+
+## 2026-10-31 — REQ-066 DONE (sbx1, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Beacon freeze pins the frontier model: freeze writes the line, bench-beacon refuses on mismatch, verify/EVIDENCE show the pin, docs updated; 9 new unit tests, full python gates green (UI 1 pre-existing failure, also on clean tree). Owner step: keyed bench-beacon rehearsal/real run exercises the gate live.
