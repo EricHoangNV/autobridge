@@ -21,7 +21,7 @@ Tests: freeze writes the line; mismatch refuses; missing line on a rehearsal par
 or commit anything under `experiments/beacon/` except labelled rehearsals.
 
 ### REQ-067 — Demo UI: fix the walkthrough findings and make the wording match the demo script (2026-11-01)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-31 18:27)
 Owner keyed browser walkthrough on `a172e09f` (blank-slate seed, decks 1-7 + closing, 2026-11-01 00:45-00:55). Findings,
 screenshots and the per-deck result are in `tmp/walkthrough-a172e09f/FINDINGS.md` (gitignored; read in place from the
 main checkout, with the `*.jpg` next to it). The demo script the UI must match is `tmp/demo-flow/demo-flow.md` §5.2
