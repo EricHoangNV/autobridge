@@ -210,10 +210,11 @@ differs from `FRONTIER_MODEL` fails as `model_mismatch` (provider
 prefixes ignored). All arms share one wall-clock (default 600 s;
 `--wall-clock` / `BENCH_WALL_CLOCK`); agent timeouts are labelled
 `timed_out`.
-No token limit (REQ-060, owner 2026-10-31): `token_ceiling` (and
-`BENCH_TOKEN_CEILING`) 0 = no limit, and 0 is the default for every
-arm — `Budget` skips the token check when its limit is 0, so nothing
-is ever `budget_exhausted` on tokens. Every row records input, output
+Token limit (owner 2026-10-31): `token_ceiling` (and
+`BENCH_TOKEN_CEILING`) defaults to 200,000 tokens per attempt for every
+arm, about 1.3x the largest keyed run with no limit (`frontier_agent`
+156,389 on `duplicate_late_records`, `cf2666e6`). 0 = no limit (REQ-060):
+`Budget` skips the token check when its limit is 0. Every row records input, output
 and reasoning tokens (when the provider reports them); the summary
 adds per-arm min / median / max total tokens (`summary
 ["total_tokens_stats"]`) so the owner can pick a limit from the

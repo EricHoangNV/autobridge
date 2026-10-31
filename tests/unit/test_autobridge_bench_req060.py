@@ -26,10 +26,11 @@ import yaml
 from autobridge.llm.provider import Budget, Completion, FakeProvider, Usage
 
 
-def _inputs(scenario_id: str = "page_to_cursor", trial: int = 0) -> Any:
+def _inputs(scenario_id: str = "page_to_cursor", trial: int = 0, token_ceiling: int | None = None) -> Any:
     from bench.harness import HarnessConfig, make_trial_inputs
 
-    return make_trial_inputs(HarnessConfig(), scenario_id, trial)
+    cfg = HarnessConfig() if token_ceiling is None else HarnessConfig(token_ceiling=token_ceiling)
+    return make_trial_inputs(cfg, scenario_id, trial)
 
 
 def _case(scenario_id: str = "page_to_cursor") -> Any:
@@ -320,11 +321,12 @@ def test_one_shot_arm_parses_patch_and_escalation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_zero_token_ceiling_is_no_limit_default() -> None:
+def test_zero_token_ceiling_is_no_limit() -> None:
     from bench.harness import DEFAULT_TOKEN_CEILING, HarnessConfig
 
-    assert DEFAULT_TOKEN_CEILING == 0
-    assert HarnessConfig().token_ceiling == 0
+    assert DEFAULT_TOKEN_CEILING == 200_000
+    assert HarnessConfig().token_ceiling == 200_000
+    assert HarnessConfig(token_ceiling=0).token_ceiling == 0
     budget = Budget(max_frontier_tokens=0, max_small_tokens=0)
     assert budget.max_frontier_tokens is None
     assert budget.max_small_tokens is None
@@ -335,10 +337,10 @@ def test_zero_token_ceiling_is_no_limit_default() -> None:
 def test_one_shot_arm_no_ceiling_no_budget_exhausted() -> None:
     from bench.one_shot import run_one_shot_arm
 
-    # Above the old 20000 default (would have budget-exhausted) but below
+    # Ceiling 0 = no limit: far above any ceiling (would have budget-exhausted) but below
     # the per-call output cap (so the truncation heuristic stays quiet).
     big = Completion(text="no json here at all, just words", usage=Usage(input_tokens=500_000, output_tokens=60_000))
-    res = run_one_shot_arm(_inputs(), provider=FakeProvider(responses={"frontier": big}))
+    res = run_one_shot_arm(_inputs(token_ceiling=0), provider=FakeProvider(responses={"frontier": big}))
     assert res.ran is True, res.error
     assert res.outcome == "no_output"  # legacy path (no context): no whole-spec answer
     assert "budget_exhausted" not in (res.error or "").lower()

@@ -96,8 +96,9 @@ DEFAULT_SANDBOX_URL_HOST = "http://localhost:8103"  # host-mapped when running o
 DEFAULT_DOCS_VOLUME = "simulators/docs"
 DEFAULT_CREDENTIAL_REFS: tuple[str, ...] = ("ATLAS_API_KEY", "HARBOR_API_KEY")
 DEFAULT_VISIBLE_TESTS: tuple[str, ...] = ("baseline",)
-DEFAULT_TOKEN_CEILING = 0
-#: REQ-060 item 3: 0 = no limit (the default for every arm). The per-call
+DEFAULT_TOKEN_CEILING = 200_000
+#: Owner 2026-10-31: 200k per attempt for every arm (~1.3x the largest keyed
+#: run, frontier_agent 156,389 on cf2666e6). REQ-060 item 3: 0 = no limit. The per-call
 #: output cap stays FRONTIER_MAX_TOKENS (the API needs a value); the wall
 #: clock stays. Per-row input/output/reasoning tokens are recorded so the
 #: owner can pick a limit from the results.
