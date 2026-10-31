@@ -2,7 +2,47 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-31 09:30): **REQ-061 next** (benchmark agent arm; the keyed benchmark re-runs after it). Do not start REQ-051 until the owner says so.
+Owner priority (2026-10-31 14:40): **REQ-062 next** (beacon evaluation harness; the real freeze waits for it). Do not start REQ-051 until the owner says so.
+
+### REQ-062 — Beacon evaluation: every arm really attempts every instance, and every row is gradable (2026-10-31)
+Status: OPEN
+Owner rehearsal 2026-10-31 on `afd0283a`: `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` in the sandbox
+(keyed). Output copied to `tmp/beacon-rehearsal-6599930/` (gitignored; read it in place from the main checkout:
+`protocol.md`, `instances.json`, `grades.jsonl`, `summary.json`). This is the first beacon rehearsal ever run; the real
+freeze (`eval-freeze`, one run, no retries) waits until a rehearsal is clean. Results:
+autobridge_cold/warm verified 2/12, correct escalation 1/12, 0 tokens; engine_no_knowledge 1/12; frontier_agent 2/12,
+0 escalations, `wrong_patch_released` 5, ~127k tokens/instance; frontier_oneshot 1/12, ~36k tokens.
+
+Findings:
+1. **Engine arms never attempt.** On 10/12 instances autobridge_cold/warm end `outcome Blocked (patch=False,
+   question=False)` with 0 frontier and 0 small tokens, including `atlas`/`rename` (instance 5), a class the engine
+   fixes 18/18 on the dev split. Suspect the beacon path does not run the same detect -> classify -> ladder -> verifier
+   path as `bench/ablation.py` (REQ-024 engine arms), or the served fault never reaches the engine.
+2. **PABX instances not gradable for engine arms.** Instances 4 and 9 (`fias-pabx`/`fias_layout`): "no in-process
+   engine spec for vendor (outcome-graded only)".
+3. **Verifier 500.** Instance 2 (`legacystay`/`nesting`) frontier_agent: `records grade failed: verifier
+   /beacon/records: HTTP 500: Internal Server Error`.
+4. **Wrong-patch count does not match the rows.** frontier_agent `wrong_patch_released` total 5, while its per-row
+   `grade_reason`s read e.g. "outcome Complete (patch=False, question=False) not in ['repair']". Reconcile: a wrong
+   patch released must name the patch and the failed verifier checks on its row.
+5. **One-shot reports small tokens** (e.g. 27,613 `small_tokens` on instance 0) although it only calls the frontier
+   tier. Explain or fix the accounting.
+
+Items:
+1. Engine arms on beacon instances run the same end-to-end path as the dev ablation (sync the pre-drift spec against
+   the served fault -> detector -> classifier -> ladder -> verifier gate, phase 2 with the shared provider), with no
+   case-supplied diagnostics. A row that is Blocked must say which step blocked and why.
+2. Every beacon vendor has an in-process engine spec, PABX included (built from its docs as in the demo), so no
+   instance is "outcome-graded only".
+3. Fix the `/beacon/records` 500; a grading error is an explicit row label, never a silent 0.
+4. `wrong_patch_released` is counted only from rows whose patch reached a release and failed the verifier; each such
+   row names the patch and failed checks. The summary and rows agree (test).
+5. Token accounting per arm is correct (one-shot: frontier only, unless a small-tier call really happened and is named).
+6. Beacon runs use the same arms, prompts, context and 200k ceiling as the dev ablation (REQ-060/061, `afd0283a`).
+Tests: unit tests per item; a rehearsal on round 6599930 (`FAULTS=12 TRIALS=1`) where every row is gradable with a
+stated reason, and the engine arms attempt every instance. Do not freeze, tag `eval-freeze`, or commit anything under
+`experiments/beacon/` except labelled rehearsals; the owner runs the real freeze.
+
 
 ### REQ-061 — Benchmark: the frontier agent arm runs the same model and returns gradable output (2026-10-31)
 Status: DONE (sbx1 2026-10-31 -- all 4 items code-done: derived meta/<FRONTIER_MODEL> model (always -m), stdin=DEVNULL on all CLI drivers, exit-1 reason from stdout error events + tail, live preflight gating agent rows; 10 new/updated unit tests, full gates green; live check: preflight ok (meta/muse-spark-1.3, 17878 tokens) + page_to_cursor agent row ran=True same model 43467/1648/4917 tokens with real page->cursor patch; owner step: keyed BENCH_TRIALS=1 make bench-ablation re-run)
