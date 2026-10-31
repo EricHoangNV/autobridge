@@ -147,11 +147,13 @@ def test_beacon_case_all_families() -> None:
     for index in range(60):
         descriptor = _descriptor(index)
         case = beacon_run.beacon_case_for(descriptor)
+        # REQ-062 item 2: every beacon vendor has an in-process engine
+        # spec, PABX included — no instance is outcome-graded-only.
+        assert case is not None, descriptor
         if descriptor["vendor"] == "fias-pabx":
-            assert case is None
+            assert case.connector_id == "fiaspabx", descriptor
             seen.add("fias:" + descriptor["family"])
             continue
-        assert case is not None, descriptor
         seen.add(descriptor["family"])
         # Equal task setup only: spec + connector + docs, never diagnostics.
         assert case.spec and case.connector_id and case.docs_ref
@@ -159,6 +161,7 @@ def test_beacon_case_all_families() -> None:
         assert not hasattr(case, "hypotheses")
     for family in ("rename", "nesting", "pagination", "code_list", "semantic", "dates", "transport_auth"):
         assert family in seen, f"family {family} not covered in 60 instances"
+    assert any(s.startswith("fias:") for s in seen), "no fias instances covered"
 
 
 def test_beacon_case_needs_no_instance_params() -> None:
@@ -246,7 +249,7 @@ def test_run_arm_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
         beacon_run._run_arm("nope", inputs, None, {}, None, None)
     monkeypatch.setattr(_ablation, "run_frontier_oneshot_arm", lambda _i, **_: "oneshot")
     assert beacon_run._run_arm("frontier_oneshot", inputs, None, {}, "prov", None) == "oneshot"
-    monkeypatch.setattr(_ablation, "run_frontier_agent_arm", lambda _i: "agent")
+    monkeypatch.setattr(_ablation, "run_frontier_agent_arm", lambda _i, **_: "agent")
     assert beacon_run._run_arm("frontier_agent", inputs, None, {}, None, None) == "agent"
 
 
@@ -392,7 +395,11 @@ def test_full_trial_offline_graded(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "autobridge_cold" in reports
 
 
-def test_full_trial_records_fail_marks_wrong_patch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_full_trial_records_fail_is_no_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    # REQ-062 item 4: a claimed Complete whose records fail (or never
+    # sync) is a failed attempt, not a release — wrong_patch_released
+    # counts only rows whose patch reached a release and failed the
+    # outcome grade.
     from bench.harness import HarnessConfig as _Cfg
 
     descriptor = _descriptor(0)
@@ -408,7 +415,57 @@ def test_full_trial_records_fail_marks_wrong_patch(monkeypatch: pytest.MonkeyPat
         verifier_url="http://fake-verifier",
     )[0]
     assert grade.verified_completion == 0
+    assert grade.wrong_patch_released == 0
+    assert grade.records_verdict == "fail"
+    assert grade.records_failed_checks == ()
+    assert grade.patch_summary and "replace" in grade.patch_summary
+
+
+def test_full_trial_release_then_grade_fail_marks_wrong_patch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # REQ-062 item 4: records verified (release reached) but the outcome
+    # grade fails → wrong_patch_released 1, and the row names the patch
+    # and the failed verifier checks.
+    import httpx as _httpx
+
+    from bench.harness import HarnessConfig as _Cfg
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, payload: Any) -> None:
+            self._payload = payload
+
+        def json(self) -> Any:
+            return self._payload
+
+    def _post(url: str, **_k: Any) -> Any:
+        if url.endswith("/beacon/records"):
+            return _Resp({"verdict": "pass", "score": 1.0,
+                          "failed_checks": [{"name": "money_mismatch", "count": 2}]})
+        if url.endswith("/beacon/grade"):
+            return _Resp({"passed": False, "reason": "outcome Complete not in ['escalate']", "accepted": []})
+        raise AssertionError(f"unexpected verifier path {url}")
+
+    monkeypatch.setattr(_httpx, "post", _post)
+    monkeypatch.setattr(
+        beacon_run, "sync_candidate",
+        lambda _spec, _url, **_k: {"outcome": "Complete",
+                                "canonical_records": {"Reservation": [{"reservation_id": "R1"}]}},
+    )
+    descriptor = _descriptor(0)
+    protocol = _protocol()
+    (grade,) = beacon_run.run_instance_trial(
+        protocol, EVAL_SEED_HEX, descriptor, 0, config=_Cfg(trials_per_scenario=1),
+        runners={"autobridge_cold": lambda _i: _engine_result()},
+        verifier_url="http://fake-verifier",
+    )[0]
+    assert grade.verified_completion == 0
     assert grade.wrong_patch_released == 1
+    assert grade.records_verdict == "pass"
+    assert grade.records_failed_checks == ("money_mismatch",)
+    assert grade.patch_summary and "replace" in grade.patch_summary
+    assert "money_mismatch" not in (grade.grade_reason or "")
+    assert "engine:" in (grade.grade_reason or "")
 
 
 @pytest.fixture()
@@ -656,3 +713,261 @@ def test_run_guard_allows_protocol_only_dir(
         runners={"autobridge_cold": lambda _i: _engine_result()},
         verifier_url="http://fake", base_url="https://example.invalid", output_dir=out)
     assert len(result.grades) == 1
+
+
+# ---------------------------------------------------------------------------
+# REQ-062: every arm really attempts every instance, every row gradable
+# ---------------------------------------------------------------------------
+
+
+def _http_descriptor(pred: Any) -> dict[str, Any]:
+    for index in range(60):
+        cand = _descriptor(index)
+        if cand["vendor"] in ("atlas", "harbor", "legacystay", "meridian", "fias-pabx") and pred(cand):
+            return cand
+    raise AssertionError("no matching beacon instance in range(60)")
+
+
+def test_engine_blocked_row_names_detection_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-062 item 1: a Blocked engine row says which step blocked and why.
+
+    Real offline engine arm (FakeProvider, deterministic ladder only) on
+    an instance whose faulted sync is Complete with no signals: the arm
+    attempts (derives, climbs) and the row records the detection step.
+    """
+    from autobridge.llm.provider import FakeProvider
+    from bench.harness import HarnessConfig as _Cfg
+
+    descriptor = _http_descriptor(
+        lambda c: c["vendor"] == "atlas" and c["family"] == "dates")
+    case = beacon_run.beacon_case_for(descriptor)
+    assert case is not None
+    diag = beacon_run.derive_beacon_diagnostics(
+        case.spec, descriptor=descriptor, eval_seed_hex=EVAL_SEED_HEX,
+        vendor=str(descriptor["vendor"]), connector_id=case.connector_id)
+    assert not diag.signals, descriptor
+    _fake_verifier(monkeypatch, records_verdict="pass")
+    protocol = _protocol(arms=("autobridge_cold",))
+    (grade,) = beacon_run.run_instance_trial(
+        protocol, EVAL_SEED_HEX, descriptor, 0, config=_Cfg(trials_per_scenario=1),
+        runners={}, provider=FakeProvider(), verifier_url="http://fake-verifier")[0]
+    assert grade.executed is True
+    assert grade.frontier_tokens == 0 and grade.small_tokens == 0
+    assert grade.blocked_step is not None and grade.blocked_step.startswith("detection:")
+    assert grade.grade_reason is not None and "engine: detected UNKNOWN" in grade.grade_reason
+
+
+def test_fias_layout_derive_attempts_with_reason() -> None:
+    """REQ-062 items 1+2: PABX instances derive in-process and state why they block.
+
+    A rename of a mapped wire id attempts the ladder (SCHEMA_RENAME with
+    the missing id named); the row must name the ladder step since no
+    rule matches the multi-candidate ambiguity.
+    """
+    from types import SimpleNamespace as _NS
+
+    descriptor = _http_descriptor(
+        lambda c: c["vendor"] == "fias-pabx" and c["family"] == "fias_layout"
+        and "RN" in (c["params"].get("renamed") or {}))
+    case = beacon_run.beacon_case_for(descriptor)
+    assert case is not None and case.connector_id == "fiaspabx"
+    diag = beacon_run.derive_beacon_diagnostics(
+        case.spec, descriptor=descriptor, eval_seed_hex=EVAL_SEED_HEX,
+        vendor="fias-pabx", connector_id=case.connector_id)
+    assert diag.drift_class == "SCHEMA_RENAME"
+    assert diag.signals, descriptor
+    result = _NS(arm="autobridge_cold", ran=True, outcome=None, error=None,
+                 spec={"decision": "escalate", "candidate_patch": [],
+                       "ladder_level_reached": 4, "rule_id": None,
+                       "beacon_diagnostics": {"drift_class": diag.drift_class,
+                                              "n_signals": len(diag.signals),
+                                              "n_missing": 1, "n_added": 2,
+                                              "classification_reason": diag.classification_reason}})
+    report = beacon_run._arm_outcome_for(result, False)
+    assert report["outcome"] == "Blocked"
+    step = beacon_run._blocked_step_for(result, report)
+    assert step is not None and step.startswith("ladder:")
+    assert "no rule matched SCHEMA_RENAME" in step
+    summary = beacon_run._attempt_summary_for(result, None)
+    assert "engine: detected SCHEMA_RENAME" in summary
+
+
+def test_fias_layout_mapping_intact_is_detection_block() -> None:
+    """A FIAS addition that breaks no mapping blocks at detection, not the ladder."""
+    from types import SimpleNamespace as _NS
+
+    result = _NS(arm="autobridge_cold", ran=True, outcome=None, error=None,
+                 spec={"decision": "escalate", "candidate_patch": [],
+                       "ladder_level_reached": 4, "rule_id": None,
+                       "beacon_diagnostics": {"drift_class": "UNKNOWN", "n_signals": 0,
+                                              "n_missing": 0, "n_added": 2,
+                                              "classification_reason": "No drift signals observed"}})
+    report = beacon_run._arm_outcome_for(result, False)
+    step = beacon_run._blocked_step_for(result, report)
+    assert step is not None and step.startswith("detection:")
+
+
+def test_arm_outcome_maps_frontier_escalation() -> None:
+    """REQ-062 item 4: a frontier escalation is Blocked with its question, never Complete."""
+    from types import SimpleNamespace as _NS
+
+    escalate = _NS(ran=True, outcome="escalated",
+                   spec={"answer_kind": "escalate", "question": "Net or gross?",
+                         "rationale": "ambiguous", "proposal_patch": []})
+    report = beacon_run._arm_outcome_for(escalate, False)
+    assert report == {"outcome": "Blocked", "patch_reached_release": False, "operator_question": True}
+    assert beacon_run._patch_summary_for(escalate, None) is not None
+    assert "Net or gross?" in (beacon_run._patch_summary_for(escalate, None) or "")
+
+
+def test_token_accounting_frontier_vs_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-062 item 5: frontier input tokens never land in small_tokens."""
+    from types import SimpleNamespace as _NS
+
+    from bench.harness import HarnessConfig as _Cfg
+
+    descriptor = _http_descriptor(lambda c: c["family"] == "rename")
+    _fake_verifier(monkeypatch, records_verdict="pass")
+
+    def _arm_result(arm: str, **tokens: Any) -> Any:
+        from bench.harness import make_trial_inputs as _inputs
+
+        return _NS(arm=arm, inputs=_inputs(_Cfg(), "beacon:0", 0), ran=True,
+                   frontier_tokens=tokens.get("frontier_tokens", 0),
+                   input_tokens=tokens.get("input_tokens", 0),
+                   output_tokens=tokens.get("output_tokens", 0),
+                   reasoning_tokens=tokens.get("reasoning_tokens", 0),
+                   cost_usd=None, model="m", error=None,
+                   spec={"decision": "escalate", "candidate_patch": []},
+                   outcome=None)
+
+    protocol = _protocol(arms=("frontier_oneshot", "autobridge_cold"))
+    grades, _reports = beacon_run.run_instance_trial(
+        protocol, EVAL_SEED_HEX, descriptor, 0, config=_Cfg(trials_per_scenario=1),
+        runners={"frontier_oneshot": lambda _i: _arm_result(
+                     "frontier_oneshot", frontier_tokens=150, input_tokens=100,
+                     output_tokens=50, reasoning_tokens=20),
+                 "autobridge_cold": lambda _i: _arm_result(
+                     "autobridge_cold", frontier_tokens=0, input_tokens=5,
+                     output_tokens=0, reasoning_tokens=0)},
+        verifier_url="http://fake-verifier")
+    by_arm = {g.arm: g for g in grades}
+    one_shot, cold = by_arm["frontier_oneshot"], by_arm["autobridge_cold"]
+    assert (one_shot.frontier_tokens, one_shot.small_tokens) == (150, 0)
+    assert (one_shot.input_tokens, one_shot.output_tokens, one_shot.reasoning_tokens) == (100, 50, 20)
+    assert (cold.frontier_tokens, cold.small_tokens) == (0, 5)
+    assert "frontier:" in (one_shot.grade_reason or "")
+    assert "engine:" in (cold.grade_reason or "")
+
+
+def test_beacon_frontier_context_matches_engine_task() -> None:
+    """REQ-062 item 6: frontier arms get the engine's spec + fault evidence.
+
+    Both frontier arms render the same file-based prompts over one shared
+    context whose spec is byte-identical to the engine's pre-drift spec.
+    """
+    from bench.evidence import spec_to_yaml as _spec_to_yaml
+    from bench.harness import HarnessConfig as _Cfg
+    from bench.harness import make_trial_inputs as _inputs
+
+    descriptor = _http_descriptor(
+        lambda c: c["vendor"] == "harbor" and c["family"] == "rename")
+    case = beacon_run.beacon_case_for(descriptor)
+    assert case is not None
+    inputs = _inputs(_Cfg(), f"beacon:{descriptor['index']}", 0)
+    ctx = beacon_run.beacon_bench_context(descriptor, case, inputs, EVAL_SEED_HEX)
+    assert ctx.pre_drift_spec_yaml == _spec_to_yaml(case.spec)
+    assert "sync outcome" in ctx.evidence_text
+    assert ctx.content_hash()
+
+    from autobridge.llm.provider import FakeProvider
+    from bench import ablation as _ablation
+
+    one = _ablation.run_frontier_oneshot_arm(inputs, provider=FakeProvider(), case=case, context=ctx)
+    agent = _ablation.run_frontier_agent_arm(inputs, case=case, context=ctx)
+    assert one.context_hash == ctx.content_hash() == agent.context_hash
+    assert (one.prompt or {}).get("id") == "frontier_oneshot"
+    assert (agent.prompt or {}).get("id") == "frontier_agent"
+
+
+def test_default_beacon_config_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-062 item 6: beacon runs use the dev ablation's 200k ceiling, env-overridable."""
+    monkeypatch.delenv("BENCH_TOKEN_CEILING", raising=False)
+    monkeypatch.delenv("BENCH_WALL_CLOCK", raising=False)
+    cfg = beacon_run.default_beacon_config()
+    assert cfg.token_ceiling == 200000
+    assert cfg.wall_clock_s == 600.0
+    monkeypatch.setenv("BENCH_TOKEN_CEILING", "0")
+    assert beacon_run.default_beacon_config().token_ceiling == 0
+    monkeypatch.setenv("BENCH_TOKEN_CEILING", "abc")
+    import pytest as _pytest
+
+    with _pytest.raises(beacon_run.BeaconError):
+        beacon_run.default_beacon_config()
+    monkeypatch.delenv("BENCH_TOKEN_CEILING", raising=False)
+    monkeypatch.delenv("BENCH_WALL_CLOCK", raising=False)
+    assert beacon_run._cli_config(None, None) is None
+    assert beacon_run._cli_config(10, None).token_ceiling == 10
+
+
+def test_summarize_grades_total_tokens_and_agreement() -> None:
+    """REQ-062 items 4+5: summary totals agree with rows; per-arm min/med/max totals."""
+    from bench.beacon_run import BeaconArmGrade as _Grade
+
+    rows = [_Grade(arm="autobridge_cold", instance_index=i, trial=0, vendor="atlas",
+                   family="rename", wrong_patch_released=int(i == 0),
+                   input_tokens=2 * i, output_tokens=i)
+            for i in range(4)]
+    summary = beacon_run.summarize_grades(rows)
+    cold = summary["by_arm"]["autobridge_cold"]
+    assert cold["wrong_patch_released"]["total"] == 1 == sum(g.wrong_patch_released for g in rows)
+    assert cold["total_tokens"]["min"] == 0
+    assert cold["total_tokens"]["max"] == 9
+    assert cold["total_tokens"]["median"] == 4.5
+
+
+def test_fias_feed_layout_aliases_and_added() -> None:
+    """REQ-062 item 2: the FIAS serving layer exposes aliases + added (observation, not diagnosis)."""
+    from bench import faults as _faults
+
+    layout = _faults.beacon_fias_layout(EVAL_SEED_HEX, 24)
+    assert layout["family"] == "fias_layout"
+    assert layout["aliases"] == {"TX": "RN", "R#": "DA"}
+    assert layout["added"] == []
+    row = _faults._fias_feed_row(layout["aliases"], layout["added"])
+    assert row["TX"] == "101" and row["R#"] == "261028"
+    assert "RN" not in row and "DA" not in row
+    assert row["SO"] == "TEL"
+    link = _faults.beacon_fias_layout(EVAL_SEED_HEX, 4)
+    assert link["family"] == "fias_link"
+    assert link["aliases"] == {} and link["added"] == []
+    with __import__("pytest").raises(ValueError):
+        _faults.beacon_fias_layout(EVAL_SEED_HEX, 0)
+
+
+def test_fias_beacon_sync_pair_serves_announced_and_baseline() -> None:
+    """REQ-062 item 2: faulted feed carries the announced layout, baseline the pre-drift shape."""
+    from bench import faults as _faults
+
+    def _ps_keys(summary: Any) -> set[str]:
+        for op_result in (summary.get("operation_results", {}) or {}).values():
+            if isinstance(op_result, dict):
+                records = op_result.get("records")
+            else:
+                records = getattr(op_result, "records", None)
+            if isinstance(records, list) and records:
+                return {str(k) for r in records if isinstance(r, dict) for k in r}
+        raise AssertionError("no PS wire records")
+
+    descriptor = _http_descriptor(
+        lambda c: c["vendor"] == "fias-pabx" and c["family"] == "fias_layout"
+        and "RN" in (c["params"].get("renamed") or {}))
+    case = beacon_run.beacon_case_for(descriptor)
+    assert case is not None
+    faulted, baseline = _faults.beacon_sync_pair(
+        vendor="fias-pabx", eval_seed_hex=EVAL_SEED_HEX, index=int(descriptor["index"]), spec=case.spec)
+    assert faulted.get("outcome") in ("Complete", "Degraded", "Blocked")
+    assert baseline.get("outcome") == "Complete"
+    faulted_keys, baseline_keys = _ps_keys(faulted), _ps_keys(baseline)
+    assert "RN" in baseline_keys and "RN" not in faulted_keys
+    assert "TX" in faulted_keys and "TX" not in baseline_keys

@@ -77,9 +77,10 @@ class BeaconVendor:
 
     Vendor names live in ``config/beacon_vendors.yaml``, never in engine
     code (unseen-vendor guards). ``http=False`` vendors ride non-HTTP
-    transports: no live sync, outcome-graded only. ``docs`` is the vendor
-    docs path the engine's hypothesis engine reads (equal input, same as
-    the frontier arms' docs).
+    transports: no live sync — candidate records are verified in-process
+    over the announced feed layout. ``docs`` is the vendor docs path the
+    engine's hypothesis engine reads (equal input, same as the frontier
+    arms' docs).
     """
 
     vendor: str
@@ -436,9 +437,10 @@ def engine_spec_for(descriptor: dict[str, Any], vendors: list[BeaconVendor] | No
     """Reference/docs spec for the descriptor's vendor (None when none exists).
 
     Filesystem sources only (generated reference specs, vendor docs —
-    the spec source rides the vendor table, never engine code).
-    Non-HTTP vendors have no connector spec: engine arms cannot propose an
-    in-process patch there (outcome-graded only, documented).
+    the spec source rides the vendor table, never engine code). REQ-062
+    item 2: every beacon vendor has an in-process engine spec, PABX
+    included (built from its docs as in the demo, vocabulary from the
+    vendor table, default v2).
     """
     from bench import ablation as _ablation
 
@@ -449,7 +451,8 @@ def engine_spec_for(descriptor: dict[str, Any], vendors: list[BeaconVendor] | No
     try:
         if source["kind"] == "generated":
             return _ablation._load_reference_spec(source["connector"])
-        return _ablation._docs_spec(source["path"], source["connector"], "v2")
+        vocabulary = str(source.get("vocabulary", "v2") or "v2")
+        return _ablation._docs_spec(source["path"], source["connector"], vocabulary)
     except Exception:
         return None
 
@@ -462,9 +465,8 @@ def beacon_case_for(descriptor: dict[str, Any], vendors: list[BeaconVendor] | No
     connector, vendor docs) built from the vendor table + filesystem
     only — never from generator internals, instance parameters or answer
     keys. The fault is observed at arm time by syncing the served
-    instance (see :func:`derive_beacon_diagnostics`). ``None`` when the
-    vendor has no in-process spec (FIAS): the arms are outcome-graded
-    only for those instances.
+    instance (see :func:`derive_beacon_diagnostics`). ``None`` only when
+    the vendor table carries no spec source for the vendor.
     """
     index = int(descriptor["index"])
     spec = engine_spec_for(descriptor, vendors)
@@ -492,6 +494,71 @@ def beacon_case_for(descriptor: dict[str, Any], vendors: list[BeaconVendor] | No
     )
 
 
+def beacon_bench_context(
+    descriptor: dict[str, Any],
+    case: Any,
+    inputs: Any,
+    eval_seed_hex: str,
+) -> Any:
+    """Shared repair-task context for a beacon instance (REQ-062 item 6).
+
+    The same bundle every arm gets: the pre-drift spec under repair plus
+    the faulted sync's evidence (outcome, unmet criteria / failed checks,
+    served response sample), alongside the schema, capabilities, a
+    different-vendor example, the vendor docs and the patch-or-escalate
+    answer format. Built from the public descriptor + public seed only —
+    the same observation the engine arms derive from, never instance
+    parameters, generator internals or answer keys. ``fias-pabx``
+    evidence is the announced-layout feed sync (framed transport has no
+    HTTP wire sample).
+    """
+    import functools as _functools
+    import json as _json
+
+    from bench.context import (  # noqa: PLC0415
+        BenchContext,
+        capabilities_json_for_version,
+        connector_schema_json,
+        example_spec_for,
+        vendor_docs_text,
+    )
+    from bench.evidence import render_sync_evidence, spec_to_yaml  # noqa: PLC0415
+    from bench.faults import beacon_sync_pair as _beacon_sync_pair  # noqa: PLC0415
+
+    @_functools.lru_cache(maxsize=256)
+    def _cached_evidence(spec_json: str, seed_hex: str, index: int, vendor: str) -> str:
+        faulted_summary, _baseline_summary = _beacon_sync_pair(
+            vendor=vendor, eval_seed_hex=seed_hex, index=index, spec=_json.loads(spec_json)
+        )
+        return render_sync_evidence(faulted_summary)
+
+    spec = dict(case.spec)
+    spec_json = _json.dumps(spec, sort_keys=True, default=str)
+    try:
+        version_num = int(spec.get("spec_version", 1))
+    except (TypeError, ValueError):
+        version_num = 1
+    version = {1: "v1", 2: "v2"}.get(version_num, "v3")
+    _example_vendor, _example_spec, example_yaml = example_spec_for(case.connector_id)
+    try:
+        evidence_text = _cached_evidence(spec_json, eval_seed_hex, int(descriptor["index"]), str(descriptor["vendor"]))
+    except Exception as exc:
+        evidence_text = f"(fault evidence unavailable: {type(exc).__name__}: {exc})"
+    return BenchContext(
+        scenario_id=case.scenario_id,
+        connector_id=case.connector_id,
+        vocabulary_version=version,
+        schema_json=connector_schema_json(),
+        capabilities_json=capabilities_json_for_version(version),
+        example_vendor=_example_vendor,
+        example_spec_yaml=example_yaml,
+        docs_text=vendor_docs_text(case.docs_ref),
+        visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
+        pre_drift_spec_yaml=spec_to_yaml(spec),
+        evidence_text=evidence_text,
+    )
+
+
 def derive_beacon_diagnostics(
     spec: dict[str, Any],
     *,
@@ -509,10 +576,23 @@ def derive_beacon_diagnostics(
     instance parameters as diagnostics, generator internals or answer
     keys: the only inputs are the pre-drift spec and the public
     ``(eval_seed_hex, index, vendor)`` every arm receives.
+
+    ``fias-pabx`` rides framed/event transport: the observation is the
+    announced PS layout (the same handshake the live edge agent
+    reports), compared against the spec's mapped wire ids with
+    ``detect_feed_field_rename`` — the announced ids and sample values
+    come from the served feed records (observation), never from
+    instance parameters.
     """
     from bench import ablation as _ablation
     from bench import faults as _faults
 
+    if vendor == "fias-pabx":
+        return _derive_fias_diagnostics(
+            spec,
+            descriptor=descriptor,
+            eval_seed_hex=eval_seed_hex,
+        )
     faulted_summary, baseline_summary = _faults.beacon_sync_pair(
         vendor=vendor,
         eval_seed_hex=eval_seed_hex,
@@ -522,6 +602,118 @@ def derive_beacon_diagnostics(
     _ = connector_id  # serving follows the vendor app, not the connector id
     return _ablation.derive_from_summaries(
         spec, baseline_summary=baseline_summary, faulted_summary=faulted_summary
+    )
+
+
+def _derive_fias_diagnostics(
+    spec: dict[str, Any],
+    *,
+    descriptor: dict[str, Any],
+    eval_seed_hex: str,
+) -> Any:
+    """FIAS diagnostics: announced layout vs spec-mapped wire ids (observed).
+
+    Syncs the pre-drift spec against the announced feed (faulted) and
+    the mapped baseline, then reports the announced-vs-mapped drift the
+    same way the live edge path does. The announced ids are read off
+    the served faulted feed records — the handshake observation every
+    arm could make — and the signal shape matches the HTTP
+    ``keys_changed`` wire evidence the ladder rules consume.
+    """
+    from autobridge.drift.classifier import classify  # noqa: PLC0415
+    from autobridge.drift.event_feeds import (  # noqa: PLC0415
+        _feed_operations,
+        detect_feed_field_rename,
+    )
+    from autobridge.drift.signals import DriftSignal  # noqa: PLC0415
+    from bench import ablation as _ablation
+    from bench import faults as _faults
+
+    index = int(descriptor["index"])
+    faulted_summary, baseline_summary = _faults.beacon_sync_pair(
+        vendor="fias-pabx",
+        eval_seed_hex=eval_seed_hex,
+        index=index,
+        spec=spec,
+    )
+
+    def _wire_keys(summary: Any) -> set[str]:
+        keys: set[str] = set()
+        op_results = summary.get("operation_results", {})
+        if isinstance(op_results, dict):
+            for op_result in op_results.values():
+                records = op_result.get("records") if isinstance(op_result, dict) else getattr(op_result, "records", None)
+                if isinstance(records, list):
+                    for rec in records:
+                        if isinstance(rec, dict):
+                            keys.update(str(k) for k in rec)
+        return keys
+
+    wire_records: list[dict[str, Any]] = []
+    op_results = faulted_summary.get("operation_results", {})
+    if isinstance(op_results, dict):
+        for op_result in op_results.values():
+            records = op_result.get("records") if isinstance(op_result, dict) else getattr(op_result, "records", None)
+            if isinstance(records, list):
+                wire_records.extend([r for r in records if isinstance(r, dict)])
+                if wire_records:
+                    break
+    announced = sorted({str(k) for rec in wire_records for k in rec})
+    report = detect_feed_field_rename(spec, "PS", announced, sample_records=wire_records)
+    entity = report.get("entity")
+    op_name: str | None = None
+    try:
+        for name, _feed in _feed_operations(spec, "PS"):
+            op_name = str(name)
+            break
+    except Exception:
+        op_name = None
+    # Scope added to genuinely new keys (mirrors the HTTP build-probe
+    # annotation: perennial unmapped wire keys are not drift evidence).
+    baseline_keys = _wire_keys(baseline_summary)
+    mapped_set = set(report.get("mapped_wire_ids", {}).values()) if isinstance(report.get("mapped_wire_ids"), dict) else set()
+    scoped_added = [
+        fid for fid in (report.get("added_wire", []) or [])
+        if fid not in baseline_keys and fid not in mapped_set
+    ]
+    missing = list(report.get("missing_wire", []) or [])
+    added = [
+        {"key": fid, "sample": next((r.get(fid) for r in wire_records if isinstance(r, dict) and fid in r), None), "type": "str"}
+        for fid in scoped_added
+    ]
+    signal = DriftSignal(
+        kind="keys_changed" if missing else "fingerprint_changed",
+        operation=op_name,
+        entity=entity if isinstance(entity, str) else None,
+        severity="medium",
+        message=(
+            f"PABX announced layout changed: missing {missing}, new {[a['key'] for a in added]}"
+            if missing
+            else "PABX announced layout matches the spec mapping"
+        ),
+        details={
+            "entity": entity,
+            "missing": missing,
+            "added": added,
+            "wire_evidence": "feed-announced-layout",
+        },
+        fingerprint_delta=report.get("delta"),
+    )
+    if not missing:
+        # Mapping intact (pure additions or no change): no drift to repair.
+        # No signals — the row states detection found nothing (REQ-062 item 1).
+        return _ablation.DerivedDiagnostics(
+            drift_class="UNKNOWN",
+            fingerprint_delta=report.get("delta"),
+            signals=(),
+            classification_reason="No drift signals observed",
+        )
+    classification = classify([signal])
+    return _ablation.DerivedDiagnostics(
+        drift_class=classification.drift_class,
+        fingerprint_delta=report.get("delta"),
+        signals=(signal,),
+        classification_reason=classification.reason,
     )
 
 
@@ -594,10 +786,25 @@ class BeaconArmGrade:
     correct_escalation: int = 0
     frontier_tokens: int = 0
     small_tokens: int = 0
+    # REQ-060 item 3 / REQ-062 item 5: the per-row token split the owner
+    # picks a limit from (input / output / reasoning as the provider
+    # reports them; 0 when unreported).
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
     cost_usd: float | None = None
     elapsed_ms: float = 0.0
     model: str | None = None
     records_verdict: str | None = None
+    # REQ-062 item 4: the failed check names behind a records verdict, so
+    # a row that counts a wrong patch names the patch (patch_summary)
+    # and the checks it failed.
+    records_failed_checks: tuple[str, ...] = ()
+    patch_summary: str | None = None
+    # REQ-062 item 1: which step blocked a Blocked row (detection with no
+    # signals, ladder with no matching rule, verifier gate, ...), so a
+    # non-attempt is a stated reason, never a silent 0.
+    blocked_step: str | None = None
     grade_reason: str | None = None
     error: str | None = None
     executed: bool = True
@@ -712,11 +919,23 @@ def run_instance_trial(
         elapsed_ms = (time.monotonic() - start) * 1000.0
         grade.elapsed_ms = elapsed_ms
         grade.frontier_tokens = int(getattr(result, "frontier_tokens", 0) or 0)
-        grade.small_tokens = int(getattr(result, "input_tokens", 0) or 0)
-        if case is None and arm not in ("frontier_oneshot", "frontier_agent"):
-            # No in-process engine spec for this vendor (FIAS): the arm
-            # cannot attempt the instance here (edge flows stay in FIAS
-            # e2e). Recorded as a fail-closed loss with the reason named.
+        # REQ-062 item 5: ArmResult.input_tokens carries the frontier
+        # tier's input tokens for frontier arms (one-shot prompt +
+        # completion) — only engine arms spend the small tier.
+        from bench.ablation import ENGINE_ARMS as _ENGINE_ARMS
+
+        if arm in _ENGINE_ARMS:
+            grade.small_tokens = int(getattr(result, "input_tokens", 0) or 0)
+        else:
+            grade.small_tokens = 0
+        grade.input_tokens = int(getattr(result, "input_tokens", 0) or 0)
+        grade.output_tokens = int(getattr(result, "output_tokens", 0) or 0)
+        grade.reasoning_tokens = int(getattr(result, "reasoning_tokens", 0) or 0)
+        if case is None and arm in _ENGINE_ARMS:
+            # No in-process engine spec for this vendor: the arm cannot
+            # attempt the instance here. Recorded as a fail-closed loss
+            # with the reason named (REQ-062 item 2 removes this path
+            # for every beacon vendor, which all carry a spec now).
             grade.executed = False
         try:
             grade.cost_usd = float(result.cost_usd) if result.cost_usd is not None else None
@@ -749,18 +968,35 @@ def _run_arm(
     (public descriptor + public seed only — never instance parameters as
     diagnostics); ``derive=None`` (ablation default) is rejected loudly for
     beacon cases, since ``beacon:<index>`` is not a served sim scenario.
+
+    REQ-062 item 6: frontier arms receive the same repair task as the
+    engine — the shared :func:`beacon_bench_context` (pre-drift spec +
+    faulted-sync evidence) rendered through the same file-based bench
+    prompts — instead of the legacy whole-spec path.
     """
     from bench import ablation as _ablation
 
     if arm in runners and runners[arm] is not None:
         return runners[arm](inputs)
     if arm == "frontier_oneshot":
-        return _ablation.run_frontier_oneshot_arm(inputs, provider=provider)
+        ctx = None
+        if case is not None and descriptor is not None and eval_seed_hex:
+            try:
+                ctx = beacon_bench_context(descriptor, case, inputs, eval_seed_hex)
+            except Exception:
+                ctx = None
+        return _ablation.run_frontier_oneshot_arm(inputs, provider=provider, case=case, context=ctx)
     if arm == "frontier_agent":
-        return _ablation.run_frontier_agent_arm(inputs)
+        ctx = None
+        if case is not None and descriptor is not None and eval_seed_hex:
+            try:
+                ctx = beacon_bench_context(descriptor, case, inputs, eval_seed_hex)
+            except Exception:
+                ctx = None
+        return _ablation.run_frontier_agent_arm(inputs, case=case, context=ctx)
     if arm in ("engine_no_knowledge", "autobridge_cold", "autobridge_warm"):
         if case is None:
-            # No in-process spec for this vendor (FIAS): the engine cannot
+            # No in-process spec for this vendor: the engine cannot
             # propose a patch in-process; report Blocked without a patch and
             # let /beacon/grade judge the outcome class.
             from bench.harness import ArmResult as _ArmResult
@@ -772,32 +1008,79 @@ def _run_arm(
         vendor = str(descriptor["vendor"])
         connector_id = str(getattr(case, "connector_id", ""))
         knowledge = knowledge_warm if arm == "autobridge_warm" else None
+        # Observe once up front (the same observation the ladder climbs
+        # from) so the row can name which step blocked (REQ-062 item 1).
+        diag = derive_beacon_diagnostics(
+            dict(case.spec),
+            descriptor=descriptor,
+            eval_seed_hex=eval_seed_hex,
+            vendor=vendor,
+            connector_id=connector_id,
+        )
 
-        def _derive(spec: dict[str, Any], _case: Any, _inputs: Any) -> Any:
-            return derive_beacon_diagnostics(
-                spec,
-                descriptor=descriptor,
-                eval_seed_hex=eval_seed_hex,
-                vendor=vendor,
-                connector_id=connector_id,
-            )
+        def _derive(_spec: dict[str, Any], _case: Any, _inputs: Any) -> Any:
+            return diag
 
-        return _ablation.run_engine_arm(inputs, case, ablation=cast("Any", arm),
-                                        provider=provider, knowledge=knowledge, derive=_derive)
+        result = _ablation.run_engine_arm(inputs, case, ablation=cast("Any", arm),
+                                          provider=provider, knowledge=knowledge, derive=_derive)
+        try:
+            import dataclasses as _dataclasses
+
+            payload = dict(result.spec) if isinstance(result.spec, dict) else {}
+            n_missing, n_added = _signal_wire_counts(getattr(diag, "signals", ()) or ())
+            payload["beacon_diagnostics"] = {
+                "drift_class": str(getattr(diag, "drift_class", "?")),
+                "n_signals": len(getattr(diag, "signals", ()) or ()),
+                "n_missing": n_missing,
+                "n_added": n_added,
+                "classification_reason": str(getattr(diag, "classification_reason", ""))[:300],
+            }
+            result = _dataclasses.replace(result, spec=payload)
+        except Exception:
+            pass
+        return result
     raise BeaconError(f"unknown arm: {arm}")
 
 
+def _signal_wire_counts(signals: Any) -> tuple[int, int]:
+    """(n_missing, n_added) from the first wire-evidence signal (-1 when absent).
+
+    Lets a Blocked row distinguish "detection saw nothing" from "the
+    ladder saw the rename but matched no rule" (REQ-062 item 1).
+    """
+    for sig in signals or ():
+        details = getattr(sig, "details", None)
+        if isinstance(sig, dict):
+            details = sig.get("details")
+        if not isinstance(details, dict):
+            continue
+        if "missing" not in details and "added" not in details:
+            continue
+        missing = details.get("missing")
+        added = details.get("added")
+        return (
+            len(missing) if isinstance(missing, list) else -1,
+            len(added) if isinstance(added, list) else -1,
+        )
+    return (-1, -1)
+
+
 def _summarize_result(result: Any) -> dict[str, Any]:
+    from bench.ablation import ENGINE_ARMS as _ENGINE_ARMS
+
     spec = getattr(result, "spec", None)
+    arm_name = getattr(result, "arm", None)
     return {
         "ran": bool(getattr(result, "ran", False)),
         "error": getattr(result, "error", None),
         "model": getattr(result, "model", None),
         "frontier_tokens": int(getattr(result, "frontier_tokens", 0) or 0),
-        "small_tokens": int(getattr(result, "input_tokens", 0) or 0),
+        "small_tokens": int(getattr(result, "input_tokens", 0) or 0) if arm_name in _ENGINE_ARMS else 0,
         "has_patch": bool(isinstance(spec, dict) and spec.get("candidate_patch")),
         "has_spec": bool(isinstance(spec, dict) and len(spec) > 0),
         "decision": spec.get("decision") if isinstance(spec, dict) else None,
+        "prompt": getattr(result, "prompt", None),
+        "context_hash": getattr(result, "context_hash", None),
     }
 
 
@@ -830,12 +1113,15 @@ def _arm_outcome_for(result: Any, has_records: bool) -> dict[str, Any]:
     with a non-empty patch (Complete + patch, records judged),
     ``propose`` with an empty patch (backoff-only/refresh: Complete, no
     patch, no release), ``degraded`` (Degraded + one operator question),
-    ``escalate`` (Blocked). Anything else (arm error, unparseable output)
-    is Blocked — fail closed.
+    ``escalate`` (Blocked). A frontier escalation answer (``answer_kind``
+    ``escalate``, no ladder decision) is Blocked with its question
+    recorded. Anything else (arm error, unparseable output) is Blocked
+    — fail closed.
     """
     spec = getattr(result, "spec", None)
     decision = spec.get("decision") if isinstance(spec, dict) else None
     patch = spec.get("candidate_patch") if isinstance(spec, dict) else None
+    answer_kind = spec.get("answer_kind") if isinstance(spec, dict) else None
     if decision == "propose" and patch:
         return {"outcome": "Complete", "patch_reached_release": has_records, "operator_question": False}
     if decision == "propose":
@@ -844,11 +1130,114 @@ def _arm_outcome_for(result: Any, has_records: bool) -> dict[str, Any]:
         return {"outcome": "Degraded", "patch_reached_release": False, "operator_question": True}
     if decision == "escalate":
         return {"outcome": "Blocked", "patch_reached_release": False, "operator_question": False}
+    if answer_kind == "escalate":
+        return {"outcome": "Blocked", "patch_reached_release": False, "operator_question": True}
     if getattr(result, "ran", False) and isinstance(spec, dict) and len(spec) > 0 and not patch:
         # A produced full spec without a patch wrapper (oneshot frontier):
         # synced below when possible; the grade decides.
         return {"outcome": "Complete", "patch_reached_release": has_records, "operator_question": False}
     return {"outcome": "Blocked", "patch_reached_release": False, "operator_question": False}
+
+
+def _patch_summary_for(result: Any, candidate: dict[str, Any] | None) -> str | None:
+    """Bounded one-line summary of what the arm produced (REQ-062 item 4)."""
+    spec = getattr(result, "spec", None)
+    if not isinstance(spec, dict):
+        return None
+    patch = spec.get("candidate_patch")
+    if isinstance(patch, list) and patch:
+        ops = [f"{op.get('op', '?')} {op.get('path', '?')}" for op in patch[:3] if isinstance(op, dict)]
+        more = f" +{len(patch) - 3} more" if len(patch) > 3 else ""
+        return f"patch ({len(patch)} ops): " + ", ".join(ops) + more
+    if spec.get("answer_kind") == "escalate":
+        question = str(spec.get("question", ""))[:120]
+        return f"escalation, no patch: {question}" if question else "escalation, no patch"
+    if candidate is not None:
+        return "full spec (no patch wrapper)"
+    if getattr(result, "outcome", None):
+        return f"outcome label: {result.outcome}"
+    return None
+
+
+def _is_engine_shaped(result: Any) -> bool:
+    """Engine-shaped result: an engine arm name or a ladder payload (REQ-062 item 1).
+
+    Custom test runners build bare namespaces without ``arm``; the
+    ladder payload (``decision`` + ``ladder_level_reached``, never an
+    ``answer_kind``) still identifies them.
+    """
+    from bench.ablation import ENGINE_ARMS as _ENGINE_ARMS
+
+    if getattr(result, "arm", None) in _ENGINE_ARMS:
+        return True
+    spec = getattr(result, "spec", None)
+    return isinstance(spec, dict) and "decision" in spec and "ladder_level_reached" in spec
+
+
+def _attempt_summary_for(result: Any, candidate: dict[str, Any] | None) -> str:
+    """One-line attempt summary appended to every row's reason (REQ-062 items 1/4)."""
+    _raw_spec = getattr(result, "spec", None)
+    spec: dict[str, Any] = _raw_spec if isinstance(_raw_spec, dict) else {}
+    if _is_engine_shaped(result):
+        diag = spec.get("beacon_diagnostics", {}) if isinstance(spec.get("beacon_diagnostics"), dict) else {}
+        drift = diag.get("drift_class", "?")
+        n_signals = diag.get("n_signals", "?")
+        decision = spec.get("decision", "?")
+        level = spec.get("ladder_level_reached", "?")
+        rule = spec.get("rule_id") or "no rule"
+        return f"engine: detected {drift} ({n_signals} signals) -> {decision} at L{level} ({rule})"
+    patch = spec.get("candidate_patch") if spec else None
+    if isinstance(patch, list) and patch:
+        return f"frontier: produced patch (applies: {candidate is not None})"
+    if spec.get("answer_kind") == "escalate":
+        return "frontier: escalated with a question (no patch)"
+    if candidate is not None:
+        return "frontier: produced full spec (applies: True)"
+    outcome_label = getattr(result, "outcome", None)
+    if outcome_label:
+        return f"frontier: no patch or escalation ({outcome_label})"
+    if getattr(result, "ran", False):
+        return "frontier: ran with no gradable patch or escalation"
+    return "frontier: no attempt (arm error)"
+
+
+def _blocked_step_for(result: Any, outcome_report: dict[str, Any]) -> str | None:
+    """Which step blocked a Blocked row, and why (REQ-062 item 1)."""
+    if outcome_report.get("outcome") != "Blocked":
+        return None
+    _raw_spec = getattr(result, "spec", None)
+    spec: dict[str, Any] = _raw_spec if isinstance(_raw_spec, dict) else {}
+    if getattr(result, "error", None) and not getattr(result, "ran", False) and not spec:
+        return f"setup: arm errored before attempting ({str(result.error)[:120]})"
+    if _is_engine_shaped(result):
+        diag = spec.get("beacon_diagnostics", {}) if isinstance(spec.get("beacon_diagnostics"), dict) else {}
+        n_signals = diag.get("n_signals", "?")
+        drift = diag.get("drift_class", "?")
+        try:
+            n = int(n_signals)
+        except (TypeError, ValueError):
+            n = -1
+        if n == 0:
+            return "detection: no drift signals (the faulted sync looked Complete, nothing observed)"
+        n_missing = diag.get("n_missing", -1)
+        try:
+            n_missing = int(n_missing)
+        except (TypeError, ValueError):
+            n_missing = -1
+        decision = spec.get("decision", "?")
+        level = spec.get("ladder_level_reached", "?")
+        rule = spec.get("rule_id")
+        if n_missing == 0:
+            return "detection: announced/served shape breaks no mapping (missing: none) — nothing to repair"
+        if decision == "escalate" and not rule:
+            return f"ladder: no rule matched {drift} at L{level}, escalated without a patch"
+        return f"ladder: escalated at L{level} (rule: {rule or 'none'})"
+    if spec.get("answer_kind") == "escalate":
+        return "attempt: escalated with a question instead of a patch"
+    outcome_label = getattr(result, "outcome", None)
+    if outcome_label:
+        return f"attempt: no patch or escalation produced ({outcome_label})"
+    return "attempt: no gradable output produced"
 
 
 def _grade_arm_result(
@@ -862,14 +1251,26 @@ def _grade_arm_result(
     http_sync: bool = True,
     vendors: list[BeaconVendor] | None = None,
 ) -> None:
-    """Judge one arm result via the verifier (never raises; records the loss)."""
+    """Judge one arm result via the verifier (never raises; records the loss).
+
+    REQ-062 item 4: ``wrong_patch_released`` counts only rows whose patch
+    reached a release (records synced *and* passing) and then failed the
+    outcome grade — each such row names the patch
+    (:attr:`BeaconArmGrade.patch_summary`) and the failed verifier
+    checks (:attr:`BeaconArmGrade.records_failed_checks`), so the
+    summary total and the rows agree. A claimed Complete whose records
+    fail (or never sync) is a failed attempt, not a release.
+    """
     if verifier_url is None:
         grade.error = "no verifier URL (grade skipped, counts as loss)"
         return
     index = int(descriptor["index"])
-    candidate = _candidate_spec_for(result, beacon_case_for(descriptor, vendors))
+    vendor = str(descriptor["vendor"])
+    case = beacon_case_for(descriptor, vendors)
+    candidate = _candidate_spec_for(result, case)
     records: dict[str, list[dict[str, Any]]] = {"reservations": [], "folios": []}
     records_verdict: str | None = None
+    records_failed: list[str] = []
     synced = False
     if candidate is not None and http_sync and public_url:
         try:
@@ -878,7 +1279,27 @@ def _grade_arm_result(
             synced = True
         except Exception as exc:
             grade.error = f"candidate sync failed: {type(exc).__name__}: {exc}"[:500]
-    if synced:
+    elif candidate is not None and not http_sync and vendor == "fias-pabx":
+        # Framed transport has no live HTTP sync: verify the patched spec
+        # in-process over the announced feed layout (same serving code the
+        # live edge agent runs). A Complete feed sync backs the release
+        # claim; anything else is a failed attempt, not a release.
+        try:
+            from bench.faults import beacon_sync_pair as _beacon_sync_pair
+
+            faulted_summary, _baseline_summary = _beacon_sync_pair(
+                vendor=vendor, eval_seed_hex=eval_seed_hex, index=index, spec=candidate
+            )
+            synced = True
+            if faulted_summary.get("outcome") == "Complete":
+                records_verdict = "pass"
+            else:
+                records_verdict = "fail"
+                unmet = faulted_summary.get("unmet_criteria") or ["sync_not_complete"]
+                records_failed = [str(unmet[0])[:120]]
+        except Exception as exc:
+            grade.error = f"fias candidate verify failed: {type(exc).__name__}: {exc}"[:500]
+    if synced and records_verdict is None:
         try:
             judged = _verifier_post(
                 verifier_url,
@@ -887,14 +1308,23 @@ def _grade_arm_result(
                  "records": records, "spec": candidate},
             )
             records_verdict = str(judged.get("verdict", "fail"))
+            failed = judged.get("failed_checks", [])
+            if isinstance(failed, list):
+                records_failed = [str(f.get("name", ""))[:120] for f in failed if isinstance(f, dict) and f.get("name")]
         except BeaconError as exc:
             grade.error = f"records grade failed: {exc}"[:500]
             records_verdict = "fail"
         grade.records_verdict = records_verdict
+    elif not synced:
+        grade.records_verdict = None
+    else:
+        grade.records_verdict = records_verdict
+    grade.records_failed_checks = tuple(records_failed)
+    grade.patch_summary = _patch_summary_for(result, candidate)
     outcome_report = _arm_outcome_for(result, synced and records_verdict == "pass")
-    # A claimed Complete with broken/unsynced records is a wrong patch.
-    if outcome_report["outcome"] == "Complete" and candidate is not None and records_verdict != "pass":
-        grade.wrong_patch_released = 1
+    # Only a patch that reached a release (records verified) and then
+    # failed the outcome grade counts as a wrong patch released.
+    grade.blocked_step = _blocked_step_for(result, outcome_report)
     try:
         graded = _verifier_post(
             verifier_url,
@@ -904,7 +1334,9 @@ def _grade_arm_result(
     except BeaconError as exc:
         grade.error = f"outcome grade failed: {exc}"[:500]
         return
-    grade.grade_reason = str(graded.get("reason", ""))
+    reason = str(graded.get("reason", ""))
+    attempt = _attempt_summary_for(result, candidate)
+    grade.grade_reason = f"{reason} | {attempt}" if reason else attempt
     passed = bool(graded.get("passed", False))
     records_ok = (not synced) or records_verdict == "pass"
     if passed and records_ok:
@@ -915,6 +1347,8 @@ def _grade_arm_result(
             grade.correct_escalation = 1
     elif passed and not records_ok:
         grade.correct_escalation = 0
+    if outcome_report["outcome"] == "Complete" and outcome_report["patch_reached_release"] and not passed:
+        grade.wrong_patch_released = 1
 
 
 def _placeholder_credential_env() -> None:
@@ -947,14 +1381,34 @@ class BeaconRunResult:
         }
 
 
+def _min_med_max(values: list[float]) -> dict[str, Any]:
+    import statistics as _statistics
+
+    if not values:
+        return {"min": 0, "median": 0, "max": 0, "n": 0}
+    ordered = sorted(values)
+    return {
+        "min": ordered[0],
+        "median": float(_statistics.median(ordered)),
+        "max": ordered[-1],
+        "n": len(ordered),
+    }
+
+
 def summarize_grades(grades: list[BeaconArmGrade]) -> dict[str, Any]:
-    """Aggregate grades per arm, per (arm, instance) and overall (mean+CI95)."""
+    """Aggregate grades per arm, per (arm, instance) and overall (mean+CI95).
+
+    REQ-060 item 3 / REQ-062 item 5: per-row input / output / reasoning
+    tokens are recorded so the owner can pick a limit from the results;
+    the summary adds per-arm min / median / max total tokens.
+    """
     arms = sorted({g.arm for g in grades})
 
     def block(items: list[BeaconArmGrade]) -> dict[str, Any]:
         def vals(fn: Any) -> list[float]:
             return [float(fn(g)) for g in items]
 
+        totals = vals(lambda g: g.input_tokens + g.output_tokens)
         return {
             "n": len(items),
             "verified_completion": _mean_ci95(vals(lambda g: g.verified_completion)),
@@ -962,6 +1416,10 @@ def summarize_grades(grades: list[BeaconArmGrade]) -> dict[str, Any]:
             "correct_escalation": _mean_ci95(vals(lambda g: g.correct_escalation)),
             "frontier_tokens": _mean_ci95(vals(lambda g: g.frontier_tokens)),
             "small_tokens": _mean_ci95(vals(lambda g: g.small_tokens)),
+            "input_tokens": _mean_ci95(vals(lambda g: g.input_tokens)),
+            "output_tokens": _mean_ci95(vals(lambda g: g.output_tokens)),
+            "reasoning_tokens": _mean_ci95(vals(lambda g: g.reasoning_tokens)),
+            "total_tokens": {**_mean_ci95(totals), **_min_med_max(totals)},
             "cost_usd": _mean_ci95([g.cost_usd or 0.0 for g in items]),
             "elapsed_ms": _mean_ci95(vals(lambda g: g.elapsed_ms)),
         }
@@ -986,8 +1444,14 @@ def run_beacon(
     Refuses when the round is not yet published or a result dir for it
     already exists. Prints the public evidence (round, time, randomness,
     verification URL, freeze commit) to stdout.
+
+    REQ-062 item 6: the beacon run uses the same arms, prompts, context
+    and 200k ceiling as the dev ablation — the default
+    :class:`HarnessConfig` (200k ceiling, 600 s wall clock, file-based
+    bench prompts loaded once here), overridable via ``BENCH_TOKEN_CEILING``
+    / ``BENCH_WALL_CLOCK`` like the dev harness.
     """
-    from bench.harness import HarnessConfig as _HarnessConfig
+    from bench.bench_prompts import ensure_bench_prompts_loaded as _ensure_prompts
 
     out_dir = pathlib.Path(output_dir) if output_dir else BEACON_DIR / str(protocol.target_round)
     # No re-rolls: refuse when result files already exist. A directory that
@@ -1010,7 +1474,9 @@ def run_beacon(
     print(f"beacon run: freeze engine={protocol.engine_commit[:12]} generator={protocol.generator_commit[:12]} "
           f"frozen_at={protocol.frozen_at_utc} rehearsal={protocol.rehearsal}", flush=True)
     _placeholder_credential_env()
-    cfg = config or _HarnessConfig()
+    _ensure_prompts()
+    cfg = config if config is not None else default_beacon_config()
+    print(f"beacon run: token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
     vendors = load_vendors()
     admin = admin_urls(vendors)
     public = public_urls(vendors)
@@ -1098,6 +1564,53 @@ def verify_repro(
     return True
 
 
+def _cli_config(token_ceiling: int | None, wall_clock: float | None) -> Any | None:
+    """HarnessConfig from CLI flags (None when neither is given → env/defaults).
+
+    Explicit flags compose with the env overrides in :func:`run_beacon`
+    (env wins, mirroring the dev harness): a flag only fills a field the
+    env leaves unset.
+    """
+    if token_ceiling is None and wall_clock is None:
+        return None
+    import os as _os
+
+    from bench.harness import HarnessConfig as _HarnessConfig
+
+    kwargs: dict[str, Any] = {}
+    if token_ceiling is not None and not _os.environ.get("BENCH_TOKEN_CEILING", "").strip():
+        kwargs["token_ceiling"] = token_ceiling
+    if wall_clock is not None and not _os.environ.get("BENCH_WALL_CLOCK", "").strip():
+        kwargs["wall_clock_s"] = wall_clock
+    return _HarnessConfig(**kwargs) if kwargs else None
+
+
+def default_beacon_config() -> Any:
+    """Default run config: the dev ablation's 200k ceiling, env-overridable.
+
+    REQ-062 item 6: beacon runs use the same 200k token ceiling and 600 s
+    wall clock as the dev ablation (``HarnessConfig`` defaults);
+    ``BENCH_TOKEN_CEILING`` (``0`` = no limit, mirroring the dev bench)
+    and ``BENCH_WALL_CLOCK`` override them.
+    """
+    from bench.harness import HarnessConfig as _HarnessConfig
+
+    kwargs: dict[str, Any] = {}
+    env_ceiling = os.environ.get("BENCH_TOKEN_CEILING", "").strip()
+    if env_ceiling:
+        try:
+            kwargs["token_ceiling"] = int(env_ceiling)
+        except ValueError as exc:
+            raise BeaconError(f"BENCH_TOKEN_CEILING must be an int: {exc}") from exc
+    env_wall = os.environ.get("BENCH_WALL_CLOCK", "").strip()
+    if env_wall:
+        try:
+            kwargs["wall_clock_s"] = float(env_wall)
+        except ValueError as exc:
+            raise BeaconError(f"BENCH_WALL_CLOCK must be a number: {exc}") from exc
+    return _HarnessConfig(**kwargs)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI: ``freeze`` / ``run`` / ``verify-repro`` (wired to make targets)."""
     import argparse
@@ -1116,6 +1629,10 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--verifier-url", default=None)
     p_run.add_argument("--base-url", default=beacon_client.DRAND_DEFAULT_BASE_URL)
     p_run.add_argument("--output-dir", default=None)
+    p_run.add_argument("--token-ceiling", type=int, default=None,
+                       help="shared token ceiling (default 200000; 0 = no limit; BENCH_TOKEN_CEILING wins)")
+    p_run.add_argument("--wall-clock", type=float, default=None,
+                       help="shared wall-clock seconds (default 600; BENCH_WALL_CLOCK wins)")
     p_verify = sub.add_parser("verify-repro", help="reproduce + check published instances (item 7)")
     p_verify.add_argument("--round", type=int, required=True)
     p_verify.add_argument("--base-url", default=beacon_client.DRAND_DEFAULT_BASE_URL)
@@ -1127,6 +1644,10 @@ def main(argv: list[str] | None = None) -> int:
     p_rehearse.add_argument("--arms", default=",".join(ABLATION_ARMS))
     p_rehearse.add_argument("--verifier-url", default=None)
     p_rehearse.add_argument("--base-url", default=beacon_client.DRAND_DEFAULT_BASE_URL)
+    p_rehearse.add_argument("--token-ceiling", type=int, default=None,
+                            help="shared token ceiling (default 200000; 0 = no limit; BENCH_TOKEN_CEILING wins)")
+    p_rehearse.add_argument("--wall-clock", type=float, default=None,
+                            help="shared wall-clock seconds (default 600; BENCH_WALL_CLOCK wins)")
     args = parser.parse_args(argv)
     try:
         if args.cmd == "freeze":
@@ -1139,7 +1660,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "run":
             protocol = parse_protocol(args.protocol)
             run_beacon(protocol, verifier_url=args.verifier_url, base_url=args.base_url,
-                       output_dir=args.output_dir)
+                       output_dir=args.output_dir,
+                       config=_cli_config(args.token_ceiling, args.wall_clock))
         elif args.cmd == "rehearse":
             info = beacon_client.fetch_chain_info(args.base_url)
             pub_epoch = beacon_client.round_time_utc(
@@ -1159,7 +1681,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise BeaconError(
                     f"rehearsal protocol targets round {protocol.target_round}, want {args.round}")
             run_beacon(protocol, verifier_url=args.verifier_url, base_url=args.base_url,
-                       output_dir=rehearsal_dir)
+                       output_dir=rehearsal_dir,
+                       config=_cli_config(args.token_ceiling, args.wall_clock))
         else:
             verify_repro(args.round, base_url=args.base_url, output_dir=args.output_dir)
     except BeaconError as exc:

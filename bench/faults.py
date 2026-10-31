@@ -419,7 +419,14 @@ def beacon_sync_pair(
     the instance mutation. Both summaries come from
     :func:`execute_sync` — the arm derives detector input from their
     difference exactly like the ablation path.
+
+    ``fias-pabx`` rides framed/event transport (no HTTP app): the
+    instance is served through a feed reader over the announced PS
+    layout (the same handshake the live edge agent reports), with the
+    same :func:`execute_sync` summaries.
     """
+    if vendor == "fias-pabx":
+        return _fias_beacon_sync_pair(eval_seed_hex=eval_seed_hex, index=index, spec=spec)
     import importlib as _importlib
 
     from autobridge.engine.sync_run import execute_sync
@@ -522,3 +529,134 @@ def _meridian_fault_client(scenario_id: str, *, seed: int) -> Any:
         return _httpx.Response(404, json={"msg": "not found"})
 
     return _mock_client(handler)
+
+
+# ---------------------------------------------------------------------------
+# Beacon serving: FIAS PABX (framed/event transport, no HTTP app)
+# ---------------------------------------------------------------------------
+
+
+#: Realistic PABX posting values (mirrors the demo step-8 base row so the
+#: in-process feed carries the same wire shapes the live link sends:
+#: all-digit minor-unit amounts, date/time ids, short codes).
+_FIAS_BASE_ROW: dict[str, str] = {
+    "RN": "101",
+    "P#": "000417",
+    "DA": "261028",
+    "TI": "231504",
+    "TA": "1250",
+    "TM": "1250",
+    "DD": "004930",
+    "DU": "000312",
+    "SO": "TEL",
+    "CX": "VOICE",
+}
+
+#: Handshake response records (link control plane; not drifted).
+_FIAS_RE: list[dict[str, str]] = [{"RN": "101", "RS": "3", "DA": "261028", "TI": "180000"}]
+
+
+class _BeaconFiasFeed:
+    """Minimal EVENT feed reader for beacon FIAS syncs (duck-types the relay reader)."""
+
+    def __init__(self, ps: list[dict[str, Any]], re_: list[dict[str, Any]]) -> None:
+        self._by_record = {"PS": ps, "RE": re_}
+
+    def read(self, feed: Any, operation_name: str) -> list[dict[str, Any]]:
+        rec = feed["record"] if isinstance(feed, dict) else feed.record
+        records = self._by_record.get(rec)
+        if records is None:
+            raise KeyError(f"unknown feed {rec!r} for {operation_name!r}")
+        return [dict(r) for r in records]
+
+
+def _fias_feed_row(aliases: dict[str, str], added: list[str]) -> dict[str, str]:
+    """One PS posting shaped to the announced layout (live-alias semantics).
+
+    Starts from the full pre-drift posting shape, moves each renamed old
+    id's value under its new id (the live ``ps_field_aliases`` behavior:
+    the PABX sends the old value under the new id; the old id is gone),
+    and appends added ids empty. Fields the behavior never mentions ride
+    along untouched — the announced layout only adds/renames, it never
+    drops the rest of the posting. Deterministic in its inputs.
+    """
+    row = dict(_FIAS_BASE_ROW)
+    for new, old in aliases.items():
+        if old in row:
+            row[new] = row.pop(old)
+        else:
+            row[new] = _FIAS_BASE_ROW.get(old, "")
+    for fid in added:
+        row.setdefault(fid, "")
+    return row
+
+
+def beacon_fias_layout(eval_seed_hex: str, index: int) -> dict[str, Any]:
+    """Announced PS layout change for a FIAS beacon instance (serving side).
+
+    Returns ``{"aliases": {new: old}, "added": [...], "family": ...}``.
+    ``fias_link`` instances carry no layout change (the link drop is
+    absorbed by the edge agent): aliases/added are empty, so the faulted
+    feed equals the baseline feed. Raises :class:`ValueError` for
+    non-FIAS instances (fail closed).
+    """
+    import simulators.common.faultgen as _faultgen
+
+    try:
+        eval_seed = bytes.fromhex(str(eval_seed_hex).strip())
+    except (ValueError, AttributeError) as exc:
+        raise ValueError(f"eval_seed_hex must be hex: {exc}") from exc
+    try:
+        instance = _faultgen.generate_instance(eval_seed, int(index))
+    except (ValueError, KeyError) as exc:
+        raise ValueError(f"invalid beacon instance index={index}: {exc}") from exc
+    if str(instance["vendor"]) != "fias-pabx":
+        raise ValueError(f"instance {index} targets {instance['vendor']!r}, not fias-pabx")
+    behavior = _faultgen.behavior_for_instance(instance)
+    family = str(instance["family"])
+    if behavior is not None and str(behavior.get("family")) == "fias_layout":
+        renamed = behavior.get("renamed", {})
+        aliases = {str(new): str(old) for old, new in renamed.items()} if isinstance(renamed, dict) else {}
+        announced = [str(f) for f in behavior.get("announced_fields", [])]
+        base_keys = set(_FIAS_BASE_ROW) | set(aliases.values())
+        added = [f for f in announced if f not in base_keys and f not in aliases]
+        return {"aliases": aliases, "added": added, "family": family}
+    return {"aliases": {}, "added": [], "family": family}
+
+
+def _fias_beacon_sync_pair(
+    *, eval_seed_hex: str, index: int, spec: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(faulted_summary, baseline_summary) for a FIAS beacon instance.
+
+    Serves the announced PS layout through a feed reader (live-alias
+    semantics) and the baseline shape the pre-drift spec maps, both via
+    the real engine runtime (:func:`execute_sync`). ``fias_link``
+    instances serve the baseline shape twice (no layout drift to
+    observe: the drop is agent-absorbed, REQ-051 precedent).
+    """
+    from autobridge.engine.sync_run import execute_sync  # noqa: PLC0415
+    from autobridge.spec.models import load_spec_from_dict  # noqa: PLC0415
+    from simulators.common import beacon_serve as _beacon  # noqa: PLC0415
+
+    load_spec_from_dict(spec)  # fail fast on an invalid pre-drift spec
+    with isolated_sim_state(), fake_env():
+        try:
+            _beacon.set_beacon(eval_seed_hex, index)
+        except (ValueError, KeyError) as exc:
+            raise ValueError(f"invalid beacon instance vendor=fias-pabx index={index}: {exc}") from exc
+        layout = beacon_fias_layout(eval_seed_hex, index)
+        aliases = dict(layout["aliases"])
+        added = list(layout["added"])
+        faulted_ps = [_fias_feed_row(aliases, added)]
+        # The baseline is the full pre-drift posting shape (what the PABX
+        # sent before the announced change), not just the spec-mapped ids:
+        # scoping genuinely-new keys against it mirrors the HTTP
+        # build-probe annotation.
+        baseline_ps = [dict(_FIAS_BASE_ROW)]
+        faulted_summary = execute_sync(spec, None, feed_reader=_BeaconFiasFeed(faulted_ps, [dict(r) for r in _FIAS_RE]))
+        from simulators.common import state as _sim_state
+
+        _sim_state.set_beacon_state(None, None)
+        baseline_summary = execute_sync(spec, None, feed_reader=_BeaconFiasFeed(baseline_ps, [dict(r) for r in _FIAS_RE]))
+    return faulted_summary, baseline_summary

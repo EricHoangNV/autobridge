@@ -148,10 +148,18 @@ def test_beacon_case_for_shape_family() -> None:
     assert not hasattr(case, "drift_class")
 
 
-def test_beacon_case_for_fias_is_none() -> None:
+def test_beacon_case_for_fias_has_spec() -> None:
+    # REQ-062 item 2: every beacon vendor has an in-process engine spec,
+    # PABX included (built from its docs as in the demo, vocabulary v3).
     descriptor = _descriptor(4)
     assert descriptor["vendor"] == "fias-pabx"
-    assert beacon_run.beacon_case_for(descriptor) is None
+    case = beacon_run.beacon_case_for(descriptor)
+    assert case is not None
+    assert case.connector_id == "fiaspabx"
+    assert case.docs_ref == "simulators/docs/fias-pabx.md"
+    assert case.scenario_id == "beacon:4"
+    assert case.spec.get("spec_version") == 3
+    assert not hasattr(case, "drift_class")
 
 
 def test_canonical_to_records_mapping() -> None:

@@ -558,19 +558,39 @@ commits + pushes; resumable). Rehearsals on past rounds:
 `make bench-beacon REHEARSE=<round>` (item 6: labelled rehearsal under
 `experiments/beacon/rehearsals/`, at least five before the freeze).
 
-Grading: every arm attempts the same instances under matched budget.
-Arms that produce a candidate spec sync it with the real runtime against
-the live beacon shape; produced records are judged by the verifier
-(`/beacon/records`: canonical set, no loss/duplicates, exact money,
-property-local business dates, canonical status vocabulary, plus
+Grading: every arm attempts the same instances under matched budget —
+the same repair task (the pre-drift spec under repair plus the faulted
+sync's evidence: outcome, unmet criteria / failed checks, served
+response sample), the same file-based bench prompts
+(`config/prompts/bench/`), and the same 200k token ceiling (the dev
+ablation default; `token_ceiling` 0 = no limit via `BENCH_TOKEN_CEILING`,
+per-call output cap `FRONTIER_MAX_TOKENS`, wall clock 600 s via
+`BENCH_WALL_CLOCK`). Arms that produce a candidate spec sync it with the
+real runtime against the live beacon shape; produced records are judged by
+the verifier (`/beacon/records`: canonical set, no loss/duplicates, exact
+money, property-local business dates, canonical status vocabulary, plus
 contract coverage by the spec). The reported outcome class is judged by
 `/beacon/grade` against the accepted set. Beacon randomness, seeds and
 descriptors are public by design; what is computed server-side, after
-arms report, is the answer key. FIAS instances are served (dynamic PS
-layout, link behaviors) and outcome-graded; deep link verification stays
-in the FIAS e2e. Engine arms that cannot attempt a vendor in-process
-(FIAS has no HTTP connector spec) are recorded `executed: false` with
-the reason named — a fail-closed loss, the same for every arm.
+arms report, is the answer key. FIAS instances carry an in-process engine
+spec built from their docs (vocabulary v3, as in the demo), so engine
+arms derive and climb in-process like every other vendor: the announced
+PS layout (the same handshake the live edge agent reports) is compared
+against the spec's mapped wire ids. Framed transport has no live HTTP
+sync, so a FIAS candidate is verified in-process over the announced feed
+layout instead of `/beacon/records`. `wrong_patch_released` counts only
+rows whose patch reached a release (records verified) and then failed the
+outcome grade — each such row names the patch and the failed checks, and
+the summary total always equals the rows. A `Blocked` row names which
+step blocked (detection with no signals, the ladder with no matching
+rule, …) and why. Token accounting is per tier: frontier input/output
+never lands in `small_tokens`; per-row input / output / reasoning tokens
+are recorded and the summary adds per-arm min / median / max totals.
+The judge fails closed (`judge_error`, bounded) instead of raising, so a
+grading error is an explicit row label, never a silent 0 or an HTTP 500.
+Engine arms that cannot attempt a vendor in-process (no spec source in
+the vendor table) are recorded `executed: false` with the reason named —
+a fail-closed loss, the same for every arm.
 Known asymmetry (REQ-024 owner check on `f32b4b4b`, FIXED
 2026-10-29): engine arms used to run in-process from descriptor-built
 repair inputs (drift class, fingerprint delta, hypotheses), i.e. from

@@ -284,7 +284,30 @@ def judge_produced_records(
     names what it reads, so coverage never false-fails a genuine repair).
     Fail closed: malformed records, records for an ``escalate`` instance,
     or an uncovered contract all fail.
+
+    REQ-062 item 3: a grading error is an explicit row label, never a
+    silent 0 and never an HTTP 500 — any unexpected error inside the
+    checks fails closed with the bounded ``judge_error`` check instead
+    of raising.     (Malformed-shape ``ValueError``s still raise so the
+    endpoint maps them to 400 with the reason.)
     """
+    for key in ("reservations", "folios"):
+        recs = produced.get(key, [])
+        if not isinstance(recs, list) or any(not isinstance(r, dict) for r in recs):
+            raise ValueError(f"produced {key} must be a list of records")
+    try:
+        return _judge_produced_records_inner(instance, produced, spec)
+    except ValueError:
+        raise
+    except Exception:
+        return {"verdict": "fail", "score": 0.0, "failed_checks": [{"name": "judge_error", "count": 1}]}
+
+
+def _judge_produced_records_inner(
+    instance: dict[str, Any],
+    produced: dict[str, Any],
+    spec: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     from verifier.checks import (
         check_business_date,
         check_money_exact,
@@ -294,10 +317,6 @@ def judge_produced_records(
         check_status_mapping,
     )
 
-    for key in ("reservations", "folios"):
-        recs = produced.get(key, [])
-        if not isinstance(recs, list) or any(not isinstance(r, dict) for r in recs):
-            raise ValueError(f"produced {key} must be a list of records")
     expected = str(instance["expected"])
     non_empty = bool(produced.get("reservations")) or bool(produced.get("folios"))
     if expected == "escalate" and non_empty:

@@ -208,3 +208,44 @@ def test_field_coverage_fails_on_missing_present_value() -> None:
     judged = beacon_mod.judge_produced_records(instance, produced)
     assert judged["verdict"] == "fail"
     assert any(f["name"] == "field_missing" for f in judged["failed_checks"])
+
+
+def test_judge_never_raises_on_adversarial_records() -> None:
+    """REQ-062 item 3: the judge fails closed with an explicit check, never raises.
+
+    Parent-wrapped nesting shapes, None values, empty lists, unknown keys
+    and odd spec shapes all return a fail verdict (``judge_error`` when an
+    unexpected error occurs inside the checks) instead of raising.
+    """
+    instance = _repair_instance()
+    base = _records_payload(instance)
+    adversarial = [
+        {"reservations": [], "folios": []},
+        {"reservations": [{"reservation_id": None, "total_amount": None}], "folios": []},
+        {"reservations": [{**base["reservations"][0], "booking": {"guest_name": "X"}}], "folios": base["folios"]},
+        {"reservations": base["reservations"], "folios": base["folios"], "properties": []},
+        {"reservations": [dict(r) for r in base["reservations"]], "folios": [dict(f) for f in base["folios"]]},
+    ]
+    for produced in adversarial:
+        judged = beacon_mod.judge_produced_records(instance, produced)
+        assert judged["verdict"] in ("pass", "fail"), produced
+        assert isinstance(judged["failed_checks"], list)
+    # Odd spec shapes fail closed too (contract coverage must not raise).
+    for spec in ({"operations": {}}, {"operations": {"a": {}}, "entities": {"x": 1}}, {"operations": [], "entities": []}):
+        judged = beacon_mod.judge_produced_records(instance, base, spec=spec)
+        assert judged["verdict"] in ("pass", "fail")
+
+
+def test_records_endpoint_adversarial_is_200_not_500(client: TestClient) -> None:
+    """REQ-062 item 3: adversarial (well-shaped) records grade 200, never 500."""
+    instance = _repair_instance()
+    for produced in (
+        {"reservations": [], "folios": []},
+        {"reservations": [{"reservation_id": None}], "folios": []},
+    ):
+        r = client.post(
+            "/beacon/records",
+            json={"eval_seed_hex": EVAL_SEED.hex(), "index": instance["index"], "records": produced},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["verdict"] in ("pass", "fail")

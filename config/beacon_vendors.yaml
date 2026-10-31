@@ -8,11 +8,14 @@
 # `order` is the generator's round-robin vendor order
 # (simulators/common/faultgen.py VENDORS): instance index % len(order)
 # selects the vendor. `http: false` vendors ride non-HTTP transports
-# (FIAS framed TCP): no live sync, outcome-graded only.
+# (FIAS framed TCP): no live sync — records are verified in-process over
+# the announced feed layout instead (REQ-062 item 2).
 # `admin_url` / `public_url` are local-mode defaults; env
 # BEACON_ADMIN_URLS / BEACON_PUBLIC_URLS (`vendor=url,...`) override them.
 # `spec` selects the in-process engine spec: a generated reference spec or
-# a vendor-docs draft build (absent = outcome-graded only, e.g. FIAS).
+# a vendor-docs draft build (REQ-062 item 2: every vendor has one, PABX
+# included — built from its docs as in the demo, vocabulary v3).
+# `vocabulary` is the spec version the docs build compiles under.
 order:
   - vendor: atlas
     http: true
@@ -42,3 +45,5 @@ order:
     http: false
     admin_url: http://localhost:8119
     public_url: http://localhost:8118
+    spec: {kind: docs, path: simulators/docs/fias-pabx.md, connector: fiaspabx, vocabulary: v3}
+    docs: simulators/docs/fias-pabx.md

@@ -164,6 +164,8 @@ BOUNDED_FAILED_CHECK_NAMES: frozenset[str] = frozenset(
         # REQ-025 beacon evaluation: contract coverage + escalate hygiene.
         "beacon_contract_uncovered",
         "records_for_escalate",
+        # REQ-062 item 3: the judge itself failed (fail-closed, explicit).
+        "judge_error",
     }
 )
 
@@ -444,6 +446,8 @@ def _load_beacon_instance(eval_seed_hex: str, index: int) -> dict[str, Any]:
         return faultgen.generate_instance(eval_seed, index)
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=f"invalid beacon instance: {exc}") from exc
+    except Exception as exc:  # REQ-062 item 3: a grading error is an explicit row label, never a 500.
+        raise HTTPException(status_code=400, detail=f"invalid beacon instance: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/beacon/records", response_model=BeaconRecordsResponse, response_model_exclude_none=True)
@@ -463,6 +467,12 @@ def post_beacon_records(body: BeaconRecordsRequest) -> BeaconRecordsResponse:
         judged = beacon_mod.judge_produced_records(instance, body.records, body.spec)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # REQ-062 item 3: never a 500 from grading.
+        raise HTTPException(
+            status_code=400, detail=f"records judgement failed: {type(exc).__name__}: {exc}"
+        ) from exc
     failed_checks = _sanitize_failed_checks(judged["failed_checks"])
     resp = BeaconRecordsResponse(
         verdict=judged["verdict"],

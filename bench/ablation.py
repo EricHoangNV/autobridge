@@ -364,7 +364,7 @@ def ablation_provider(prefer: str = "auto") -> Any:
 # ---------------------------------------------------------------------------
 
 
-def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None, docs_loader: Any | None = None, case: AblationCase | None = None) -> Any:
+def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None, docs_loader: Any | None = None, case: AblationCase | None = None, context: Any | None = None) -> Any:
     """Arm a (``frontier_oneshot``): the model alone, one prompt with full context.
 
     REQ-046: the prompt is the file-based ``frontier_oneshot`` prompt
@@ -372,7 +372,11 @@ def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None, docs_l
     different-vendor example, vendor docs, visible tests, answer format)
     — exactly the context the engine has. *docs_loader* is kept for unit
     tests that inject docs text; when given it takes the legacy path.
-    *case* overrides the scenario lookup (tests).
+    *case* overrides the scenario lookup (tests). *context* is a
+    prebuilt :class:`bench.context.BenchContext` (REQ-062: the beacon
+    run builds it from the public descriptor + public seed, since the
+    dev evidence path cannot serve ``beacon:<index>`` scenarios); when
+    given it wins over *case*.
     """
     from bench.context import build_bench_context  # noqa: PLC0415
     from bench.one_shot import run_one_shot_arm  # noqa: PLC0415
@@ -380,22 +384,22 @@ def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None, docs_l
     if docs_loader is not None:
         result = run_one_shot_arm(inputs, provider=provider or ablation_provider(), docs_loader=docs_loader)
         return dataclasses.replace(result, arm="frontier_oneshot")
-    case_obj = case
-    if case_obj is None:
-        try:
-            case_obj = ablation_case_for_scenario(str(getattr(inputs, "scenario_id", "")))
-        except Exception:
-            case_obj = None
-    context = None
-    if case_obj is not None:
-        context = build_bench_context(
-            scenario_id=case_obj.scenario_id,
-            connector_id=case_obj.connector_id,
-            spec=case_obj.spec,
-            docs_ref=case_obj.docs_ref,
-            visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
-            seed=int(getattr(inputs, "seed", 0) or 0),
-        )
+    if context is None:
+        case_obj = case
+        if case_obj is None:
+            try:
+                case_obj = ablation_case_for_scenario(str(getattr(inputs, "scenario_id", "")))
+            except Exception:
+                case_obj = None
+        if case_obj is not None:
+            context = build_bench_context(
+                scenario_id=case_obj.scenario_id,
+                connector_id=case_obj.connector_id,
+                spec=case_obj.spec,
+                docs_ref=case_obj.docs_ref,
+                visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
+                seed=int(getattr(inputs, "seed", 0) or 0),
+            )
     result = run_one_shot_arm(inputs, provider=provider or ablation_provider(), context=context)
     # run_one_shot_arm labels arm="one_shot"; relabel to the ablation name.
     return dataclasses.replace(result, arm="frontier_oneshot")
@@ -486,14 +490,16 @@ def preflight_frontier_agent(*, timeout_s: float = 300.0, driver: Any | None = N
     return res
 
 
-def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: AblationCase | None = None) -> Any:
+def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: AblationCase | None = None, context: Any | None = None) -> Any:
     """Arm b (``frontier_agent``): the model as a coding agent with tools.
 
     REQ-046: the brief is the file-based ``frontier_agent`` prompt over
     the shared context bundle, and the sandbox holds the same files the
     engine has (schema, capabilities, different-vendor example, vendor
     docs); the brief names them. *case* overrides the scenario lookup
-    (tests).
+    (tests). *context* is a prebuilt :class:`bench.context.BenchContext`
+    (REQ-062: the beacon run builds it from the public descriptor +
+    public seed); when given it wins over *case*.
 
     REQ-052: on a live run (``FRONTIER_API_KEY`` set) the recorded model
     must be the model the run itself reports, and it must equal
@@ -505,22 +511,22 @@ def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: Abla
     from bench.context import build_bench_context  # noqa: PLC0415
     from bench.harness import run_baseline_arm  # noqa: PLC0415
 
-    case_obj = case
-    if case_obj is None:
-        try:
-            case_obj = ablation_case_for_scenario(str(getattr(inputs, "scenario_id", "")))
-        except Exception:
-            case_obj = None
-    context = None
-    if case_obj is not None:
-        context = build_bench_context(
-            scenario_id=case_obj.scenario_id,
-            connector_id=case_obj.connector_id,
-            spec=case_obj.spec,
-            docs_ref=case_obj.docs_ref,
-            visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
-            seed=int(getattr(inputs, "seed", 0) or 0),
-        )
+    if context is None:
+        case_obj = case
+        if case_obj is None:
+            try:
+                case_obj = ablation_case_for_scenario(str(getattr(inputs, "scenario_id", "")))
+            except Exception:
+                case_obj = None
+        if case_obj is not None:
+            context = build_bench_context(
+                scenario_id=case_obj.scenario_id,
+                connector_id=case_obj.connector_id,
+                spec=case_obj.spec,
+                docs_ref=case_obj.docs_ref,
+                visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
+                seed=int(getattr(inputs, "seed", 0) or 0),
+            )
     res = run_baseline_arm(
         inputs, driver=driver or frontier_agent_driver(), arm="frontier_agent", context=context
     )
