@@ -5,7 +5,7 @@
 Owner priority (2026-10-31 22:00): **REQ-065 next** (remove REQ-064 B2, keep B1; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-065 — Remove REQ-064 B2 (L3 before L4 for non-semantic classes); keep B1 (2026-10-31)
-Status: IN_PROGRESS (sbx1 since 2026-10-31 14:40)
+Status: DONE (sbx1 2026-10-31 -- B2 removed, B1 kept: engine/ladder/job/live/bench back to semantic-only L3, repair+engine diff vs 5d6d3977 empty, 4 adapted tests, full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 (rehearsal 5), then close)
 Owner decision after rehearsal 4 on `450bb445` (`tmp/beacon-rehearsal-6599930-r4/`, gitignored, read in place): B2 is
 rolled back because it did not improve results (engine 5/12 either way; L3 fixed 0 faults and added ~2k tokens/fault).
 Owner in-process replay of the L3 context showed why: instance 1 (`harbor` ENUM_NEW_VALUE) resolved entity `status` (a
@@ -31,6 +31,7 @@ Done when the diff against `5d6d3977` in `src/autobridge/repair/` and `src/autob
 needs, full gates are green, and the owner reruns `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1`
 (rehearsal 5: expected engine 5/12, ~0 frontier tokens except semantic climbs, 0 wrong). Do not freeze, tag
 `eval-freeze`, or commit anything under `experiments/beacon/` except labelled rehearsals.
+Resolution: `src/autobridge/repair/` + `src/autobridge/engine/` restored to `5d6d3977` (B2 gone: `_L3_PROPOSE/_CLIMB/_NEVER_CLASSES`, `prepare_detected_inputs`, `build_detected_l3_evidence`, deferred detected climb, live B2 deferral); `bench/ablation.py` keeps only the B1 `baseline_summary` detector input with the semantic-only phase-2 gate restored; `docs/architecture.md` ladder paragraph restored + B1/removal note; B2 test file replaced by `tests/unit/test_autobridge_req065_deterministic_first.py` (4 tests pinning the restored behaviour).
 
 ### REQ-063 — Beacon grading: no-drift runs complete, escalation questions count, answer keys match what the connector reads (2026-10-31)
 Status: DONE (sbx1 2026-10-31 -- all 3 items code-done: no-signal Complete + question carried/graded both ways + generator fixes with sanity gate; full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 in the sandbox, then close)

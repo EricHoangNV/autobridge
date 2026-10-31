@@ -27,13 +27,6 @@ from typing import Any
 
 from sqlalchemy import select as _select
 
-from autobridge.repair.controller import _L3_CLIMB_CLASSES
-
-#: Detected classes whose escalate-no-patch defers to a live L3 climb
-#: (REQ-064 B2): every climb class except SEMANTIC_VALUE_DRIFT, which has
-#: its own deferral branch above.
-_L3_DEFERRABLE = frozenset(_L3_CLIMB_CLASSES - {"SEMANTIC_VALUE_DRIFT"})
-
 
 def _summary_has_responses(summary: dict[str, Any]) -> bool:
     """Whether the sync observed any vendor response (raw page or records).
@@ -368,48 +361,6 @@ def _submit_deferred_semantic_repair(
             "signals_json": [signal_to_json(s) for s in (signals or [])],
             "fingerprint_delta": delta,
             "hypotheses_json": hyps_json,
-            "hypothesis_stages": list(prepared.get("stages") or []),
-            "l3_evidence": dict(prepared.get("evidence") or {}),
-            # REQ-053 item 6: the background climb judges L3 proposals on
-            # the break's records — no new vendor call from the job.
-            "dry_run_fault": dry_run_fault,
-        },
-    )
-
-
-def _submit_deferred_detected_repair(
-    session: Any,
-    *,
-    drift_id: str,
-    connector_id: str,
-    release_id: str,
-    drift_class: str,
-    prepared: dict[str, Any],
-    signals: list[Any],
-    delta: Any | None,
-    dry_run_fault: dict[str, Any] | None = None,
-) -> str:
-    """Queue a detected non-semantic climb as a background repair job (REQ-064 B2).
-
-    Same parcel shape as :func:`_submit_deferred_semantic_repair` (the job
-    handler reads one shape): the generic L3 repair context derived
-    inline, no hypotheses (L2 skipped, L3 directly). The parcel is
-    JSON-safe so the job survives threads and restarts.
-    """
-    from autobridge.control.runner import get_runner  # noqa: PLC0415
-    from autobridge.drift.signals import signal_to_json  # noqa: PLC0415
-
-    runner = get_runner(session)
-    return runner.submit_repair(
-        [drift_id],
-        payload_extra={
-            "drift_class": drift_class,
-            "connector_id": connector_id,
-            "release_id": release_id,
-            "scenario": None,
-            "signals_json": [signal_to_json(s) for s in (signals or [])],
-            "fingerprint_delta": delta,
-            "hypotheses_json": [],
             "hypothesis_stages": list(prepared.get("stages") or []),
             "l3_evidence": dict(prepared.get("evidence") or {}),
             # REQ-053 item 6: the background climb judges L3 proposals on
@@ -1169,69 +1120,6 @@ def detect_after_sync(
             "provider_mode": "live",
             "l3_status": f"queued: live climb runs in repair job {job_id}",
         }
-    if classification.drift_class in _L3_DEFERRABLE and _live_frontier_wanted():
-        # REQ-064 B2: a detected break with no deterministic fix is worth
-        # one live L3 attempt before escalating — but never inside this
-        # request (REQ-042). Probe the deterministic ladder purely (no
-        # rows, no calls); only an escalate-no-patch defers to the
-        # background job, which climbs with the provider and finalizes.
-        # A propose needs no job: the inline path below persists it.
-        import json as _json  # noqa: PLC0415
-
-        from autobridge.repair.controller import (  # noqa: PLC0415
-            RepairController,
-            prepare_detected_inputs,
-        )
-
-        probe = RepairController(
-            knowledge_cache=knowledge_cache
-        ).handle(
-            spec=spec_dict,
-            drift_class=classification.drift_class,
-            signals=list(signals),
-            fingerprint_delta=delta,
-            vendor=None,
-            drift_event_ids=[],
-            session=None,
-        )
-        if probe.decision != "propose":
-            prepared = prepare_detected_inputs(
-                spec=spec_dict,
-                signals=list(signals),
-                summary=summary if isinstance(summary, dict) else None,
-                sync_run_id=sync_run_id,
-            )
-            job_id = _submit_deferred_detected_repair(
-                session,
-                drift_id=drift.id,
-                connector_id=connector_id,
-                release_id=release_id,
-                drift_class=classification.drift_class,
-                prepared=prepared,
-                signals=list(signals),
-                delta=_json.loads(_json.dumps(delta, sort_keys=True, default=str))
-                if delta is not None
-                else None,
-                dry_run_fault=prepared.get("dry_run_fault"),
-            )
-            return {
-                "drift_found": True,
-                "repair_pending": True,
-                "outcome": opened["outcome"],
-                "drift_id": drift.id,
-                "drift_class": classification.drift_class,
-                "drift_reason": classification.reason,
-                "repair_job_id": job_id,
-                "repair_run_id": None,
-                "decision": None,
-                "rule_id": None,
-                "ladder_level_reached": None,
-                "model_usage": {},
-                "candidate_release_id": None,
-                "gate_error": None,
-                "provider_mode": "live",
-                "l3_status": f"queued: live climb runs in repair job {job_id}",
-            }
     result, semantic_info = _repair_inline(
         session,
         spec_dict=spec_dict,
