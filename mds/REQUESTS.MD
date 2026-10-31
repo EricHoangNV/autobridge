@@ -2,7 +2,71 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-31 22:00): **REQ-065 next** (remove REQ-064 B2, keep B1; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01 01:30): **REQ-066, then REQ-067** (the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
+
+### REQ-066 — Beacon protocol pins the frontier model (2026-11-01)
+Status: OPEN
+The owner switched every frontier call to Muse Spark 1.3 Contributor (`.env` `FRONTIER_MODEL=muse-spark-1.3-contributor`,
+price entry in `cca4eb70`). The frozen beacon protocol (`experiments/beacon/protocol.md`, written by `freeze()` in
+`bench/beacon_run.py`) names the round, faults, arms and rules but not the model, so the freeze cannot prove the model
+was fixed before the random value existed.
+Items:
+1. `freeze()` writes a `frontier-model: <id>` line (from `autobridge.config.frontier_model()`, the same resolution every
+   arm uses, e.g. `muse-spark-1.3-contributor`), and the agent arm's resolved opencode model alongside it if it differs
+   in form (`meta/<id>`). `parse_protocol` reads it.
+2. `bench-beacon` (real run and rehearsals) refuses to start, with a clear message, when the resolved model differs
+   from the protocol's line. A protocol without the line (older rehearsals) still parses; a real run requires it.
+3. `verify-beacon` / EVIDENCE.md show the pinned model. Docs (`docs/benchmark.md` beacon section) mention it.
+Tests: freeze writes the line; mismatch refuses; missing line on a rehearsal parses. Do not freeze, tag `eval-freeze`,
+or commit anything under `experiments/beacon/` except labelled rehearsals.
+
+### REQ-067 — Demo UI: fix the walkthrough findings and make the wording match the demo script (2026-11-01)
+Status: OPEN
+Owner keyed browser walkthrough on `a172e09f` (blank-slate seed, decks 1-7 + closing, 2026-11-01 00:45-00:55). Findings,
+screenshots and the per-deck result are in `tmp/walkthrough-a172e09f/FINDINGS.md` (gitignored; read in place from the
+main checkout, with the `*.jpg` next to it). The demo script the UI must match is `tmp/demo-flow/demo-flow.md` §5.2
+(read in place; do not copy it into the repo, do not edit `tmp/`). Fix every finding there:
+
+1. **Deck 5 decision box truncates the model's question** to "Should..." (repair page, NEEDS YOUR DECISION box). Show
+   the full question (wrap; no ellipsis on the question or the rationale).
+2. **Deck 3 second occurrence shows nothing.** After the approved r2 (cursor), a second `make demo-break
+   SCENARIO=page_to_cursor` is not a drift, so the scripted "resolves at L0 (known fix), reused 1×" beat cannot happen.
+   Make the second occurrence real and honest: the learned fix must actually be reused at L0 with 0 tokens and the
+   Knowledge page must then read "reused 1×". No faked rows. Choose the mechanism (for example: roll back to r1 from
+   the repair page, then inject again; or whatever reproduces the same drift on a live connector), document the exact
+   presenter steps in `docs/demo.md`, and report them in the Resolution so the owner updates the deck script.
+3. **Deck 5 Approve path is luck.** This run the model escalated with a question and no proposal, so only Deny showed
+   and Approve -> Green could not happen. When L3 escalates a semantic business decision, the model must also return
+   the concrete change the operator could approve (the existing optional `proposal` in `config/prompts/l3_patch.md`):
+   make the prompt ask for it whenever one concrete spec change would apply the other reading. Never invent a proposal
+   in code. Also explain the 2 frontier calls (10,035 tokens) on this escalation vs one call in earlier keyed runs, and
+   fix it if the second call is not needed.
+4. **Connector names wrap mid-word** on the Connectors list ("HarborPM / S", "MeridianP / MS") at 1440 px. Names wrap
+   at word boundaries only (or shrink), at 1440x900, the demo layout.
+5. **Wrong release numbers after Approve** on the repair page: right after r2 ships it says "Approve to ship it as
+   release r3" and "roll back to r2 stays available". After approval it must read r2 shipped, roll back to r1.
+6. **Build form copy contradicts behaviour:** "You approve release r1 · Nothing syncs into your systems before that" /
+   "Nothing syncs before you approve the release", but r1 goes live and syncs immediately ("Approved by —"). Make the
+   copy say what happens (the verifier-passed r1 goes live automatically; later changes need your approval), and
+   show who/what approved r1 in the Releases table instead of "—".
+7. **Deck 5 live counter reads "0 tokens so far"** during the model call. Show tokens as they stream, or show
+   "tokens counted when the model answers" instead of a 0 that looks wrong.
+8. **PABX "Postings arriving: 408 received · last 6-7 m ago"** on a connector built a minute earlier, and unchanged
+   through the link drop: the timestamp must be this connector's last received posting, and deck 7 must show postings
+   resuming after the reconnect (the script's "postings resume ... nothing lost, nothing duplicated"). If the
+   simulator emits no postings after the reconnect, make the `fias_link_resync` break emit some (counts must show
+   nothing lost, nothing duplicated).
+9. **Harbor shows "last sync 3 m ago"** while it waits for a decision. If syncs pause on purpose, say so on the
+   connector ("syncs paused until you decide"); otherwise keep syncing.
+10. **Wording pass:** every label on the screens the demo shows (Connectors, connector page, build form and build
+    progress, Repairs list, repair page, Knowledge) matches the terms in `tmp/demo-flow/demo-flow.md` §5.2 (connector
+    states Working / Degrading / Error, the repair page's four sections, "fix ready", "needs your decision", "business
+    decision by Eric", "learned from approval ... reused N×"). List any place where the UI and the script disagree and
+    which one you changed.
+
+Tests: unit/UI tests per item (Playwright where it is a rendering issue: full question visible, no mid-word wrap at
+1440 px, release numbers after approve). `data-testid`s used by `tests/e2e/test_06_ui_journey.spec.ts` keep working.
+Full gates green. The owner reruns the keyed browser walkthrough to close.
 
 ### REQ-065 — Remove REQ-064 B2 (L3 before L4 for non-semantic classes); keep B1 (2026-10-31)
 Status: DONE (sbx1 2026-10-31 -- B2 removed, B1 kept: engine/ladder/job/live/bench back to semantic-only L3, repair+engine diff vs 5d6d3977 empty, 4 adapted tests, full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 (rehearsal 5), then close)
