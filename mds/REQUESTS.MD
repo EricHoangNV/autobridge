@@ -5,7 +5,7 @@
 Owner priority (2026-10-31 22:00): **REQ-065 next** (remove REQ-064 B2, keep B1; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-065 — Remove REQ-064 B2 (L3 before L4 for non-semantic classes); keep B1 (2026-10-31)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-31 14:40)
 Owner decision after rehearsal 4 on `450bb445` (`tmp/beacon-rehearsal-6599930-r4/`, gitignored, read in place): B2 is
 rolled back because it did not improve results (engine 5/12 either way; L3 fixed 0 faults and added ~2k tokens/fault).
 Owner in-process replay of the L3 context showed why: instance 1 (`harbor` ENUM_NEW_VALUE) resolved entity `status` (a
