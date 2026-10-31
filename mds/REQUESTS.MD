@@ -2,7 +2,35 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-10-31 18:20): **REQ-064 next** (engine: silent corruption detection + L3 before L4; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+Owner priority (2026-10-31 22:00): **REQ-065 next** (remove REQ-064 B2, keep B1; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+
+### REQ-065 — Remove REQ-064 B2 (L3 before L4 for non-semantic classes); keep B1 (2026-10-31)
+Status: OPEN
+Owner decision after rehearsal 4 on `450bb445` (`tmp/beacon-rehearsal-6599930-r4/`, gitignored, read in place): B2 is
+rolled back because it did not improve results (engine 5/12 either way; L3 fixed 0 faults and added ~2k tokens/fault).
+Owner in-process replay of the L3 context showed why: instance 1 (`harbor` ENUM_NEW_VALUE) resolved entity `status` (a
+field) so 0 patchable pointers; instance 6 (PAGINATION_CHANGE) signal names no entity so the evidence was `{}`;
+instances 4 and 9 (`fias-pabx`) got no evidence (the FIAS beacon derive never attaches `l3_evidence`, and the builder
+finds 0 raw PABX records); instance 2 got full evidence and its L3 patch was blocked by the verifier. B1 (silent
+corruption detection) stays: it turned instance 7 into a pass and instance 5 from a silent Complete into a question,
+with 0 tokens and no new signal on the dev scenarios or demos.
+
+Items:
+1. Remove B2 from `450bb445`: the ladder/controller/job/live/bench paths go back to the pre-REQ-064 behaviour (L3 only
+   for SEMANTIC_VALUE_DRIFT/UNKNOWN with engine-enumerated hypotheses, "deterministic first, models last"). This
+   includes `_L3_PROPOSE_CLASSES`/`_L3_CLIMB_CLASSES` and their use, `prepare_detected_inputs`,
+   `build_detected_l3_evidence` (and helpers only it uses), the deferred detected climb in `_run_repair_climb`, the
+   `detect_repair.py` B2 wiring, and the bench phase-2 change in `bench/ablation.py`. Remove or adapt the B2 tests in
+   `tests/unit/test_autobridge_req064_l3_before_l4.py`; keep every B1 test.
+2. Keep B1 exactly: `mapped_field_emptied` -> SCHEMA_RENAME and `money_scale_shift` -> SEMANTIC_VALUE_DRIFT
+   (`drift/signals.py`, `drift/classifier.py`, the `baseline_summary` detector input) and the B1 parts of the bench
+   wiring. A detected class with no rule escalates at L4 with its question, 0 model tokens (REQ-063 behaviour).
+3. Put the ladder docs back ("L3 runs for semantic drift / UNKNOWN after the enumerator"); note in
+   `docs/architecture.md` that B1 signals exist and that non-semantic L3 was tried and removed (REQ-064/065).
+Done when the diff against `5d6d3977` in `src/autobridge/repair/` and `src/autobridge/engine/` contains only what B1
+needs, full gates are green, and the owner reruns `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1`
+(rehearsal 5: expected engine 5/12, ~0 frontier tokens except semantic climbs, 0 wrong). Do not freeze, tag
+`eval-freeze`, or commit anything under `experiments/beacon/` except labelled rehearsals.
 
 ### REQ-063 — Beacon grading: no-drift runs complete, escalation questions count, answer keys match what the connector reads (2026-10-31)
 Status: DONE (sbx1 2026-10-31 -- all 3 items code-done: no-signal Complete + question carried/graded both ways + generator fixes with sanity gate; full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 in the sandbox, then close)
