@@ -5,7 +5,7 @@
 Owner priority (2026-10-31 18:20): **REQ-064 next** (engine: silent corruption detection + L3 before L4; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-064 — Engine: catch silent corruption, and try L3 before escalating when no rule fits (2026-10-31)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-31 12:51)
 Owner rehearsal 3 on `5d6d3977` (after REQ-063): `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1`, keyed, in
 the sandbox. Output in `tmp/beacon-rehearsal-6599930-r3/` (gitignored; read in place from the main checkout). Grading is
 now clean. Verified: frontier_agent 6/12 (~77k tokens/fault), frontier_oneshot 5/12, autobridge_cold/warm 4/12 (~330),
