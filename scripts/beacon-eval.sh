@@ -105,6 +105,9 @@ make bench-beacon
 ROUND_DIR="experiments/beacon/$TARGET_ROUND"
 EVIDENCE="$ROUND_DIR/EVIDENCE.md"
 FREEZE_SHA="$(git rev-list -n 1 eval-freeze)"
+# REQ-066: the freeze pins the frontier model; show it on the evidence page.
+PINNED_FRONTIER="$(sed -n 's/.*beacon-frontier-model: *//p' "$PROTOCOL" | head -1)"
+PINNED_AGENT="$(sed -n 's/.*beacon-agent-model: *//p' "$PROTOCOL" | head -1)"
 {
   echo "# Beacon evaluation evidence — round $TARGET_ROUND"
   echo
@@ -116,6 +119,10 @@ FREEZE_SHA="$(git rev-list -n 1 eval-freeze)"
   echo "- verification URL: https://api.drand.sh/public/$TARGET_ROUND"
   echo "- freeze commit: $FREEZE_SHA (tag eval-freeze, pushed $PUSH_TIME)"
   echo "- protocol: experiments/beacon/protocol.md"
+  echo "- frontier model: ${PINNED_FRONTIER:-unknown (pre-REQ-066 freeze)}"
+  if [ -n "$PINNED_AGENT" ]; then
+    echo "- agent model: $PINNED_AGENT"
+  fi
   echo
   echo "## Per-arm summary"
   echo

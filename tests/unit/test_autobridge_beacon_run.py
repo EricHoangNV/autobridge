@@ -218,10 +218,15 @@ def test_run_instance_trial_offline_no_verifier() -> None:
 
 
 def test_run_beacon_refuses_unpublished_and_rerolls(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from autobridge import config as _config
+
     protocol = beacon_run.BeaconProtocol(
         round_after_utc="2030-01-01T00:00:00+00:00", target_round=9999999,
         faults=1, trials=1, arms=("autobridge_cold",),
         engine_commit="a", generator_commit="b", frozen_at_utc="2030-01-01T00:00:00+00:00",
+        # REQ-066: pin the current env model so this test exercises the
+        # unpublished-round guard, not the pinned-model gate.
+        frontier_model=_config.frontier_model(),
     )
     monkeypatch.setattr(
         beacon_run.beacon_client, "fetch_chain_info", lambda _base_url: dict(FAKE_INFO)

@@ -192,6 +192,14 @@ class BeaconProtocol:
     generator_commit: str
     frozen_at_utc: str
     rehearsal: bool = False
+    # REQ-066: the freeze pins the frontier model (every arm resolves it
+    # through ``autobridge.config.frontier_model``) so the freeze proves
+    # the model was fixed before the random value existed. ``None`` =
+    # a pre-REQ-066 protocol without the line (still parses; rehearsal-only).
+    frontier_model: str | None = None
+    # The agent arm's resolved opencode model (``meta/<id>`` form), only
+    # written when it differs from ``frontier_model``.
+    agent_model: str | None = None
 
 
 def parse_protocol(path: str | pathlib.Path = PROTOCOL_PATH) -> BeaconProtocol:
@@ -242,6 +250,8 @@ def parse_protocol(path: str | pathlib.Path = PROTOCOL_PATH) -> BeaconProtocol:
         generator_commit=fields["beacon-generator-commit"],
         frozen_at_utc=fields["beacon-frozen-at-utc"],
         rehearsal=fields.get("beacon-rehearsal", "false").strip().lower() == "true",
+        frontier_model=fields.get("beacon-frontier-model") or None,
+        agent_model=fields.get("beacon-agent-model") or None,
     )
 
 
@@ -288,6 +298,18 @@ def freeze(
     generator_commit = _git_commit()
     if _git_dirty():
         raise BeaconError("refusing freeze: git tree is dirty (commit everything first)")
+    # REQ-066: pin the frontier model every arm resolves (the same
+    # ``autobridge.config.frontier_model()`` the arms use), so the freeze
+    # proves the model was fixed before the random value existed. The
+    # agent arm's resolved opencode model rides alongside when it differs
+    # in form (``meta/<id>``).
+    from autobridge import config as _engine_config  # noqa: PLC0415
+
+    pinned_frontier = _engine_config.frontier_model()
+    pinned_agent = _engine_config.opencode_model()
+    agent_line = (
+        f"\n- beacon-agent-model: {pinned_agent}" if pinned_agent != pinned_frontier else ""
+    )
     frozen_at = now.isoformat()
     body = f"""# Beacon evaluation protocol (REQ-025 item 4)
 
@@ -295,7 +317,8 @@ One run, no retries, results published whatever they are. Frozen before the
 target round exists: the instances (fault parameters per seed) could not be
 known at freeze time. Fault *families* are known by design — that is the
 engine's everyday knowledge; the honest-scope note in docs/benchmark.md
-applies.
+applies. The frontier model below is pinned: ``bench-beacon`` refuses to
+run when the resolved model differs (REQ-066).
 
 - beacon-round-after-utc: {when.isoformat()}
 - beacon-target-round: {target_round}
@@ -306,6 +329,7 @@ applies.
 - beacon-generator-commit: {generator_commit}
 - beacon-frozen-at-utc: {frozen_at}
 - beacon-rehearsal: {"true" if rehearsal else "false"}
+- beacon-frontier-model: {pinned_frontier}{agent_line}
 - beacon-chain: {beacon_client.LOE_MAINNET_CHAIN_HASH} scheme={beacon_client.LOE_SCHEME_ID}
 - beacon-verify-url: {base_url.rstrip("/")}/public/{target_round}
 
@@ -327,6 +351,46 @@ parameters, generator internals and answer keys never reach the arms.
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
     return path
+
+
+def require_pinned_model(protocol: BeaconProtocol) -> None:
+    """Refuse the run unless the resolved frontier model matches the freeze (REQ-066).
+
+    A protocol without the line (older rehearsals) still parses: on a
+    rehearsal it warns and runs unpinned; a real run requires the line and
+    refuses without it. Any mismatch — frontier or agent form — refuses
+    with the expected vs actual model named.
+    """
+    from autobridge import config as _engine_config  # noqa: PLC0415
+
+    resolved = _engine_config.frontier_model()
+    pinned = protocol.frontier_model
+    if pinned is None:
+        if protocol.rehearsal:
+            print(
+                "beacon run: no pinned frontier-model in protocol "
+                "(pre-REQ-066 rehearsal); running unpinned",
+                flush=True,
+            )
+            return
+        raise BeaconError(
+            "refusing real run: protocol has no beacon-frontier-model line "
+            "(re-freeze with the REQ-066 code; unpinned protocols are rehearsal-only)"
+        )
+    if resolved != pinned:
+        raise BeaconError(
+            f"refusing run: resolved frontier model {resolved!r} differs from "
+            f"the frozen protocol's beacon-frontier-model {pinned!r} "
+            "(the freeze pins the model before the random value exists)"
+        )
+    agent_pinned = protocol.agent_model
+    if agent_pinned is not None:
+        resolved_agent = _engine_config.opencode_model()
+        if resolved_agent != agent_pinned:
+            raise BeaconError(
+                f"refusing run: resolved agent model {resolved_agent!r} differs from "
+                f"the frozen protocol's beacon-agent-model {agent_pinned!r}"
+            )
 
 
 def _git_commit() -> str:
@@ -1560,7 +1624,11 @@ def run_beacon(
     :class:`HarnessConfig` (200k ceiling, 600 s wall clock, file-based
     bench prompts loaded once here), overridable via ``BENCH_TOKEN_CEILING``
     / ``BENCH_WALL_CLOCK`` like the dev harness.
+
+    REQ-066: the pinned-model gate runs first — a model mismatch (or a
+    missing pin on a real run) refuses before any network or arm spend.
     """
+    require_pinned_model(protocol)
     from bench.bench_prompts import ensure_bench_prompts_loaded as _ensure_prompts
 
     out_dir = pathlib.Path(output_dir) if output_dir else BEACON_DIR / str(protocol.target_round)
@@ -1582,7 +1650,9 @@ def run_beacon(
     eval_seed_hex = verified.eval_seed_hex
     print(f"beacon run: {beacon_client.evidence_line(info, verified)}", flush=True)
     print(f"beacon run: freeze engine={protocol.engine_commit[:12]} generator={protocol.generator_commit[:12]} "
-          f"frozen_at={protocol.frozen_at_utc} rehearsal={protocol.rehearsal}", flush=True)
+          f"frozen_at={protocol.frozen_at_utc} rehearsal={protocol.rehearsal} "
+          f"frontier-model={protocol.frontier_model or 'unpinned'}"
+          + (f" agent-model={protocol.agent_model}" if protocol.agent_model else ""), flush=True)
     _placeholder_credential_env()
     _ensure_prompts()
     cfg = config if config is not None else default_beacon_config()
@@ -1633,6 +1703,32 @@ def _write_results(result: BeaconRunResult, out_dir: pathlib.Path) -> None:
           f"({len(result.instances)} instances, {len(result.grades)} grades)", flush=True)
 
 
+def _print_pinned_model(out_dir: pathlib.Path) -> None:
+    """Print the freeze's pinned frontier model for a results dir (REQ-066).
+
+    Reads the protocol next to the results (rehearsals), else the frozen
+    ``experiments/beacon/protocol.md``. A protocol without the line
+    (pre-REQ-066) is reported as unpinned, never an error here.
+    """
+    candidates = [out_dir / "protocol.md"]
+    if BEACON_DIR / "protocol.md" not in candidates:
+        candidates.append(BEACON_DIR / "protocol.md")
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            protocol = parse_protocol(candidate)
+        except BeaconError:
+            continue
+        if protocol.frontier_model:
+            extra = f" agent-model={protocol.agent_model}" if protocol.agent_model else ""
+            print(f"beacon verify: pinned frontier-model={protocol.frontier_model}{extra}", flush=True)
+        else:
+            print("beacon verify: no pinned frontier-model in protocol (pre-REQ-066 freeze)", flush=True)
+        return
+    print("beacon verify: no protocol found; pinned frontier-model unknown", flush=True)
+
+
 def verify_repro(
     round: int,
     *,
@@ -1645,11 +1741,15 @@ def verify_repro(
     them against ``experiments/beacon/<round>/instances.json`` (params
     equality). Returns True on match; raises :class:`BeaconError` on any
     mismatch (fail closed).
+
+    REQ-066: also shows the freeze's pinned frontier model (read from the
+    protocol next to the results, else the frozen ``protocol.md``).
     """
     out_dir = pathlib.Path(output_dir) if output_dir else BEACON_DIR / str(round)
     published_path = out_dir / "instances.json"
     if not published_path.is_file():
         raise BeaconError(f"no published instances at {published_path}")
+    _print_pinned_model(out_dir)
     published = json.loads(published_path.read_text(encoding="utf-8"))
     if not isinstance(published, list) or not published:
         raise BeaconError(f"published instances at {published_path} are not a non-empty list")

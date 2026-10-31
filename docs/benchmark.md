@@ -532,7 +532,13 @@ What a judge can check (everything is public except nothing needs to be):
 1. `experiments/beacon/protocol.md` — the freeze: round rule (first
    round at/after a UTC time), N instances, arms, metrics, trials,
    budgets, the engine + generator commits, "one run, no retries,
-   results published whatever they are".
+   results published whatever they are", and the pinned frontier model
+   (`beacon-frontier-model`, from `FRONTIER_MODEL`, plus the agent arm's
+   resolved `meta/<id>` form when it differs). The pin proves the model
+   was fixed before the random value existed: `bench-beacon` (real runs
+   and rehearsals) refuses to start when the resolved model differs, a
+   real run requires the line, and a protocol without it (older
+   rehearsals) still parses.
 2. The `eval-freeze` git tag and its push time — before the round's
    publication time (the round's own timestamp is inside the signed
    beacon; compare the two).

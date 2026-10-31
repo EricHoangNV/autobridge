@@ -39,10 +39,15 @@ def _descriptor(index: int) -> dict[str, Any]:
 
 
 def _protocol(**over: Any) -> beacon_run.BeaconProtocol:
+    from autobridge import config as _config
+
     base = dict(
         round_after_utc="2030-01-01T00:00:00+00:00", target_round=9999999,
         faults=2, trials=1, arms=("autobridge_cold",),
         engine_commit="a", generator_commit="b", frozen_at_utc="2030-01-01T00:00:00+00:00",
+        # REQ-066: pin the current env model so run_beacon tests exercise
+        # their own guard, not the pinned-model gate (overridable per test).
+        frontier_model=_config.frontier_model(),
     )
     base.update(over)
     return beacon_run.BeaconProtocol(**base)  # type: ignore[arg-type]
