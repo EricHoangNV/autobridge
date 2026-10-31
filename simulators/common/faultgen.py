@@ -95,6 +95,19 @@ RENAME_FIELDS: dict[str, tuple[str, ...]] = {
     "folio": ("description", "amount", "business_date", "posted_at"),
 }
 
+#: (vendor, entity, field) triples the vendor's wire never serves, so
+#: renaming them is a silent no-op while the key expects a repair
+#: (REQ-063 item 3 — the bench sanity gate flags such instances loudly).
+#: Meridian serves reservation money only through the folio join
+#: (``UnitAmount``) and folio business dates only derived from
+#: ``PostedUtc``; the dataset keys themselves never reach the wire.
+RENAME_UNSERVED: dict[str, dict[str, tuple[str, ...]]] = {
+    "meridian": {
+        "reservation": ("total_amount",),
+        "folio": ("business_date",),
+    },
+}
+
 #: Fresh field names a rename may introduce. None of these may collide
 #: with an existing record key (enforced at generation time as well).
 NAME_POOL: tuple[str, ...] = (
@@ -274,7 +287,9 @@ def _params_for(family: str, vendor: str, rng: random.Random) -> dict[str, Any]:
     """Pick family parameters from the fixed pools with ``rng``."""
     if family == "rename":
         entity = rng.choice(["reservation", "folio"])
-        field = rng.choice(list(RENAME_FIELDS[entity]))
+        unserved = RENAME_UNSERVED.get(vendor, {}).get(entity, ())
+        served = [f for f in RENAME_FIELDS[entity] if f not in unserved]
+        field = rng.choice(served)
         taken = _record_keys(entity)
         choices = [n for n in NAME_POOL if n not in taken and n != field]
         return {"entity": entity, "field": field, "new_name": rng.choice(choices)}
@@ -332,12 +347,20 @@ def _params_for(family: str, vendor: str, rng: random.Random) -> dict[str, Any]:
     if family == "dates":
         mode = rng.choice(list(DATE_MODES))
         if mode == "cutoff":
-            choices = [h for h in (1, 2, 3, 5, 6) if h != BASELINE_CUTOFF_HOUR]
+            # Only cutoffs inside the generator's 00:00-03:59 late-posting
+            # window can move a business date; 5/6 never manifest, so they
+            # are not offered (REQ-063 item 3). The selection guard below
+            # still verifies manifestation on the instance's dataset.
+            choices = [h for h in (1, 2, 3) if h != BASELINE_CUTOFF_HOUR]
             return {"mode": mode, "cutoff_hour": rng.choice(choices)}
         if mode == "tz_shift":
             choices = [h for h in (-3, -2, -1, 1, 2, 3)]
             return {"mode": mode, "shift_hours": rng.choice(choices)}
-        return {"mode": mode, "date_format": rng.choice(list(DATE_FORMATS))}
+        # The baseline vendor format is ISO (%Y-%m-%d): serving it back is a
+        # silent no-op while the key expects a repair (REQ-063 item 3), so it
+        # is never chosen.
+        choices = [f for f in DATE_FORMATS if f != "%Y-%m-%d"]
+        return {"mode": mode, "date_format": rng.choice(choices)}
     if family == "transport_auth":
         kind = rng.choice(list(TRANSPORT_KINDS))
         params: dict[str, Any] = {"kind": kind}
@@ -353,7 +376,11 @@ def _params_for(family: str, vendor: str, rng: random.Random) -> dict[str, Any]:
         n_added = rng.randint(0, 2)
         added = rng.sample(list(FIAS_FIELD_POOL), n_added) if n_added else []
         renamable = [f for f in FIAS_BASE_FIELDS if f not in ("P#",)]
-        n_renamed = rng.randint(0, 2)
+        # Every layout change renames at least one mapped wire id: an
+        # added-only (or empty) announcement breaks no mapping, serves
+        # byte-identical canonical output, and can never expect a repair
+        # (REQ-063 item 3 — the sanity gate flags such silent no-ops).
+        n_renamed = rng.randint(1, 2)
         renamed: dict[str, str] = {}
         if n_renamed:
             olds = rng.sample(renamable, min(n_renamed, len(renamable)))
@@ -431,6 +458,45 @@ def expected_for(family: str, params: dict[str, Any]) -> str:
     raise ValueError(f"unknown family: {family}")
 
 
+def _manifesting_cutoff(dataset_seed: int, picked: int) -> int:
+    """Cutoff that moves at least one folio business date (REQ-063 item 3).
+
+    Late postings cluster in 00:00–03:59 local, so cutoffs 5/6 usually
+    change nothing: a silent no-op while the key expects a repair. Keep
+    the seed-picked value when it manifests; otherwise take the first
+    pool value that does (deterministic, no extra randomness). Selection
+    is a pure function of the seed and ``posted_at`` is never touched, so
+    the dates inverse still round-trips byte-identically. When nothing
+    manifests (no late postings at all — vanishingly rare) the pick
+    stands and the bench sanity gate catches it loudly.
+    """
+    dataset = generate_dataset(seed=dataset_seed)
+    tz_map = property_timezone_map(dataset.get("properties", []))
+    folios = dataset.get("folios", [])
+
+    def _moves(cutoff: int) -> bool:
+        for rec in folios:
+            posted_at = rec.get("posted_at")
+            if not isinstance(posted_at, str):
+                continue
+            tz_name = tz_map.get(str(rec.get("property_id", "")), "UTC")
+            try:
+                if business_date_for_posted_at(posted_at, tz_name, cutoff_hour=cutoff) != rec.get(
+                    "business_date"
+                ):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    if _moves(picked):
+        return picked
+    for cutoff in [h for h in (1, 2, 3) if h != BASELINE_CUTOFF_HOUR]:
+        if _moves(cutoff):
+            return cutoff
+    return picked
+
+
 def generate_instance(eval_seed: bytes, index: int) -> dict[str, Any]:
     """Build one beacon fault instance (``index`` selects vendor round-robin).
 
@@ -450,13 +516,16 @@ def generate_instance(eval_seed: bytes, index: int) -> dict[str, Any]:
     family = rng.choice(list(families))
     prng = _rng_for(iseed, f"params:{family}")
     params = _params_for(family, vendor, prng)
+    dataset_seed = dataset_seed_for(iseed)
+    if family == "dates" and params.get("mode") == "cutoff":
+        params = dict(params, cutoff_hour=_manifesting_cutoff(dataset_seed, int(params["cutoff_hour"])))
     return {
         "vendor": vendor,
         "family": family,
         "index": index,
         "params": params,
         "seed_hex": iseed.hex(),
-        "dataset_seed": dataset_seed_for(iseed),
+        "dataset_seed": dataset_seed,
         "expected": expected_for(family, params),
     }
 

@@ -2831,3 +2831,80 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). All 6 items code-d
 - Item 3 (verifier 500): `judge_produced_records` fails closed (`judge_error`, bounded; added to `BOUNDED_FAILED_CHECK_NAMES`) instead of raising; `_load_beacon_instance` + `/beacon/records` map any grading error to 400 with the reason — a grading error is an explicit row label, never a 500 or silent 0.
 - Gates: `make test` 2951 + 136 + 409 passed, autobridge 90.13% / verifier 91.00% / simulators 90.48%, UI 295 passed; lint (import-contracts) + typecheck green. No live stack in sbx1: beacon rehearsal + e2e are owner steps.
 - Files: bench/beacon_run.py (grades fields, context, grading, ceiling), bench/ablation.py (context kwarg), bench/faults.py (FIAS serving), config/beacon_vendors.yaml, verifier/beacon.py + verifier/app.py, docs/benchmark.md; tests: test_autobridge_beacon_run{,_extra}.py (16 new/updated), test_verifier_beacon_endpoints.py (adversarial battery).
+
+### REQ-063 — Beacon grading: no-drift runs complete, escalation questions count, answer keys match what the connector reads (sbx1 2026-10-31)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). All 3 items code-done; full gates green
+(`make test` 2958 + 138 + 413 passed, autobridge 90.14% / verifier 91.04% / simulators 90.42%; UI 295;
+lint/typecheck green; no live stack in sbx1, W1 fakes cover the change in unit tests).
+Owner step: keyed `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` in the sandbox, then close.
+
+Item 1 — no drift detected is Complete, never an escalation:
+- `bench/ablation.py`: `DerivedDiagnostics` gains `faulted_outcome` (set by `derive_from_summaries`
+  from the faulted sync). `run_engine_arm` short-circuits when 0 signals + faulted `Complete`:
+  returns `ran=True`, `decision propose`, empty patch, `ladder_level_reached 0`, `question ""`,
+  0 tokens — the ladder/controller is never called (mirrors production: no repair run opens). On a
+  repair instance this still fails downstream as a silent miss (verified 0), never hidden. A 0-signal
+  non-Complete sync still climbs. Dev-ablation grading is unaffected (produced 0 counts as held
+  back on unfixable scenarios, verified 0 on repair).
+- `bench/beacon_run.py`: `_attempt_summary_for` reads "engine: no drift detected (0 signals), no
+  repair run opened (Complete, no patch)" for such rows; `_arm_outcome_for` maps propose-empty to
+  Complete/no patch (unchanged). FIAS diagnostics also carry `faulted_outcome`.
+- Test: `test_engine_no_signal_complete_reports_complete_no_patch` (ablation level, ladder never
+  called) + `test_engine_no_drift_reports_complete_no_patch` (full offline trial on an atlas
+  throttle instance: 0 tokens, `blocked_step None`, "no drift detected" in reason, grade passes as
+  no_patch). Rewrote `test_engine_blocked_row_names_detection_step` (its atlas/dates fixture now
+  manifests after the generator fix; the old Blocked-on-no-signal expectation contradicts item 1).
+
+Item 2 — escalation questions are carried and graded:
+- `run_engine_arm` records `_ladder_question(result)` (open question first, else the escalation
+  bundle's; `""` when the ladder wrote none) into `spec["question"]`.
+- `_arm_outcome_for`: engine `escalate` now reports `operator_question=True` when a question is
+  present (frontier `answer_kind=escalate` already did). Attempt summary / blocked step / patch
+  summary name the question, or state "the ladder wrote no question" (never invented).
+- `verifier/beacon.py::grade_arm_outcome`: `Blocked` + one operator question + no patch passes
+  `degraded_question` (frontier agents report Blocked with a question); `Degraded` + question still
+  passes; `escalate` keeps passing with or without a question.
+- Tests: question mapping both ways, wording ("with operator question" / "the ladder wrote no
+  question"), verifier grading (Blocked+question passes degraded_question, Complete+patch fails it).
+
+Item 3 — answer keys match what the connector reads + sanity gate:
+- Root causes found by reproducing instances 0/3/5/7/10 in-process (`beacon_sync_pair`, faulted vs
+  baseline canonical, eval seed from rehearsal-2 `summary.json`):
+  - Instance 0 (atlas/dates cutoff 5): silent no-op — late postings cluster 00:00–03:59, so cutoffs
+    5/6 never move a business date. Fix: cutoff pool is now (1,2,3) and `generate_instance` keeps
+    the seed-picked cutoff only when it moves ≥1 folio business date on the instance's dataset
+    (`_manifesting_cutoff`, pure function of the seed, `posted_at` untouched so the dates inverse
+    still round-trips). First attempt (forcing a posting into the window by moving `posted_at`)
+    was reverted: it broke `inverse_canonicalize` (information destroyed).
+  - Instance 3 (meridian decoy): by design — the connector ignores the decoy field, output correct.
+    Fix is grading: `accepted_outcomes_for` returns `{degraded_question, no_patch}` for decoys, so
+    `Complete` with no patch passes alongside the question.
+  - Full 40-combo rename sweep (every vendor × entity × field through real serving) found two more
+    silent no-ops, both Meridian fields the wire never serves: reservation `total_amount` (money
+    only via the folio join) and folio `business_date` (derived from `PostedUtc`).
+    Fix: `RENAME_UNSERVED` per-vendor exclusion in `_params_for`.
+  - `fias_layout` could generate added-only/empty layouts (break no mapping): now always renames ≥1
+    mapped wire id. `dates/format` could serve the baseline `%Y-%m-%d`: excluded from the pool.
+- Sanity gate (`bench/beacon_run.py::sanity_unchanged_repairs`, bench-side only — uses
+  `faultgen.expected_for`, never the answer key; `verifier/` keeps zero engine imports): flags a
+  repair instance whose faulted canonical output equals the baseline **with no drift signals**
+  (the wire-observed case — e.g. a renamed pagination cursor on a single-page dataset, 4 signals —
+  stays solvable and is spared, as are detection misses with changed output like instances 5/7).
+  `run_beacon` runs it per instance before any arm budget is spent and raises `BeaconError` naming
+  the instance (fail loudly; covers real runs and rehearsals). Verified clean: 0 flags on 150
+  instances (6 seeds × 25) + the round-6599930 seed (12/12) + the unit-test seed (60/60).
+- Tests: cutoff always manifests (all of 1/2/3 move ≥1 folio over 60 seeds), format never baseline,
+  meridian rename exclusions, fias rename guarantee; sanity flags a crafted silent repair, spares
+  wire-observed and no-patch instances (mocked + real meridian-pagination control); `run_beacon`
+  raises on a flagged instance. Updated 2 pinned FIAS vectors (index-24 layout is now `{TX: TA}`).
+- Docs: `docs/benchmark.md` grading paragraph (no-drift rule, question grading, decoy rule, sanity gate).
+
+Out of scope respected: no engine detection/ladder changes (`src/autobridge` untouched); instances
+4/5/7 detection misses unchanged; no freeze/tag/`experiments/beacon` commits.
+
+Files: `bench/ablation.py`, `bench/beacon_run.py`, `verifier/beacon.py`,
+`simulators/common/faultgen.py`, `docs/benchmark.md`, 5 unit-test files.
+Directives check (`./directives-for.sh`, no args): §§2/4/5/8 apply and hold — no new imports across
+trust boundaries (bench→`simulators/common` only, as `bench/faults.py` already does; no bench→verifier,
+no verifier→engine), outcomes stay Complete/Degraded/Blocked, coverage gates pass (90.14/91.04/90.42).
+No rule left unfollowed.

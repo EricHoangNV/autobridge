@@ -728,33 +728,142 @@ def _http_descriptor(pred: Any) -> dict[str, Any]:
     raise AssertionError("no matching beacon instance in range(60)")
 
 
-def test_engine_blocked_row_names_detection_step(monkeypatch: pytest.MonkeyPatch) -> None:
-    """REQ-062 item 1: a Blocked engine row says which step blocked and why.
+def test_sanity_flags_silent_repair_and_spares_observed_wire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-063 item 3: the bench sanity report flags a repair instance whose
+    faulted canonical output equals the baseline with no drift signals
+    (generator bug), and spares a repair the detector sees on the wire
+    (solvable: the ladder repairs from the observed signals) and a no-patch
+    instance with identical output."""
+    from types import SimpleNamespace as _NS
 
-    Real offline engine arm (FakeProvider, deterministic ladder only) on
-    an instance whose faulted sync is Complete with no signals: the arm
-    attempts (derives, climbs) and the row records the detection step.
+    import bench.faults as _faults
+
+    silent = {"index": 0, "vendor": "atlas", "family": "rename",
+              "params": {"entity": "reservation", "field": "guest_name", "new_name": "zzQ"}}
+    summary = {"outcome": "Complete", "unmet_criteria": [], "operation_results": {},
+               "canonical_records": {"Reservation": [{"reservation_id": "R1"}]}}
+    monkeypatch.setattr(_faults, "beacon_sync_pair", lambda **_: (dict(summary), dict(summary)))
+    monkeypatch.setattr(beacon_run, "derive_beacon_diagnostics",
+                        lambda *_, **__: _NS(signals=(), drift_class="UNKNOWN",
+                                             classification_reason="none", faulted_outcome="Complete"))
+    flags = beacon_run.sanity_unchanged_repairs(EVAL_SEED_HEX, [silent])
+    assert len(flags) == 1 and flags[0]["index"] == 0
+    assert flags[0]["expected"] == "repair"
+
+    # The detector sees the wire drift: not a silent no-op, no flag.
+    monkeypatch.setattr(beacon_run, "derive_beacon_diagnostics",
+                        lambda *_, **__: _NS(signals=(_NS(kind="pagination_changed"),),
+                                             drift_class="PAGINATION_CHANGE",
+                                             classification_reason="wire", faulted_outcome="Complete"))
+    assert beacon_run.sanity_unchanged_repairs(EVAL_SEED_HEX, [silent]) == []
+
+    # A no-patch instance with identical output is correct, never flagged.
+    nopatch = {"index": 10, "vendor": "atlas", "family": "transport_auth",
+               "params": {"kind": "retry_after", "retry_after_s": 1}}
+    assert beacon_run.sanity_unchanged_repairs(EVAL_SEED_HEX, [nopatch]) == []
+
+
+def test_sanity_spares_wire_observed_repair_on_real_serving() -> None:
+    """REQ-063 item 3: a repair whose fault the detector sees on the wire
+    (Meridian body_cursor rename: canonical equal on a single-page dataset,
+    4 drift signals) is solvable and never flagged — the signals spare it."""
+    inst = faultgen.generate_instance(EVAL_SEED, 18)
+    assert inst["family"] == "pagination", inst
+    descriptor = {"index": 18, "vendor": inst["vendor"], "family": inst["family"],
+                  "params": dict(inst["params"])}
+    assert beacon_run.sanity_unchanged_repairs(EVAL_SEED_HEX, [descriptor]) == []
+
+
+def test_run_beacon_fails_loud_on_silent_repair(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+                                                _clean_bench_env: Any) -> None:
+    """REQ-063 item 3: a rehearsal with a silent repair instance refuses the
+    run before spending any arm budget (fail loudly, naming the instance)."""
+    monkeypatch.setattr(beacon_run.beacon_client, "fetch_chain_info", lambda _base_url: dict(FAKE_INFO))
+    monkeypatch.setattr(
+        beacon_run.beacon_client, "fetch_latest",
+        lambda _base_url: {"round": 9999999, "randomness": "ab" * 32,
+                          "signature": "cd" * 96, "previous_signature": "ef" * 96})
+    verified = beacon_run.beacon_client.VerifiedRound(
+        round=9999999, randomness_hex="ab" * 32, eval_seed_hex=EVAL_SEED_HEX, published_at_utc=1893456000)
+    monkeypatch.setattr(beacon_run.beacon_client, "fetch_verified_round",
+                        lambda _base_url, _round, **_: verified)
+    monkeypatch.setattr(beacon_run, "push_beacon", lambda _seed, index, _vendor, **_: _descriptor(index))
+    monkeypatch.setattr(
+        beacon_run, "sanity_unchanged_repairs",
+        lambda _seed, _descriptors, _vendors=None: [{"index": 0, "vendor": "atlas", "family": "rename",
+                                                   "params": {}, "expected": "repair",
+                                                   "faulted_outcome": "Complete"}])
+    protocol = _protocol(faults=1)
+    with pytest.raises(BeaconError, match="generator bug"):
+        beacon_run.run_beacon(
+            protocol, config=None, runners={}, verifier_url=None,
+            base_url="https://example.invalid", output_dir=tmp_path / "beacon" / "9999999",
+        )
+
+
+def test_engine_no_drift_reports_complete_no_patch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-063 item 1: no drift signals + faulted Complete → every engine
+    arm reports Complete, no patch, no question (as production does: no
+    repair run opens). The ladder is not called (0 tokens); the row reads
+    "no drift detected".
+
+    Real offline engine arm (FakeProvider, deterministic ladder only) on a
+    throttled instance whose faulted sync is Complete with no signals. The
+    instance expects no_patch, so the row grades as a pass.
     """
     from autobridge.llm.provider import FakeProvider
     from bench.harness import HarnessConfig as _Cfg
 
     descriptor = _http_descriptor(
-        lambda c: c["vendor"] == "atlas" and c["family"] == "dates")
+        lambda c: c["vendor"] == "atlas" and c["family"] == "transport_auth")
     case = beacon_run.beacon_case_for(descriptor)
     assert case is not None
     diag = beacon_run.derive_beacon_diagnostics(
         case.spec, descriptor=descriptor, eval_seed_hex=EVAL_SEED_HEX,
         vendor=str(descriptor["vendor"]), connector_id=case.connector_id)
     assert not diag.signals, descriptor
-    _fake_verifier(monkeypatch, records_verdict="pass")
+    assert diag.faulted_outcome == "Complete", descriptor
+
+    import httpx as _httpx
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, payload: Any) -> None:
+            self._payload = payload
+
+        def json(self) -> Any:
+            return self._payload
+
+    def _post(url: str, **k: Any) -> Any:
+        import json as _json
+
+        raw = k.get("content", "")
+        try:
+            body = _json.loads(raw) if isinstance(raw, str) else {}
+        except ValueError:
+            body = {}
+        if url.endswith("/beacon/records"):
+            return _Resp({"verdict": "pass", "score": 1.0, "failed_checks": []})
+        if url.endswith("/beacon/grade"):
+            # Mirror the real no_patch rule: Complete with no patch passes.
+            passed = body.get("outcome") == "Complete" and not body.get("patch_reached_release")
+            return _Resp({"passed": passed, "reason": "no_patch: complete without a patch", "accepted": ["no_patch"]})
+        raise AssertionError(f"unexpected verifier path {url}")
+
+    monkeypatch.setattr(_httpx, "post", _post)
     protocol = _protocol(arms=("autobridge_cold",))
-    (grade,) = beacon_run.run_instance_trial(
+    grades, reports = beacon_run.run_instance_trial(
         protocol, EVAL_SEED_HEX, descriptor, 0, config=_Cfg(trials_per_scenario=1),
-        runners={}, provider=FakeProvider(), verifier_url="http://fake-verifier")[0]
+        runners={}, provider=FakeProvider(), verifier_url="http://fake-verifier")
+    (grade,) = grades
     assert grade.executed is True
     assert grade.frontier_tokens == 0 and grade.small_tokens == 0
-    assert grade.blocked_step is not None and grade.blocked_step.startswith("detection:")
-    assert grade.grade_reason is not None and "engine: detected UNKNOWN" in grade.grade_reason
+    assert grade.blocked_step is None
+    assert grade.grade_reason is not None and "no drift detected" in grade.grade_reason
+    assert grade.verified_completion == 1
+    report = reports["autobridge_cold"]
+    assert report["decision"] == "propose" and not report["has_patch"]
 
 
 def test_fias_layout_derive_attempts_with_reason() -> None:
@@ -818,6 +927,44 @@ def test_arm_outcome_maps_frontier_escalation() -> None:
     assert report == {"outcome": "Blocked", "patch_reached_release": False, "operator_question": True}
     assert beacon_run._patch_summary_for(escalate, None) is not None
     assert "Net or gross?" in (beacon_run._patch_summary_for(escalate, None) or "")
+
+
+def test_arm_outcome_maps_engine_escalation_with_question() -> None:
+    """REQ-063 item 2: an engine L4 escalation carries the ladder's question
+    (operator_question=True); without one the row says the ladder wrote
+    none (operator_question=False, never an invented question)."""
+    from types import SimpleNamespace as _NS
+
+    with_question = _NS(ran=True, outcome=None, error=None,
+                        spec={"decision": "escalate", "candidate_patch": [],
+                              "ladder_level_reached": 4, "rule_id": None,
+                              "question": "Which mapping is correct?",
+                              "beacon_diagnostics": {"drift_class": "UNKNOWN", "n_signals": 3,
+                                                     "n_missing": -1, "n_added": -1,
+                                                     "classification_reason": "r"}})
+    report = beacon_run._arm_outcome_for(with_question, False)
+    assert report == {"outcome": "Blocked", "patch_reached_release": False, "operator_question": True}
+    summary = beacon_run._attempt_summary_for(with_question, None)
+    assert "with operator question" in summary
+    step = beacon_run._blocked_step_for(with_question, report)
+    assert step is not None and "operator question carried" in step
+    assert beacon_run._patch_summary_for(with_question, None) == "escalation, no patch: Which mapping is correct?"
+
+    without_question = _NS(ran=True, outcome=None, error=None,
+                           spec={"decision": "escalate", "candidate_patch": [],
+                                 "ladder_level_reached": 4, "rule_id": None,
+                                 "question": "",
+                                 "beacon_diagnostics": {"drift_class": "UNKNOWN", "n_signals": 3,
+                                                        "n_missing": -1, "n_added": -1,
+                                                        "classification_reason": "r"}})
+    bare = beacon_run._arm_outcome_for(without_question, False)
+    assert bare == {"outcome": "Blocked", "patch_reached_release": False, "operator_question": False}
+    bare_summary = beacon_run._attempt_summary_for(without_question, None)
+    assert "the ladder wrote no question" in bare_summary
+    bare_step = beacon_run._blocked_step_for(without_question, bare)
+    assert bare_step is not None and "the ladder wrote no question" in bare_step
+    assert beacon_run._patch_summary_for(without_question, None) == (
+        "escalation, no patch (the ladder wrote no question)")
 
 
 def test_token_accounting_frontier_vs_engine(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -932,11 +1079,11 @@ def test_fias_feed_layout_aliases_and_added() -> None:
 
     layout = _faults.beacon_fias_layout(EVAL_SEED_HEX, 24)
     assert layout["family"] == "fias_layout"
-    assert layout["aliases"] == {"TX": "RN", "R#": "DA"}
+    assert layout["aliases"] == {"TX": "TA"}
     assert layout["added"] == []
     row = _faults._fias_feed_row(layout["aliases"], layout["added"])
-    assert row["TX"] == "101" and row["R#"] == "261028"
-    assert "RN" not in row and "DA" not in row
+    assert row["TX"] == "1250" and row["RN"] == "101"
+    assert "TA" not in row
     assert row["SO"] == "TEL"
     link = _faults.beacon_fias_layout(EVAL_SEED_HEX, 4)
     assert link["family"] == "fias_link"
@@ -970,4 +1117,5 @@ def test_fias_beacon_sync_pair_serves_announced_and_baseline() -> None:
     assert baseline.get("outcome") == "Complete"
     faulted_keys, baseline_keys = _ps_keys(faulted), _ps_keys(baseline)
     assert "RN" in baseline_keys and "RN" not in faulted_keys
-    assert "TX" in faulted_keys and "TX" not in baseline_keys
+    new_name = str(descriptor["params"]["renamed"]["RN"])
+    assert new_name in faulted_keys and new_name not in baseline_keys

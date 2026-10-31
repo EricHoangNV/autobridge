@@ -269,6 +269,77 @@ def test_materialize_dates_cutoff_matches_announcement() -> None:
     assert seen > 0
 
 
+def test_dates_cutoff_always_manifests() -> None:
+    """REQ-063 item 3: every cutoff fault moves at least one folio's
+    business date (cutoff 5/6 fall outside the generator's late-posting
+    window, so without the forcing rule they are silent no-ops)."""
+    from simulators.common.generator import generate_dataset
+
+    seen: dict[int, int] = {}
+    for raw in _seeds(60):
+        for inst in generate_instances(raw, 5):
+            params = dict(inst["params"])
+            if str(inst["family"]) != "dates" or params.get("mode") != "cutoff":
+                continue
+            cutoff = int(params["cutoff_hour"])
+            seen[cutoff] = seen.get(cutoff, 0) + 1
+            mat = materialize(inst)
+            base = generate_dataset(seed=int(inst["dataset_seed"]))
+            changed = [
+                (b.get("business_date"), a.get("business_date"))
+                for a, b in zip(mat["dataset"]["folios"], base["folios"], strict=True)
+                if a.get("business_date") != b.get("business_date")
+            ]
+            assert changed, (inst["vendor"], params)
+    assert set(seen) == {1, 2, 3}, seen
+
+
+def test_dates_format_never_picks_baseline() -> None:
+    """REQ-063 item 3: the baseline vendor format (%Y-%m-%d) served back is
+    a silent no-op while the key expects a repair, so it is never chosen."""
+    seen = 0
+    for raw in _seeds(60):
+        for inst in generate_instances(raw, 5):
+            params = dict(inst["params"])
+            if str(inst["family"]) != "dates" or params.get("mode") != "format":
+                continue
+            seen += 1
+            assert str(params["date_format"]) != "%Y-%m-%d", params
+    assert seen > 0
+
+
+def test_rename_never_picks_unserved_meridian_fields() -> None:
+    """REQ-063 item 3: Meridian never serves reservation total_amount or
+    folio business_date on the wire, so renaming them is a silent no-op."""
+    seen_meridian = 0
+    for raw in _seeds(120):
+        for inst in generate_instances(raw, 5):
+            params = dict(inst["params"])
+            if str(inst["family"]) != "rename":
+                continue
+            if str(inst["vendor"]) == "meridian":
+                seen_meridian += 1
+                assert (params.get("entity"), params.get("field")) not in (
+                    ("reservation", "total_amount"),
+                    ("folio", "business_date"),
+                ), params
+    assert seen_meridian > 0
+
+
+def test_fias_layout_always_renames_a_mapped_field() -> None:
+    """REQ-063 item 3: an added-only (or empty) layout announcement breaks
+    no mapping, so every fias_layout instance renames a mapped wire id."""
+    seen = 0
+    for raw in _seeds(60):
+        for inst in generate_instances(raw, 5):
+            if str(inst["family"]) != "fias_layout":
+                continue
+            seen += 1
+            renamed = dict(inst["params"].get("renamed", {}))
+            assert renamed, inst["params"]
+    assert seen > 0
+
+
 def test_materialize_dates_format_parseable() -> None:
     import datetime as _dt
 

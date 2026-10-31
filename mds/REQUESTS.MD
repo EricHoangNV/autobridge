@@ -5,7 +5,7 @@
 Owner priority (2026-10-31 18:30): **REQ-063 next** (beacon grading; the real freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-063 — Beacon grading: no-drift runs complete, escalation questions count, answer keys match what the connector reads (2026-10-31)
-Status: IN_PROGRESS (sbx1 since 2026-10-31 10:10)
+Status: DONE (sbx1 2026-10-31 -- all 3 items code-done: no-signal Complete + question carried/graded both ways + generator fixes with sanity gate; full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 in the sandbox, then close)
 Owner rehearsal 2 on `441efe7f` (after REQ-062): `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` in the
 sandbox (keyed). Output in `tmp/beacon-rehearsal-6599930-r2/` (gitignored; read it in place from the main checkout).
 REQ-062 holds: every row is gradable with a stated reason. Results: frontier_agent verified 5/12, frontier_oneshot 3/12,

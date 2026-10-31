@@ -707,6 +707,7 @@ def _derive_fias_diagnostics(
             fingerprint_delta=report.get("delta"),
             signals=(),
             classification_reason="No drift signals observed",
+            faulted_outcome=str(faulted_summary.get("outcome", "")),
         )
     classification = classify([signal])
     return _ablation.DerivedDiagnostics(
@@ -714,6 +715,7 @@ def _derive_fias_diagnostics(
         fingerprint_delta=report.get("delta"),
         signals=(signal,),
         classification_reason=classification.reason,
+        faulted_outcome=str(faulted_summary.get("outcome", "")),
     )
 
 
@@ -737,6 +739,82 @@ def canonical_to_records(canonical: dict[str, Any]) -> dict[str, list[dict[str, 
             produced[key] = []
         produced[key].extend([r for r in rows if isinstance(r, dict)])
     return produced
+
+
+def sanity_unchanged_repairs(
+    eval_seed_hex: str,
+    descriptors: list[dict[str, Any]],
+    vendors: list[BeaconVendor] | None = None,
+) -> list[dict[str, Any]]:
+    """Flag repair instances whose fault changes nothing the engine can observe.
+
+    REQ-063 item 3: for every instance whose answer key expects ``repair``
+    (via :func:`faultgen.expected_for`, the same rule the verifier uses —
+    never the answer key itself), sync the pre-drift spec against the
+    faulted and baseline shapes in-process and compare the canonical
+    output. An output equal to the baseline *with no drift signals* means
+    the fault never reaches what the connector reads: a generator bug,
+    never an engine failure. A wire-shape drift the detector sees (e.g. a
+    renamed pagination cursor on a single-page dataset) stays solvable —
+    the ladder repairs from the observed signals — so signals spare the
+    instance. Returns one entry per flagged instance (empty when clean).
+    Bench-side only — ``verifier/`` stays free of engine imports.
+    """
+    from bench.faults import beacon_sync_pair as _beacon_sync_pair  # noqa: PLC0415
+    from simulators.common import faultgen as _faultgen  # noqa: PLC0415 - simulators-side, like faults.py
+
+    flags: list[dict[str, Any]] = []
+    for descriptor in descriptors:
+        family = str(descriptor.get("family", ""))
+        params = dict(descriptor.get("params", {}) or {})
+        try:
+            expected = _faultgen.expected_for(family, params)
+        except Exception:
+            continue
+        if expected != "repair":
+            continue
+        case = beacon_case_for(descriptor, vendors)
+        if case is None:
+            continue
+        vendor = str(descriptor["vendor"])
+        try:
+            faulted, baseline = _beacon_sync_pair(
+                vendor=vendor,
+                eval_seed_hex=eval_seed_hex,
+                index=int(descriptor["index"]),
+                spec=dict(case.spec),
+            )
+        except Exception:
+            # Unjudgeable here (bad seed/index/spec) — the run's own
+            # grading surfaces it; the sanity gate only flags silent no-ops.
+            continue
+        faulted_norm = json.dumps(faulted.get("canonical_records", {}), sort_keys=True, default=str)
+        baseline_norm = json.dumps(baseline.get("canonical_records", {}), sort_keys=True, default=str)
+        if faulted_norm != baseline_norm:
+            continue
+        try:
+            diag = derive_beacon_diagnostics(
+                dict(case.spec),
+                descriptor=descriptor,
+                eval_seed_hex=eval_seed_hex,
+                vendor=vendor,
+                connector_id=case.connector_id,
+            )
+            n_signals = len(diag.signals or ())
+        except Exception:
+            continue
+        if n_signals == 0:
+            flags.append(
+                {
+                    "index": int(descriptor["index"]),
+                    "vendor": vendor,
+                    "family": family,
+                    "params": params,
+                    "expected": expected,
+                    "faulted_outcome": str(faulted.get("outcome", "")),
+                }
+            )
+    return flags
 
 
 def sync_candidate(
@@ -1111,17 +1189,20 @@ def _arm_outcome_for(result: Any, has_records: bool) -> dict[str, Any]:
 
     Ladder decision vocabulary (``LadderResult.decision``): ``propose``
     with a non-empty patch (Complete + patch, records judged),
-    ``propose`` with an empty patch (backoff-only/refresh: Complete, no
-    patch, no release), ``degraded`` (Degraded + one operator question),
-    ``escalate`` (Blocked). A frontier escalation answer (``answer_kind``
-    ``escalate``, no ladder decision) is Blocked with its question
-    recorded. Anything else (arm error, unparseable output) is Blocked
-    — fail closed.
+    ``propose`` with an empty patch (backoff-only/refresh, or no drift
+    detected: Complete, no patch, no release), ``degraded`` (Degraded +
+    one operator question), ``escalate`` (Blocked, carrying the ladder's
+    question when it wrote one — REQ-063 item 2). A frontier escalation
+    answer (``answer_kind`` ``escalate``, no ladder decision) is Blocked
+    with its question recorded. Anything else (arm error, unparseable
+    output) is Blocked — fail closed.
     """
     spec = getattr(result, "spec", None)
     decision = spec.get("decision") if isinstance(spec, dict) else None
     patch = spec.get("candidate_patch") if isinstance(spec, dict) else None
     answer_kind = spec.get("answer_kind") if isinstance(spec, dict) else None
+    question = spec.get("question") if isinstance(spec, dict) else None
+    has_question = isinstance(question, str) and bool(question.strip())
     if decision == "propose" and patch:
         return {"outcome": "Complete", "patch_reached_release": has_records, "operator_question": False}
     if decision == "propose":
@@ -1129,7 +1210,7 @@ def _arm_outcome_for(result: Any, has_records: bool) -> dict[str, Any]:
     if decision == "degraded":
         return {"outcome": "Degraded", "patch_reached_release": False, "operator_question": True}
     if decision == "escalate":
-        return {"outcome": "Blocked", "patch_reached_release": False, "operator_question": False}
+        return {"outcome": "Blocked", "patch_reached_release": False, "operator_question": has_question}
     if answer_kind == "escalate":
         return {"outcome": "Blocked", "patch_reached_release": False, "operator_question": True}
     if getattr(result, "ran", False) and isinstance(spec, dict) and len(spec) > 0 and not patch:
@@ -1152,6 +1233,11 @@ def _patch_summary_for(result: Any, candidate: dict[str, Any] | None) -> str | N
     if spec.get("answer_kind") == "escalate":
         question = str(spec.get("question", ""))[:120]
         return f"escalation, no patch: {question}" if question else "escalation, no patch"
+    if spec.get("decision") == "escalate":
+        # REQ-063 item 2: an engine L4 escalation is also an escalation with
+        # the ladder's question (or none, stated as such) — never silent.
+        question = str(spec.get("question", ""))[:120]
+        return f"escalation, no patch: {question}" if question else "escalation, no patch (the ladder wrote no question)"
     if candidate is not None:
         return "full spec (no patch wrapper)"
     if getattr(result, "outcome", None):
@@ -1182,9 +1268,25 @@ def _attempt_summary_for(result: Any, candidate: dict[str, Any] | None) -> str:
         diag = spec.get("beacon_diagnostics", {}) if isinstance(spec.get("beacon_diagnostics"), dict) else {}
         drift = diag.get("drift_class", "?")
         n_signals = diag.get("n_signals", "?")
+        try:
+            n = int(n_signals)
+        except (TypeError, ValueError):
+            n = -1
         decision = spec.get("decision", "?")
         level = spec.get("ladder_level_reached", "?")
         rule = spec.get("rule_id") or "no rule"
+        if n == 0 and decision == "propose" and not spec.get("candidate_patch"):
+            # REQ-063 item 1: production opens no repair run here — the row
+            # reads as "no drift detected", never as an escalation.
+            return "engine: no drift detected (0 signals), no repair run opened (Complete, no patch)"
+        if decision == "escalate":
+            question = spec.get("question") if isinstance(spec.get("question"), str) else ""
+            if question and question.strip():
+                return f"engine: detected {drift} ({n_signals} signals) -> escalate at L{level} ({rule}) with operator question"
+            return (
+                f"engine: detected {drift} ({n_signals} signals) -> escalate at L{level} ({rule}); "
+                "the ladder wrote no question"
+            )
         return f"engine: detected {drift} ({n_signals} signals) -> {decision} at L{level} ({rule})"
     patch = spec.get("candidate_patch") if spec else None
     if isinstance(patch, list) and patch:
@@ -1230,8 +1332,16 @@ def _blocked_step_for(result: Any, outcome_report: dict[str, Any]) -> str | None
         if n_missing == 0:
             return "detection: announced/served shape breaks no mapping (missing: none) — nothing to repair"
         if decision == "escalate" and not rule:
-            return f"ladder: no rule matched {drift} at L{level}, escalated without a patch"
-        return f"ladder: escalated at L{level} (rule: {rule or 'none'})"
+            base = f"ladder: no rule matched {drift} at L{level}, escalated without a patch"
+        else:
+            base = f"ladder: escalated at L{level} (rule: {rule or 'none'})"
+        # REQ-063 item 2: say whether the escalation carries the operator question.
+        question = spec.get("question") if isinstance(spec.get("question"), str) else ""
+        if decision == "escalate":
+            if question and question.strip():
+                return base + " (operator question carried)"
+            return base + " (the ladder wrote no question)"
+        return base
     if spec.get("answer_kind") == "escalate":
         return "attempt: escalated with a question instead of a patch"
     outcome_label = getattr(result, "outcome", None)
@@ -1486,6 +1596,17 @@ def run_beacon(
         descriptor = push_beacon(eval_seed_hex, index, vendor_cfg.vendor, admin_url=admin.get(vendor_cfg.vendor))
         result.instances.append(descriptor)
         print(f"beacon run: instance {index} vendor={vendor_cfg.vendor} family={descriptor['family']}", flush=True)
+        # REQ-063 item 3: fail loudly before spending any arm budget on an
+        # instance the connector cannot distinguish from the baseline.
+        sanity_flags = sanity_unchanged_repairs(eval_seed_hex, [descriptor], vendors)
+        if sanity_flags:
+            flag = sanity_flags[0]
+            raise BeaconError(
+                "beacon sanity: instance "
+                f"{flag['index']} ({flag['vendor']}/{flag['family']} {flag['params']}) "
+                f"expects {flag['expected']} but its faulted canonical output equals "
+                "the baseline under the pre-drift spec — generator bug, refusing run"
+            )
         for trial in range(protocol.trials):
             grades, _reports = run_instance_trial(
                 protocol, eval_seed_hex, descriptor, trial,

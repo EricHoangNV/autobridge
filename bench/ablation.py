@@ -573,6 +573,11 @@ class DerivedDiagnostics:
     signals: tuple[Any, ...]
     hypotheses: tuple[Any, ...] = ()
     classification_reason: str = ""
+    # REQ-063 item 1: the faulted sync's outcome, observed alongside the
+    # signals. When the detector reports no signals and the faulted sync is
+    # Complete, production opens no repair run — the arm reports Complete
+    # with no patch (the ladder is never called).
+    faulted_outcome: str = ""
 
 
 def derive_from_summaries(
@@ -614,6 +619,7 @@ def derive_from_summaries(
         fingerprint_delta=delta,
         signals=tuple(signals),
         classification_reason=classification.reason,
+        faulted_outcome=str(faulted_summary.get("outcome", "")),
     )
 
 
@@ -705,6 +711,28 @@ def _default_derive(
     )
 
 
+def _ladder_question(result: Any) -> str:
+    """The operator question the ladder wrote, or "" when it wrote none.
+
+    REQ-063 item 2: the engine's L4 escalation carries this question (the
+    open question first, else the escalation bundle's). Never invented —
+    callers report an empty string as "the ladder wrote no question".
+    """
+    try:
+        open_q = list(getattr(result, "open_questions", None) or ())
+    except TypeError:
+        open_q = []
+    for q in open_q:
+        if isinstance(q, str) and q.strip():
+            return q.strip()[:500]
+    bundle = getattr(result, "escalation_bundle", None)
+    if bundle is not None:
+        q = getattr(bundle, "question", "")
+        if isinstance(q, str) and q.strip():
+            return q.strip()[:500]
+    return ""
+
+
 def run_engine_arm(
     inputs: Any,
     case: AblationCase,
@@ -754,6 +782,31 @@ def run_engine_arm(
         # public-descriptor serving. Either way: observation, never labels.
         derive_fn = derive or _default_derive
         diag = derive_fn(case.spec, case, inputs)
+        signals = list(diag.signals or ())
+        if len(signals) == 0 and str(getattr(diag, "faulted_outcome", "")) == "Complete":
+            # REQ-063 item 1: the detector reports no drift signals and the
+            # faulted sync is Complete — production opens no repair run, so
+            # the arm reports Complete with no patch and the ladder is never
+            # called. On a repair scenario this still fails downstream as a
+            # silent miss (verified 0), and the row reads as one, never hidden.
+            elapsed_ms = (time.monotonic() - start) * 1000.0
+            return ArmResult(
+                arm=ablation,
+                inputs=inputs,
+                ran=True,
+                elapsed_ms=elapsed_ms,
+                model=getattr(provider, "frontier_model", None) or "engine-ladder",
+                spec={
+                    "candidate_patch": [],
+                    "decision": "propose",
+                    "ladder_level_reached": 0,
+                    "rule_id": None,
+                    "question": "",
+                    "no_drift": True,
+                },
+                prompt=None,
+                context_hash=None,
+            )
         run_id = f"ablation-{ablation}-{case.scenario_id}-{getattr(inputs, 'trial', 0)}"
         common = dict(
             spec=case.spec,
@@ -796,6 +849,10 @@ def run_engine_arm(
             except Exception:
                 cost = None
         patch = result.candidate_patch
+        # REQ-063 item 2: the engine's L4 escalation carries the question the
+        # ladder wrote (open question, else the escalation bundle's). The
+        # row reports it via operator_question; when the ladder writes none
+        # the row says so (empty string, never an invented question).
         # REQ-046: the engine arm holds the same shared context bundle the
         # frontier arms render (schema, capabilities, different-vendor
         # example, docs, visible tests) — record its hash so the
@@ -837,6 +894,7 @@ def run_engine_arm(
                 "decision": result.decision,
                 "ladder_level_reached": result.ladder_level_reached,
                 "rule_id": result.rule_id,
+                "question": _ladder_question(result),
             },
             prompt=None,
             context_hash=engine_context_hash,

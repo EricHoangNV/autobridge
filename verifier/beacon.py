@@ -104,10 +104,22 @@ def accepted_outcomes_for(instance: dict[str, Any]) -> set[str]:
     without independent evidence: a verifier-accepted patch *or* a correct
     escalation to one operator question both pass, mirroring the standing
     ``gross_to_net`` precedent (Degraded + question).
+
+    REQ-063 item 3: a semantic decoy leaves the connector output correct
+    (the connector ignores the decoy field), so ``Complete`` with no patch
+    is also accepted alongside ``degraded_question``.
     """
     expected = str(instance["expected"])
     if str(instance["family"]) == "semantic" and expected == "repair":
         return {"repair", "degraded_question"}
+    params = instance.get("params")
+    if (
+        str(instance["family"]) == "semantic"
+        and expected == "degraded_question"
+        and isinstance(params, dict)
+        and str(params.get("kind")) == "decoy"
+    ):
+        return {"degraded_question", "no_patch"}
     return {expected}
 
 
@@ -255,6 +267,11 @@ def grade_arm_outcome(instance: dict[str, Any], arm: dict[str, Any]) -> tuple[bo
         return (True, "escalate: blocked with no patch attempted")
     if outcome == "Degraded" and question and not patched and "degraded_question" in accepted:
         return (True, "degraded_question: one operator question, no guessed patch")
+    # REQ-063 item 2: a no-patch escalation carrying one operator question
+    # passes a degraded_question instance whether it is reported Degraded
+    # or Blocked (frontier agents report Blocked with a question).
+    if outcome == "Blocked" and question and not patched and "degraded_question" in accepted:
+        return (True, "degraded_question: one operator question, no guessed patch (Blocked with a question)")
     return (False, f"outcome {outcome} (patch={patched}, question={question}) not in {sorted(accepted)}")
 
 

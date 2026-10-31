@@ -4022,3 +4022,13 @@ Benchmark fairness fix, all 6 items: (1) frontier arms get the engine's repair t
 - Tests: `test_autobridge_beacon_run{,_extra}.py`, `test_verifier_beacon_endpoints.py`
 
 **Tests:** 16 new/updated unit tests; `make test` 2951 + 136 + 409 passed (90.13% / 91.00% / 90.48%), UI 295 passed, lint + typecheck green. Owner step: keyed `make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1` in the sandbox.
+
+## 2026-10-31 10:10–12:00 UTC — REQ-063 DONE (sbx1, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Beacon grading: no-drift runs Complete (ladder not called), L4 escalations carry the ladder's
+question (Blocked+question passes degraded_question), semantic decoy accepts Complete/no-patch,
+generator silent no-ops fixed (cutoff selection over (1,2,3) with dataset manifestation check,
+format excludes baseline, meridian rename exclusions, fias_layout renames >=1) + bench sanity gate
+(`sanity_unchanged_repairs`: canonical equal + 0 signals + expects repair => fail loudly before arm
+budget). Reverted one approach (moving posted_at broke inverse_canonicalize). Full gates:
+2958+138+413 passed, 90.14/91.04/90.42%, UI 295, lint/typecheck green. Owner step: keyed
+`make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1`, then close.

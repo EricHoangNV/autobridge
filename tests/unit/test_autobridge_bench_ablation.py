@@ -173,6 +173,59 @@ def test_engine_no_knowledge_escalates_structural() -> None:
     assert res.spec is not None and res.spec["decision"] == "escalate"
 
 
+def test_engine_no_signal_complete_reports_complete_no_patch() -> None:
+    """REQ-063 item 1: no drift signals + faulted Complete → Complete, no
+    patch, no question; the ladder is never called (production opens no
+    repair run)."""
+    from bench.ablation import DerivedDiagnostics
+
+    cfg = HarnessConfig()
+    inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
+    case = ablation_case_for_scenario("page_to_cursor")
+    diag = DerivedDiagnostics(
+        drift_class="UNKNOWN", fingerprint_delta=None, signals=(),
+        classification_reason="No drift signals observed", faulted_outcome="Complete",
+    )
+    res = run_engine_arm(inputs, case, ablation="autobridge_cold", provider=FakeProvider(),
+                         derive=lambda _s, _c, _i: diag)
+    assert res.ran
+    assert res.spec is not None
+    assert res.spec["decision"] == "propose"
+    assert res.spec["candidate_patch"] == []
+    assert res.spec["ladder_level_reached"] == 0
+    assert res.spec["question"] == ""
+    assert res.frontier_tokens == 0 and res.input_tokens == 0 and res.model_calls == 0
+
+
+def test_engine_no_signal_non_complete_still_climbs() -> None:
+    """REQ-063 item 1: zero signals with a non-Complete faulted sync still
+    climbs the ladder (only a Complete sync with nothing observed skips it)."""
+    from bench.ablation import DerivedDiagnostics
+
+    cfg = HarnessConfig()
+    inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
+    case = ablation_case_for_scenario("page_to_cursor")
+    diag = DerivedDiagnostics(
+        drift_class="UNKNOWN", fingerprint_delta=None, signals=(),
+        classification_reason="No drift signals observed", faulted_outcome="Blocked",
+    )
+    res = run_engine_arm(inputs, case, ablation="engine_no_knowledge", provider=FakeProvider(),
+                         derive=lambda _s, _c, _i: diag)
+    assert res.spec is not None and res.spec["decision"] == "escalate"
+
+
+def test_engine_escalation_carries_ladder_question() -> None:
+    """REQ-063 item 2: the engine's L4 escalation carries the question the
+    ladder wrote (open question first, else the escalation bundle)."""
+    cfg = HarnessConfig()
+    inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
+    case = ablation_case_for_scenario("page_to_cursor")
+    res = run_engine_arm(inputs, case, ablation="engine_no_knowledge", provider=FakeProvider())
+    assert res.spec is not None and res.spec["decision"] == "escalate"
+    question = res.spec.get("question", "")
+    assert isinstance(question, str) and question.strip().endswith("?"), question
+
+
 def test_engine_semantic_climb_uses_provider() -> None:
     """gross_to_net derives SEMANTIC_VALUE_DRIFT; the arm climbs with the
     engine-enumerated hypotheses: L2 ranks (small-model tokens), L3 is

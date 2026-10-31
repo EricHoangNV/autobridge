@@ -183,6 +183,11 @@ def test_arm_outcome_mapping() -> None:
     assert beacon_run._arm_outcome_for(degraded, False)["operator_question"] is True
     escalated = _NS(ran=True, spec={"decision": "escalate", "candidate_patch": None})
     assert beacon_run._arm_outcome_for(escalated, False)["outcome"] == "Blocked"
+    # REQ-063 item 2: the ladder's question rides the escalation report.
+    escalated_q = _NS(ran=True, spec={"decision": "escalate", "candidate_patch": None,
+                                      "question": "Which mapping is correct?"})
+    assert beacon_run._arm_outcome_for(escalated_q, False) == {
+        "outcome": "Blocked", "patch_reached_release": False, "operator_question": True}
     failed = _NS(ran=False, spec=None)
     assert beacon_run._arm_outcome_for(failed, False)["outcome"] == "Blocked"
 

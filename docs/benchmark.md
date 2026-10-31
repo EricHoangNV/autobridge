@@ -588,6 +588,20 @@ never lands in `small_tokens`; per-row input / output / reasoning tokens
 are recorded and the summary adds per-arm min / median / max totals.
 The judge fails closed (`judge_error`, bounded) instead of raising, so a
 grading error is an explicit row label, never a silent 0 or an HTTP 500.
+No drift detected is not an escalation (REQ-063): when the detector
+reports no signals and the faulted sync is `Complete`, every engine arm
+reports `Complete` with no patch and no question — production opens no
+repair run, so the ladder is never called — and the row reads "no drift
+detected". On a repair instance that still fails, as a silent miss.
+An escalation carrying one operator question passes a
+`degraded_question` instance whether reported `Degraded` or `Blocked`;
+`escalate` instances pass with or without a question; a semantic decoy
+also accepts `Complete` with no patch (the connector ignores the decoy,
+so its output is correct). Every rehearsal runs a bench-side sanity
+gate first (`sanity_unchanged_repairs`): a repair instance whose faulted
+canonical output equals the baseline with no drift signals is a
+generator bug — the run refuses before spending any arm budget, naming
+the instance.
 Engine arms that cannot attempt a vendor in-process (no spec source in
 the vendor table) are recorded `executed: false` with the reason named —
 a fail-closed loss, the same for every arm.

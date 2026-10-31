@@ -102,8 +102,18 @@ def test_accepted_outcomes_semantic_ambiguity() -> None:
         for inst in generate_instances(raw, 5):
             accepted = accepted_outcomes_for(inst)
             assert str(inst["expected"]) in accepted
+            params = dict(inst["params"])
             if str(inst["family"]) == "semantic" and str(inst["expected"]) == "repair":
                 assert accepted == {"repair", "degraded_question"}
+            elif (
+                str(inst["family"]) == "semantic"
+                and str(inst["expected"]) == "degraded_question"
+                and params.get("kind") == "decoy"
+            ):
+                # REQ-063 item 3: the connector ignores the decoy field, so a
+                # correct Complete with no patch is accepted alongside the
+                # operator question.
+                assert accepted == {"degraded_question", "no_patch"}
             else:
                 assert accepted == {str(inst["expected"])}
 
@@ -139,6 +149,8 @@ def test_grade_no_patch_pass_and_fail() -> None:
 def test_grade_escalate_pass_and_fail() -> None:
     inst = _find(lambda i: i["expected"] == "escalate")
     assert grade_arm_outcome(inst, _arm("Blocked"))[0]
+    # REQ-063 item 2: escalate instances keep passing with or without a question.
+    assert grade_arm_outcome(inst, _arm("Blocked", question=True))[0]
     assert not grade_arm_outcome(inst, _arm("Complete"))[0]
     assert not grade_arm_outcome(inst, _arm("Blocked", patched=True))[0]
 
@@ -148,6 +160,25 @@ def test_grade_degraded_question_pass_and_fail() -> None:
     assert grade_arm_outcome(inst, _arm("Degraded", question=True))[0]
     assert not grade_arm_outcome(inst, _arm("Degraded", question=False))[0]
     assert not grade_arm_outcome(inst, _arm("Degraded", question=True, patched=True))[0]
+
+
+def test_grade_decoy_accepts_complete_no_patch() -> None:
+    """REQ-063 item 3: the decoy leaves the connector output correct, so
+    Complete with no patch passes alongside the operator question."""
+    inst = _find(lambda i: i["expected"] == "degraded_question")
+    assert grade_arm_outcome(inst, _arm("Complete", patched=False))[0]
+    assert not grade_arm_outcome(inst, _arm("Complete", patched=True))[0]
+
+
+def test_grade_degraded_question_accepts_blocked_with_question() -> None:
+    """REQ-063 item 2: a no-patch escalation carrying one operator question
+    passes a degraded_question instance whether reported Degraded or
+    Blocked (frontier agents report Blocked with a question)."""
+    inst = _find(lambda i: i["expected"] == "degraded_question")
+    passed, reason = grade_arm_outcome(inst, _arm("Blocked", question=True))
+    assert passed, reason
+    assert not grade_arm_outcome(inst, _arm("Blocked", question=False))[0]
+    assert not grade_arm_outcome(inst, _arm("Blocked", question=True, patched=True))[0]
 
 
 def test_grade_semantic_repair_accepts_correct_escalation() -> None:
