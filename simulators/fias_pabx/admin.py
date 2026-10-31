@@ -78,7 +78,11 @@ class FaultsRequest(BaseModel):
 #: shared slot records the label, the link is untouched.
 SCENARIO_LINK_FAULTS: dict[str, dict[str, Any]] = {
     "fias_record_layout_change": {"ps_layout": "layout_v3", "drop_link": True},
-    "fias_link_resync": {"send_zeros_then_drop": True},
+    # REQ-067 item 8: the link drop alone leaves nothing new to forward
+    # (stay postings were planned once and already PA'd), so deck 7 shows
+    # a frozen count. Five burst postings queue at the reconnect with
+    # fresh P#s: postings visibly resume, and lost/duplicated stay 0.
+    "fias_link_resync": {"send_zeros_then_drop": True, "burst_postings": 5},
     "fias_ack_timeout": {"silent_types": ("WR",)},
     "agent_restart_inflight": {},
     "cloud_slow": {},
@@ -250,6 +254,8 @@ def post_fias_scenario(body: ScenarioRequest, request: Request) -> dict[str, Any
                 link.faults.silent_types = tuple(armed["silent_types"])
             if armed.get("replay_postings"):
                 link.faults.replay_postings = int(armed["replay_postings"])
+            if armed.get("burst_postings"):
+                link.faults.burst_postings = int(armed["burst_postings"])
             if armed.get("send_oversize"):
                 link.faults.send_oversize = True
             if armed.get("flood_records"):

@@ -46,4 +46,35 @@ describe("ConnectorStateBadge", () => {
     render(<ConnectorStateBadge state="degrading" />);
     expect(screen.queryByTestId("connector-state-sync-age")).toBeNull();
   });
+
+  it("says syncs are paused when a decision waits (REQ-067 item 9)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-29T12:03:00Z"));
+    try {
+      const threeMinutesAgo = new Date("2026-10-29T12:00:00Z").toISOString();
+      render(<ConnectorStateBadge state="error" activity="needs your decision" lastSyncAt={threeMinutesAgo} />);
+      expect(screen.getByTestId("connector-state-sync-age").textContent).toContain("syncs paused until you decide");
+      expect(screen.getByTestId("connector-state-sync-age").textContent).not.toContain("last sync");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says syncs are paused for a verified fix waiting for review (REQ-067 item 9)", () => {
+    const threeMinutesAgo = new Date(Date.now() - 180000).toISOString();
+    render(<ConnectorStateBadge state="degrading" activity="fix waiting for review" lastSyncAt={threeMinutesAgo} />);
+    expect(screen.getByTestId("connector-state-sync-age").textContent).toContain("syncs paused until you decide");
+  });
+
+  it("keeps the age for errors that still sync (REQ-067 item 9)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-29T12:00:00Z"));
+    try {
+      const fourSecondsAgo = new Date("2026-10-29T11:59:56Z").toISOString();
+      render(<ConnectorStateBadge state="error" activity="Blocked: auth revoked" lastSyncAt={fourSecondsAgo} />);
+      expect(screen.getByTestId("connector-state-sync-age").textContent).toContain("last sync 4 s ago");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

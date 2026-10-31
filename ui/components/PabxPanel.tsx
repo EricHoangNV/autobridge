@@ -74,9 +74,23 @@ export function PabxPanel({ connectorId, connectorName }: { connectorId: string;
     { refreshInterval: 2000 },
   );
   const { data: agents } = useSWR<{ agents: EdgeAgent[] }>("/edge/agents", fetcher, { refreshInterval: 2000 });
-  const { data: postings, error: postingsError } = useSWR<{ postings: EdgePosting[] }>("/edge/postings", fetcher, {
-    refreshInterval: 2000,
-  });
+  // REQ-067 item 8: postings are this connector's own, not the relay's
+  // global queue — filter by the agent once it is known, so the count and
+  // the "last received" timestamp belong to this connector and visibly
+  // resume after the link comes back.
+  const matchedAgent = (() => {
+    const list = agents?.agents ?? [];
+    return (
+      list.find((a) => a.agent_id === connectorId) ??
+      list.find((a) => a.agent_id === connectorName) ??
+      null
+    );
+  })();
+  const { data: postings, error: postingsError } = useSWR<{ postings: EdgePosting[] }>(
+    matchedAgent ? `/edge/postings?agent_id=${encodeURIComponent(matchedAgent.agent_id)}` : "/edge/postings",
+    fetcher,
+    { refreshInterval: 2000 },
+  );
 
   const links = (events ?? []).filter((e) => e.kind === "link");
   const restarts = (events ?? []).filter((e) => e.kind === "restart");
@@ -85,12 +99,9 @@ export function PabxPanel({ connectorId, connectorName }: { connectorId: string;
 
   const agent = (() => {
     const list = agents?.agents ?? [];
-    return (
-      list.find((a) => a.agent_id === connectorId) ??
-      list.find((a) => a.agent_id === connectorName) ??
-      list[0] ??
-      null
-    );
+    // Link state may fall back to the first agent (one relay, one PABX);
+    // the postings above never do — they stay unfiltered until matched.
+    return matchedAgent ?? list[0] ?? null;
   })();
 
   const liveUp = agent?.link_up;

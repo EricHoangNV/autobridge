@@ -21,7 +21,7 @@ Tests: freeze writes the line; mismatch refuses; missing line on a rehearsal par
 or commit anything under `experiments/beacon/` except labelled rehearsals.
 
 ### REQ-067 — Demo UI: fix the walkthrough findings and make the wording match the demo script (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-10-31 18:27)
+Status: DONE (sbx1 2026-10-31 -- all 10 items code-done: decision-box question wraps unclamped; deck-3 second occurrence documented as Activate-r1-then-break (rollback would evict learning); l3_patch/l3_patch_retry v2 ask for the proposal + replay fixture re-keyed; names shrink at word boundaries via container query; approved reads shipped-rN/rollback-rN-1; build copy + r1 automatic-verifier-passed label; in-flight counter reads counted-when-answers; PABX per-agent postings + link_resync burst=5; error/degrading-awaiting reads syncs-paused; chapter3 decided + reuse-x + approve-preview wording; new/updated unit+UI tests + Playwright assertions (items 1/4/9), full gates green; owner step: keyed browser walkthrough re-run to close)
 Owner keyed browser walkthrough on `a172e09f` (blank-slate seed, decks 1-7 + closing, 2026-11-01 00:45-00:55). Findings,
 screenshots and the per-deck result are in `tmp/walkthrough-a172e09f/FINDINGS.md` (gitignored; read in place from the
 main checkout, with the `*.jpg` next to it). The demo script the UI must match is `tmp/demo-flow/demo-flow.md` §5.2

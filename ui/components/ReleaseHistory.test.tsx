@@ -55,6 +55,39 @@ describe("ReleaseHistory", () => {
     expect(screen.queryByTestId("release-approved-by-rel-2")).not.toBeInTheDocument();
   });
 
+  it("labels a verifier-passed build r1 automatic instead of — (REQ-067 item 6)", () => {
+    const r1 = mkRelease({
+      id: "rel-1",
+      version: 1,
+      approved_by: null,
+      provenance_build_run_id: "build-1",
+      verification_report_id: "rep-1",
+    });
+    const { unmount } = render(<ReleaseHistory releases={[r1]} activeReleaseId="rel-1" />);
+    expect(screen.getByTestId("release-approved-by-rel-1")).toHaveTextContent("automatic · verifier passed");
+    unmount();
+  });
+
+  it("a build candidate that never went live still waits for the operator (REQ-067 item 6)", () => {
+    const r1 = mkRelease({
+      id: "rel-1",
+      version: 1,
+      approved_by: null,
+      provenance_build_run_id: "build-1",
+      verification_report_id: "rep-1",
+    });
+    const r2 = mkRelease({
+      id: "rel-2",
+      version: 2,
+      approved_by: null,
+      provenance_build_run_id: "build-2",
+      verification_report_id: "rep-2",
+    });
+    render(<ReleaseHistory releases={[r1, r2]} activeReleaseId="rel-1" />);
+    // r2 is the newest non-active release: the candidate waits for approval.
+    expect(screen.getByText("needs your approval")).toBeInTheDocument();
+  });
+
   it("shows no active badge when active id does not match", () => {
     const r1 = mkRelease({ id: "rel-1", version: 1 });
     render(<ReleaseHistory releases={[r1]} activeReleaseId="rel-99" />);

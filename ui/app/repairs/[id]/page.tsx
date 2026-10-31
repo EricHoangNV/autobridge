@@ -108,6 +108,7 @@ type ReleaseLite = {
   id: string;
   version: number;
   spec: Record<string, unknown>;
+  parent_release_id?: string | null;
 };
 
 type ConnectorLite = {
@@ -786,7 +787,38 @@ export default function RepairDetailPage({ params }: PageProps) {
         : null;
   // Chapter 3 facts: what changes (plain per op), tested, reversible.
   const changePhrases = [...new Set((displayPatch as PatchOp[]).map((op) => patchChangePlain(op.op, String(op.path ?? "/"))))];
-  const reversibleTo = activeRelease ? `r${activeRelease.version}` : null;
+  // REQ-067 item 5: after approval the shipped release is the approval's
+  // to_release (which the activation made active), and the rollback target
+  // is the release it was built from — never "Approve rN+1" / "roll back
+  // to the just-shipped release". Waiting repairs keep the live active as
+  // the rollback target (approving ships active+1).
+  const shippedRelease: ReleaseLite | null = (() => {
+    const toId = repair.approval?.to_release_id;
+    if (!toId) return null;
+    const releases = connector?.releases ?? [];
+    return releases.find((r) => r.id === toId) ?? null;
+  })();
+  const shippedVersion = shippedRelease?.version ?? null;
+  const previousVersion: number | null = (() => {
+    const releases = connector?.releases ?? [];
+    const parentId = shippedRelease?.parent_release_id;
+    if (parentId) {
+      const parent = releases.find((r) => r.id === parentId);
+      if (parent) return parent.version;
+    }
+    if (shippedVersion !== null) {
+      const older = releases.filter((r) => r.version < shippedVersion).sort((a, b) => b.version - a.version);
+      if (older.length) return older[0].version;
+    }
+    return null;
+  })();
+  const isApproved = repair.decision === "approved";
+  const reversibleTo =
+    isApproved && previousVersion !== null
+      ? `r${previousVersion}`
+      : activeRelease
+        ? `r${activeRelease.version}`
+        : null;
   // Storyline: one plain headline + one fact per step (REQ-056 item 2).
   const story1 = storylineStep1(driftClass, failedCheck);
   const story2plain = climbingNow
@@ -829,8 +861,14 @@ export default function RepairDetailPage({ params }: PageProps) {
                 : `${connectorLabel} ${driftClass ? humanizeDriftClass(driftClass) : "drifted"}: the climb ${repair.decision}.`;
   // REQ-055 item 3a: no action wording until a decision exists — while
   // the climb runs (or failed) there is nothing to approve yet.
-  const approveAction = climbingNow || repair.decision === "failed"
-    ? null
+  // REQ-067 item 5: terminal repairs never read as approvable — an
+  // approved repair reads "shipped as rN", never "Approve to ship rN+1".
+  const isTerminalDecision =
+    repair.decision === "approved" || repair.decision === "reject" || repair.decision === "rolled_back";
+  const approveAction = climbingNow || repair.decision === "failed" || isTerminalDecision
+    ? isApproved && (shippedVersion ?? activeRelease?.version) != null
+      ? `Shipped as release r${shippedVersion ?? activeRelease?.version}`
+      : null
     : isEscalated && modelProposal
       ? `Approve the tested proposal: ${modelProposal.label}`
       : hasPatch
@@ -850,9 +888,11 @@ export default function RepairDetailPage({ params }: PageProps) {
     ? `Repairing at L${runningRung}…`
     : isEscalated
       ? "Needs your decision"
-      : hasReport && hasPatch
-        ? `Fix verified · Approve r${candidateVersion ?? "?"}…`
-        : decisionLine;
+      : isApproved
+        ? `Shipped as r${shippedVersion ?? activeRelease?.version ?? "?"} ✓`
+        : hasReport && hasPatch
+          ? `Fix verified · Approve r${candidateVersion ?? "?"}…`
+          : decisionLine;
 
   return (
     <div data-testid="repair-detail-page" data-state={pageState}>
@@ -1103,7 +1143,11 @@ export default function RepairDetailPage({ params }: PageProps) {
                   {frontierBudget !== null
                     ? `${formatInt(frontierTokens + smallTokens)} of ${formatInt(frontierBudget)} budget`
                     : `${formatInt(frontierTokens + smallTokens)} tokens total`}
-                  {typeof tickingFrontier === "number" && climbingNow ? ` · ${formatInt(tickingFrontier)} so far` : ""}
+                  {typeof tickingFrontier === "number" && climbingNow
+                    ? tickingFrontier > 0
+                      ? ` · ${formatInt(tickingFrontier)} so far`
+                      : " · counted when the model answers"
+                    : ""}
                 </span>
               </div>
               <div data-testid="proof-verifier">
@@ -1222,11 +1266,11 @@ export default function RepairDetailPage({ params }: PageProps) {
             </details>
           </section>
 
-          {/* Chapter 3: What the engine recommends — Now → Proposed, once. */}
+          {/* Chapter 3: What the engine decided — Now → Proposed, once. */}
           <section id="recommends" data-testid="repair-section-decided" aria-label="What the engine decided" className="rd-chapter">
             <header>
               <span className="no" aria-hidden="true">3</span>
-              <h2>What the engine recommends</h2>
+              <h2>What the engine decided</h2>
             </header>
             <p data-testid="decided-line" className="text-sm">
               {decisionLine}
@@ -1368,7 +1412,11 @@ export default function RepairDetailPage({ params }: PageProps) {
                   <>
                     calling {String(inFlightEntry["model"])}
                     {inFlightElapsed !== null ? ` · ${inFlightElapsed} s so far` : ""}
-                    {typeof tickingFrontier === "number" ? ` · ${formatInt(tickingFrontier)} tokens so far` : ""}
+                    {/* REQ-067 item 7: tokens land only when the call
+                        returns — a 0 mid-call looks broken, so say so. */}
+                    {typeof tickingFrontier === "number" && tickingFrontier > 0
+                      ? ` · ${formatInt(tickingFrontier)} tokens so far`
+                      : " · tokens counted when the model answers"}
                   </>
                 ) : (
                   <>working through the ladder{runningRung > 0 ? ` · on rung L${runningRung}` : ""}</>
@@ -1530,7 +1578,7 @@ export default function RepairDetailPage({ params }: PageProps) {
       <div className="rd-sticky-act" role="region" aria-label="Decision">
         <p data-testid="repair-sticky-summary">{stickySummary}</p>
         <a className="btn" href="#rail-approve">
-          {climbingNow ? `Repairing…` : isEscalated ? "Decide…" : hasPatch ? `Approve r${candidateVersion ?? "?"}…` : "Decision…"}
+          {climbingNow ? `Repairing…` : isEscalated ? "Decide…" : isApproved ? `Shipped r${shippedVersion ?? activeRelease?.version ?? "?"} ✓` : hasPatch ? `Approve r${candidateVersion ?? "?"}…` : "Decision…"}
         </a>
       </div>
     </div>

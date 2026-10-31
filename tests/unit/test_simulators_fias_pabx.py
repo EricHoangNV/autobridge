@@ -891,6 +891,13 @@ def test_fias_admin_scenario_arms_every_catalog_fault(admin_client: TestClient) 
                       headers=_admin_headers())
     state = admin_client.get("/admin/fias/state", headers=_admin_headers()).json()
     assert state["faults"]["replay_postings"] == 3
+    # REQ-067 item 8: the link resync also queues burst postings so the
+    # deck-7 count visibly resumes after the reconnect.
+    admin_client.post("/admin/scenario", json={"id": "fias_link_resync", "seed": 0},
+                      headers=_admin_headers())
+    state = admin_client.get("/admin/fias/state", headers=_admin_headers()).json()
+    assert state["faults"]["send_zeros_then_drop"] is True
+    assert state["faults"]["burst_postings"] == 5
     admin_client.post("/admin/scenario", json={"id": "fias_record_flood", "seed": 0},
                       headers=_admin_headers())
     state = admin_client.get("/admin/fias/state", headers=_admin_headers()).json()

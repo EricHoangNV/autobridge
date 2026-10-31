@@ -70,8 +70,17 @@ export function ReleaseHistory({ releases, activeReleaseId, onActivate, activati
               <span className="s">
                 {r.approved_by ? (
                   <span data-testid={`release-approved-by-${r.id}`}>approved by {r.approved_by}</span>
+                ) : isCandidate ? (
+                  <span className="text-ink-2">needs your approval</span>
+                ) : r.provenance_build_run_id && r.verification_report_id ? (
+                  <span
+                    data-testid={`release-approved-by-${r.id}`}
+                    title="This release went live automatically: the verifier passed it at build time, so no operator approval was needed. Every later change waits for your approval."
+                  >
+                    automatic · verifier passed
+                  </span>
                 ) : (
-                  <span className="text-ink-2">{isCandidate ? "needs your approval" : "—"}</span>
+                  <span className="text-ink-2">—</span>
                 )}
                 {isActive ? (
                   <>

@@ -367,8 +367,11 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("storyline-3")).toHaveAttribute("data-active", "false");
     expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Repairing at L3");
     // Rail shows the run, not actions.
-    expect(screen.getByTestId("repair-climbing-status")).toHaveTextContent("calling sleep-frontier");
-    expect(screen.getByTestId("repair-climbing-status")).toHaveTextContent("so far");
+  expect(screen.getByTestId("repair-climbing-status")).toHaveTextContent("calling sleep-frontier");
+  expect(screen.getByTestId("repair-climbing-status")).toHaveTextContent("so far");
+  // REQ-067 item 7: a 0 mid-call reads as broken — the rail says the
+  // tokens are counted when the model answers.
+  expect(screen.getByTestId("repair-climbing-status")).toHaveTextContent("tokens counted when the model answers");
     expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
     expect(screen.queryByTestId("repair-deny-btn")).not.toBeInTheDocument();
     expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
@@ -699,6 +702,38 @@ describe("RepairDetailPage", () => {
     mockAll(undefined, undefined, undefined, mockConnectorWithSpec);
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-subline")).toHaveTextContent(/Approve to ship it as release r2/);
+  });
+
+  it("approved repair reads shipped r2 with rollback to r1, never Approve r3 (REQ-067 item 5)", () => {
+    mockAll(
+      {
+        ...mockRepair,
+        decision: "approved",
+        approval: {
+          id: "ap-1",
+          actor: "eric",
+          decision: "approve",
+          from_release_id: "rel-1",
+          to_release_id: "rel-2",
+          created_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+      undefined,
+      {
+        ...mockConnector,
+        active_release_id: "rel-2",
+        releases: [
+          { id: "rel-1", version: 1, spec: {}, parent_release_id: null },
+          { id: "rel-2", version: 2, spec: {}, parent_release_id: "rel-1" },
+        ],
+      },
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-subline")).toHaveTextContent(/Shipped as release r2/);
+    expect(screen.getByTestId("repair-subline")).not.toHaveTextContent(/Approve to ship/);
+    expect(screen.getByTestId("decided-facts")).toHaveTextContent("Reversible: roll back to r1 stays available");
+    expect(screen.getByTestId("repair-sticky-summary")).toHaveTextContent("Shipped as r2");
   });
 
   it("escalated chapter 3 shows the tested proposal Now → Proposed, with the dry-run and the field note (REQ-055 items 2, 3b)", () => {

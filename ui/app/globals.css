@@ -727,11 +727,20 @@ h2.sec {
 .crow > * {
   min-width: 0;
 }
-.crow .name a {
-  overflow-wrap: anywhere;
+.crow .name {
+  /* REQ-067 item 4: the name cell is a size container so a long
+     single-word vendor name shrinks to fit instead of breaking
+     mid-word ("HarborPM / S"). */
+  container-type: inline-size;
 }
 .crow .name a {
-  font-size: 30px;
+  /* REQ-067 item 4: names wrap at word boundaries only; a single word
+     wider than the column shrinks (8cqw fits ~12 chars) instead of
+     breaking mid-word. */
+  overflow-wrap: break-word;
+  font-size: min(30px, 8cqw);
+}
+.crow .name a {
   font-weight: 800;
   font-variation-settings: "wdth" 118;
   text-decoration: none;
@@ -1642,15 +1651,11 @@ table.ctab td code {
   padding: 12px 14px;
   font-size: 14px;
 }
-/* REQ-055 item 3e: the rail keeps only the decision — the question reads
-   as one line (full text in the title tooltip) so Approve stays pinned. */
+/* REQ-067 item 1: the decision box shows the model's full question and
+   rationale (wrap, no ellipsis) — the question is the point of the deck. */
 .rd-rail .rail-question > p:first-child {
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
   margin: 0;
+  overflow-wrap: break-word;
 }
 /* Demo foot: dashed, at the bottom. */
 .rd-demo-foot {

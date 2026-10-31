@@ -18,9 +18,9 @@ const RUN_SHEET: { title: string; detail: string; you?: boolean }[] = [
     detail: "Write the spec, run visible tests, send it to the verifier's hidden fixtures.",
   },
   {
-    title: "You approve release r1",
-    detail: "Nothing syncs into your systems before that.",
-    you: true,
+    title: "Release r1 goes live automatically",
+    detail: "The verifier-passed r1 activates at once and starts syncing; every later change waits for your approval.",
+    you: false,
   },
 ];
 
@@ -87,7 +87,7 @@ export default function NewConnectorPage() {
             Start build
           </button>
           <p className="mt-3 text-sm text-ink-2">
-            Probes run GET only. Nothing syncs before you approve the release.
+            Probes run GET only. The first release goes live once the verifier passes it; later changes wait for your approval.
           </p>
         </aside>
       </div>

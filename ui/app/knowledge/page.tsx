@@ -253,7 +253,7 @@ export default function KnowledgePage() {
                         {entry.learned_from.actor ? ` by ${entry.learned_from.actor}` : ""}
                       </>
                     ) : null}{" "}
-                    · reused {entry.times_reused}x, saved {entry.tokens_saved} tokens
+                    · reused {entry.times_reused}×, saved {entry.tokens_saved} tokens
                   </p>
                 </div>
               ))}

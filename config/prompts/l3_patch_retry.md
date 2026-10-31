@@ -1,7 +1,7 @@
 ---
 id: l3_patch_retry
-version: "1"
-purpose: Retry the L3 patch proposal after the first patch failed the apply/pointer check (L3, frontier model). Same question as l3_patch plus the rejection.
+version: "2"
+purpose: "Retry the L3 patch proposal after the first patch failed the apply/pointer check (L3, frontier model). Same question as l3_patch plus the rejection. v2 (REQ-067 item 3): same proposal rule as l3_patch v2."
 tier: frontier
 max_tokens: 131072
 inputs:
@@ -26,12 +26,14 @@ vocabulary's transforms by name. Answer with one JSON object and
 nothing else: either {"patch": [...], "rationale": "<one sentence>"}
 or, when the right mapping is a business decision the evidence does not
 settle, {"escalate": "<the one question for the human>",
-"rationale": "<one sentence>"} — optionally with a "proposal" object
-carrying the change the operator could approve if they accept the
-vendor's new behaviour ("label": short button text, "effect": what
-approving does in one sentence, "patch": RFC 6902 ops on the listed
-patchable members only). A malformed proposal is dropped and the
-escalation stands on the question alone.
+"rationale": "<one sentence>"} — and whenever one concrete spec change
+would apply the other reading, also with a "proposal" object carrying
+the change the operator could approve ("label": short button text,
+"effect": what approving does in one sentence, "patch": RFC 6902 ops
+on the listed patchable members only). Omit the proposal only when no
+single spec change captures the other reading. A malformed proposal is
+dropped and the escalation stands on the question alone. Never invent
+a member the patchable subtree does not list.
 
 ## User
 

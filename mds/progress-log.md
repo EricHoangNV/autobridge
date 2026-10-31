@@ -4041,3 +4041,28 @@ Removed REQ-064 B2, kept B1: ladder/controller/job/live/bench back to semantic-o
 
 ## 2026-10-31 — REQ-066 DONE (sbx1, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Beacon freeze pins the frontier model: freeze writes the line, bench-beacon refuses on mismatch, verify/EVIDENCE show the pin, docs updated; 9 new unit tests, full python gates green (UI 1 pre-existing failure, also on clean tree). Owner step: keyed bench-beacon rehearsal/real run exercises the gate live.
+
+## 2026-10-31 — REQ-067 DONE (sbx1, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+**Date:** 2026-10-31
+**Ref:** REQUESTS REQ-067 (walkthrough on `a172e09f`, script §5.2)
+
+**What was done:**
+- Fixed all 10 walkthrough findings across UI (7), prompt (1), simulator fault mapping (1) and docs (1 + wording).
+- Decision-box question wraps unclamped; connector names shrink at word boundaries via container query; approved repairs read shipped/r-rollback numbers; build copy + r1 "automatic · verifier passed"; in-flight counter wording; error/awaiting badges read "syncs paused until you decide"; chapter-3/approve-preview/knowledge wording matches §5.2.
+- `l3_patch`/`l3_patch_retry` v2: escalation carries the operator-approvable proposal whenever one concrete change applies the other reading; replay fixture re-keyed for the new hashes (stale v1 keys dropped).
+- `fias_link_resync` arms `burst_postings: 5` so deck-7 counts visibly resume with 0 lost / 0 duplicated; PABX panel filters postings by agent.
+- Deck-3 second occurrence: documented as Activate-r1-then-break in `docs/demo.md` (rollback would evict learning).
+
+**Key decisions:**
+- 2 frontier calls on deck 5 are the designed single retry (call-1 proposal failed the gate), not a bug — explained, prompt strengthened instead.
+- Rollback vs Activate for the L0 encore: Activate preserves the learned entry, rollback evicts it — presenter steps say Activate.
+- Mid-word wrap needed shrink-to-fit (cqw), not just `break-word`: "MeridianPMS" at 30px exceeds the column even with word-boundary wrapping.
+
+**Files changed:**
+- `ui/app/globals.css`, `ui/app/repairs/[id]/page.tsx`, `ui/components/{ConnectorStateBadge,ReleaseHistory,PabxPanel,ApprovePreview}.tsx`, `ui/app/{connectors/new/page,knowledge/page}.tsx` + tests, `ui/components/PabxPanel.test.tsx` (new), `tests/e2e/test_10_layout_no_overlap.spec.ts`
+- `config/prompts/l3_patch.md`, `config/prompts/l3_patch_retry.md`, `tests/fixtures/replay/gross_to_net.json`, `tests/unit/test_autobridge_req049_proposal.py`
+- `simulators/fias_pabx/admin.py`, `tests/unit/test_simulators_fias_pabx.py`, `docs/demo.md`
+
+**Notes for next iteration:**
+- Owner steps: re-run `make record-frontier SCENARIO=gross_to_net` (prompt hash changed), then the keyed browser walkthrough to close REQ-067.
+- Open: REQ-065/063/062/061/060 VERIFY items (keyed sandbox runs), REQ-051 DEFERRED, P1.W10.3 owner step (confirm CI demo + record video).

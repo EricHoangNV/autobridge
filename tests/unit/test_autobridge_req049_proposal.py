@@ -141,6 +141,19 @@ def test_l3_prompts_contain_no_scenario_wording() -> None:
             assert not re.search(pattern, text, re.IGNORECASE), f"{name} matches {pattern!r}"
 
 
+def test_l3_prompts_ask_for_proposal_when_one_change_applies() -> None:
+    """REQ-067 item 3: an escalation carries the operator-approvable
+    change whenever one concrete spec change applies the other reading,
+    so the Approve path exists. The engine never invents a proposal
+    (the parser/validator only accept model-supplied patches)."""
+    for name in ("l3_patch.md", "l3_patch_retry.md"):
+        text = (PROMPT_DIR / name).read_text(encoding="utf-8")
+        flat = " ".join(text.split())
+        assert "whenever one concrete spec change would apply the other reading" in flat, name
+        assert "Omit the proposal only when no single spec change captures the other reading" in flat, name
+        assert "Never invent" in text, name
+
+
 def test_proposal_plumbing_names_no_scenario_fields() -> None:
     """The generic proposal code never names the scenario's fields.
 

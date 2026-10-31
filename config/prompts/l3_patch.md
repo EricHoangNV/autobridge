@@ -1,7 +1,7 @@
 ---
 id: l3_patch
-version: "1"
-purpose: Propose a JSON Patch against the connector spec for a semantic drift, or escalate with one question (L3, frontier model). Moved from the REQ-044 engine prompt into a file (same blocks, same answer format).
+version: "2"
+purpose: "Propose a JSON Patch against the connector spec for a semantic drift, or escalate with one question (L3, frontier model). v2 (REQ-067 item 3): an escalation carries the operator-approvable change whenever one concrete spec change applies the other reading, so the Approve path exists."
 tier: frontier
 max_tokens: 131072
 inputs:
@@ -27,13 +27,19 @@ or, when the right mapping is a business decision the evidence does not
 settle, {"escalate": "<the one question for the human>",
 "rationale": "<one sentence>"}.
 
-An escalation may optionally carry the change the operator could
-approve if they accept the vendor's new behaviour: add a "proposal"
-object with a short "label" (button text, a few words), an "effect"
-(what approving does, one sentence), and a "patch" (RFC 6902 ops on
-the listed patchable members only, same rules as a direct patch). The
-proposal is never applied without a human's approval; a malformed
-proposal is dropped and the escalation stands on the question alone.
+An escalation must also carry the change the operator could approve
+whenever one concrete spec change would apply the other reading (this
+is the common case: the question names the decision, the proposal is
+the change the operator approves to accept the vendor's new
+behaviour): add a "proposal" object with a short "label" (button text,
+a few words), an "effect" (what approving does, one sentence), and a
+"patch" (RFC 6902 ops on the listed patchable members only, same rules
+as a direct patch). Omit the proposal only when no single spec change
+captures the other reading — then the question alone is the right
+answer. The proposal is never applied without a human's approval; a
+malformed proposal is dropped and the escalation stands on the
+question alone. Never invent a member the patchable subtree does not
+list: an unlisted path is a dropped proposal, not a guess.
 
 ## User
 

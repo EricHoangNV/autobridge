@@ -34,6 +34,11 @@ type Props = {
  * Connector state badge (REQ-032 §1): colour + shape + word, never colour
  * alone, plus the server's activity line. `data-state` carries the raw
  * state for tests; `data-shape` pins the distinct shape per state.
+ *
+ * REQ-067 item 9: the scheduler skips a connector whose repair waits for
+ * an operator decision, so "last sync 3 m ago" on such a connector reads
+ * as broken. When the server says the connector needs a decision, the
+ * age line instead says the syncs are paused until it gets one.
  */
 export function ConnectorStateBadge({ state, activity, lastSyncAt }: Props) {
   const now = useNow(1000);
@@ -41,6 +46,11 @@ export function ConnectorStateBadge({ state, activity, lastSyncAt }: Props) {
   const cls = CLASS[state] ?? "cs-unknown";
   const shape = SHAPE[state] ?? "hollow";
   const age = ageAgo(lastSyncAt ?? null, now);
+  // The server's awaiting-decision activities (connector_state.py): syncs
+  // are paused for these connectors, so the stale age would mislead.
+  const paused =
+    (state === "error" && activity === "needs your decision") ||
+    (state === "degrading" && (activity === "fix ready · verified · 0 model calls" || activity === "fix waiting for review"));
   return (
     <span data-testid="connector-state" data-state={state} data-shape={shape} className={`cs ${cls}`}>
       <span aria-hidden="true" className="sr-only">
@@ -52,7 +62,11 @@ export function ConnectorStateBadge({ state, activity, lastSyncAt }: Props) {
           {activity}
         </span>
       ) : null}
-      {age ? (
+      {paused ? (
+        <span data-testid="connector-state-sync-age" className="num font-normal text-ink-2">
+          syncs paused until you decide
+        </span>
+      ) : age ? (
         <span data-testid="connector-state-sync-age" className="num font-normal text-ink-2">
           last sync {age}
         </span>

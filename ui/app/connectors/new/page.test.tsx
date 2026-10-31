@@ -22,7 +22,7 @@ describe("NewConnectorPage", () => {
     const sheet = screen.getByTestId("run-sheet");
     expect(sheet.textContent).toContain("Read the docs");
     expect(sheet.textContent).toContain("Probe the sandbox, GET only");
-    expect(sheet.textContent).toContain("You approve release r1");
+    expect(sheet.textContent).toContain("Release r1 goes live automatically");
     const start = screen.getByTestId("sheet-start-build");
     expect(start).toHaveAttribute("form", "build-connector-form");
     expect(screen.getByTestId("new-connector-form")).toHaveAttribute("id", "build-connector-form");

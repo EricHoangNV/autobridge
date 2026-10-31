@@ -63,7 +63,7 @@ export function ApprovePreviewSection({ repairId }: { repairId: string }) {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <h3 className="mb-1 text-sm font-semibold">If you click Approve</h3>
+            <h3 className="mb-1 text-sm font-semibold">What happens when you click Approve</h3>
             <ul className="list-disc space-y-1 pl-5 text-sm">
               {preview.approve_lines.map((line, i) => (
                 <li key={i} data-testid={`approve-preview-line-${i}`}>

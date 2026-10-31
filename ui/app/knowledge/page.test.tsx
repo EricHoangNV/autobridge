@@ -67,7 +67,7 @@ describe("KnowledgePage", () => {
     expect(screen.getByTestId("knowledge-vocabulary-v3").textContent).toContain("everything in v2, plus:");
     expect(screen.getByTestId("knowledge-rule-page_to_cursor").textContent).toContain("flip page to cursor");
     expect(screen.getByTestId("knowledge-entry-0").textContent).toContain("AtlasPMS / PAGINATION_CHANGE");
-    expect(screen.getByTestId("knowledge-entry-0").textContent).toContain("reused 1x");
+    expect(screen.getByTestId("knowledge-entry-0").textContent).toContain("reused 1×");
     expect(screen.getByTestId("knowledge-connector-c1").textContent).toContain("Atlas");
   });
 

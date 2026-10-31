@@ -62,13 +62,25 @@ Connectors header reads "1 connector".
   calls, verifier, hypotheses/probes — the hypothesis funnel
   "24 explanations → … → 1 distinct" with expandable stages, probes,
   ▸ model usage across runs, ▸ evidence graph); **3 What the engine
-  recommends** (per-operation Now → Proposed table grouped by operation,
+  decided** (per-operation Now → Proposed table grouped by operation,
   raw JSON Patch one click away with copy). The decision rail sits beside
   the story: Approve release r2 with what Approve does, Reject with what
   it does, ▸ roll back, "Approving as …". Click **Approve** in the rail:
   the page follows approval → release → verifying sync →
-  Complete, and the connector returns to ● Working. Break it again:
-  the same drift resolves at L0 and the Knowledge entry reads "reused 1×".
+  Complete, and the connector returns to ● Working. Break it again —
+  this time the fix is already known, so the second occurrence resolves
+  at L0 with 0 model calls, and the Knowledge entry reads "reused 1×".
+  Exact presenter steps (REQ-067 item 2): on the Atlas connector page,
+  open **Releases** and click **Activate** on r1 (the pre-patch
+  release), then in the terminal run
+  `make demo-break SCENARIO=page_to_cursor` again. The next scheduled
+  sync (≤ 10 s) Degrades on the same drift, the engine answers from
+  learned knowledge (rung L0, `page_to_cursor`, 0 model calls) with
+  "fix ready", and approving it makes the Knowledge entry read
+  "learned from approval … reused 1×". Activate r1 — do not roll back
+  to it: a rollback evicts the learned entry (the reverted release
+  regressed), so the re-injected drift would climb the ladder again
+  instead of hitting L0.
 - **Deck 4 — Build Harbor from its wiki.** On
   `/connectors/new` pick the Harbor docs (the picker lists the simulator
   docs from `config/demo_targets.yaml`; the server fetches the text, the
@@ -89,9 +101,9 @@ Connectors header reads "1 connector".
   plus the one proposed change when the model offered it — with its
   effect and the diff. The chapters read from the break's own rows —
   chapter 2 holds the climb (L0 miss → L1 no rule → L2 skipped with its
-  one explanation → exactly one L3 attempt → L4 escalate), the hypothesis
+  one explanation → one L3 stage → L4 escalate), the hypothesis
   funnel (generated → amount → wire-consistent → distinct, ending on the
-  single "net" reading), the proof tiles and the single frontier call — live
+  single "net" reading), the proof tiles and the frontier call(s) — live
   ("muse-spark-1.3, N tokens") with `FRONTIER_API_KEY` set, otherwise
   the labelled replay ("replayed from a live Muse capture on …"), or the
   explicit L3 skip naming the capture to run when neither exists — and

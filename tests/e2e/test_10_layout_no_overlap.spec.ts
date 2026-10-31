@@ -150,6 +150,24 @@ const connectorsList = [
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
+  {
+    // REQ-067 item 4: a single-word vendor name like the deck's
+    // "HarborPMS" — it must never wrap mid-word ("HarborPM / S").
+    id: "conn-harbor",
+    name: "HarborPMS",
+    base_url: "http://localhost:8106",
+    health_status: "healthy",
+    state: "error",
+    activity: "needs your decision",
+    last_sync_at: new Date(Date.now() - 180000).toISOString(),
+    active_release_id: "rel-2",
+    credential_ref: "HARBOR_API_KEY",
+    target_entities: ["Reservation"],
+    runtime_target: { kind: "local_process" },
+    vendor_docs_ref: "file:HarborPMS.md",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
 ];
 
 function repairFixture(state: string) {
@@ -543,6 +561,35 @@ test.describe("REQ-055 item 3f layout: no overlap or overflow", () => {
       // The mock rows render (never an empty error page under the check).
       if (mocked) await expect(page.getByText("Atlas PMS with a very long").first()).toBeVisible();
       await expectClean(page, "/connectors", vp);
+      if (mocked) {
+        // REQ-067 item 4: the single-word vendor name wraps at word
+        // boundaries only — no mid-word break ("HarborPM / S") at 1440px.
+        const harborName = page.locator('[data-testid="connector-row-conn-harbor"] .name a');
+        await expect(harborName).toBeVisible();
+        const midWordBreak = await harborName.evaluate((el) => {
+          const text = el.textContent ?? "";
+          const node = el.firstChild;
+          if (!node || !text) return false;
+          const range = document.createRange();
+          let prevTop: number | null = null;
+          for (let i = 0; i < text.length; i++) {
+            range.setStart(node, i);
+            range.setEnd(node, i + 1);
+            const rects = range.getClientRects();
+            if (!rects.length) continue;
+            const top = Math.round(rects[0].top);
+            if (prevTop !== null && top !== prevTop && !/\s/.test(text[i - 1] ?? "")) return true;
+            prevTop = top;
+          }
+          return false;
+        });
+        expect(midWordBreak, "connector name breaks mid-word").toBe(false);
+        // REQ-067 item 9: a connector waiting for a decision says its
+        // syncs are paused instead of showing a stale "last sync N m ago".
+        await expect(page.locator('[data-testid="connector-row-conn-harbor"] [data-testid="connector-state-sync-age"]')).toContainText(
+          "syncs paused until you decide",
+        );
+      }
     });
 
     test(`connector page (long spec, 30+ runs) clean @ ${vp.width}x${vp.height}`, async ({ page }) => {
@@ -640,6 +687,23 @@ test.describe("REQ-055 item 3f layout: no overlap or overflow", () => {
         await page.goto(`${UI_BASE}/repairs/${REPAIR_ID}`);
         if (mocked) await expect(page.getByText(stateText[state]).first()).toBeVisible();
         await expectClean(page, `/repairs/${REPAIR_ID} [${state}]`, vp);
+        if (mocked && state === "escalated") {
+          // REQ-067 item 1: the decision box shows the full question —
+          // wrapped, never ellipsized to "Should...".
+          const qbox = page.getByTestId("escalation-question-top");
+          await expect(qbox).toContainText(
+            "Should Reservation.total_amount track the vendor net amount or stay defined as gross?",
+          );
+          const lineClamp = await qbox.evaluate(
+            (el) => getComputedStyle(el.querySelector("p") ?? el).webkitLineClamp,
+          );
+          expect(["none", ""], "question is line-clamped").toContain(lineClamp);
+          const clipped = await qbox.evaluate((el) => {
+            const h = el as HTMLElement;
+            return h.scrollHeight - h.clientHeight;
+          });
+          expect(clipped, "question text is clipped").toBeLessThanOrEqual(2);
+        }
       });
     }
   }
