@@ -5,7 +5,7 @@
 Owner priority (2026-10-31 05:30): **REQ-060 next** (benchmark fairness; the keyed benchmark re-runs after it). Do not start REQ-051 until the owner says so.
 
 ### REQ-060 — Benchmark: the frontier arms get the engine's repair task, no token limit, agent arm and learning curve fixed (2026-10-31)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-31 01:21)
 Keyed run 2026-10-31 on `03a02f55` (`BENCH_TRIALS=1 make bench-ablation`, sandbox) after REQ-052. Owner review of the
 prompts and data sent to the models found the frontier arms were asked a different question from the engine:
 - `config/prompts/bench/frontier_oneshot.md` and `frontier_agent.md` say "Write the ConnectorSpec": a whole spec from the
