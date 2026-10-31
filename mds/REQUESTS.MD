@@ -5,7 +5,7 @@
 Owner priority (2026-10-31 09:30): **REQ-061 next** (benchmark agent arm; the keyed benchmark re-runs after it). Do not start REQ-051 until the owner says so.
 
 ### REQ-061 — Benchmark: the frontier agent arm runs the same model and returns gradable output (2026-10-31)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-10-31 03:28)
 Keyed run 2026-10-31 on `d9317e15` (after REQ-060): `frontier_oneshot` is valid (5/6 fixable fixed, 2/6 held back,
 0 wrong shipped), but `frontier_agent` produced nothing on 12/12 rows:
 - Every row: `OpenCodeCliError: opencode CLI failed with exit 1:` after ~3 s, stderr empty. The driver
