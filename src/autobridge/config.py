@@ -112,13 +112,20 @@ def frontier_max_tokens() -> int:
 def opencode_model() -> str:
     """Model for the opencode baseline driver (env ``OPENCODE_MODEL``).
 
-    ``opencode run`` takes ``-m provider/model``; empty (unset) omits the
-    flag and opencode uses its configured default.  REQ-024 requires every
-    frontier arm to use the same model — set this to the same provider and
-    model as ``FRONTIER_MODEL`` (``provider/model`` form); the bench
-    records both ids per arm so a mismatch is visible in the scorecard.
+    ``opencode run`` takes ``-m provider/model``.  When ``OPENCODE_MODEL``
+    is set it wins; otherwise it is derived from :func:`frontier_model`
+    (REQ-061 item 1: the agent arm runs the same model as the one-shot —
+    bare ``muse-spark-1.3`` becomes ``meta/muse-spark-1.3``, a value that
+    already names a provider passes through).  The driver therefore always
+    passes ``-m`` and never falls back to opencode's configured default.
     """
-    return os.environ.get("OPENCODE_MODEL", "").strip()
+    explicit = os.environ.get("OPENCODE_MODEL", "").strip()
+    if explicit:
+        return explicit
+    base = frontier_model().strip()
+    if "/" in base:
+        return base
+    return f"meta/{base}"
 
 
 def model_price_per_million(model: str) -> tuple[str, str] | None:

@@ -30,9 +30,17 @@ accumulates assistant text from message/content/delta shapes and takes the
 maximum input/output token counters (cumulative, so the max is the run
 total), plus model and cost when present. Unknown shapes are ignored, never
 raised. Env: `OPENCODE_CLI_PATH` overrides the binary; `OPENCODE_MODEL`
-(`provider/model` form — set it to the same provider+model as
-`FRONTIER_MODEL`) selects the model, and is omitted when unset. Unit tests
-use `FakeOpenCodeDriver` (in-memory, no subprocess).
+(`provider/model` form) selects the model — when unset it is derived from
+`FRONTIER_MODEL` (REQ-061: bare `muse-spark-1.3` becomes
+`meta/muse-spark-1.3`), so the agent arm always runs the same model as the
+one-shot and `-m` is always passed. The driver runs `opencode` with stdin
+closed (`DEVNULL`, REQ-061: never waits on inherited input) and, on a
+non-zero exit, raises with the stderr plus the parsed stdout `error` events
+and the stdout tail (exit-1 causes usually arrive on stdout with empty
+stderr). Before the ablation's agent rows, one live `opencode run` must
+return text, the model id and token usage (preflight, REQ-061); otherwise
+the run stops with the reason instead of filling the table with empty
+rows. Unit tests use `FakeOpenCodeDriver` (in-memory, no subprocess).
 
 ### `claude_code_headless` — headless CLI with usage capture
 

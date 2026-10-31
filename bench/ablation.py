@@ -110,7 +110,7 @@ def describe_arm_availability() -> list[dict[str, str]]:
     """
     import shutil as _shutil
 
-    from autobridge.config import frontier_api_key, frontier_model  # noqa: PLC0415
+    from autobridge.config import frontier_api_key, frontier_model, opencode_model  # noqa: PLC0415
 
     rows: list[dict[str, str]] = []
     key = bool(frontier_api_key())
@@ -125,8 +125,11 @@ def describe_arm_availability() -> list[dict[str, str]]:
         oneshot = "fake provider (offline rehearsal; 0 frontier tokens)"
     rows.append({"arm": "frontier_oneshot", "mode": oneshot})
     cli = _shutil.which("opencode")
+    # REQ-061 item 1: the agent runs opencode_model() (OPENCODE_MODEL, else
+    # derived from FRONTIER_MODEL), so name that model here.
+    agent_model = opencode_model()
     if cli and key:
-        agent = f"live opencode CLI ({cli}, model {model})"
+        agent = f"live opencode CLI ({cli}, model {agent_model})"
     elif cli:
         agent = "opencode CLI present but no FRONTIER_API_KEY: fake driver (rows labelled fake-*)"
     else:
@@ -430,6 +433,57 @@ def frontier_agent_driver() -> Any:
 def _norm_model_id(model: Any) -> str:
     """Bare model id (``provider/model`` → ``model``) for identity comparison."""
     return str(model or "").strip().split("/")[-1].strip()
+
+
+def preflight_frontier_agent(*, timeout_s: float = 300.0, driver: Any | None = None) -> Any:
+    """One live ``opencode run`` before the ablation's agent rows (REQ-061 item 4).
+
+    When the agent arm would run live (an :class:`OpenCodeCliDriver`, i.e.
+    ``FRONTIER_API_KEY`` is set and ``BASELINE_DRIVER`` selects opencode),
+    this runs a minimal prompt and requires text, the model id and token
+    usage back.  Anything missing raises ``RuntimeError`` naming the
+    reason, so the run stops here instead of producing a full table of
+    empty agent rows.  Fake/offline drivers (and non-opencode kinds) skip
+    silently and return ``None``; a passing run returns the result.
+    """
+    from bench.baseline_coding_agent import OpenCodeCliDriver  # noqa: PLC0415
+
+    drv = driver if driver is not None else frontier_agent_driver()
+    if not isinstance(drv, OpenCodeCliDriver):
+        return None
+    try:
+        res = drv.run("Reply with exactly: ok", timeout_s=timeout_s)
+    except Exception as exc:
+        raise RuntimeError(
+            "bench ablation: frontier-agent preflight failed "
+            f"({type(exc).__name__}: {exc}); refusing to run agent rows "
+            "that would all come back empty"
+        ) from exc
+    problems: list[str] = []
+    if not (getattr(res, "text", "") or "").strip():
+        stream_error = (getattr(res, "stream_error", "") or "").strip()
+        problems.append(
+            "empty text" + (f" (stream error: {stream_error[:500]})" if stream_error else "")
+        )
+    model = (getattr(res, "model", "") or "").strip()
+    if not model or model == "unknown":
+        problems.append(f"no model id (got {model!r})")
+    usage = getattr(res, "usage", None)
+    total = int(getattr(usage, "input_tokens", 0) or 0) + int(getattr(usage, "output_tokens", 0) or 0)
+    if total <= 0:
+        problems.append("no token usage reported")
+    if problems:
+        raise RuntimeError(
+            "bench ablation: frontier-agent preflight failed "
+            f"({'; '.join(problems)}); refusing to run agent rows "
+            "that would all come back empty"
+        )
+    print(
+        f"bench harness: frontier-agent preflight ok "
+        f"(model {model}, {total} tokens)",
+        flush=True,
+    )
+    return res
 
 
 def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: AblationCase | None = None) -> Any:
@@ -1403,6 +1457,10 @@ def run_ablation_harness(
     prov = provider or ablation_provider()
     for row in describe_arm_availability():
         print(f"bench harness: arm {row['arm']}: {row['mode']}", flush=True)
+    # REQ-061 item 4: one live opencode run must return text, the model id
+    # and token usage before the agent rows run — otherwise stop here with
+    # the reason instead of filling the table with empty rows.
+    preflight_frontier_agent()
     warm = warm_knowledge(
         list(warm_scenario_ids if warm_scenario_ids is not None else scenario_ids),
         provider=prov,

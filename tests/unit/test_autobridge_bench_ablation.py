@@ -22,6 +22,7 @@ from bench.ablation import (
     enumerate_hypotheses,
     grade_ablation_arm,
     pre_drift_spec_for,
+    preflight_frontier_agent,
     run_ablation_trial,
     run_engine_arm,
     run_frontier_agent_arm,
@@ -467,6 +468,82 @@ def test_frontier_agent_driver_kinds(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv("BASELINE_DRIVER", "llm")
     assert isinstance(frontier_agent_driver(), BaselineLLMDriver)
+
+
+def test_preflight_skips_fake_driver() -> None:
+    """REQ-061 item 4: offline/fake drivers skip the preflight (return None)."""
+    assert preflight_frontier_agent(driver=FakeOpenCodeDriver()) is None
+
+
+def test_preflight_passes_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 4: a live run returning text + model + usage passes."""
+    import subprocess
+
+    from bench.baseline_coding_agent import OpenCodeCliDriver, build_fake_opencode_output
+
+    def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=a[0] if a else [],
+            returncode=0,
+            stdout=build_fake_opencode_output(
+                "ok", input_tokens=100, output_tokens=10, model="meta/muse-spark-1.3"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
+    res = preflight_frontier_agent(driver=OpenCodeCliDriver(cli_path="opencode"))
+    assert res is not None
+    assert res.text.strip() == "ok"
+
+
+def test_preflight_fails_empty_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 4: a text-less live run stops the run with the reason."""
+    import subprocess
+
+    from bench.baseline_coding_agent import OpenCodeCliDriver
+
+    stdout = '{"type": "error", "error": {"message": "boom went the model"}}'
+    monkeypatch.setattr(
+        "bench.baseline_coding_agent.subprocess.run",
+        lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=0, stdout=stdout, stderr=""),  # noqa: ARG005
+    )
+    with pytest.raises(RuntimeError, match="preflight failed"):
+        preflight_frontier_agent(driver=OpenCodeCliDriver(cli_path="opencode"))
+
+
+def test_preflight_fails_cli_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 4: a failing CLI stops the run with the CLI's reason."""
+    import subprocess
+
+    from bench.baseline_coding_agent import OpenCodeCliDriver
+
+    stdout = '{"type": "error", "error": {"message": "invalid_api_key"}}}'
+    monkeypatch.setattr(
+        "bench.baseline_coding_agent.subprocess.run",
+        lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout=stdout, stderr=""),  # noqa: ARG005
+    )
+    with pytest.raises(RuntimeError, match="invalid_api_key"):
+        preflight_frontier_agent(driver=OpenCodeCliDriver(cli_path="opencode"))
+
+
+def test_preflight_fails_unknown_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 4: text without a model id or usage fails the preflight."""
+    import subprocess
+
+    from bench.baseline_coding_agent import OpenCodeCliDriver, build_fake_opencode_output
+
+    def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=a[0] if a else [],
+            returncode=0,
+            stdout=build_fake_opencode_output("ok", input_tokens=0, output_tokens=0, model=""),
+            stderr="",
+        )
+
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
+    with pytest.raises(RuntimeError, match="preflight failed"):
+        preflight_frontier_agent(driver=OpenCodeCliDriver(cli_path="opencode", model=None))
 
 
 def test_run_ablation_harness_offline(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:

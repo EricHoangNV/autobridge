@@ -260,6 +260,8 @@ class ClaudeCodeDriver:
                 capture_output=True,
                 text=True,
                 timeout=t,
+                # Never inherit stdin (REQ-061 item 2: same hang class as opencode).
+                stdin=subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
             )
         except subprocess.TimeoutExpired as e:
@@ -477,6 +479,8 @@ class CodexCliDriver:
                 capture_output=True,
                 text=True,
                 timeout=t,
+                # Never inherit stdin (REQ-061 item 2: same hang class as opencode).
+                stdin=subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
             )
         except subprocess.TimeoutExpired as e:
@@ -878,11 +882,11 @@ class OpenCodeCliDriver:
         opencode run --format json [-m <provider/model>] <prompt>
 
     *model* defaults to :func:`autobridge.config.opencode_model`
-    (env ``OPENCODE_MODEL``); when unset the ``-m`` flag is omitted and
-    opencode uses its configured default.  REQ-024 requires every
-    frontier arm to use the same model — set ``OPENCODE_MODEL`` to match
-    ``FRONTIER_MODEL`` (same provider, ``provider/model`` form) and the
-    run records both ids in the results for audit.
+    (env ``OPENCODE_MODEL``, else derived from ``FRONTIER_MODEL`` in
+    ``provider/model`` form — REQ-061 item 1, so the agent arm always runs
+    the same model as the one-shot and ``-m`` is always passed).  REQ-024
+    requires every frontier arm to use the same model — the bench records
+    both ids per arm so a mismatch is visible in the scorecard.
 
     REQ-060 item 4: the parsed stream misses the model id and undercounts
     multi-step runs, so after a successful run the driver resolves the
@@ -948,6 +952,9 @@ class OpenCodeCliDriver:
                 capture_output=True,
                 text=True,
                 timeout=t,
+                # REQ-061 item 2: never inherit stdin — opencode would wait
+                # on it (the sandbox hang) instead of running headless.
+                stdin=subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
             )
         except subprocess.TimeoutExpired as e:
@@ -965,8 +972,18 @@ class OpenCodeCliDriver:
 
         elapsed = (time.monotonic() - start) * 1000.0
         if proc.returncode != 0:
+            # REQ-061 item 3: a non-zero exit usually leaves stderr empty
+            # and the reason on stdout as {"type":"error"} events — parse
+            # them and carry the stdout tail so the ablation row's error
+            # names the actual cause instead of "exit 1: ".
+            stream_error = ""
+            with contextlib.suppress(Exception):
+                stream_error = parse_opencode_output(proc.stdout).stream_error.strip()
+            stderr_tail = proc.stderr.strip()[:500]
+            stdout_tail = proc.stdout.strip()[-1000:]
+            detail = " | ".join(p for p in (stderr_tail, stream_error[:1000], stdout_tail) if p)
             raise OpenCodeCliError(
-                f"opencode CLI failed with exit {proc.returncode}: {proc.stderr.strip()[:500]}",
+                f"opencode CLI failed with exit {proc.returncode}: {detail[:2000]}",
                 exit_code=proc.returncode,
                 stderr=proc.stderr,
                 stdout=proc.stdout,

@@ -543,9 +543,11 @@ def test_opencode_parse_unknown_shape_never_raises() -> None:
 def test_opencode_driver_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENCODE_CLI_PATH", raising=False)
     monkeypatch.delenv("OPENCODE_MODEL", raising=False)
+    monkeypatch.delenv("FRONTIER_MODEL", raising=False)
     d = OpenCodeCliDriver()
     assert d.cli_path == "opencode"
-    assert d.model is None
+    # REQ-061 item 1: unset OPENCODE_MODEL derives meta/<FRONTIER_MODEL>.
+    assert d.model == "meta/muse-spark-1.3"
     assert d.last_prompt is None
 
 
@@ -571,6 +573,108 @@ def test_opencode_driver_build_command_no_model() -> None:
     assert cmd[:4] == ["opencode", "run", "--format", "json"]
     assert "-m" not in cmd
     assert cmd[-1] == "hi"
+
+
+def test_opencode_model_explicit_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    from autobridge.config import opencode_model
+
+    monkeypatch.setenv("OPENCODE_MODEL", "customprov/custom-model")
+    monkeypatch.setenv("FRONTIER_MODEL", "muse-spark-1.3")
+    assert opencode_model() == "customprov/custom-model"
+
+
+def test_opencode_model_derives_from_frontier(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 1: unset OPENCODE_MODEL derives provider/model from FRONTIER_MODEL."""
+    from autobridge.config import opencode_model
+
+    monkeypatch.delenv("OPENCODE_MODEL", raising=False)
+    monkeypatch.setenv("FRONTIER_MODEL", "muse-spark-1.3")
+    assert opencode_model() == "meta/muse-spark-1.3"
+    # A FRONTIER_MODEL that already names a provider passes through.
+    monkeypatch.setenv("FRONTIER_MODEL", "meta/muse-wonder-1.0")
+    assert opencode_model() == "meta/muse-wonder-1.0"
+    # Default (FRONTIER_MODEL unset) is Spark under meta/.
+    monkeypatch.delenv("FRONTIER_MODEL", raising=False)
+    assert opencode_model() == "meta/muse-spark-1.3"
+
+
+def test_opencode_driver_passes_derived_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 1: -m is always passed; unset env derives from FRONTIER_MODEL."""
+    monkeypatch.delenv("OPENCODE_MODEL", raising=False)
+    monkeypatch.setenv("FRONTIER_MODEL", "muse-wonder-1.0")
+    d = OpenCodeCliDriver(cli_path="opencode")
+    assert d.model == "meta/muse-wonder-1.0"
+    cmd = d._build_command("hi")
+    assert "-m" in cmd
+    assert cmd[cmd.index("-m") + 1] == "meta/muse-wonder-1.0"
+
+
+def test_opencode_driver_stdin_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 2: the driver never inherits stdin (the sandbox hang)."""
+    seen: dict[str, object] = {}
+
+    def fake_run(*a: object, **kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
+        seen.update(kw)
+        return subprocess.CompletedProcess(
+            args=a[0] if a else [],
+            returncode=0,
+            stdout=build_fake_opencode_output("ok", input_tokens=5, output_tokens=6),
+            stderr="",
+        )
+
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
+    OpenCodeCliDriver(cli_path="opencode", model="meta/muse-spark-1.3").run("hi")
+    assert seen.get("stdin") == subprocess.DEVNULL
+
+
+def test_cli_drivers_stdin_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 2: claude/codex drivers close stdin too (same hang class)."""
+    seen: dict[str, object] = {}
+
+    def fake_run(*a: object, **kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
+        seen.update(kw)
+        return subprocess.CompletedProcess(
+            args=a[0] if a else [],
+            returncode=0,
+            stdout=build_fake_claude_output("ok"),
+            stderr="",
+        )
+
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
+    ClaudeCodeDriver(cli_path="claude").run("hi")
+    assert seen.get("stdin") == subprocess.DEVNULL
+    CodexCliDriver(cli_path="codex").run("hi")
+    assert seen.get("stdin") == subprocess.DEVNULL
+
+
+def test_opencode_driver_nonzero_carries_stdout_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 3: exit 1 with empty stderr names the stdout error event."""
+    stdout = json.dumps(
+        {
+            "type": "error",
+            "sessionID": "ses_test",
+            "error": {"name": "AuthError", "data": {"message": "invalid_api_key for provider openai"}},
+        }
+    )
+    monkeypatch.setattr(
+        "bench.baseline_coding_agent.subprocess.run",
+        lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout=stdout, stderr=""),  # noqa: ARG005
+    )
+    with pytest.raises(OpenCodeCliError, match="invalid_api_key") as exc_info:
+        OpenCodeCliDriver(cli_path="opencode").run("prompt")
+    assert "exit 1" in str(exc_info.value)
+    # The raw stdout is still attached for debugging.
+    assert exc_info.value.stdout == stdout
+
+
+def test_opencode_driver_nonzero_carries_stdout_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-061 item 3: exit 1 with no error event still shows the stdout tail."""
+    monkeypatch.setattr(
+        "bench.baseline_coding_agent.subprocess.run",
+        lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout="some explainer line", stderr=""),  # noqa: ARG005
+    )
+    with pytest.raises(OpenCodeCliError, match="some explainer line"):
+        OpenCodeCliDriver(cli_path="opencode").run("prompt")
 
 
 def test_opencode_driver_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
