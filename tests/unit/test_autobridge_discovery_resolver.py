@@ -122,7 +122,8 @@ def test_resolve_l3_budget_exhausted():
     iface = _iface_with_ops(["/reservations"])
     sel = ProbeSelector(iface)
     provider = FakeProvider(responses={"frontier": Completion(text='{"id": "x", "family": "date", "claim": "new"}', usage=Usage(10, 10))})
-    budget = Budget(max_frontier_tokens=0, max_calls=10)
+    # REQ-060: 0 token ceiling = unlimited; exhaust via max_calls=0.
+    budget = Budget(max_calls=0)
     result = resolve_hypotheses(hyps, probe_selector=sel, enumerator_yield_count=1, provider=provider, llm_budget=budget)
     assert result.decision == "escalate"
     assert result.escalation_bundle is not None

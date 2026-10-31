@@ -648,20 +648,50 @@ def run_one_shot_arm(
         elapsed = (time.monotonic() - start) * 1000.0
         # Prefer generator's duration when available
         elapsed = result.duration_ms or elapsed
-        spec_payload: dict[str, Any] | None = None
-        if result.spec_dict is not None:
-            spec_payload = result.spec_dict
+        reasoning = int(getattr(result.usage, "reasoning_tokens", 0) or 0)
         # REQ-052: a truncated answer is labelled, never silently scored
-        # as a model failure; a ran arm with no parseable spec is
-        # no_output. Grading counts both per arm.
+        # as a model failure; a ran arm with no parseable answer is
+        # no_output. REQ-060: with the shared repair context the answer
+        # is what L3 may answer — a JSON Patch on the pre-drift spec or
+        # an escalation with one question (bench.repair_answer) — never
+        # a whole spec. Without a context (synthetic paths) the legacy
+        # whole-spec parse stays.
         outcome: str | None = None
         ran = True
         error: str | None = None
+        spec_payload: dict[str, Any] | None = None
         if result.truncated:
             outcome = "truncated"
             ran = False
             error = result.truncation_reason or "truncated: output cap cut the answer off"
-        elif spec_payload is None:
+        elif context is not None:
+            from bench.repair_answer import parse_repair_answer  # noqa: PLC0415
+
+            parsed = parse_repair_answer(result.text)
+            kind = parsed["kind"]
+            if kind == "patch":
+                spec_payload = {
+                    "candidate_patch": parsed["patch"],
+                    "answer_kind": "patch",
+                    "decision": "propose",
+                    "rationale": parsed["rationale"],
+                }
+            elif kind == "escalate":
+                spec_payload = {
+                    "answer_kind": "escalate",
+                    "question": parsed["question"],
+                    "rationale": parsed["rationale"],
+                    "proposal_label": parsed["proposal_label"],
+                    "proposal_effect": parsed["proposal_effect"],
+                    "proposal_patch": parsed["proposal"] or [],
+                }
+                outcome = "escalated"
+            else:
+                outcome = "no_output"
+                error = parsed["detail"]
+        elif result.spec_dict is not None:
+            spec_payload = result.spec_dict
+        else:
             outcome = "no_output"
         return ArmResult(
             arm="one_shot",
@@ -670,6 +700,7 @@ def run_one_shot_arm(
             elapsed_ms=elapsed,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
+            reasoning_tokens=reasoning,
             frontier_tokens=result.usage.total_tokens if tier == "frontier" else 0,
             cost_usd=result.cost_usd,
             model=result.model,
@@ -697,6 +728,8 @@ def run_one_shot_arm(
                     error=f"{type(cause).__name__}: {cause}",
                     model=model or tier,
                     outcome="budget_exhausted",
+                    prompt=prompt_ref,
+                    context_hash=context_hash,
                 )
         return ArmResult(
             arm="one_shot",
@@ -705,6 +738,8 @@ def run_one_shot_arm(
             elapsed_ms=elapsed,
             error=f"{type(exc).__name__}: {exc}"[:2000],
             model=model or tier,
+            prompt=prompt_ref,
+            context_hash=context_hash,
         )
 
 
@@ -766,6 +801,17 @@ def run_trial_with_one_shot(
     from bench.bench_prompts import ensure_bench_prompts_loaded  # noqa: PLC0415
 
     ensure_bench_prompts_loaded()
+
+    inputs = make_trial_inputs(cfg, scenario_id, trial)
+    inputs_a = inputs
+    inputs_b = make_trial_inputs(cfg, scenario_id, trial)
+    inputs_c = make_trial_inputs(cfg, scenario_id, trial)
+
+    # REQ-046: the default one-shot runner renders the shared context
+    # bundle when the scenario has an ablation case (all real bench
+    # scenarios do); synthetic ids keep the legacy path (unit tests).
+    # REQ-060: the bundle carries the trial seed so its faulted-sync
+    # evidence matches the other arms' observation exactly.
     default_context: Any | None = None
     try:
         from bench.ablation import ablation_case_for_scenario  # noqa: PLC0415
@@ -778,14 +824,10 @@ def run_trial_with_one_shot(
             spec=_case.spec,
             docs_ref=_case.docs_ref,
             visible_tests=tuple(cfg.visible_tests),
+            seed=int(inputs_c.seed),
         )
     except Exception:
         default_context = None
-
-    inputs = make_trial_inputs(cfg, scenario_id, trial)
-    inputs_a = inputs
-    inputs_b = make_trial_inputs(cfg, scenario_id, trial)
-    inputs_c = make_trial_inputs(cfg, scenario_id, trial)
 
     matched = True
     matched_error: str | None = None

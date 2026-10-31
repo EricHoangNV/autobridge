@@ -1,8 +1,14 @@
-"""Shared bench context — exactly what every arm gets for a case (REQ-046).
+"""Shared bench context — exactly what every arm gets for a case (REQ-046, REQ-060).
 
 Both frontier arms receive **exactly the context the engine has** for
-the same case:
+the same case, and since REQ-060 that means the engine's *repair* task
+— not a build task:
 
+* the pre-drift ConnectorSpec under repair (the spec the engine arms
+  sync; paths in a patch address this document only),
+* the evidence of the faulted sync the engine's detector sees (sync
+  outcome, unmet criteria / failed checks, the served response sample
+  for the affected operations — redacted, secret-free),
 * the ConnectorSpec JSON Schema (the format answers are validated against),
 * the vocabulary version's capabilities (methods, auth, pagination,
   protocols, transforms, checks, stop conditions, L1 rules),
@@ -10,12 +16,17 @@ the same case:
   case's own vendor and never held-out material (``generated/`` dev
   reference specs only; anything under ``verifier/`` is refused),
 * the vendor docs for the case,
-* the visible tests, and a precise answer format.
+* the visible tests, and a precise answer format (a JSON Patch on the
+  pre-drift spec, or an escalation with one question).
 
 The bundle is content-hashed (:func:`BenchContext.content_hash`); the
 fair-context test asserts the engine arm and both frontier arms resolve
 the same hash for a case. The agent arm's sandbox holds the same files
 (:func:`write_agent_sandbox`), and its brief names them.
+
+What no arm gets: no drift class, no fingerprint delta, no hypotheses,
+no ``expected`` outcome, nothing under ``verifier/`` (grading stays
+HTTP-only).
 
 Trust boundary (DIRECTIVES §2): this module reads the engine's spec
 models, the ``generated/`` reference specs and ``simulators/docs`` —
@@ -35,9 +46,17 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 GENERATED_DIR = REPO_ROOT / "generated" / "connectors"
 
 #: Precise answer format every frontier arm is given (and graded against).
+#: REQ-060: the arms answer what the engine's L3 may answer — a JSON
+#: Patch on the pre-drift spec, or an escalation with one question.
 ANSWER_FORMAT = (
-    "Respond with ONLY the ConnectorSpec YAML document "
-    "(a bare document or one fenced ```yaml block) — no prose, no tool calls."
+    "Respond with ONLY one JSON object (a bare document or one fenced "
+    "```json block) — no prose, no tool calls: either "
+    '{"patch": [...], "rationale": "<one sentence>"} (RFC 6902 ops with '
+    '"op"/"path" addressing the pre-drift spec document only), or '
+    '{"escalate": "<the one question for the human>", "rationale": '
+    '"<one sentence>"} when the right mapping is a business decision '
+    "the evidence does not settle (optionally with a \"proposal\" "
+    '{"label", "effect", "patch"} the operator could approve).'
 )
 
 #: Sandbox file names the agent arm finds (written by write_agent_sandbox).
@@ -47,6 +66,8 @@ SANDBOX_FILES: tuple[str, ...] = (
     "example_spec.yaml",
     "vendor_docs.md",
     "visible_tests.json",
+    "pre_drift_spec.yaml",
+    "evidence.md",
     "task.md",
 )
 
@@ -189,7 +210,13 @@ def vendor_docs_text(docs_ref: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class BenchContext:
-    """Everything every arm gets for one case (equal inputs + shared context)."""
+    """Everything every arm gets for one case (equal inputs + shared context).
+
+    REQ-060: the bundle is the engine's repair task — the pre-drift
+    spec under repair plus the faulted sync's evidence — alongside the
+    schema, capabilities, foreign example, docs, visible tests and the
+    patch-or-escalate answer format.
+    """
 
     scenario_id: str
     connector_id: str
@@ -201,6 +228,8 @@ class BenchContext:
     docs_text: str
     visible_tests: tuple[str, ...] = ()
     answer_format: str = ANSWER_FORMAT
+    pre_drift_spec_yaml: str = ""
+    evidence_text: str = ""
 
     def content_hash(self) -> str:
         """sha256 over the canonical context (arms must agree on this)."""
@@ -213,6 +242,8 @@ class BenchContext:
                 "docs_text": self.docs_text,
                 "visible_tests": sorted(self.visible_tests),
                 "answer_format": self.answer_format,
+                "pre_drift_spec_yaml": self.pre_drift_spec_yaml,
+                "evidence_text": self.evidence_text,
             },
             sort_keys=True,
         )
@@ -231,6 +262,8 @@ class BenchContext:
             "docs_text": self.docs_text,
             "visible_tests": list(self.visible_tests),
             "answer_format": self.answer_format,
+            "pre_drift_spec_yaml": self.pre_drift_spec_yaml,
+            "evidence_text": self.evidence_text,
             "content_hash": self.content_hash(),
         }
 
@@ -242,17 +275,34 @@ def build_bench_context(
     spec: dict[str, Any] | None,
     docs_ref: str,
     visible_tests: tuple[str, ...] | list[str] = (),
+    seed: int | None = None,
 ) -> BenchContext:
     """Resolve the shared context bundle for one case.
 
-    *spec* is the pre-drift spec (its ``spec_version`` picks the
-    vocabulary slice). Nothing here reads case diagnostics, the
-    verifier, or hidden cases — task setup only.
+    *spec* is the pre-drift spec: its ``spec_version`` picks the
+    vocabulary slice, and its canonical YAML travels with the bundle as
+    the document every patch addresses. *seed* renders the faulted
+    sync's evidence (outcome, unmet criteria / failed checks, served
+    response sample) from the same observation the engine arms derive
+    from; ``None`` (unit tests / synthetic paths) leaves the evidence
+    empty. Nothing here reads case diagnostics, the verifier, or hidden
+    cases — task setup only.
     """
     version = "v1"
     if isinstance(spec, dict):
         version = _version_for_spec_version(spec.get("spec_version", 1))
     example_vendor, _example_spec, example_yaml = example_spec_for(connector_id)
+    pre_drift_yaml = ""
+    evidence_text = ""
+    if isinstance(spec, dict):
+        from bench.evidence import spec_and_evidence_for, spec_to_yaml  # noqa: PLC0415
+
+        if seed is not None:
+            pre_drift_yaml, evidence_text = spec_and_evidence_for(
+                spec, scenario_id=scenario_id, connector_id=connector_id, seed=int(seed)
+            )
+        else:
+            pre_drift_yaml = spec_to_yaml(spec)
     return BenchContext(
         scenario_id=scenario_id,
         connector_id=connector_id,
@@ -263,6 +313,8 @@ def build_bench_context(
         example_spec_yaml=example_yaml,
         docs_text=vendor_docs_text(docs_ref),
         visible_tests=tuple(visible_tests),
+        pre_drift_spec_yaml=pre_drift_yaml,
+        evidence_text=evidence_text,
     )
 
 
@@ -288,6 +340,8 @@ def render_frontier_oneshot_prompt(inputs: Any, context: BenchContext) -> list[d
         "example_spec_yaml": context.example_spec_yaml,
         "docs_text": context.docs_text,
         "answer_format": context.answer_format,
+        "pre_drift_spec_yaml": context.pre_drift_spec_yaml,
+        "evidence_text": context.evidence_text,
     }
     return render_prompt(template, **values)
 
@@ -317,6 +371,8 @@ def render_frontier_agent_brief(
         "example_spec_yaml": context.example_spec_yaml,
         "docs_text": context.docs_text,
         "answer_format": context.answer_format,
+        "pre_drift_spec_yaml": context.pre_drift_spec_yaml,
+        "evidence_text": context.evidence_text,
         "sandbox_files": "\n".join(f"- {name}" for name in sandbox_files),
     }
     return render_prompt(template, **values)
@@ -337,7 +393,8 @@ def write_agent_sandbox(context: BenchContext, dest: str | pathlib.Path) -> list
 
     The sandbox holds the same context the engine has: the schema, the
     vocabulary capabilities, the different-vendor example, the vendor
-    docs, the visible tests, and the rendered task brief (``task.md``).
+    docs, the visible tests, the pre-drift spec under repair, the
+    faulted sync's evidence, and the rendered task brief (``task.md``).
     """
     dest_path = pathlib.Path(dest)
     dest_path.mkdir(parents=True, exist_ok=True)
@@ -347,8 +404,14 @@ def write_agent_sandbox(context: BenchContext, dest: str | pathlib.Path) -> list
         "example_spec.yaml": context.example_spec_yaml,
         "vendor_docs.md": context.docs_text,
         "visible_tests.json": json.dumps(list(context.visible_tests), indent=2, sort_keys=True),
+        "pre_drift_spec.yaml": context.pre_drift_spec_yaml,
+        "evidence.md": context.evidence_text,
         "task.md": (
-            f"# Bench task: {context.scenario_id}\n\n"
+            f"# Bench task: repair {context.scenario_id}\n\n"
+            f"Repair the connector in `pre_drift_spec.yaml` from the fault "
+            f"evidence in `evidence.md`: answer with a JSON Patch on that "
+            f"spec, or escalate with one question when the evidence does not "
+            f"settle it.\n\n"
             f"Vocabulary: {context.vocabulary_version}; "
             f"worked example vendor: {context.example_vendor} "
             "(different vendor — follow its shape, not its values).\n\n"

@@ -391,6 +391,7 @@ def run_frontier_oneshot_arm(inputs: Any, *, provider: Any | None = None, docs_l
             spec=case_obj.spec,
             docs_ref=case_obj.docs_ref,
             visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
+            seed=int(getattr(inputs, "seed", 0) or 0),
         )
     result = run_one_shot_arm(inputs, provider=provider or ablation_provider(), context=context)
     # run_one_shot_arm labels arm="one_shot"; relabel to the ablation name.
@@ -426,6 +427,11 @@ def frontier_agent_driver() -> Any:
     return get_baseline_driver(kind)
 
 
+def _norm_model_id(model: Any) -> str:
+    """Bare model id (``provider/model`` → ``model``) for identity comparison."""
+    return str(model or "").strip().split("/")[-1].strip()
+
+
 def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: AblationCase | None = None) -> Any:
     """Arm b (``frontier_agent``): the model as a coding agent with tools.
 
@@ -459,6 +465,7 @@ def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: Abla
             spec=case_obj.spec,
             docs_ref=case_obj.docs_ref,
             visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
+            seed=int(getattr(inputs, "seed", 0) or 0),
         )
     res = run_baseline_arm(
         inputs, driver=driver or frontier_agent_driver(), arm="frontier_agent", context=context
@@ -469,7 +476,10 @@ def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: Abla
         if frontier_api_key() and getattr(res, "ran", False):
             expected = frontier_model()
             actual = getattr(res, "model", None) or ""
-            if actual not in (expected, "unknown"):
+            # REQ-060 item 4: the run reports the model it actually used
+            # (session row, ``provider/model`` form); it matches when the
+            # bare ids agree. "unknown"/"" still pass (the run said nothing).
+            if actual.strip() and _norm_model_id(actual) not in ("unknown", "") and _norm_model_id(actual) != _norm_model_id(expected):
                 import dataclasses as _dataclasses  # noqa: PLC0415
 
                 return _dataclasses.replace(
@@ -485,9 +495,6 @@ def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: Abla
     except Exception:
         pass
     return res
-    return run_baseline_arm(
-        inputs, driver=driver or frontier_agent_driver(), arm="frontier_agent", context=context
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -675,8 +682,10 @@ def run_engine_arm(
         raise ValueError(f"unknown engine ablation {ablation!r}")
     cache = knowledge if knowledge is not None else KnowledgeCache()
     ctrl = RepairController(knowledge_cache=cache)
-    token_ceiling = int(getattr(inputs, "token_ceiling", 0) or 20000)
+    token_ceiling = int(getattr(inputs, "token_ceiling", 0) or 0)
     wall_clock = float(getattr(inputs, "wall_clock_s", 0) or 300.0)
+    # REQ-060 item 3: token_ceiling 0 = no limit (Budget normalizes 0 to
+    # unlimited); the wall clock stays.
     budget = Budget(max_frontier_tokens=token_ceiling, max_small_tokens=token_ceiling, max_wall=wall_clock)
     start = time.monotonic()
     try:
@@ -743,6 +752,7 @@ def run_engine_arm(
                 spec=case.spec,
                 docs_ref=case.docs_ref,
                 visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
+                seed=int(getattr(inputs, "seed", 0) or 0),
             ).content_hash()
         except Exception:
             engine_context_hash = None
@@ -1141,11 +1151,11 @@ class AblationGrade:
     elapsed_ms: float
     model: str | None = None
     # REQ-052 item 3: every frontier attempt graded with the reason.
-    produced: int = 0  # 1 iff the arm produced a spec/patch at all
-    applied: int = 0  # 1 iff it applied (patch applied / spec validated)
+    produced: int = 0  # 1 iff the arm produced a patch/escalation/spec at all
+    applied: int = 0  # 1 iff it applied (patch/proposal applied, spec validated)
     verdict: str | None = None  # "pass" | "fail" | None (no verifier / no output)
     failed_checks: tuple[str, ...] = ()  # verifier failed-check names
-    outcome_label: str | None = None  # truncated|timed_out|no_output|unverified|error|None
+    outcome_label: str | None = None  # truncated|timed_out|no_output|escalated|unverified|error|None
 
 
 def _looks_like_full_spec(spec: Any) -> bool:
@@ -1156,17 +1166,34 @@ def _looks_like_full_spec(spec: Any) -> bool:
 
 
 def _spec_applies(spec: Any, case_spec: dict[str, Any] | None) -> int:
-    """1 iff the arm's output applied: patch applies, or spec validates."""
+    """1 iff the arm's output applied: patch applies, or spec validates.
+
+    REQ-060: a direct ``candidate_patch`` decides first (it is what the
+    verifier judges); an escalation's ``proposal_patch`` is checked only
+    when there is no direct patch. A full produced spec validates
+    against the schema (legacy whole-spec answers).
+    """
     if not isinstance(spec, dict):
         return 0
-    raw_patch = spec.get("candidate_patch")
-    if isinstance(raw_patch, list) and raw_patch:
+    direct = spec.get("candidate_patch")
+    if isinstance(direct, list) and direct:
         if case_spec is None:
             return 0
         try:
             from autobridge.spec.patch import apply_patch  # noqa: PLC0415
 
-            apply_patch(dict(case_spec), list(raw_patch))
+            apply_patch(dict(case_spec), list(direct))
+            return 1
+        except Exception:
+            return 0
+    proposal = spec.get("proposal_patch")
+    if isinstance(proposal, list) and proposal:
+        if case_spec is None:
+            return 0
+        try:
+            from autobridge.spec.patch import apply_patch  # noqa: PLC0415
+
+            apply_patch(dict(case_spec), list(proposal))
             return 1
         except Exception:
             return 0
@@ -1200,10 +1227,15 @@ def grade_ablation_arm(
     refresh with no spec change released) or ``"degraded_question"``
     (Degraded with one operator question, no patch).
 
-    REQ-052: *produced* (did it produce a spec/patch at all), *applied*
-    (did it apply) and the verifier *verdict* + failed-check names land
-    on the grade, so every arm × scenario row has a verdict or an
-    explicit label (truncated/timed_out/no_output/unverified/error).
+    REQ-052 + REQ-060: *produced* (did it produce a patch, an
+    escalation or a spec at all), *applied* (did the patch/proposal
+    apply, or the spec validate) and the verifier *verdict* + failed
+    checks land on the grade. A frontier patch is applied to the
+    pre-drift spec and goes to the verifier like an engine patch; an
+    escalation on an unfixable scenario counts as held back, on a
+    fixable one as not fixed. Every arm × scenario row ends with a
+    verdict or an explicit label
+    (truncated/timed_out/no_output/escalated/unverified/error).
     """
     res: _ArmResult | None = trial.results.get(arm)
     verified = 0
@@ -1223,12 +1255,18 @@ def grade_ablation_arm(
             )
     patch: list[Any] = []
     arm_spec = getattr(res, "spec", None) if res is not None else None
+    answer_kind: str | None = None
     if isinstance(arm_spec, dict):
+        answer_kind = arm_spec.get("answer_kind")
         raw_patch = arm_spec.get("candidate_patch")
         if isinstance(raw_patch, list) and raw_patch:
             patch = raw_patch
     if produced is None:
-        produced = 1 if (patch or _looks_like_full_spec(arm_spec)) else 0
+        # REQ-060: a frontier patch, a frontier escalation, or a legacy
+        # whole spec all count as produced attempts; silence does not.
+        # An explicit (even empty) patch answer counts — the arm answered
+        # the repair question.
+        produced = 1 if (patch or (answer_kind in ("patch", "escalate")) or _looks_like_full_spec(arm_spec)) else 0
     if applied is None:
         case_spec: dict[str, Any] | None = None
         try:
@@ -1236,7 +1274,13 @@ def grade_ablation_arm(
         except Exception:
             case_spec = None
         applied = _spec_applies(arm_spec, case_spec) if produced else 0
-    correct_esc = (1 if verified else 0) if expected == "repair" else (0 if produced else 1)
+    if expected == "repair":
+        correct_esc = 1 if verified else 0
+    else:
+        # REQ-060 item 2: an escalation on an unfixable scenario counts
+        # as held back; a patch where none belongs does not (and a
+        # verifier-passing patch there is still not a hold-back).
+        correct_esc = 1 if (answer_kind == "escalate" or produced == 0) else 0
     label = outcome_label or (res.outcome if res is not None else None)
     if label is None and verdict is None:
         label = "unverified" if (res is not None and res.ran) else "error"
@@ -1266,10 +1310,13 @@ def grade_ablation_trial(trial: AblationTrialResult, *, verifier_url: str | None
 
     Engine arms that released a non-empty candidate patch are verified
     over HTTP (patched spec = case spec + patch); frontier arms that
-    produced a full ConnectorSpec are verified directly (the produced
-    spec is what the verifier judges). Every other arm gets outcome
-    None. A ``verifier_unreachable`` transport failure degrades that arm
-    to unverified rather than fail-guessed.
+    produced a JSON Patch are applied to the pre-drift spec and verified
+    the same way (REQ-060 item 2: graded like an engine patch); legacy
+    full-spec answers are verified directly. An escalation carries no
+    patch, so it is never verified — on an unfixable scenario it counts
+    as held back, on a fixable one as not fixed. Every other arm gets
+    outcome None. A ``verifier_unreachable`` transport failure degrades
+    that arm to unverified rather than fail-guessed.
 
     REQ-052: the verdict + failed checks are written back onto the
     trial's arm rows, so every arm × scenario row carries a verdict or
@@ -1410,6 +1457,9 @@ def run_ablation_harness(
     summary["trials"] = len(trials)
     summary["skipped_scenarios"] = sorted(skipped)
     summary["warm_provenance"] = warm_provenance(warm)
+    # REQ-060 item 3: per-arm min / median / max total tokens so the
+    # owner can pick a limit from the results.
+    summary["total_tokens_stats"] = total_tokens_stats(trials)
     # REQ-046: bench prompt provenance on the summary too (id/version/hash
     # per frontier arm, shared context hash agreement across all arms).
     prompt_refs: dict[str, Any] = {}
@@ -1424,6 +1474,31 @@ def run_ablation_harness(
     summary["context_hashes"] = context_by_arm
     summary["context_matched"] = len(set(context_by_arm.values())) <= 1
     return trials, grades, summary
+
+
+def total_tokens_stats(trials: list[AblationTrialResult]) -> dict[str, dict[str, Any]]:
+    """Per-arm min / median / max total tokens (REQ-060 item 3).
+
+    Totals come from the recorded rows (input + output per arm row), so
+    the owner can pick a token limit from the results. Reasoning tokens
+    ride per row on the trial records.
+    """
+    totals_by_arm: dict[str, list[float]] = {}
+    for trial in trials:
+        for name, res in trial.results.items():
+            totals_by_arm.setdefault(name, []).append(
+                float(int(getattr(res, "input_tokens", 0) or 0) + int(getattr(res, "output_tokens", 0) or 0))
+            )
+    return {
+        arm: {
+            "min": min(values),
+            "median": statistics.median(values),
+            "max": max(values),
+            "n": len(values),
+        }
+        for arm, values in sorted(totals_by_arm.items())
+        if values
+    }
 
 
 def write_ablation_results(
@@ -1546,6 +1621,7 @@ def _quality_block(items: list[AblationGrade]) -> dict[str, Any]:
         "wrong_patches_shipped": sum(g.wrong_patch_released for g in items),
         "produced": sum(g.produced for g in items),
         "applied": sum(g.applied for g in items),
+        "escalated": sum(1 for label in labels if label == "escalated"),
         "truncated": sum(1 for label in labels if label == "truncated"),
         "timed_out": sum(1 for label in labels if label == "timed_out"),
         "no_output": sum(1 for label in labels if label == "no_output"),
@@ -1720,8 +1796,10 @@ def run_learning_curve(
         "rows": rows,
         "totals": totals,
         "provenance": {
+            # REQ-060 item 5: every driver exposes default_model
+            # (OpenCodeCliDriver included) — getattr, never a crash.
             "frontier_agent_driver": type(driver).__name__,
-            "frontier_agent_model": driver.default_model,
+            "frontier_agent_model": getattr(driver, "default_model", getattr(driver, "model", None)),
             "engine_provider": type(prov).__name__,
             "engine_frontier_model": getattr(prov, "frontier_model", None),
             "warm": warm_provenance(warm_cache),

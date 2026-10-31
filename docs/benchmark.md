@@ -95,20 +95,21 @@ driver = get_baseline_driver("one_shot")   # OneShotGenerator (secondary control
 
 ## Secondary diagnostic control — `one_shot_generator` (P1.W8.3)
 
-`bench/one_shot.py:OneShotGenerator` is the secondary control: a single `LLMProvider.complete` that must produce a `ConnectorSpec` YAML in one pass, with the *same* `HarnessInputs` the other two arms receive (docs volume, sandbox URL, credentials as refs, visible tests, token ceiling, wall-clock — asserted by `assert_inputs_equal` / `assert_budget_fields_equal` three-way). It goes through `Budget` + `BudgetedProvider` so ceilings are identical and every call lands in `ModelCall`; cost is `Decimal` via `estimate_cost`.
+`bench/one_shot.py:OneShotGenerator` is the secondary control: a single `LLMProvider.complete` that must answer the engine's repair task (REQ-060: a JSON Patch on the pre-drift spec, or an escalation with one question — never a whole spec) in one pass, with the *same* `HarnessInputs` the other two arms receive (docs volume, sandbox URL, credentials as refs, visible tests, token ceiling, wall-clock — asserted by `assert_inputs_equal` / `assert_budget_fields_equal` three-way). It goes through `Budget` + `BudgetedProvider` so the wall clock is identical and every call lands in `ModelCall`; cost is `Decimal` via `estimate_cost`. REQ-060: `token_ceiling` 0 = no limit (the default for every arm), so nothing is ever `budget_exhausted` on tokens; the per-call output cap stays `FRONTIER_MAX_TOKENS` because the API needs a value.
 
 Helpers:
 
 * `build_one_shot_prompt(inputs, docs_text)` — legacy inline prompt (unit tests / synthetic paths): scenario/trial/seed, docs Volume/ref, sandbox URL/image/runtime_target, credential refs (names only), visible tests, token/wall ceilings, plus loaded vendor docs text; no secret values (DIRECTIVES §6).
-* `bench/context.py:build_bench_context(...)` — the shared fair-context bundle every real arm renders (REQ-046, below): the ConnectorSpec JSON Schema, the vocabulary version's capabilities, a complete example spec for a *different* vendor, the vendor docs, the visible tests and the answer format.
+* `bench/context.py:build_bench_context(...)` — the shared fair-context bundle every real arm renders (REQ-046, below): the pre-drift spec under repair, the faulted sync's evidence, the ConnectorSpec JSON Schema, the vocabulary version's capabilities, a complete example spec for a *different* vendor, the vendor docs, the visible tests and the patch-or-escalate answer format.
 * File prompts `config/prompts/bench/frontier_oneshot.md` + `frontier_agent.md` (same loader/front-matter as the engine prompts in `config/prompts/`; loaded once at bench start via `bench/bench_prompts.py`; edit + rerun to change) — the one-shot arm renders the first, the agent arm the second; the scorecard records each arm's prompt id/version/content-hash.
-* `extract_spec_yaml(text)` — normalizes fenced ```yaml ... ``` or bare YAML.
-* `try_parse_spec_yaml(text)` — returns dict when valid YAML, else None.
+* `extract_spec_yaml(text)` / `try_parse_spec_yaml(text)` — legacy whole-spec extraction (unit tests / synthetic paths only).
+* `bench/repair_answer.py:parse_repair_answer(text)` — the repair answer parser (REQ-060): `{"patch": [...]}` / bare patch list, `{"escalate": "<question>", ...}` with optional tested `proposal`, or `none` with a one-line reason. Never raises; a whole ConnectorSpec is explicitly not an answer.
+* `bench/evidence.py:render_fault_evidence(spec, ...)` — the faulted sync's evidence (outcome, unmet criteria / failed checks, served response sample, redacted) from the same in-process observation the engine arms derive from. Never a drift class, delta, hypotheses, `expected`, or verifier material.
 * `load_docs_text(inputs)` — reads docs file/dir from mounted volume (max 120k chars).
-* `run_one_shot_arm(inputs, provider, budget, tier, ...)` → `ArmResult(arm="one_shot")` with usage/cost/spec.
+* `run_one_shot_arm(inputs, provider, budget, tier, ...)` → `ArmResult(arm="one_shot")` with usage/cost/answer payload (patch under `candidate_patch`, escalation under `answer_kind`/`question`, label `escalated`).
 * `run_trial_with_one_shot(config, scenario_id, trial, ...)` — runs all three arms under matched audit, returning a `TrialResult` with extra `one_shot` arm.
 
-If the agentic baseline beats the one-shot, the gain is from tool use/iteration, not just model size. The one-shot's `spec_dict` is available for verifier scoring (W8.4) alongside the other arms.
+If the agentic baseline beats the one-shot, the gain is from tool use/iteration, not just model size. The one-shot's answer is graded exactly like an engine arm's (patch → verifier on the patched spec; escalation → held back / not fixed).
 
 ## Ablation arms — engine vs. untrained frontier model (REQ-024 B)
 
@@ -162,14 +163,15 @@ observed delta) — transport/auth/capability classes and empty deltas
 (which share one constant signature across scenarios) never consult or
 populate it, so a learned fix is never reused on an unrelated drift;
 (3) `frontier_oneshot` reads the one vendor docs file the engine arms
-read for the scenario (not the whole docs volume, which blew the shared
-20k budget before the model was called) — proven by a unit test that
+read for the scenario (not the whole docs volume, which blew the old
+shared 20k token budget before the model was called) — proven by a unit test that
 meters prompt size against the ceiling; it still needs a frontier key
 or a prompt-hash recording to run for real (see arm availability below).
 Still open: no frontier baseline ran for real in the sandbox (no
 `FRONTIER_API_KEY` there — `frontier_oneshot` fails loudly with
 `ReplayMissing`, `frontier_agent` runs on the fake driver); the owner
-reruns with the key after all REQ-027/REQ-028 fixes land.
+reruns with the key after REQ-060 lands (the re-run measures the
+models, not the harness).
 
 Metrics (`summarize_ablation`, per arm / per arm+scenario / overall, mean +
 95 % normal-approx interval, ≥5 trials): verified completion rate (verifier
@@ -180,26 +182,45 @@ when the verifier is unreachable. `render_ablation_table` prints the
 per-run table (rung that resolved it, model calls, small/frontier tokens,
 why it escalated comes from the ladder trace).
 
-Frontier quality (REQ-052, 2026-10-30): the harness must not grade
-itself. Every frontier arm gets the engine L3's output room
+Frontier quality (REQ-052, 2026-10-30; REQ-060, 2026-10-31): the harness must not grade
+itself. The frontier arms answer what the engine's L3 may answer — a
+JSON Patch on the pre-drift spec, or an escalation with one question.
+Every frontier arm gets the engine L3's output room
 (`FRONTIER_MAX_TOKENS`, default 131072, for the one-shot and the LLM
 fallback too); a cut-off answer (`finish_reason == "length"`, or a full
-cap with no parseable spec) is labelled `truncated`, never scored as a
-model failure. The agent row records the model the run itself reports
-(never a default label); a live run whose model differs from
-`FRONTIER_MODEL` fails as `model_mismatch`. All arms share one
-wall-clock (default 600 s; `--wall-clock` / `BENCH_WALL_CLOCK`);
-agent timeouts are labelled `timed_out`. Produced frontier specs go to
-the verifier like engine patches, so every arm x scenario row carries a
-verdict + failed checks or an explicit
-`truncated`/`timed_out`/`no_output`/`unverified` label; the summary adds
-per-arm fixable-fixed / unfixable-held-back / wrong-shipped counts plus
-label counts (`render_frontier_quality_table`, `summary["quality"]`,
-per-scenario `summary["frontier_detail"]`). The one-shot prices by the
-resolved model id from `MODEL_PRICES_PER_MILLION` (Spark $1.25/$4.25 per
-M). With `FRONTIER_API_KEY` set the learning curve uses the live agent
-driver (the fake driver raises there) and reports per-repeat agent
-verification.
+cap with no parseable answer) is labelled `truncated`, never scored as
+a model failure. Escalations are first-class answers: graded like an
+engine escalation (held back on unfixable, not fixed on fixable) with
+the label `escalated`. The agent driver parses the live `opencode run
+--format json` shapes (assistant text in `part.text`, usage in
+`part.tokens`, failures as `error` events — a text-less error stream
+raises instead of scoring silence) and resolves the model the run
+itself used plus the run totals from the CLI's session row, falling
+back to the stream sums when the row is unreachable. The agent row
+records that model (never a default label); a live run whose model
+differs from `FRONTIER_MODEL` fails as `model_mismatch` (provider
+prefixes ignored). All arms share one wall-clock (default 600 s;
+`--wall-clock` / `BENCH_WALL_CLOCK`); agent timeouts are labelled
+`timed_out`.
+No token limit (REQ-060, owner 2026-10-31): `token_ceiling` (and
+`BENCH_TOKEN_CEILING`) 0 = no limit, and 0 is the default for every
+arm — `Budget` skips the token check when its limit is 0, so nothing
+is ever `budget_exhausted` on tokens. Every row records input, output
+and reasoning tokens (when the provider reports them); the summary
+adds per-arm min / median / max total tokens (`summary
+["total_tokens_stats"]`) so the owner can pick a limit from the
+results. The one-shot prices by the resolved model id from
+`MODEL_PRICES_PER_MILLION` (Spark $1.25/$4.25 per M). With
+`FRONTIER_API_KEY` set the learning curve uses the live agent driver
+(the fake driver raises there) and reports per-repeat agent
+verification — or fails loudly; it no longer crashes on
+`default_model` for live drivers.
+Every arm × scenario row carries a verdict + failed checks or an
+explicit `truncated`/`timed_out`/`no_output`/`escalated`/`unverified`
+label; the summary adds per-arm fixable-fixed / unfixable-held-back /
+wrong-shipped counts plus label counts
+(`render_frontier_quality_table`, `summary["quality"]`, per-scenario
+`summary["frontier_detail"]`).
 
 ```bash
 make bench-ablation   # all arms on the dev split + learning curve (REQ-024 B)
@@ -240,39 +261,56 @@ produced patch verifies is judged only by the verifier (`verified`,
 `correct_escalation` in the grades). A row with `ran: true` and
 `verified_completion: 0` is a loss, published as one.
 
-### Fair context — what each arm is given (REQ-046)
+### Fair context — what each arm is given (REQ-046, REQ-060)
 
 A starved baseline is a strawman judges will spot, so both frontier arms
-receive **exactly the context the engine has** for the same case, and a
-unit test (`tests/unit/test_autobridge_bench_fair_context.py`) asserts
-all three agree by content hash. The shared bundle
+receive **exactly the task the engine arms run** for the same case — not
+a build task but the engine's repair task — and a unit test
+(`tests/unit/test_autobridge_bench_req060.py`) asserts all three agree
+by content hash on the spec + evidence. The shared bundle
 (`bench/context.py:BenchContext`) is:
 
-* the ConnectorSpec JSON Schema (the exact format answers validate against),
+* the pre-drift ConnectorSpec under repair (as YAML; patch paths
+  address this document only),
+* the evidence of the faulted sync the engine's detector sees (sync
+  outcome, unmet criteria / failed checks, the served response sample
+  for the affected operations — rendered by `bench/evidence.py` from
+  the same in-process observation the engine arms derive from, secrets
+  redacted),
+* the ConnectorSpec JSON Schema (the exact format the repaired spec
+  validates against),
 * the vocabulary version's capabilities for the case's `spec_version`
-  (methods, auth, pagination, protocols, transforms, checks, stop
-  conditions, L1 rules — the same `capabilities_payload()` the
-  `/capabilities` endpoint serves, so the bundle can never drift from
-  what the engine reports it knows),
+  (methods, auth, pagination, transforms, checks, stop conditions, L1
+  rules — the same `capabilities_payload()` the `/capabilities`
+  endpoint serves, so the bundle can never drift from what the engine
+  reports it knows),
 * **one complete example spec for a different vendor** — never the
   case's own vendor and never held-out material (`generated/`
   reference specs only; anything under `verifier/` is refused),
 * the vendor docs for the case (full text in the hash; rendered prompts
-  truncate per the shared budget with a loud marker, never raising the
-  ceiling for one arm),
-* the visible tests, and a precise answer format
-  (`ConnectorSpec YAML only`).
+  show them in full — there is no per-arm truncation anymore),
+* the visible tests, and a precise answer format: what the engine's L3
+  may answer — a JSON Patch on the given spec, or an escalation with
+  one question (optionally a tested proposal).
+
+What no arm gets: no drift class, no fingerprint delta, no hypotheses,
+no `expected` outcome, nothing under `verifier/` — the context test
+scans every dev scenario's bundle for leaks, and the leak audit still
+passes.
 
 The agent arm's sandbox holds the same files
 (`schema.json`, `capabilities.json`, `example_spec.yaml`,
-`vendor_docs.md`, `visible_tests.json`, `task.md`, written by
-`write_agent_sandbox`), and its file-based brief names them. The
-`run_baseline_via_llm_provider` fallback (plan §9, not used by the
-ablation — it drives `run_baseline_arm`) renders the same full context
-for real scenarios; only unknown/synthetic scenario ids with no
-ablation case keep the legacy one-liner (unit tests). Nothing from
-`verifier/` or hidden cases enters any arm — the context test scans
-every dev scenario's bundle for it, and the leak audit still passes.
+`vendor_docs.md`, `visible_tests.json`, `pre_drift_spec.yaml`,
+`evidence.md`, `task.md`, written by `write_agent_sandbox`), and its
+file-based brief names them. The `run_baseline_via_llm_provider`
+fallback (plan §9, not used by the ablation — it drives
+`run_baseline_arm`) renders the same full context for real scenarios;
+only unknown/synthetic scenario ids with no ablation case keep the
+legacy one-liner (unit tests). Grading is symmetric: a frontier patch
+is applied to the pre-drift spec and goes to the verifier like an
+engine patch (fixable fixed / wrong shipped); an escalation on an
+unfixable scenario counts as held back, on a fixable one as not fixed
+(`tests/unit/test_autobridge_bench_req060.py` pins all four).
 
 The learning curve (`run_learning_curve`, `experiments/learning_curve.md`)
 injects the same drift five times: the agent pays every repair; the

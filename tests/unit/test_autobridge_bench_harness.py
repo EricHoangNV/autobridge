@@ -59,8 +59,10 @@ def test_harness_config_defaults() -> None:
 
 
 def test_harness_config_invalid_token_ceiling() -> None:
+    # REQ-060 item 3: token_ceiling 0 = no limit (valid); negatives fail.
+    assert HarnessConfig(token_ceiling=0).token_ceiling == 0
     with pytest.raises(ValueError, match="token_ceiling"):
-        HarnessConfig(token_ceiling=0)
+        HarnessConfig(token_ceiling=-1)
 
 
 def test_harness_config_invalid_wall_clock() -> None:

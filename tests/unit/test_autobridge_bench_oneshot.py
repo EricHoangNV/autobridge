@@ -735,7 +735,9 @@ def test_oneshot_vendor_scoped_docs_fit_shared_budget() -> None:
 
     metered = FakeProvider(responses={"default": _metered}, frontier_model="fake-frontier", small_model="fake-small")
     case = ab.ablation_case_for_scenario("rename_guest_id")
-    cfg = HarnessConfig()
+    # REQ-060: the default ceiling is 0 (no limit); this legacy-budget
+    # test pins an explicit ceiling to prove the exhaustion mechanism.
+    cfg = HarnessConfig(token_ceiling=20000)
     inp = make_trial_inputs(cfg, "rename_guest_id", 0)
     assert inp.token_ceiling == 20000
     whole = _volume_docs(inp)

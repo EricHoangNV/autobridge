@@ -152,8 +152,10 @@ def test_l3_skipped_when_enumerator_yields_ge_2_trace():
 def test_budget_exhausted_l3_escalates_with_bundle():
     spec = _load_spec()
     h1 = _hyp("date:date:business", "date", "business")
-    # Budget with 0 frontier tokens -> next frontier call exceeds
-    budget = Budget(max_frontier_tokens=0, max_calls=10)
+    # REQ-060: a token ceiling of 0 means unlimited, so immediate
+    # exhaustion is triggered by the call budget (max_calls=0) — the
+    # first model call raises BudgetExhausted before any patch exists.
+    budget = Budget(max_calls=0)
     provider = FakeProvider(responses={"frontier": Completion(text='{"id": "x", "family": "date", "claim": "new"}', usage=Usage(10, 10))})
     result = run_ladder(spec, "UNKNOWN", hypotheses=[h1], enumerator_yield_count=1, provider=provider, budget=budget)
     assert result.decision == "escalate"
@@ -166,7 +168,8 @@ def test_budget_exhausted_l3_escalates_with_bundle():
 def test_budget_exhausted_l2_escalates_with_bundle():
     spec = _load_spec()
     hyps = [_hyp("date:date:business", "date", "business"), _hyp("date:date:arrival", "date", "arrival")]
-    budget = Budget(max_small_tokens=0, max_calls=10)
+    # REQ-060: 0 token ceiling = unlimited; exhaust via max_calls=0.
+    budget = Budget(max_calls=0)
     provider = FakeProvider(responses={"small": Completion(text=json.dumps([hyps[0].id, hyps[1].id]), usage=Usage(10, 10))})
     result = run_ladder(spec, "UNKNOWN", hypotheses=hyps, enumerator_yield_count=2, provider=provider, budget=budget)
     assert result.decision == "escalate"
@@ -191,8 +194,9 @@ def test_budget_exhausted_never_produces_patch():
     """Ensure BudgetExhausted never yields a candidate patch (no silent guess)."""
     spec = _load_spec()
     hyps = [_hyp("date:date:business", "date", "business")]
-    for maxf in [0]:
-        budget = Budget(max_frontier_tokens=maxf, max_calls=10)
+    # REQ-060: 0 token ceiling = unlimited; exhaust via max_calls=0.
+    for _ in [0]:
+        budget = Budget(max_calls=0)
         provider = FakeProvider(responses={"frontier": Completion(text='{"id": "x", "family": "date", "claim": "new"}', usage=Usage(5, 5))})
         result = run_ladder(spec, "UNKNOWN", hypotheses=hyps, enumerator_yield_count=1, provider=provider, budget=budget)
         assert result.candidate_patch is None

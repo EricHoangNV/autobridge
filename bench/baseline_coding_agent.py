@@ -56,6 +56,13 @@ class ClaudeCliResult:
     raw_output: str = ""
     exit_code: int = 0
     duration_ms: float = 0.0
+    #: ``opencode run`` session id parsed from the event stream ("" when
+    #: absent). The driver resolves the authoritative model/totals from
+    #: the session row when it is reachable (REQ-060 item 4).
+    session_id: str = ""
+    #: ``opencode run`` ``{"type":"error"}`` event messages ("" when none).
+    #: A text-less stream with errors raises instead of scoring silence.
+    stream_error: str = ""
 
     @property
     def total_tokens(self) -> int:
@@ -519,9 +526,33 @@ class CodexCliDriver:
 # ``opencode run --format json`` streams one JSON event per line.  Event
 # shapes vary by version, so :func:`parse_opencode_output` is defensive:
 # it accumulates assistant text from known message shapes and takes the
-# maximum input/output token counters seen (cumulative counters grow, so
-# the max is the run total).  Unknown shapes are ignored — never raised.
+# maximum input/output/reasoning counters seen (cumulative counters grow,
+# so the max is the run total; per-step ``step_finish`` deltas are
+# additionally summed via the session row when reachable — see
+# :func:`resolve_opencode_session`).  Unknown shapes are ignored — never
+# raised.  REQ-060 item 4 (shapes captured from ``opencode 1.18`` in the
+# sandbox): assistant text lives in ``part.text`` of ``{"type":"text"}``
+# events, usage in ``part.tokens`` (``input``/``output``/``reasoning``)
+# of ``step_finish`` events, cost in ``part.cost``, and failures arrive
+# as ``{"type":"error"}`` events on exit 0 — all of which the old parser
+# missed (12/12 ``no_output`` / ``unknown`` / 0 tokens). The model id is
+# not in the stream; the driver resolves it from the session row.
 # ---------------------------------------------------------------------------
+
+
+def _content_parts_text(content: Any) -> str:
+    """Join ``{"type":"text","text":...}`` parts (and bare strings)."""
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for part in content:
+        if isinstance(part, dict):
+            t = part.get("text")
+            if isinstance(t, str) and t.strip():
+                parts.append(t)
+        elif isinstance(part, str) and part.strip():
+            parts.append(part)
+    return "".join(parts)
 
 
 def _opencode_event_text(event: dict[str, Any]) -> str:
@@ -540,17 +571,19 @@ def _opencode_event_text(event: dict[str, Any]) -> str:
     content = event.get("content")
     if isinstance(event.get("message"), dict):
         content = event["message"].get("content", content)
-    if isinstance(content, list):
-        parts: list[str] = []
-        for part in content:
-            if isinstance(part, dict):
-                t = part.get("text")
-                if isinstance(t, str) and t.strip():
-                    parts.append(t)
-            elif isinstance(part, str) and part.strip():
-                parts.append(part)
-        if parts:
-            return "".join(parts)
+    text = _content_parts_text(content)
+    if text:
+        return text
+    # REQ-060: real assistant text shape — {"type":"text","part":{"type":"text","text":...}}.
+    # Reasoning/tool parts are never answer text (they would pollute patch parsing).
+    part = event.get("part")
+    if isinstance(part, dict) and part.get("type") == "text":
+        t = part.get("text")
+        if isinstance(t, str) and t.strip():
+            return t
+        text = _content_parts_text(part.get("content"))
+        if text:
+            return text
     # Delta shapes: {"type": "text_delta"/"message_delta", "delta": {"text": ...}}
     if etype in ("text_delta", "message_delta", "content_delta"):
         delta = event.get("delta")
@@ -563,22 +596,100 @@ def _opencode_event_text(event: dict[str, Any]) -> str:
     return ""
 
 
-def _opencode_event_usage(event: dict[str, Any]) -> tuple[int, int]:
-    """Extract (input_tokens, output_tokens) from one event; (0, 0) if absent."""
-    containers: list[Any] = [event.get("usage"), event.get("tokenUsage"), event.get("tokens"), event]
-    for container in containers:
+def _usage_triple(container: Any) -> tuple[int, int, int]:
+    """(input, output, reasoning) from one usage-like mapping; (0,0,0) if absent."""
+    if not isinstance(container, dict):
+        return (0, 0, 0)
+    inp = container.get(
+        "input_tokens",
+        container.get(
+            "inputTokens",
+            container.get("input", container.get("prompt_tokens", container.get("promptTokens"))),
+        ),
+    )
+    out = container.get(
+        "output_tokens",
+        container.get(
+            "outputTokens",
+            container.get("output", container.get("completion_tokens", container.get("completionTokens"))),
+        ),
+    )
+    reasoning = container.get(
+        "reasoning_tokens",
+        container.get(
+            "reasoningTokens", container.get("reasoning", container.get("thinking_tokens", container.get("thinkingTokens")))
+        ),
+    )
+    try:
+        i = int(inp) if inp is not None else 0
+        o = int(out) if out is not None else 0
+        r = int(reasoning) if reasoning is not None else 0
+    except (TypeError, ValueError):
+        return (0, 0, 0)
+    if i or o or r:
+        return (max(i, 0), max(o, 0), max(r, 0))
+    return (0, 0, 0)
+
+
+def _opencode_event_usage(event: dict[str, Any]) -> tuple[int, int, int]:
+    """Extract (input_tokens, output_tokens, reasoning_tokens) from one event.
+
+    REQ-060: the live shape is ``part.tokens`` (``input``/``output``/
+    ``reasoning``) on ``step_finish`` events; cumulative shapes
+    (``usage``, ``tokenUsage``, ``tokens``) are honored too.
+    """
+    part = event.get("part")
+    if isinstance(part, dict):
+        triple = _usage_triple(part.get("tokens"))
+        if triple != (0, 0, 0):
+            return triple
+    for key in ("usage", "tokenUsage", "tokens"):
+        triple = _usage_triple(event.get(key))
+        if triple != (0, 0, 0):
+            return triple
+    return _usage_triple(event)
+
+
+def _opencode_event_model(event: dict[str, Any]) -> str:
+    """Best-effort model id from one event ("" when the stream says none)."""
+    for container in (event, event.get("session"), event.get("part"), event.get("message")):
         if not isinstance(container, dict):
             continue
-        inp = container.get("input_tokens", container.get("inputTokens", container.get("input", container.get("prompt_tokens", container.get("promptTokens")))))
-        out = container.get("output_tokens", container.get("outputTokens", container.get("output", container.get("completion_tokens", container.get("completionTokens")))))
-        try:
-            i = int(inp) if inp is not None else 0
-            o = int(out) if out is not None else 0
-        except (TypeError, ValueError):
-            continue
-        if i or o:
-            return (max(i, 0), max(o, 0))
-    return (0, 0)
+        for key in ("model", "modelID", "modelId", "model_id"):
+            m = container.get(key)
+            if isinstance(m, str) and m.strip():
+                return m.strip()
+    return ""
+
+
+def _opencode_event_error(event: dict[str, Any]) -> str:
+    """Error text from one ``{"type":"error"}`` event ("" when not an error)."""
+    if str(event.get("type", "")) != "error":
+        return ""
+    err = event.get("error", event)
+    if isinstance(err, str) and err.strip():
+        return err.strip()
+    if isinstance(err, dict):
+        data = err.get("data")
+        if isinstance(data, dict):
+            for key in ("message", "error", "responseBody"):
+                val = data.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()[:2000]
+        for key in ("message", "text"):
+            val = err.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()[:2000]
+    return "opencode run reported an error event with no message"
+
+
+def _opencode_event_session_id(event: dict[str, Any]) -> str:
+    """Session id from one event ("" when absent)."""
+    for key in ("sessionID", "sessionId", "session_id"):
+        val = event.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
 
 
 def parse_opencode_output(stdout: str) -> ClaudeCliResult:
@@ -586,7 +697,12 @@ def parse_opencode_output(stdout: str) -> ClaudeCliResult:
 
     Accepts a JSON-lines event stream (one event per line) or a single
     JSON object (claude/codex shape for cross-driver tests).  Never
-    raises: unparsable input yields empty text with zero usage.
+    raises: unparsable input yields empty text with zero usage. REQ-060:
+    assistant text comes from ``part.text``, usage/cost from
+    ``part.tokens``/``part.cost``, failures from ``{"type":"error"}``
+    events (kept in :attr:`stream_error` so the driver fails loudly
+    instead of scoring silence), and the session id is captured so the
+    driver can resolve the authoritative model/totals.
     """
     raw = stdout.strip()
     if not raw:
@@ -594,8 +710,12 @@ def parse_opencode_output(stdout: str) -> ClaudeCliResult:
     texts: list[str] = []
     max_in = 0
     max_out = 0
+    max_reasoning = 0
+    total_cost = Decimal("0")
+    has_cost = False
     model = ""
-    cost: Decimal | None = None
+    session_id = ""
+    errors: list[str] = []
     events: list[Any] = []
     # Whole-document JSON first (single object or array)
     try:
@@ -620,29 +740,107 @@ def parse_opencode_output(stdout: str) -> ClaudeCliResult:
         t = _opencode_event_text(event)
         if t:
             texts.append(t)
-        i, o = _opencode_event_usage(event)
+        i, o, r = _opencode_event_usage(event)
         max_in = max(max_in, i)
         max_out = max(max_out, o)
-        m = event.get("model")
-        if isinstance(m, str) and m.strip():
-            model = m.strip()
-        for cost_key in ("cost_usd", "cost", "total_cost"):
-            c = event.get(cost_key)
+        max_reasoning = max(max_reasoning, r)
+        part = event.get("part")
+        cost_holder = part if isinstance(part, dict) and part.get("cost") is not None else event
+        for cost_key in ("cost", "cost_usd", "total_cost"):
+            c = cost_holder.get(cost_key) if isinstance(cost_holder, dict) else None
             if c is not None:
                 with contextlib.suppress(Exception):
-                    cost = Decimal(str(c))
+                    total_cost += Decimal(str(c))
+                    has_cost = True
                 break
+        m = _opencode_event_model(event)
+        if m:
+            model = m
+        err = _opencode_event_error(event)
+        if err and err not in errors:
+            errors.append(err)
+        sid = _opencode_event_session_id(event)
+        if sid and not session_id:
+            session_id = sid
     # A claude-shaped single object may carry result text under "result"
     # while content parts were missed; whole-doc parse via parse_claude_output
     # is intentionally not reused so opencode semantics stay explicit.
     text = "".join(texts) if any("delta" in str(e.get("type", "")) for e in events if isinstance(e, dict)) else "\n".join(texts)
     return ClaudeCliResult(
         text=text,
-        usage=Usage(input_tokens=max_in, output_tokens=max_out),
+        usage=Usage(input_tokens=max_in, output_tokens=max_out, reasoning_tokens=max_reasoning),
         model=model,
-        cost_usd=cost,
+        cost_usd=total_cost if has_cost else None,
         raw_output=stdout,
+        session_id=session_id,
+        stream_error="\n".join(errors),
     )
+
+
+def opencode_session_db_path() -> str:
+    """Default opencode session database path (same user that ran the CLI)."""
+    from pathlib import Path as _Path  # noqa: PLC0415
+
+    return str(_Path.home() / ".local" / "share" / "opencode" / "opencode.db")
+
+
+def resolve_opencode_session(session_id: str, *, db_path: str | None = None) -> dict[str, Any] | None:
+    """Authoritative model/totals for an ``opencode run`` session (REQ-060 item 4).
+
+    The ``--format json`` stream never names the model, and its per-step
+    token events undercount multi-step runs — but the CLI records the
+    run itself in its session database (model id, input/output/reasoning
+    totals, cost). Returns ``{"model", "input_tokens",
+    "output_tokens", "reasoning_tokens", "cost_usd"}`` (model in
+    ``provider/id`` form when both are known), or ``None`` when the row
+    is unreachable — the caller keeps the stream-parsed values. Never
+    raises, never reads secrets (model id and counters only).
+    """
+    if not session_id or not session_id.strip():
+        return None
+    import sqlite3  # noqa: PLC0415
+
+    path = db_path or opencode_session_db_path()
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+        try:
+            row = con.execute(
+                "SELECT model, cost, tokens_input, tokens_output, tokens_reasoning"
+                " FROM session WHERE id = ?",
+                (session_id.strip(),),
+            ).fetchone()
+        finally:
+            con.close()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    model_raw, cost, tokens_in, tokens_out, tokens_reasoning = row
+    model = ""
+    try:
+        import json as _json  # noqa: PLC0415
+
+        parsed = _json.loads(model_raw) if isinstance(model_raw, str) else None
+        if isinstance(parsed, dict):
+            mid = str(parsed.get("id") or "").strip()
+            provider = str(parsed.get("providerID") or parsed.get("provider") or "").strip()
+            model = f"{provider}/{mid}" if provider and mid else mid
+        elif isinstance(model_raw, str):
+            model = model_raw.strip()
+    except Exception:
+        model = ""
+    try:
+        usage = {
+            "input_tokens": max(int(tokens_in or 0), 0),
+            "output_tokens": max(int(tokens_out or 0), 0),
+            "reasoning_tokens": max(int(tokens_reasoning or 0), 0),
+        }
+    except (TypeError, ValueError):
+        return {"model": model, "input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0, "cost_usd": None}
+    cost_usd: Decimal | None = None
+    with contextlib.suppress(Exception):
+        cost_usd = Decimal(str(cost)) if cost is not None else None
+    return {"model": model, **usage, "cost_usd": cost_usd}
 
 
 def build_fake_opencode_output(
@@ -686,7 +884,17 @@ class OpenCodeCliDriver:
     ``FRONTIER_MODEL`` (same provider, ``provider/model`` form) and the
     run records both ids in the results for audit.
 
+    REQ-060 item 4: the parsed stream misses the model id and undercounts
+    multi-step runs, so after a successful run the driver resolves the
+    authoritative model/totals from the CLI's own session row
+    (:func:`resolve_opencode_session`, keyed by the stream's session
+    id). A text-less stream with ``{"type":"error"}`` events raises
+    instead of returning silence (the 12/12 ``no_output`` rows were
+    unparsed text/usage plus unreported errors on exit 0).
+
     *cli_path* defaults to ``OPENCODE_CLI_PATH`` env or ``"opencode"``.
+    *session_db_path* overrides the session database path (tests only;
+    ``None`` means the default location).
     """
 
     def __init__(
@@ -696,6 +904,7 @@ class OpenCodeCliDriver:
         timeout_s: float = 600.0,
         model: str | None = None,
         extra_args: list[str] | None = None,
+        session_db_path: str | None = None,
     ) -> None:
         self.cli_path = cli_path or os.environ.get("OPENCODE_CLI_PATH", "") or "opencode"
         self.timeout_s = timeout_s
@@ -708,6 +917,7 @@ class OpenCodeCliDriver:
                 model = None
         self.model = model
         self.extra_args = list(extra_args or [])
+        self.session_db_path = session_db_path
         self.calls: list[dict[str, Any]] = []
 
     def _build_command(self, prompt: str) -> list[str]:
@@ -726,6 +936,8 @@ class OpenCodeCliDriver:
         timeout_s: float | None = None,
     ) -> ClaudeCliResult:
         """Execute ``opencode run --format json`` with *prompt*."""
+        import dataclasses as _dataclasses  # noqa: PLC0415
+
         cmd = self._build_command(prompt)
         t = timeout_s if timeout_s is not None else self.timeout_s
         self.calls.append({"cmd": cmd, "prompt": prompt, "cwd": str(cwd) if cwd else None})
@@ -760,9 +972,45 @@ class OpenCodeCliDriver:
                 stdout=proc.stdout,
             )
         result = parse_opencode_output(proc.stdout)
+        # REQ-060 item 4: resolve the model actually used (and the run
+        # totals) from the CLI's own session row; the stream never names
+        # the model and undercounts multi-step runs.
+        if result.session_id:
+            resolved = resolve_opencode_session(result.session_id, db_path=self.session_db_path)
+            if resolved is not None:
+                usage = result.usage
+                if resolved.get("model"):
+                    result = _dataclasses.replace(result, model=str(resolved["model"]))
+                if (resolved.get("input_tokens", 0) or 0) + (resolved.get("output_tokens", 0) or 0) > 0:
+                    usage = Usage(
+                        input_tokens=int(resolved.get("input_tokens", 0) or 0),
+                        output_tokens=int(resolved.get("output_tokens", 0) or 0),
+                        reasoning_tokens=int(resolved.get("reasoning_tokens", 0) or 0),
+                    )
+                    result = _dataclasses.replace(result, usage=usage)
+                if resolved.get("cost_usd") is not None:
+                    result = _dataclasses.replace(result, cost_usd=resolved["cost_usd"])
         result.exit_code = proc.returncode
         result.duration_ms = elapsed
+        if not result.text.strip() and result.stream_error.strip():
+            # The CLI exited 0 but reported only errors: fail loudly with
+            # the reason instead of a silent no_output/unknown/0 row.
+            raise OpenCodeCliError(
+                f"opencode run produced no text: {result.stream_error.strip()[:1000]}",
+                exit_code=proc.returncode,
+                stderr=proc.stderr,
+                stdout=proc.stdout,
+            )
         return result
+
+    @property
+    def default_model(self) -> str | None:
+        """The model this driver runs with (``-m`` value or ``None``).
+
+        Duck-types :class:`FakeOpenCodeDriver` / :class:`FakeClaudeDriver`
+        so provenance readers never crash on a live driver (REQ-060 item 5).
+        """
+        return self.model
 
     @property
     def last_prompt(self) -> str | None:

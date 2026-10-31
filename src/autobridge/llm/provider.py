@@ -99,6 +99,11 @@ class Budget:
     and are incremented *after* a successful call (so the call that
     exceeds the ceiling is the one that raises).
 
+    REQ-060 item 3: a token ceiling of ``0`` also means unlimited (the
+    bench passes ``token_ceiling=0`` for no limit) — normalized to
+    ``None`` in :meth:`__post_init__`, so no caller can loop forever on
+    a zero budget and nothing is ever ``budget_exhausted`` on tokens.
+
     ``max_wall`` is seconds since the budget was created (or since
     ``wall_start``).  A caller can pass an explicit ``wall_start`` for
     deterministic tests.
@@ -114,6 +119,14 @@ class Budget:
     small_tokens: int = 0
     calls: int = 0
     wall_start: float = field(default_factory=time.monotonic)
+
+    def __post_init__(self) -> None:
+        # REQ-060 item 3: 0 = no limit (bench default); normalize so the
+        # token check below treats it exactly like None (unlimited).
+        if self.max_frontier_tokens == 0:
+            self.max_frontier_tokens = None
+        if self.max_small_tokens == 0:
+            self.max_small_tokens = None
 
     def check_pre_call(self) -> None:
         """Raise :class:`BudgetExhausted` if call count or wall-clock is over."""

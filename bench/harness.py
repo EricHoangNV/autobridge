@@ -96,7 +96,11 @@ DEFAULT_SANDBOX_URL_HOST = "http://localhost:8103"  # host-mapped when running o
 DEFAULT_DOCS_VOLUME = "simulators/docs"
 DEFAULT_CREDENTIAL_REFS: tuple[str, ...] = ("ATLAS_API_KEY", "HARBOR_API_KEY")
 DEFAULT_VISIBLE_TESTS: tuple[str, ...] = ("baseline",)
-DEFAULT_TOKEN_CEILING = 20_000
+DEFAULT_TOKEN_CEILING = 0
+#: REQ-060 item 3: 0 = no limit (the default for every arm). The per-call
+#: output cap stays FRONTIER_MAX_TOKENS (the API needs a value); the wall
+#: clock stays. Per-row input/output/reasoning tokens are recorded so the
+#: owner can pick a limit from the results.
 #: REQ-052: the agent arm must have time to finish a real attempt, under
 #: the same budget rule as every other arm — one wall-clock for all, so
 #: the matched-budget self-test still holds. 600 s fits a live agent run;
@@ -140,7 +144,13 @@ DEFAULT_RUNTIME_TARGET: dict[str, Any] = {"kind": "docker_sandbox", "timeout_s":
 
 @dataclass(frozen=True, slots=True)
 class HarnessConfig:
-    """Global harness settings shared by every scenario × trial."""
+    """Global harness settings shared by every scenario × trial.
+
+    REQ-060 item 3: ``token_ceiling`` 0 = no limit (the default);
+    :class:`Budget` skips the token check when its limit is 0/None, so
+    nothing is ever ``budget_exhausted`` on tokens. The per-call output
+    cap stays ``FRONTIER_MAX_TOKENS`` and the wall clock stays.
+    """
 
     sandbox_image: str = DEFAULT_SANDBOX_IMAGE
     sandbox_url: str = DEFAULT_SANDBOX_URL
@@ -157,8 +167,8 @@ class HarnessConfig:
     scenarios: tuple[str, ...] | None = None  # None = all dev scenarios
 
     def __post_init__(self) -> None:
-        if self.token_ceiling <= 0:
-            raise ValueError("token_ceiling must be > 0")
+        if self.token_ceiling < 0:
+            raise ValueError("token_ceiling must be >= 0 (0 = no limit)")
         if self.wall_clock_s <= 0:
             raise ValueError("wall_clock_s must be > 0")
         if self.trials_per_scenario <= 0:
@@ -392,6 +402,10 @@ class ArmResult:
     input_tokens: int = 0
     output_tokens: int = 0
     frontier_tokens: int = 0
+    #: Reasoning/thinking tokens, a sub-count of output (billed as
+    #: completion/output). Reported separately so the owner can pick a
+    #: limit from the results (REQ-060 item 3).
+    reasoning_tokens: int = 0
     cost_usd: Decimal | None = None
     # Usage counters for W8.4 scoring (defaults keep old constructors green)
     tool_calls: int = 0
@@ -435,6 +449,7 @@ class ArmResult:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "total_tokens": self.total_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
             "frontier_tokens": self.frontier_tokens,
             "cost_usd": str(self.cost_usd) if self.cost_usd is not None else None,
             "tool_calls": self.tool_calls,
@@ -893,19 +908,51 @@ def run_baseline_arm(
                 or getattr(driver, "default_model", None)
                 or "unknown"
             )
-            # REQ-052 item 3: parse the agent's answer for grading — did it
-            # produce a spec at all? (The verifier judges it in
-            # grade_ablation_trial; here we only record what came back.)
-            produced_spec: dict[str, Any] | None = None
+            # REQ-060 item 3: every frontier attempt is graded — did it
+            # produce a patch/escalation at all, and what did the
+            # verifier say? With the shared repair context the answer
+            # is what L3 may answer (bench.repair_answer); without one
+            # (legacy/synthetic paths) the old whole-spec parse stays.
+            answer: dict[str, Any] | None = None
             outcome: str | None = None
-            try:
-                from bench.one_shot import try_parse_spec_yaml  # noqa: PLC0415
+            if context is not None:
+                try:
+                    from bench.repair_answer import parse_repair_answer  # noqa: PLC0415
 
-                produced_spec = try_parse_spec_yaml(getattr(result, "text", "") or "")
-            except Exception:
-                produced_spec = None
-            if produced_spec is None:
-                outcome = "no_output"
+                    parsed = parse_repair_answer(getattr(result, "text", "") or "")
+                    kind = parsed["kind"]
+                    if kind == "patch":
+                        answer = {
+                            "candidate_patch": parsed["patch"],
+                            "answer_kind": "patch",
+                            "decision": "propose",
+                            "rationale": parsed["rationale"],
+                        }
+                    elif kind == "escalate":
+                        answer = {
+                            "answer_kind": "escalate",
+                            "question": parsed["question"],
+                            "rationale": parsed["rationale"],
+                            "proposal_label": parsed["proposal_label"],
+                            "proposal_effect": parsed["proposal_effect"],
+                            "proposal_patch": parsed["proposal"] or [],
+                        }
+                        outcome = "escalated"
+                    else:
+                        outcome = "no_output"
+                except Exception:
+                    answer = None
+                    outcome = "no_output"
+            else:
+                try:
+                    from bench.one_shot import try_parse_spec_yaml  # noqa: PLC0415
+
+                    answer = try_parse_spec_yaml(getattr(result, "text", "") or "")
+                except Exception:
+                    answer = None
+                if answer is None:
+                    outcome = "no_output"
+            reasoning = int(getattr(getattr(result, "usage", None), "reasoning_tokens", 0) or 0)
             return ArmResult(
                 arm=arm,  # type: ignore[arg-type]
                 inputs=inputs,
@@ -913,6 +960,7 @@ def run_baseline_arm(
                 elapsed_ms=elapsed,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                reasoning_tokens=reasoning,
                 frontier_tokens=frontier,
                 cost_usd=cost,
                 model=actual_model,
@@ -920,7 +968,7 @@ def run_baseline_arm(
                 model_calls=1,
                 prompt=prompt_ref,
                 context_hash=context_hash,
-                spec=produced_spec,
+                spec=answer,
                 outcome=outcome,
             )
         elapsed = (time.monotonic() - start) * 1000.0
@@ -942,6 +990,8 @@ def run_baseline_arm(
             elapsed_ms=elapsed,
             error=err_msg[:1000],
             outcome="timed_out" if timed_out else None,
+            prompt=prompt_ref,
+            context_hash=context_hash,
         )
 
 
@@ -1023,6 +1073,7 @@ def run_baseline_via_llm_provider(
                     spec=case.spec,
                     docs_ref=inputs.docs_ref,
                     visible_tests=tuple(inputs.visible_tests),
+                    seed=int(getattr(inputs, "seed", 0) or 0),
                 )
             except Exception:
                 resolved = None
@@ -1049,7 +1100,7 @@ def run_baseline_via_llm_provider(
             purpose = "bench-baseline"
         comp = budgeted.complete(
             [{"role": "user", "content": prompt}],
-            max_tokens=min(inputs.token_ceiling, _frontier_output_cap()),
+            max_tokens=_frontier_output_cap(),
             tier="frontier",
             purpose=purpose,
         )
@@ -1566,6 +1617,8 @@ def main(argv: list[str] | None = None) -> int:
     cfg = HarnessConfig(**cfg_kwargs)
 
     print(f"bench harness: seed={cfg.seed} token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
+    if cfg.token_ceiling == 0:
+        print("bench harness: token_ceiling=0 (no limit; per-call cap FRONTIER_MAX_TOKENS still applies)", flush=True)
     print(f"  sandbox_image={cfg.sandbox_image} sandbox_url={cfg.sandbox_url}", flush=True)
     print(f"  docs_volume={cfg.docs_volume} control={cfg.control_api_url} verifier={cfg.verifier_url}", flush=True)
 

@@ -68,10 +68,10 @@ def test_context_bundle_has_engine_context() -> None:
     example = yaml.safe_load(ctx.example_spec_yaml)
     assert isinstance(example, dict)
     assert "operations" in example and "entities" in example
-    # Vendor docs + visible tests + answer format.
+    # Vendor docs + visible tests + answer format (REQ-060: patch-or-escalate).
     assert ctx.docs_text.strip()
     assert list(ctx.visible_tests) == list(inputs.visible_tests)
-    assert "ConnectorSpec" in ctx.answer_format
+    assert "patch" in ctx.answer_format and "escalate" in ctx.answer_format
     assert len(ctx.content_hash()) == 64
 
 

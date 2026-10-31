@@ -641,3 +641,15 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The fix labels each at the point it happens: `finish_reason` captured on `Completion` (Anthropic `max_tokens` mapped to OpenAI `length`), one-shot truncation → `outcome="truncated"` + `ran=False`, agent timeout → `timed_out`, empty answer → `no_output`, live model mismatch → `model_mismatch`; grading writes verdicts back onto the trial rows so no row ships without a verdict or a label.
 
 **Rule:** Any pipeline that grades attempts made by someone else must give every non-verdict row an explicit machine-readable reason at the point of failure — never leave the grading fields null and let the summary imply the attempt was judged.
+---
+
+## 71. A CLI parser written from docs will miss the live shapes — pin it with a captured run
+
+**Context:** REQ-060 item 4 (sbx1 2026-10-31) — the frontier agent arm scored 12/12 `no_output` / `unknown` / 0 tokens while `opencode` ran 25–160 s per trial. The parser was written from the documented event shapes; the live `opencode run --format json` (v1.18, captured in this sandbox) uses different ones.
+
+- Assistant text lives in `part.text` of `{"type":"text"}` events (the parser only read top-level `text`/`result`/`content`) — the single biggest miss.
+- Usage lives in `part.tokens` with `input`/`output`/`reasoning` keys on `step_finish` events (the parser looked for `input_tokens` on the event itself) — plus per-step counters that must be summed or, better, replaced by the session row.
+- Failures arrive as `{"type":"error"}` events on exit 0 — the old code returned empty text, scoring silence instead of the reason.
+- The model id is nowhere in the stream; the CLI records it in its session database (`~/.local/share/opencode/opencode.db`, `session.model` = `{"id","providerID"}` plus authoritative totals) — the only "from the run itself" source.
+- The fix ships the capture as a fixture (`tests/fixtures/opencode/opencode_run_sample.jsonl`, no secrets) with a test pinning text/usage/session parsing, and the driver resolves model+totals from the session row, raising loudly on error-only streams.
+- **Rule:** Any parser for a third-party CLI's machine output ships with a captured-output fixture from the real binary at a pinned version, and a test asserting every field the pipeline consumes (answer, model id, token usage); doc-shaped unit tests alone always drift from the wire.
