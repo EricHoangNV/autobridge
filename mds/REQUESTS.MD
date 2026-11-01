@@ -5,7 +5,7 @@
 Owner priority (2026-11-01 08:45): **REQ-069** (REQ-066/067/068 done; the real beacon freeze waits for REQ-069). Do not start REQ-051 until the owner says so.
 
 ### REQ-069 — Demo walkthrough round 3: the dry-run gate checks every failing check; release numbers; rollback wording (2026-11-01)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-01 01:40)
 Owner keyed browser walkthrough on `6f72867a` (Contributor, blank-slate seed, 2026-11-01 08:27-08:37). Findings and
 screenshots: `tmp/walkthrough-6f72867a/FINDINGS.md` (gitignored; read in place from the main checkout, do not edit
 `tmp/`). REQ-068 items 2, 4, 5, 6, 7, 8 are confirmed fixed live; keep them working. Fix:
