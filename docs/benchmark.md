@@ -549,6 +549,10 @@ What a judge can check (all of it public):
    "repair" instances accept an escalation with one question (nothing
    reveals a random new code's meaning; a guessed mapping is a wrong
    patch), and `transport_auth/token_expired` accepts an escalation.
+   A meridian `dates/cutoff` fault keys `no_patch`: it recomputes folio
+   `business_date` values the meridian wire never serves (money and
+   instants only), so the connector output is correct and there is
+   nothing to repair (REQ-078 item 8).
 
 Protocol commands: `make eval-freeze ROUND_AFTER=<UTC> FAULTS=<N>
 [TRIALS=5]` (item 4: writes the round's own `protocol.md`), `make
@@ -663,3 +667,12 @@ Honest scope: fault *families* are known by design (that is the engine's
 everyday knowledge: renames, nesting, pagination switches, code lists,
 semantic scaling, date shifts, transport/auth, FIAS layout/link); what
 could not be known are the *instances* (family + parameters per seed).
+
+Serving guarantee (REQ-078 item 8): every beacon record-shape mutation
+is served on the vendor wire, never a 500. Meridian parses dates
+strict-ISO: an unparseable date nulls the derived UTC fields and rides
+the wire verbatim as an extra, as do renamed keys and nesting parent
+wrappers; Atlas folio renames ride the transaction wire under their
+camelCase name while the old key keeps its blank/default value. The
+item-4 detection sweep covers these instances: none whose records
+differ from the baseline may end `Complete` with 0 signals.

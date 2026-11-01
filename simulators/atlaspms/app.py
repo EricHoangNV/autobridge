@@ -344,10 +344,16 @@ def to_wire_transaction(rec: dict[str, Any]) -> dict[str, Any]:
     retired classic getTransactions reference page no longer lists them,
     so ``businessDate``/``transactionDateTime``/``transactionID`` are
     documented here as simulator-confirmed rather than reference-confirmed.
+
+    REQ-078 item 8: a beacon-renamed folio key (e.g. ``business_date`` or
+    ``amount``) rides the wire under its camelCase name via
+    ``_extra_wire_fields`` — the old key keeps its blank/default value so
+    the rename is observable, and the new key is served so the ladder can
+    pair by value.
     """
     posted = rec.get("posted_at")
     business_date = str(rec.get("business_date", ""))
-    return {
+    wire = {
         "transactionID": rec.get("charge_id"),
         "propertyID": rec.get("property_id"),
         "reservationID": rec.get("reservation_id"),
@@ -358,6 +364,17 @@ def to_wire_transaction(rec: dict[str, Any]) -> dict[str, Any]:
         "transactionDateTime": ny_naive(str(posted)) if posted else "",
         "description": rec.get("description"),
     }
+    wire.update(
+        _extra_wire_fields(
+            rec,
+            {
+                "charge_id", "reservation_id", "property_id",
+                "amount", "currency", "business_date",
+                "posted_at", "description",
+            },
+        )
+    )
+    return wire
 
 
 # ---------------------------------------------------------------------------

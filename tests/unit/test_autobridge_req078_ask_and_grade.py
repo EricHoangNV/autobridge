@@ -346,7 +346,7 @@ def test_beacon_resume_keeps_landed_rows(tmp_path: Any, monkeypatch: pytest.Monk
     )
 
     pushed: list[int] = []
-    monkeypatch.setattr(br, "push_beacon", lambda _seed, i, vendor, _admin_url=None, _timeout_s=10: (
+    monkeypatch.setattr(br, "push_beacon", lambda _seed, i, vendor, **_kwargs: (
         pushed.append(i), {"index": i, "vendor": vendor, "family": "rename", "params": {}},
     )[1])
     monkeypatch.setattr(br, "sanity_unchanged_repairs", lambda *_a, **_k: [])

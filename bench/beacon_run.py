@@ -969,7 +969,7 @@ def sanity_unchanged_repairs(
         family = str(descriptor.get("family", ""))
         params = dict(descriptor.get("params", {}) or {})
         try:
-            expected = _faultgen.expected_for(family, params)
+            expected = _faultgen.expected_for(family, params, str(descriptor["vendor"]))
         except Exception:
             continue
         if expected != "repair":

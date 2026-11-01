@@ -288,6 +288,59 @@ def _number_for(reservation_id: str) -> str:
     return str(100000 + (sum(ord(c) for c in reservation_id) % 900000))
 
 
+def _parse_iso_date(value: Any) -> datetime.date | None:
+    """Strict ISO date parse (None when missing or non-ISO).
+
+    REQ-078 item 8: beacon date faults serve renamed, nested or non-ISO
+    dates; the serializer must serve them, never 500. Non-ISO values are
+    reported as missing below and ride the wire verbatim as extras, so the
+    drift is observable.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _parse_iso_dt(value: Any) -> datetime.datetime | None:
+    """Strict ISO datetime parse (None when missing or non-ISO)."""
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=datetime.UTC)
+    return moment
+
+
+#: Internal record keys the reservation serializer consumes; anything else
+#: (a beacon rename target, a nesting parent wrapper, a raw non-ISO date)
+#: rides the wire verbatim so a mutated shape is served, never a 500.
+_RESERVATION_CONSUMED = frozenset(
+    {
+        "reservation_id", "property_id", "arrival_date", "departure_date",
+        "status", "guest_name", "total_amount", "currency", "updated_at",
+    }
+)
+
+#: Internal record keys the order-item serializer consumes.
+_FOLIO_CONSUMED = frozenset(
+    {
+        "charge_id", "reservation_id", "property_id", "amount",
+        "currency", "description", "posted_at", "business_date",
+    }
+)
+
+
+def _wire_extras(rec: dict[str, Any], consumed: frozenset[str]) -> dict[str, Any]:
+    """Surface fault-mutated keys the fixed wire shape does not consume."""
+    return {k: v for k, v in rec.items() if k not in consumed}
+
+
 def service_id_for(property_id: str) -> str:
     return f"SVC-{property_id}"
 
@@ -302,15 +355,17 @@ def to_wire_reservation(rec: dict[str, Any], scenario_id: str = "baseline") -> d
     Under ``meridian_state_renamed`` the vendor renames the ``State`` leaf
     to ``Status`` (REQ-020 item 6: a renamed field repaired through the
     ladder).
+
+    REQ-078 item 8: beacon mutations (renamed/nested/non-ISO dates) never
+    crash the serializer. Unparseable dates null the derived UTC fields
+    and ride the wire verbatim as extras, so the drift is observable.
     """
-    arrival = datetime.date.fromisoformat(str(rec.get("arrival_date")))
-    departure = datetime.date.fromisoformat(str(rec.get("departure_date")))
-    updated = datetime.datetime.fromisoformat(str(rec.get("updated_at")))
-    if updated.tzinfo is None:
-        updated = updated.replace(tzinfo=datetime.UTC)
+    arrival = _parse_iso_date(rec.get("arrival_date"))
+    departure = _parse_iso_date(rec.get("departure_date"))
+    updated = _parse_iso_dt(rec.get("updated_at"))
     state = _STATE_MAP.get(str(rec.get("status")), str(rec.get("status")))
-    actual_start = _utc_z(datetime.datetime(arrival.year, arrival.month, arrival.day, 16, 0)) if state in ("Started", "Processed") else None
-    actual_end = _utc_z(datetime.datetime(departure.year, departure.month, departure.day, 10, 0)) if state == "Processed" else None
+    actual_start = _utc_z(datetime.datetime(arrival.year, arrival.month, arrival.day, 16, 0)) if arrival is not None and state in ("Started", "Processed") else None
+    actual_end = _utc_z(datetime.datetime(departure.year, departure.month, departure.day, 10, 0)) if departure is not None and state == "Processed" else None
     wire = {
         "Id": rec.get("reservation_id"),
         "ServiceId": service_id_for(str(rec.get("property_id"))),
@@ -319,10 +374,10 @@ def to_wire_reservation(rec: dict[str, Any], scenario_id: str = "baseline") -> d
         "Number": _number_for(str(rec.get("reservation_id"))),
         "State": state,
         "Origin": "Direct",
-        "CreatedUtc": _utc_z(datetime.datetime(arrival.year, arrival.month, arrival.day, 10, 0)),
-        "UpdatedUtc": _utc_z(updated),
-        "ScheduledStartUtc": _utc_z(datetime.datetime(arrival.year, arrival.month, arrival.day, 15, 0)),
-        "ScheduledEndUtc": _utc_z(datetime.datetime(departure.year, departure.month, departure.day, 11, 0)),
+        "CreatedUtc": _utc_z(datetime.datetime(arrival.year, arrival.month, arrival.day, 10, 0)) if arrival is not None else None,
+        "UpdatedUtc": _utc_z(updated) if updated is not None else None,
+        "ScheduledStartUtc": _utc_z(datetime.datetime(arrival.year, arrival.month, arrival.day, 15, 0)) if arrival is not None else None,
+        "ScheduledEndUtc": _utc_z(datetime.datetime(departure.year, departure.month, departure.day, 11, 0)) if departure is not None else None,
         "ActualStartUtc": actual_start,
         "ActualEndUtc": actual_end,
         "RateId": f"RATE-{rec.get('property_id')}-STD",
@@ -330,10 +385,23 @@ def to_wire_reservation(rec: dict[str, Any], scenario_id: str = "baseline") -> d
     }
     if scenario_id == "meridian_state_renamed" and "State" in wire:
         wire["Status"] = wire.pop("State")
+    extras = _wire_extras(rec, _RESERVATION_CONSUMED)
+    # A present-but-non-ISO date was consumed above and nulled: surface the
+    # raw value so the format change is observable on the wire.
+    for key in ("arrival_date", "departure_date", "updated_at"):
+        raw = rec.get(key)
+        if isinstance(raw, str) and key not in extras:
+            if key == "updated_at":
+                parsed: Any = _parse_iso_dt(raw)
+            else:
+                parsed = _parse_iso_date(raw)
+            if parsed is None:
+                extras[key] = raw
+    wire.update(extras)
     return wire
 
 
-def to_wire_customer(account_id: str, guest_name: str | None, updated_utc: str) -> dict[str, Any]:
+def to_wire_customer(account_id: str, guest_name: str | None, updated_utc: str | None) -> dict[str, Any]:
     """Account holder -> getAll customer."""
     first: str | None
     last: str | None
@@ -362,12 +430,23 @@ def _split_gross(gross: _Decimal) -> tuple[_Decimal, _Decimal]:
 
 
 def to_wire_order_item(rec: dict[str, Any]) -> dict[str, Any]:
-    """Internal folio charge -> getAll order item (money lives here)."""
-    gross = _Decimal(str(rec.get("amount", "0")))
+    """Internal folio charge -> getAll order item (money lives here).
+
+    REQ-078 item 8: beacon mutations (renamed/nested dates, renamed money
+    or description keys) never crash the serializer. Unparseable instants
+    null ``PostedUtc`` and ride the wire verbatim as extras; amounts stay
+    Decimal end to end.
+    """
+    try:
+        gross = _Decimal(str(rec.get("amount", "0")))
+    except Exception:
+        gross = _Decimal("0")
     net, tax = _split_gross(gross)
-    currency = str(rec.get("currency", "USD"))
+    currency = rec.get("currency") or "USD"
+    currency = str(currency)
     description = rec.get("description")
-    return {
+    posted = _parse_iso_dt(rec.get("posted_at"))
+    wire: dict[str, Any] = {
         "Id": rec.get("charge_id"),
         "AccountId": account_id_for(str(rec.get("reservation_id"))),
         "ServiceId": service_id_for(str(rec.get("property_id"))),
@@ -379,8 +458,14 @@ def to_wire_order_item(rec: dict[str, Any]) -> dict[str, Any]:
             "GrossValue": gross,
             "TaxValues": [{"Code": "VAT10", "Value": tax}],
         },
-        "PostedUtc": _utc_z(datetime.datetime.fromisoformat(str(rec.get("posted_at")))),
+        "PostedUtc": _utc_z(posted) if posted is not None else None,
     }
+    extras = _wire_extras(rec, _FOLIO_CONSUMED)
+    raw_posted = rec.get("posted_at")
+    if isinstance(raw_posted, str) and "posted_at" not in extras and posted is None:
+        extras["posted_at"] = raw_posted
+    wire.update(extras)
+    return wire
 
 
 def to_wire_enterprise(prop: dict[str, Any]) -> dict[str, Any]:
@@ -451,10 +536,11 @@ def customers_get_all(body: dict[str, Any]) -> Response:
     wires = []
     for r in dataset.get("reservations", []):
         account = account_id_for(str(r.get("reservation_id")))
-        updated = _utc_z(datetime.datetime.fromisoformat(str(r.get("updated_at"))))
+        updated = _parse_iso_dt(r.get("updated_at"))
         # A renamed-away guest_name stays absent: the customer row keeps its
-        # Id (accounts exist) but carries null names.
-        wires.append(to_wire_customer(account, r.get("guest_name"), updated))  # type: ignore[arg-type]
+        # Id (accounts exist) but carries null names. An unparseable
+        # updated_at nulls UpdatedUtc instead of crashing (REQ-078 item 8).
+        wires.append(to_wire_customer(account, r.get("guest_name"), _utc_z(updated) if updated is not None else None))  # type: ignore[arg-type]
     if customer_ids is not None:
         wires = [w for w in wires if str(w["Id"]) in set(customer_ids)]
     if interval is not None:

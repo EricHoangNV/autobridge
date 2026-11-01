@@ -165,6 +165,9 @@ def reference_solve(instance: dict[str, Any]) -> str:
         _assert_trap_present(dataset, params)
         return "degraded_question"
     if expected == "no_patch":
+        if family == "dates":
+            _assert_dates_invisible(instance, dataset)
+            return "no_patch"
         _assert_recoverable(behavior, family)
         return "no_patch"
     if expected == "escalate":
@@ -195,6 +198,35 @@ def _assert_trap_present(dataset: dict[str, list[dict[str, Any]]], params: dict[
                 raise GeneratorBug(f"decoy value unparseable: {exc}") from exc
     if seen == 0:
         raise GeneratorBug("decoy field present in no served record")
+
+
+def _assert_dates_invisible(instance: dict[str, Any], dataset: dict[str, list[dict[str, Any]]]) -> None:
+    """Prove a ``dates`` no-patch instance changes nothing the wire serves.
+
+    REQ-078 item 8: a meridian ``cutoff`` fault recomputes folio
+    ``business_date`` values the meridian wire never serves (money and
+    instants only), so the connector output is correct. The mutated
+    dataset must differ from the regenerated baseline in ``business_date``
+    values only — any other key drift means the fault *does* reach the
+    wire and the ``no_patch`` key is wrong.
+    """
+    params = instance.get("params")
+    if str(instance.get("vendor")) != "meridian" or not isinstance(params, dict) or str(params.get("mode")) != "cutoff":
+        raise GeneratorBug("dates no_patch is only the meridian cutoff")
+    baseline = generate_dataset(seed=int(instance["dataset_seed"]))
+    for key in ("reservations", "folios"):
+        mutated_rows = dataset.get(key, [])
+        base_rows = baseline.get(key, [])
+        if len(mutated_rows) != len(base_rows):
+            raise GeneratorBug(f"dates no_patch changed row count for {key}")
+        for mutated, base in zip(mutated_rows, base_rows, strict=True):
+            if not isinstance(mutated, dict) or not isinstance(base, dict):
+                raise GeneratorBug(f"dates no_patch changed row shape for {key}")
+            for name in set(mutated) | set(base):
+                if name == "business_date":
+                    continue
+                if mutated.get(name) != base.get(name):
+                    raise GeneratorBug(f"dates no_patch changes served key {name!r}")
 
 
 def _assert_recoverable(behavior: dict[str, Any] | None, family: str) -> None:

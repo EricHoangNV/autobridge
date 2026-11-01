@@ -127,7 +127,7 @@ def test_generate_instances_json_round_trip() -> None:
 def test_generate_instances_expected_matches_rule() -> None:
     for raw in _seeds(40):
         for inst in generate_instances(raw, 5):
-            assert inst["expected"] == expected_for(str(inst["family"]), dict(inst["params"]))
+            assert inst["expected"] == expected_for(str(inst["family"]), dict(inst["params"]), str(inst["vendor"]))
             assert inst["expected"] in ("repair", "no_patch", "escalate", "degraded_question")
 
 

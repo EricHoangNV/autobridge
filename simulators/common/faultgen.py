@@ -437,8 +437,15 @@ def _families_for(vendor: str) -> tuple[str, ...]:
     return HTTP_FAMILIES
 
 
-def expected_for(family: str, params: dict[str, Any]) -> str:
-    """Correct outcome class for a family + parameters (answer-key rule)."""
+def expected_for(family: str, params: dict[str, Any], vendor: str | None = None) -> str:
+    """Correct outcome class for a family + parameters (answer-key rule).
+
+    ``vendor`` matters only where the wire reveals nothing: a meridian
+    ``dates/cutoff`` fault changes folio ``business_date`` values the
+    meridian wire never serves (money and instants only), so the connector
+    output is correct and ``no_patch`` is the answer (REQ-078 item 8).
+    Every other vendor serves business dates, so cutoff stays ``repair``.
+    """
     if family in ("rename", "nesting", "pagination"):
         return "repair"
     if family == "code_list":
@@ -446,6 +453,12 @@ def expected_for(family: str, params: dict[str, Any]) -> str:
     if family == "semantic":
         return "degraded_question" if params.get("kind") == "decoy" else "repair"
     if family == "dates":
+        if (
+            vendor == "meridian"
+            and isinstance(params.get("mode"), str)
+            and str(params.get("mode")) == "cutoff"
+        ):
+            return "no_patch"
         return "repair"
     if family == "transport_auth":
         if params.get("kind") in ("token_revoked", "endpoint_removed"):
@@ -526,7 +539,7 @@ def generate_instance(eval_seed: bytes, index: int) -> dict[str, Any]:
         "params": params,
         "seed_hex": iseed.hex(),
         "dataset_seed": dataset_seed,
-        "expected": expected_for(family, params),
+        "expected": expected_for(family, params, vendor),
     }
 
 
@@ -914,7 +927,7 @@ def _check_instance(instance: dict[str, Any]) -> None:
         raise ValueError(f"family {family} is HTTP-only")
     if str(instance["expected"]) not in OUTCOMES:
         raise ValueError(f"unknown outcome: {instance['expected']}")
-    if str(instance["expected"]) != expected_for(family, dict(instance["params"])):
+    if str(instance["expected"]) != expected_for(family, dict(instance["params"]), vendor):
         raise ValueError("instance expected class does not match its family/params")
 
 
