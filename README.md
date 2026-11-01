@@ -227,6 +227,9 @@ autobridge/
 | `docs/benchmark.md` | Matched-budget harness, baseline drivers, scoring, `make bench` pipeline, heldout freeze runbook |
 | `docs/demo.md` | Six demo steps (plan §6) through the control API, with the evidence each step renders |
 
+## Technical Architecture
+![AutoBridge technical architecture](docs/architecture.png "Technical Architecture")
+
 ## The autonomous loop
 
 ```
