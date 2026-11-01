@@ -2,7 +2,125 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01): **REQ-077** (REQ-066..076 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01): **REQ-078** (REQ-066..077 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+
+### REQ-078 — When the engine does not know, it asks: model first, operator last; and a beacon that grades it fairly (2026-11-01)
+Status: OPEN
+Owner principle (2026-11-01): **the engine must ASK when it does not know** — any drift that L0/L1 cannot repair climbs
+to the model (L2/L3), and only when the model cannot produce a verified fix does it ask the operator. A hard-coded list
+of drift classes (or families, vendors, scenarios) that may reach the model is the wrong approach and must go. The
+engine must never pass silently when records are wrong. The verifier gate and operator Approve stay: no unverified
+patch is ever released, nothing auto-applies.
+
+Found by the owner-session beacon rehearsal (round 6603643 in the opencode sandbox: frontier_agent 0.60, every engine
+arm 0.20 with $0 cost) and a three-part review (ladder, a 1,080-instance detection sweep, beacon grading). Fix in this
+order; items 1-4 are the engine, 5-8 the beacon. Update `docs/architecture.md`, `docs/safety-model.md`,
+`docs/benchmark.md` and `docs/demo.md` in the same commits wherever they describe the old behaviour.
+
+1. **Remove the class gates; every repairable drift climbs.** Today only `SEMANTIC_VALUE_DRIFT` reaches a model:
+   `engine/detect_repair.py` ~1183 and ~1270 (and `_submit_deferred_semantic_repair` ~465 hard-codes the class),
+   `repair/controller.py` ~272 (`provider is not None` is the only way into the climb; `handle_from_signals`,
+   `handle_classified` and the job else-branch ~1465 never pass one) and ~1357, `bench/ablation.py`
+   `_MODEL_AMBIGUITY_CLASSES` (~207, ~843). Replace with: L0 → L1 → (no verified patch) → L2/L3 → L4 for every class
+   except the true non-fixables (`_NON_FIXABLE`: capability removed, auth revoked → operator, with a specific question)
+   and backoff/transient (retry). Also climb, with the failure as evidence, when an L1 rule matches but its patch fails
+   the dry-run (`detect_repair.py` ~1111) or yields no valid patch, and for `UNKNOWN` (L3 with the raw evidence, no
+   hypotheses needed). The deferred live-model job path applies to every class, not only semantic. The bench engine
+   arms take exactly the production path (no bench-only gate).
+2. **A verified model patch can be approved and released.** Today `_handle_semantic_climb` always returns
+   `escalate` with no patch (controller ~221, ~525): a plain L3 `{"patch": …}` that passed the pointer check and the
+   dry-run is recorded and dropped, and the operator gets a canned question; an L2 winner (confidence ≥ 0.70, ladder
+   ~2463) is discarded. Make a model patch that passes pointer check + dry-run + verifier a candidate the operator can
+   Approve (same release path and verifier gate as an L1 patch; never auto-applied); turn the confident L2 hypothesis
+   into a patch through the same checks. Semantic drift keeps today's rule that money semantics need the operator's
+   business decision (the model's patch rides as the proposal). Every candidate a model contributed to requires the
+   verifier (fail closed if it is unreachable). Learn approved model fixes into L0 like rule fixes.
+3. **Class-neutral model evidence.** `build_l3_evidence` (`repair/semantic.py` ~480), `allowed_l3_pointers` (~228),
+   `_L3_FIELD_POINTER` (ladder ~1942), the enumerator families (`discovery/hypotheses.py` ~40) and
+   `_patch_from_hypothesis` (ladder ~955) are built for money fields only (`gross_sum`, money_invariant, entity field
+   transforms). For every class the L3 prompt gets: the drift signals and their messages, the fingerprint delta,
+   unmet criteria / failing checks, the failed L1 attempts and why, the relevant spec subtree (operations/pagination,
+   entity fields, enum maps) and a faulted-records sample. Allowed patch pointers derive from what the delta touches.
+   Prompt text and the fallback operator questions are class-neutral (no "semantic", no "which mapping"). The deferred
+   job payload always carries signals, summary/dry-run fault and evidence, and the job's L3 proposal is judged with
+   the verifier URL (today `verifier_url=None`, controller ~1442). The `enumerator_yield_count >= 2` L3 skip
+   (ladder ~2502) must not block structural drifts.
+4. **Detection: no silent wrong records.** The sweep found 142/1080 beacon instances (13%) where the sync is
+   Complete with 0 signals while the canonical records are wrong. Fix so each is detected (and then climbs per item 1):
+   - money ratio: `_observe_money_scale_shift` tries only ×10/100/1000 (`drift/signals.py` ~779, ~1063); detect any
+     constant ratio across ≥ 90% of rows against the last-good sketch (gross→net ×0.25 / ×0.5 is invisible today);
+   - dates: a constant date/datetime offset versus the last-good sketch (tz shift, cutoff), and non-ISO values in a
+     canonical date field (`"10-13-2026"` passes today); `business_date_invariant` must not depend on one spec shape;
+   - a mapped field that turns into a constant zero/default in every row counts as emptied (`signals.py` ~782-791
+     counts only None/blank);
+   - `mapped_field_emptied` carries the added-key candidates so `rename_field` can pair by value (today it never
+     resolves when the old key stays with a blank value);
+   - nesting: an added object that contains the missing keys is a path move, not a rename (today `rename_field`
+     proposes a wrong patch, e.g. `guest_name → $.localInfo`) or a type change;
+   - classifier: `pagination_changed` must not come from runtime counters (`pages_fetched`, `stop_reason`,
+     `drift/fingerprint.py` ~161-163) — an aborted sync is not a pagination change; `http_error` / `transient_error`
+     unmet criteria map to TRANSIENT (`signals.py` ~1266-1290), not a generic invariant failure;
+   - FIAS: mapped ids include multi-path `paths` (`drift/event_feeds.py` ~89, so DA/TI renames are seen); the delta
+     compares baseline-announced to current-announced ids (~229-230, today mapped-only vs all-announced, never 1:1);
+     the report's `extra.rename` reaches the ladder (`bench/beacon_run.py` `_derive_fias_diagnostics` drops it and
+     `ablation.py` ~830 hard-codes `extra={}`).
+   Add a detection-sweep test: for a fixed set of seeds × every family × vendor, no instance whose records differ from
+   the baseline may end Complete with 0 signals.
+5. **Grading is about the act, the same for every arm.**
+   - An arm that crashed, timed out, was truncated, ran out of budget or never ran grades as its own failure class,
+     never as an escalation (today `beacon_run.py` ~1358 falls through to Blocked/no-patch, which passes every
+     `escalate` instance per `verifier/beacon.py` ~266). Escalation passes only when the arm explicitly decided to ask.
+   - "No change needed" is a stated answer for every arm: the frontier prompts and evidence say that an empty patch
+     means no change (today only the engine can pass `no_patch` instances by finding nothing).
+   - Grade "no patch + one question" the same whether reported Degraded or Blocked, for every arm.
+   - FIAS repairs are graded on records like HTTP repairs (today a sync that completes passes, ~1531-1550).
+   - Report wrong patches *proposed* as well as released; say in the docs that an unneeded patch on a no-change
+     instance counts as wrong.
+6. **The frontier agent is isolated.** `opencode run` (`bench/harness.py` ~858) has unrestricted read/bash/network:
+   it could read `simulators/common/faultgen.py` / `verifier/beacon.py`, regenerate the instance from the committed
+   protocol + public round, or use the unauthenticated `/beacon/records` as an oracle. Restrict it to its sandbox
+   dir and the vendor sandbox URL only (no repo, no verifier/admin ports). Equal-information check both ways: the
+   engine's baseline is the instance's own unmutated dataset (`bench/faults.py` ~450-455), which production never
+   has — give every arm the same last-good sketch from a different dataset seed.
+7. **Cost, budgets and liveness are real.** Engine model cost is never set in `model_usage` (`ladder.py` ~355-368,
+   ~818-822) and `summarize_grades` turns None into 0.0 (~1673); input/output tokens are swapped for engine arms
+   (`ablation.py` ~903). Budgets match: one token ceiling for every arm, enforced for the agent too (rehearsal #3:
+   221k > 200k); freeze `BENCH_TOKEN_CEILING` / `BENCH_WALL_CLOCK` into `protocol.md`. Before freezing,
+   `beacon-eval` checks the live key, runs the frontier-agent preflight (no silent `FakeOpenCodeDriver`) and hits
+   `/readyz` on verifier and simulators.
+8. **Run safety and honest statistics.**
+   - Append each grade row to `grades.jsonl` as it lands and resume from it; abort (never record as a loss) on
+     infrastructure errors (today a mid-run crash loses everything and a rerun resamples the frontier arms).
+   - `beacon-eval.sh`: a failed freeze commit stops the script (~67 hides it); write the push time into EVIDENCE.md;
+     refuse to push a freeze after its round is published; non-TTY `PUSH=yes` without `CONFIRM=yes` fails loudly;
+     works when run inside the opencode sandbox (git identity, credentials, stack).
+   - Owner decision: every arm keeps the frozen trial count; scores are averaged per instance first and CIs are
+     computed over instances, with a bounded interval; paired per-instance arm differences; per-family
+     rows in summary and EVIDENCE.md; `n` names instances.
+   - Simulator defects that make instances unsolvable: meridian serializers crash on non-ISO / renamed / nested
+     dates (`simulators/meridianpms/app.py` ~306-308, ~382); atlas folio rename never serves the new key
+     (`atlaspms/app.py` ~340-360); atlas defaults missing amounts to `"0"` (~270); meridian `dates/cutoff` never
+     manifests but is keyed `repair`; code_list "repair" instances map new codes to random statuses nothing reveals
+     (`faultgen.py` ~335) — owner decision: nothing reveals the meaning, so asking the operator is the correct
+     answer there (accept escalate / one question; a guessed mapping is a wrong patch).
+   - Owner decision: `transport_auth/token_expired` — escalating is right (the engine can refresh only OAuth
+     client-credentials tokens); the answer key accepts an escalation with one question there.
+9. **The warm arm learns during the run** (owner decision). L0 replays only an identical drift, so a cache warmed on
+   the dev split can never fire on random beacon faults and warm always equals cold. Instead: instances run in the
+   frozen order; after each instance a verified fix the warm arm produced is learned (the way an approved fix is in
+   production) and is available to later instances; cold never learns. Keep the dev-split pre-warm as the starting
+   cache. Report per instance whether warm used a learned fix (rung + source instance) and say in the docs what a
+   warm-vs-cold gap can and cannot show.
+10. Tests: every class climbs past L1 with a fake provider when no rule fixes it (no class list anywhere); a verified
+   model patch becomes an approvable candidate and an unverified one never does; the detection sweep (item 4); a
+   crashed arm never passes an `escalate` instance; the agent cannot read the repo or reach the verifier; resume after
+   a mid-run abort keeps earlier rows. Then one rehearsal in the opencode sandbox
+   (`make bench-beacon REHEARSE=<published round> FAULTS=10 TRIALS=1`), results reported in the Status line whatever
+   they are. Full gates green.
+
+Constraints: do not run `make bench-beacon` for real (rehearsal only), `make beacon-eval` or `make eval-freeze`; do not
+freeze, tag or commit under `experiments/beacon/`; never touch `verifier/hidden_cases/heldout/` or
+`~/autobridge-heldout`. Never widen a guard test without an owner note here.
 
 ### REQ-077 — The beacon run is the final benchmark: anyone can rerun it; `make bench` and `make demo` step 4 work as documented (2026-11-01)
 Status: DONE (sbx1 2026-11-01 -- all 6 items code-done: per-round beacon + tag per run + PUSH opt-in + ralph guard + grep fix, bench from ablation, demo step4 approved, beacon warm from dev split, Deny sticks; full gates green; owner step: real beacon freeze/run when ready)
