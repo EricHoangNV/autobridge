@@ -5,7 +5,7 @@
 Owner priority (2026-11-01): **REQ-078** (REQ-066..077 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-078 — When the engine does not know, it asks: model first, operator last; and a beacon that grades it fairly (2026-11-01)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-01 15:22)
 Owner principle (2026-11-01): **the engine must ASK when it does not know** — any drift that L0/L1 cannot repair climbs
 to the model (L2/L3), and only when the model cannot produce a verified fix does it ask the operator. A hard-coded list
 of drift classes (or families, vendors, scenarios) that may reach the model is the wrong approach and must go. The
