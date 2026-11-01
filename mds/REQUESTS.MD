@@ -2,7 +2,31 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01 10:45): **REQ-071** (REQ-066..070 done; the real beacon freeze waits for REQ-071). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01 11:05): **REQ-071, then REQ-072** (REQ-066..070 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
+
+### REQ-072 — A stack restart mid-sync must not wedge a connector in "sync running" (2026-11-01)
+Status: OPEN
+Owner local stack, 2026-11-01 10:50: `make local-down && make local-up` while MeridianPMS had a sync in flight.
+On startup `reclaim_orphaned_jobs()` (`src/autobridge/control/app.py`, `JobRunner.reclaim_orphaned` in
+`src/autobridge/control/jobs.py`) moved the `running` sync job back to `queued` (attempts 1/3), but nothing ever
+claims a re-queued job: jobs run by id when submitted, and no worker drains the queue. The queued row made
+`connector_busy_reason` (`src/autobridge/control/scheduler.py`) report the connector busy, so the scheduler skipped
+it and the UI showed "▲ Degrading · sync running · last sync N m ago" until the owner's session failed the row by
+hand (job `88bdef5f…`, local DB only). Any restart during a take can do this.
+
+1. After a restart no job may stay `queued` or `running` with nobody to run it. Orphaned **sync** jobs: mark them
+   `failed` with a reason ("orphaned by a restart; the next scheduled sync replaces it") — syncs are periodic, so
+   re-running a stale one is not needed. Orphaned **build** and **repair** jobs: either run them (a startup drain in
+   the background) or fail them with a reason the UI shows; pick one, keep it consistent with the existing
+   `fail_orphaned_repairs` (REQ-043 item 4), and say which in the build note. Never leave a re-queued job no worker
+   claims.
+2. Belt and braces: `connector_busy_reason` must not treat a job as in flight forever. A `queued` / `running` sync
+   job older than a bound (a few sync intervals) with no live worker is stale: the scheduler syncs anyway and the
+   stale row is failed with a reason.
+3. Tests: restart with an in-flight sync → after startup the connector is not busy and the next tick syncs;
+   orphaned build/repair handled as chosen; stale-job bound unblocks the scheduler. Full gates green.
+Do not touch the uncommitted UI work in the owner's checkout (`ui/app/connectors/*`, `ui/components/Connector*`,
+`ui/app/globals.css`).
 
 ### REQ-071 — Deck 7: the PABX link drop stays visible in Sync runs (2026-11-01)
 Status: IN_PROGRESS (sbx1 since 2026-11-01 11:38)
