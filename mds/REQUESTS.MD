@@ -5,7 +5,7 @@
 Owner priority (2026-11-01 12:20): **REQ-074** (REQ-066..073 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-074 — Repair page round 2: what REQ-073 left on approved repairs (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-01 05:28)
+Status: DONE (sbx1 2026-11-01 -- all 5 items code-done: tracker replaced-by + live window (version fallback), approved business-decision headline, preview hidden on approved, zero-funnel plain line, verifier one-verdict-no-glyph; 8 new UI tests, full gates green; owner step: browser check of the same repairs to close)
 Owner session browser check on `6e99ef96` (local stack, approved repairs from the demo run). REQ-073 items 1 (per-repair
 model calls), 5 (no Reject/Roll back after approval) and 7 (Sync runs note on one line) are confirmed live. Remaining:
 
