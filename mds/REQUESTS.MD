@@ -2,7 +2,47 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01 11:05): **REQ-071, then REQ-072** (REQ-066..070 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01 11:20): **REQ-072, then REQ-073** (REQ-066..071 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
+
+### REQ-073 — Repair page and Sync runs UI fixes from the owner's demo run (2026-11-01)
+Status: OPEN
+Owner demo run on the local stack, 2026-11-01 ~11:10, repair page of an approved L1 Atlas fix
+(`/repairs/<id>#did`, 0 model calls) and the PABX connector page.
+
+1. **"Model usage across runs" shows other repairs' tokens (bug).** The repair page appendix renders
+   `GET /metrics/model-usage` (every run with model calls) and only highlights the current one. On a 0-call Atlas repair
+   the only bar is Harbor's deck-5 run (`l3-generate-patch, l3-generate-patch-retry · 13,284 tok`) right under "Model
+   calls 0". On a repair page show only this repair's model calls (filter server- or client-side); none → "No model
+   calls in this repair". Keep any cross-run view off the repair page.
+2. **Verifier tile contradicts itself** on an approved, verified fix: a bar glyph "━━/—", "checks pass on this patch",
+   then "fail report ee21f3a2", "no visible checks recorded", and the label "VERIFIER, HIDDEN FIXTURES" under the title
+   "Verifier". Show one consistent verdict from the verifier report (pass/fail, N of M checks when known, the report
+   id once), never "fail" for a passing report; drop the duplicate label.
+3. **Hypotheses tile is noise on a rule fix:** "Hypotheses · probes 0 · enumerated, then filtered", a stray "0" under
+   the tiles, and "0 resolved without enumeration". When no hypotheses were generated, show one plain line (e.g. "no
+   hypotheses needed: a rule matched") or hide the tile; never a bare "0".
+4. **Approval steps go stale after approval.** The rail's step list on an approved repair shows "✓ Approval recorded",
+   then "○ Release activated — waiting for activation", "○ Verifying sync — waiting for the next sync", "○ Sync
+   Complete", yet "✓ Connector working". Derive each step from the real records (release active, first sync on the new
+   release and its outcome) so a shipped fix shows all steps done.
+5. **Once a patch is approved, remove "Reject patch" and the Roll back controls** from the repair page (rail and
+   any sticky bar), for rule/learned fixes and business decisions alike (owner decision). Rolling back stays possible
+   from the connector page (Releases → Activate an earlier release); where the repair page says "roll back to rN stays
+   available" after approval, point there instead. Before approval, Approve / Reject / Deny stay as today.
+6. **Developer text in the rail:** "Approve/Reject available only when decision is “propose” (current: approved)."
+   (`ui/components/RepairActions.tsx`) and a raw "release id" text box next to "Roll back to". Remove; the state is
+   already shown ("Approved ✓"). If a rollback control remains anywhere before approval, it picks a release from a list
+   (r1, r2 …), never a typed id.
+7. **Sync runs table (REQ-071 note) wraps over five lines** in the narrow Outcome column on the connector page
+   ("link dropped, re- / handshaked · +5 / postings, 0 lost, / 0 duplicated"). Give the note room (e.g. a full-width
+   line under the row, or a wider column); keep Records/Fingerprint aligned and the REQ-071 testids.
+
+Do not edit the owner's uncommitted work in progress: `ui/components/ConnectorsTable.tsx`,
+`ui/components/ConnectorStateBadge.tsx`, `ui/app/connectors/page.tsx` (+ its test); if `ui/app/globals.css` needs
+changes, add them in a new block at the end of the file. Tests: UI tests per item (0-call repair shows no other run;
+approved repair shows no Reject/Roll back; steps all done after a Complete verifying sync), existing e2e testids keep
+working, full gates green. Update `docs/demo.md` where it promises rollback on the repair page. Owner step after: keyed
+walkthrough.
 
 ### REQ-072 — A stack restart mid-sync must not wedge a connector in "sync running" (2026-11-01)
 Status: IN_PROGRESS (sbx1 since 2026-11-01 04:07)
