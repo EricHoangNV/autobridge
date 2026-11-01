@@ -231,3 +231,26 @@ def test_build_l3_evidence_has_patch_target_and_raw_records() -> None:
     # Old keys unchanged for existing callers.
     assert ev["spec_excerpt"]["field"] == "total_amount"
     assert ev["records_sample"]["observed_sum"] == "270.00"
+
+def test_raw_records_prefers_entity_operation_req068() -> None:
+    # REQ-068 item 2: a Reservation drift showed FolioCharge rows because
+    # operations were visited in name order (list_folios < list_reservations).
+    # The entity's own operation leads now.
+    summary = {
+        "operation_results": {
+            "list_folios": {"raw_pages": [{"items": [{"charge_id": "c1", "amount": "9.00"}]}]},
+            "list_reservations": {"raw_pages": [{"items": [{"reservation_id": "r1", "total_amount": "90.00"}]}]},
+        }
+    }
+    spec = {
+        "operations": {},
+        "entities": {
+            "Reservation": {"from_operation": "list_reservations", "fields": {}},
+            "FolioCharge": {"from_operation": "list_folios", "fields": {}},
+        },
+    }
+    recs = sem.raw_records_of_summary(summary, limit=2, entity="Reservation", spec=spec)
+    assert recs and recs[0].get("reservation_id") == "r1"
+    # Without the entity hint the old deterministic order still holds.
+    recs_plain = sem.raw_records_of_summary(summary, limit=2)
+    assert recs_plain and recs_plain[0].get("charge_id") == "c1"

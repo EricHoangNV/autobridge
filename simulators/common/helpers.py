@@ -227,3 +227,33 @@ def _parse_int(raw: Any, default: int, minimum: int, maximum: int) -> int:
     if isinstance(value, bool):
         return default
     return max(minimum, min(maximum, value))
+
+
+def page_net_sum(records: list[dict[str, Any]], field: str) -> str | None:
+    """Sum one money field over a served page (REQ-068 item 1).
+
+    Under ``gross_to_net`` the vendor switched to net amounts but keeps
+    reporting the baseline ``gross_sum``; a real vendor that switched
+    would also report the page's net total next to it, so the engine has
+    something honest to repoint the money check at. Returns the sum
+    formatted to 2dp, or None when the page carries no parseable values.
+    Baseline responses never call this (no ``net_sum`` there).
+    """
+    from decimal import Decimal
+
+    total = Decimal("0")
+    seen = 0
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        raw = rec.get(field)
+        if raw is None:
+            continue
+        try:
+            total += Decimal(str(raw))
+            seen += 1
+        except Exception:
+            continue
+    if not seen:
+        return None
+    return format(total, ".2f")

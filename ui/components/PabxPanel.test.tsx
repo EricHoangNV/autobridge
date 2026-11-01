@@ -80,4 +80,52 @@ describe("PabxPanel", () => {
     renderPanel("conn-1", "PABX edge");
     await waitFor(() => expect(screen.getByTestId("pabx-postings")).toHaveTextContent("5 received"));
   });
+
+  it("shows plain link state, never raw debug text (REQ-068 item 7)", async () => {
+    mockResponses([
+      { match: "/demo/pabx-events", json: [] },
+      { match: "agent_id=conn-1", json: OWN_POSTINGS },
+      {
+        match: "/edge/agents",
+        json: { agents: [{ agent_id: "conn-1", link_up: true, link_detail: 'accepted=2 dropped=0 layouts={"DR": []}', updated_at: new Date().toISOString() }] },
+      },
+      { match: "/edge/postings", json: GLOBAL_POSTINGS },
+    ]);
+    const { unmount } = renderPanel("conn-1", "PABX edge");
+    await waitFor(() => expect(screen.getByTestId("pabx-link-state")).toHaveTextContent("up"));
+    expect(screen.getByTestId("pabx-link-state").textContent).not.toContain("accepted=");
+    expect(screen.getByTestId("pabx-link-state").textContent).not.toContain("layouts=");
+    unmount();
+  });
+
+  it("reads re-handshaking while a live agent's link is down (REQ-068 item 7)", async () => {
+    mockResponses([
+      { match: "/demo/pabx-events", json: [] },
+      { match: "agent_id=conn-1", json: OWN_POSTINGS },
+      {
+        match: "/edge/agents",
+        json: { agents: [{ agent_id: "conn-1", link_up: false, link_detail: "accepted=1 dropped=1", updated_at: new Date().toISOString() }] },
+      },
+      { match: "/edge/postings", json: GLOBAL_POSTINGS },
+    ]);
+    renderPanel("conn-1", "PABX edge");
+    await waitFor(() => expect(screen.getByTestId("pabx-link-state")).toHaveTextContent("re-handshaking"));
+  });
+
+  it("falls back to the single PABX agent for postings (REQ-068 item 7)", async () => {
+    // The edge agent id never equals the connector id — the panel must
+    // still filter to the known agent instead of the global queue.
+    mockResponses([
+      { match: "/demo/pabx-events", json: [] },
+      { match: "agent_id=grand-plaza-pabx", json: OWN_POSTINGS },
+      {
+        match: "/edge/agents",
+        json: { agents: [{ agent_id: "grand-plaza-pabx", link_up: true, link_detail: "up", updated_at: new Date().toISOString() }] },
+      },
+      { match: "/edge/postings", json: GLOBAL_POSTINGS },
+    ]);
+    renderPanel("conn-other-id", "PABX edge");
+    await waitFor(() => expect(screen.getByTestId("pabx-postings")).toHaveTextContent("2 received"));
+    expect(screen.getByTestId("pabx-postings").textContent).not.toContain("5 received");
+  });
 });

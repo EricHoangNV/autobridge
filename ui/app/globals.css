@@ -99,7 +99,13 @@ body {
   align-items: center;
   gap: 7px;
   font-weight: 650;
-  white-space: nowrap;
+  /* REQ-068 item 6: the badge must wrap inside its grid cell at 1440px —
+     nowrap pushed "in sync · Complete 3 s ago" into the Last-sync column. */
+  white-space: normal;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .cs::before {
   content: "";
@@ -756,6 +762,13 @@ h2.sec {
   color: var(--ink-2);
   margin-top: 4px;
   font-size: 13px;
+  /* REQ-068 item 6: long base URLs stay inside the name cell. */
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.crow .out {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .clbl {
   display: block;
@@ -1038,6 +1051,10 @@ table.ctab td.r,
 table.ctab th.r {
   text-align: right;
   padding-right: 0;
+  /* REQ-068 item 8: adjacent right-aligned numeric columns (Records +
+     Fingerprint) need a gutter, or "420" jams into "572dedd7…". */
+  padding-left: 16px;
+  white-space: nowrap;
 }
 table.ctab td code {
   color: var(--ink-2);

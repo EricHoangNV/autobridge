@@ -171,7 +171,11 @@ export default function ConnectorsPage() {
         />
       )}
 
-      <DiscoveryList records={discoveries ?? []} />
+      {/* REQ-068 item 6: the vendors list sits inside the content gutter
+          like every other section (px-10), not flush to the viewport. */}
+      <div className="px-10 pt-6">
+        <DiscoveryList records={discoveries ?? []} />
+      </div>
 
       {(connectors?.length ?? 0) > 0 ? (
         <p data-testid="connectors-count" className="num mt-3 px-10 text-xs text-ink-2">
@@ -200,7 +204,7 @@ export default function ConnectorsPage() {
                     </Link>
                     <span>
                       {waitingIds.has(r.id) ? "Waiting for you. " : ""}
-                      {r.rule_id ? `Rule ${r.rule_id}. ` : ""}
+                      {r.rule_id ? (r.ladder_level_reached === 0 ? `Learned fix · ${r.rule_id}. ` : `Rule ${r.rule_id}. `) : ""}
                       {r.decision}
                     </span>
                   </span>

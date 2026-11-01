@@ -425,7 +425,9 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
             rule = (dec_run.rule_id if dec_run is not None and dec_run.rule_id else "") or (
                 dec_run.drift_class if dec_run is not None and dec_run.drift_class else "fix"
             )
-            summary = f"Approved {rule} → {_release_version(approval.to_release_id)}"
+            # REQ-068 item 8: the kind badge already reads "Approved", so
+            # the summary must not repeat it ("Approved Approved …").
+            summary = f"{rule} → {_release_version(approval.to_release_id)}"
             if learned:
                 summary += " (learned)"
         elif kind == "reject":

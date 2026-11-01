@@ -589,6 +589,26 @@ test.describe("REQ-055 item 3f layout: no overlap or overflow", () => {
         await expect(page.locator('[data-testid="connector-row-conn-harbor"] [data-testid="connector-state-sync-age"]')).toContainText(
           "syncs paused until you decide",
         );
+        // REQ-068 item 6: the Working row's state line never runs into the
+        // Last-sync column at 1440px, and the vendors list sits inside the
+        // content gutter.
+        const noStateOverlap = await page.evaluate(() => {
+          const row = document.querySelector('[data-testid="connector-row-conn-layout-001"]');
+          if (!row) return false;
+          const state = row.querySelector(".name");
+          const out = row.querySelector(".out");
+          if (!(state instanceof HTMLElement) || !(out instanceof HTMLElement)) return false;
+          const a = state.getBoundingClientRect();
+          const b = out.getBoundingClientRect();
+          return a.right <= b.left + 1;
+        });
+        expect(noStateOverlap, "connector state line overlaps the Last-sync column").toBe(true);
+        const discoveryInsideGutter = await page.evaluate(() => {
+          const list = document.querySelector('[data-testid="discovery-list"]');
+          if (!(list instanceof HTMLElement)) return false;
+          return list.getBoundingClientRect().left >= 24;
+        });
+        expect(discoveryInsideGutter, "Discovered vendors sits outside the content gutter").toBe(true);
       }
     });
 

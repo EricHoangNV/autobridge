@@ -212,6 +212,19 @@ describe("ConnectorDetailPage", () => {
     expect(screen.getByTestId("release-selector")).toBeInTheDocument();
   });
 
+  it("renders build vocabulary without doubling the v (REQ-068 item 5)", () => {
+    const withBuilds = {
+      ...mockDetail,
+      builds: [{ id: "b-1", spec_vocabulary: "v1", success: true, release_id: "rel-1abcd", created_at: new Date().toISOString() }],
+    };
+    mockedUseSWR
+      .mockReturnValueOnce({ data: withBuilds, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: mockSyncRuns, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+    render(<ConnectorDetailPage params={{ id: "conn-abc-123" }} />);
+    expect(screen.getByTestId("build-attempt-b-1")).toHaveTextContent("v1");
+    expect(screen.getByTestId("build-attempt-b-1").textContent).not.toMatch(/vv1/);
+  });
+
   it("shows loading state", () => {
     mockedUseSWR
       .mockReturnValueOnce({ data: undefined, error: undefined, isLoading: true, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)

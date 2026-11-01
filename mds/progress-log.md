@@ -4066,3 +4066,6 @@ Beacon freeze pins the frontier model: freeze writes the line, bench-beacon refu
 **Notes for next iteration:**
 - Owner steps: re-run `make record-frontier SCENARIO=gross_to_net` (prompt hash changed), then the keyed browser walkthrough to close REQ-067.
 - Open: REQ-065/063/062/061/060 VERIFY items (keyed sandbox runs), REQ-051 DEFERRED, P1.W10.3 owner step (confirm CI demo + record video).
+
+## 2026-11-01 sbx1 REQ-068 DONE (Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+All 8 items code-done, full gates green (python 2987+138+415, autobridge 90.05%/verifier 91.04%/simulators 90.50%, UI 312; lint/typecheck/openapi-check green). Simulator-only net_sum under gross_to_net (Harbor+LegacyStay list pages; baseline/docs untouched); bench net fake mirrors it; beacon/dev faulted pages see it too, no key/heldout changes. L3 evidence entity-first (prompt hash changed — replay fixture re-keyed with same synthetic decoy). UI: candidate max+1, L0 learned wording, vv fix, 1440px layout (badge wrap, zero-token no-chart, vendors gutter) + test_10 assertions, PABX plain state + agent-filtered postings + heartbeat-on-flip, small cuts (table gutter, release separator, decision prefix, skipped L2, live-since approval time). Owner steps: keyed record-frontier re-capture + walkthrough re-run.

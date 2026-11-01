@@ -215,7 +215,7 @@ export default function RepairsPage() {
                       </span>
                     </td>
                     <td data-testid={`repair-rule-${r.id}`} className="px-4 py-3 font-mono text-xs text-ink-2">
-                      {r.rule_id ?? "—"}
+                      {r.rule_id ? (r.ladder_level_reached === 0 ? `learned · ${r.rule_id}` : r.rule_id) : "—"}
                     </td>
                     <td data-testid={`repair-calls-${r.id}`} className="num px-4 py-3 text-xs text-ink-2">
                       {inFlight > 0

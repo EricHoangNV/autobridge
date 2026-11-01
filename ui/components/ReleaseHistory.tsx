@@ -84,7 +84,7 @@ export function ReleaseHistory({ releases, activeReleaseId, onActivate, activati
                 )}
                 {isActive ? (
                   <>
-                    {" "}
+                    {" · "}
                     <span data-testid={`release-active-${r.id}`}>active</span>
                   </>
                 ) : !r.approved_by && !r.provenance_repair_run_id && onActivate ? (

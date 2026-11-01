@@ -252,8 +252,9 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage: _modelUsa
               <span className="clbl">Model tokens, per repair</span>
               {/* REQ-048 item 4: one repair is a number, not a chart — a
                   lone bar fills the cell and reads as a glitch. Bars only
-                  for 2+ repairs. */}
-              {repairs.length > 1 ? (
+                  for 2+ repairs. REQ-068 item 6: no chart when the total
+                  is 0 — baseline ticks read as stray "–" marks. */}
+              {repairs.length > 1 && tokenTotal > 0 ? (
                 <Sparkline
                   values={tokenSeries}
                   label={repairs.length ? `frontier tokens for ${c.name}` : `no repairs for ${c.name} yet`}

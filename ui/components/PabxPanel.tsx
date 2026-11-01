@@ -78,6 +78,10 @@ export function PabxPanel({ connectorId, connectorName }: { connectorId: string;
   // global queue — filter by the agent once it is known, so the count and
   // the "last received" timestamp belong to this connector and visibly
   // resume after the link comes back.
+  // REQ-068 item 7: an edge connector's agent id (e.g. grand-plaza-pabx)
+  // never equals the connector id, so matching by connector id alone left
+  // the query unfiltered on the relay's global queue (stale "last 11 m
+  // ago"). Fall back to the single PABX agent once it is known.
   const matchedAgent = (() => {
     const list = agents?.agents ?? [];
     return (
@@ -86,8 +90,15 @@ export function PabxPanel({ connectorId, connectorName }: { connectorId: string;
       null
     );
   })();
+  const agent = (() => {
+    const list = agents?.agents ?? [];
+    // Link state may fall back to the first agent (one relay, one PABX);
+    // the postings below do the same — never the unfiltered global queue
+    // once any agent is known.
+    return matchedAgent ?? list[0] ?? null;
+  })();
   const { data: postings, error: postingsError } = useSWR<{ postings: EdgePosting[] }>(
-    matchedAgent ? `/edge/postings?agent_id=${encodeURIComponent(matchedAgent.agent_id)}` : "/edge/postings",
+    agent ? `/edge/postings?agent_id=${encodeURIComponent(agent.agent_id)}` : "/edge/postings",
     fetcher,
     { refreshInterval: 2000 },
   );
@@ -97,16 +108,20 @@ export function PabxPanel({ connectorId, connectorName }: { connectorId: string;
   const latestLink = links[0] ?? null;
   const latestRestart = restarts[0] ?? null;
 
-  const agent = (() => {
-    const list = agents?.agents ?? [];
-    // Link state may fall back to the first agent (one relay, one PABX);
-    // the postings above never do — they stay unfiltered until matched.
-    return matchedAgent ?? list[0] ?? null;
-  })();
-
   const liveUp = agent?.link_up;
   const snapUp = latestLink ? latestLink.payload["link_up"] === true : null;
   const linkUp = liveUp ?? snapUp;
+  // REQ-068 item 7: plain state only — the heartbeat detail
+  // ("accepted=2 dropped=0 layouts={…}") is debug text, not a state.
+  // Layouts ride in their own row. A live agent with a down link is
+  // mid-handshake, so the beat reads "re-handshaking" instead of "down".
+  const agentUpdatedAt = typeof agent?.updated_at === "string" ? agent.updated_at : null;
+  const agentFresh = (() => {
+    if (!agentUpdatedAt) return false;
+    const t = Date.parse(agentUpdatedAt);
+    if (!Number.isFinite(t)) return false;
+    return Date.now() - t < 30000;
+  })();
   const linkDetail = strOf(agent?.link_detail) ?? strOf(latestLink?.payload["link_detail"]);
   const layouts = layoutsFromAgent(agent) ?? layoutsFromDetail(linkDetail);
 
@@ -132,10 +147,11 @@ export function PabxPanel({ connectorId, connectorName }: { connectorId: string;
               "unknown yet"
             ) : linkUp ? (
               <span className="text-ink">up</span>
+            ) : agentFresh ? (
+              <span style={{ color: "var(--live)" }}>re-handshaking…</span>
             ) : (
               <span style={{ color: "var(--stop)" }}>down</span>
             )}
-            {linkDetail ? <span className="text-ink-2"> · {linkDetail}</span> : null}
           </dd>
         </div>
         <div>

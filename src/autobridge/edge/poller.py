@@ -331,12 +331,31 @@ class Agent:
                 self._halt.wait(0 if outcome == "forwarded" else FORWARD_INTERVAL_S)
 
     def _heartbeat_loop(self) -> None:
+        # REQ-068 item 7: the resync burst must land after the link reads
+        # back up. Forwarding runs every second but the heartbeat ran
+        # every 10 s, so burst postings arrived while the panel still read
+        # "down". Poll the (cheap, local) link state every second and
+        # heartbeat at once when link_up flips, keeping the 10 s cadence
+        # otherwise — the "postings resume" beat follows the up beat.
+        last_up: bool | None = None
+        last_sent = 0.0
+        import time as _time  # noqa: PLC0415
+
         while not self._halt.is_set():
             try:
-                self.heartbeat_once()
+                try:
+                    state = self.link.link_state()
+                    up = bool(state.get("link_up", False)) if isinstance(state, dict) else False
+                except Exception:
+                    up = False
+                now = _time.monotonic()
+                if last_up is None or up != last_up or (now - last_sent) >= HEARTBEAT_INTERVAL_S:
+                    self.heartbeat_once()
+                    last_sent = now
+                    last_up = up
             except Exception:  # pragma: no cover - defensive
                 log.exception("heartbeat failed")
-            self._halt.wait(HEARTBEAT_INTERVAL_S)
+            self._halt.wait(1.0)
 
 
 def agent_id_from_env(default: str = "grand-plaza-pabx") -> str:

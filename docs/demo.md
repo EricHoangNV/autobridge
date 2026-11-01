@@ -253,10 +253,16 @@ side by side, visible tests, verifier verdict, Approve action. The ledger line �
 Deck 4 builds Harbor from its wiki docs; deck 5 breaks it right after.
 The docs describe the page-level `meta.gross_sum` total, so the built
 spec carries the `money_invariant` check and the baseline sync lands
-`Complete`. The money drift then degrades the sync on the named
+`Complete`. Under `gross_to_net` the vendor switches its amounts to net
+but keeps reporting `meta.gross_sum` — and, the way a real vendor that
+switched would, also reports the page's net total next to it as
+`meta.net_sum` (simulator only, never in the baseline response or the
+docs). The money drift then degrades the sync on the named
 invariant, the engine's own climb runs (funnel → L2 skipped → exactly
 one L3 attempt), and the run escalates with one operator question — plus
-the one proposed change when the model offered it. The demo approves the
+the one proposed change when the model offered it (repointing the money
+check at `$.net_sum`, which passes the dry-run gate and the verifier).
+The demo approves the
 proposal as a business decision (release r2, verifying sync, Harbor back
 to `working`); a plain escalation stays red with the question.
 

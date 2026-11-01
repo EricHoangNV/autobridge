@@ -281,3 +281,52 @@ def test_atlas_does_not_import_verifier_or_autobridge() -> None:
     for m in re.finditer(r"^\s*(?:import|from)\s+(\S+)", text, re.MULTILINE):
         top = m.group(1).split(".")[0]
         assert top not in {"autobridge", "verifier"}, f"atlas app imports {top}"
+
+def test_harbor_and_legacystay_report_net_sum_only_under_gross_to_net() -> None:
+    # REQ-068 item 1: under gross_to_net the vendor reports the page's net
+    # total next to gross_sum (the honest Approve target); baseline carries
+    # no net_sum, and the docs never mention it.
+    from fastapi.testclient import TestClient
+
+    from simulators.common.state import reset_state
+    from simulators.harborpms.app import app as harbor_app
+    from simulators.legacystay.app import app as legacy_app
+
+    for app, field, headers in (
+        (harbor_app, "total_amount", {}),
+        (legacy_app, "total_amount", {"Authorization": "Bearer test-token"}),
+    ):
+        client = TestClient(app)
+        set_scenario("baseline", 42)
+        base = client.get("/reservations", params={"limit": 5}, headers=headers)
+        assert base.status_code == 200, base.text
+        body = base.json()
+        assert "gross_sum" in body
+        assert "net_sum" not in body
+        set_scenario("gross_to_net", 42)
+        faulted = client.get("/reservations", params={"limit": 5}, headers=headers)
+        assert faulted.status_code == 200, faulted.text
+        fbody = faulted.json()
+        assert "gross_sum" in fbody and "net_sum" in fbody
+        from decimal import Decimal
+
+        page_sum = sum(Decimal(str(r[field])) for r in fbody["data"])
+        assert Decimal(str(fbody["net_sum"])) == page_sum
+        # gross_sum stays the baseline total (net is 10% below per page on average).
+        assert Decimal(str(fbody["net_sum"])) < Decimal(str(fbody["gross_sum"]))
+        # Same honest total on the folios page.
+        fols = client.get("/folios", params={"limit": 5}, headers=headers)
+        assert fols.status_code == 200, fols.text
+        assert "net_sum" in fols.json()
+        reset_state()
+        set_scenario("baseline", 42)
+
+
+def test_page_net_sum_edge_cases() -> None:
+    # REQ-068 item 1: page_net_sum skips unparseable rows and returns None
+    # when nothing parseable remains (never a crash, never "0.00").
+    from simulators.common.helpers import page_net_sum
+
+    assert page_net_sum([{"total_amount": "10.00"}, "nope", {"x": 1}, {"total_amount": None}], "total_amount") == "10.00"
+    assert page_net_sum([{"total_amount": "xx"}, {"total_amount": None}], "total_amount") is None
+    assert page_net_sum([], "total_amount") is None

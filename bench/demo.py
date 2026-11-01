@@ -363,7 +363,13 @@ def _harbor_fake_client(mode: str = "gross") -> Any:
         if mode == "net":
             # Baseline meta stays gross while records read net: the same
             # contradiction the faulted simulator serves (observed only).
+            # REQ-068 item 1: the vendor also reports the page's net total
+            # next to gross_sum, so the engine has an honest Approve target.
             envelope["gross_sum"] = baseline
+            if request.url.path == "/reservations":
+                envelope["net_sum"] = gross_sum(sliced, "total_amount")
+            else:
+                envelope["net_sum"] = gross_sum(sliced, "amount")
         return httpx.Response(200, json=envelope)
 
     transport = httpx.MockTransport(handler)

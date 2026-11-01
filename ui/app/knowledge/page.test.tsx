@@ -118,7 +118,7 @@ describe("KnowledgePage", () => {
           id: "ap-8", at: "2026-10-30T09:00:00Z", actor: "alice", kind: "approve",
           business_decision: false, learned: true, connector_id: "c1", connector_name: "AtlasPMS",
           repair_run_id: "rep-8", from_release_id: "r1", to_release_id: "r2",
-          summary: "Approved page_to_cursor → r2 (learned)",
+          summary: "page_to_cursor → r2 (learned)",
         },
         {
           id: "ap-7", at: "2026-10-30T08:00:00Z", actor: "alice", kind: "reject",

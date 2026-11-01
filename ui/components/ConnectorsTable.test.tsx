@@ -226,8 +226,7 @@ describe("ConnectorsTable", () => {
     expect(waitingRepairs([reopened as never])).toHaveLength(1);
   });
 
-  it("a superseded former active release is not a waiting candidate (REQ-053 item 3)", () => {
-    const c = baseConnector({ active_release_id: "rel-2" });
+  it("a superseded former active release is not a waiting candidate (REQ-053 item 3)", () => {    const c = baseConnector({ active_release_id: "rel-2" });
     const detail = detailWith({
       active_release_id: "rel-2",
       releases: [
@@ -259,5 +258,39 @@ describe("ConnectorsTable", () => {
     render(<ConnectorsTable connectors={[c]} detailsById={{ [c.id]: detail }} repairsByConnector={{ [c.id]: [done as never] }} />);
     // r2 is active; r1 is superseded history — no "r1 waiting".
     expect(screen.queryByText(/waiting/)).not.toBeInTheDocument();
+  });
+
+  it("no chart for zero-token repairs (REQ-068 item 6)", () => {
+    const c = baseConnector();
+    const detail = detailWith();
+    const zero = (id: string) => ({
+      id,
+      drift_event_ids: [],
+      ladder_level_reached: 1,
+      vendor: "atlas",
+      drift_signature: null,
+      drift_class: "PAGINATION_CHANGE",
+      approval: null,
+      fingerprint_delta: null,
+      candidate_patch: null,
+      rule_id: "page_to_cursor",
+      hypothesis_ids: [],
+      visible_test_results: [],
+      verifier_report_id: null,
+      decision: "propose",
+      model_usage: { frontier_tokens: 0, calls: 0 },
+      ladder_trace: [],
+      escalation_bundle: null,
+      created_at: new Date().toISOString(),
+      kind: "repair",
+    });
+    render(
+      <ConnectorsTable connectors={[c]} detailsById={{ [c.id]: detail }} repairsByConnector={{ [c.id]: [zero("r1") as never, zero("r2") as never] }} />,
+    );
+    // Two zero-token repairs: the number only, no baseline ticks that
+    // read as stray "–" marks.
+    expect(screen.queryByTestId("sparkline")).not.toBeInTheDocument();
+    expect(screen.getByTestId(`connector-tokens-${c.id}`)).toHaveTextContent("0");
+    expect(screen.getByTestId(`connector-tokens-${c.id}`)).toHaveTextContent("in 2 repairs");
   });
 });

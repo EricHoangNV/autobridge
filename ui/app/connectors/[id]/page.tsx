@@ -172,6 +172,21 @@ export default function ConnectorDetailPage({ params }: PageProps) {
     // Fallback to latest
     return detail.releases[detail.releases.length - 1] ?? null;
   })();
+  // REQ-068 item 8: "live since" is when the release went live (the
+  // approval that activated it), not when its row was created (r3 is
+  // created before r2 is approved). r1 went live automatically at build,
+  // so its creation time stands.
+  const liveSince: string | null = (() => {
+    if (!activeRelease) return null;
+    const repairs = allRepairs ?? [];
+    for (const r of repairs) {
+      const approval = r.approval as { to_release_id?: unknown; created_at?: unknown } | null | undefined;
+      if (approval && approval.to_release_id === activeRelease.id && typeof approval.created_at === "string") {
+        return approval.created_at;
+      }
+    }
+    return activeRelease.created_at;
+  })();
 
   const [selectedReleaseId, setSelectedReleaseId] = useState<string | null>(null);
   // Sync selected with active when detail loads and no selection yet
@@ -300,7 +315,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
             {maxVersion !== null ? `r${maxVersion}` : "—"}
           </span>
           <span className="l">
-            {activeRelease ? `live since ${formatDayTime(activeRelease.created_at)}` : "no release yet"}
+            {activeRelease ? `live since ${formatDayTime(liveSince ?? activeRelease.created_at)}` : "no release yet"}
           </span>
         </div>
       </section>
@@ -376,7 +391,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
                 data-testid={`build-attempt-${b.id}`}
                 className="border border-rule bg-band px-4 py-2.5 text-sm"
               >
-                <span className="font-mono font-bold">v{b.spec_vocabulary || "?"}</span>{" "}
+                <span className="font-mono font-bold">{String(b.spec_vocabulary || "?").startsWith("v") ? String(b.spec_vocabulary) : `v${b.spec_vocabulary || "?"}`}</span>{" "}
                 {b.success ? (
                   <span>
                     connected{b.release_id ? ` · release ${b.release_id.slice(0, 8)}` : ""}

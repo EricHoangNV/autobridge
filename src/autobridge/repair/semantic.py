@@ -162,6 +162,8 @@ def raw_records_of_summary(
     *,
     money_fields: set[str] | None = None,
     limit: int = 2,
+    entity: str | None = None,
+    spec: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """First raw vendor items from the faulted sync's raw pages (REQ-044).
 
@@ -170,6 +172,11 @@ def raw_records_of_summary(
     in each page (operations are visited in name order, pages in order, so
     the sample is deterministic). At most *limit* records, redacted by
     :func:`redact_raw_record`. Empty when the sync never reached the wire.
+
+    REQ-068 item 2: when *entity* (and its spec) is known, the entity's
+    own operation is visited first, so a Reservation drift shows
+    Reservation rows instead of the alphabetically-first operation's
+    (e.g. FolioCharge) rows. Other operations remain as fallback.
     """
     summary = summary if isinstance(summary, dict) else {}
     op_results = summary.get("operation_results") or {}
@@ -186,6 +193,23 @@ def raw_records_of_summary(
         return []
 
     ops = sorted(op_results) if isinstance(op_results, dict) else []
+    # Entity-first ordering (REQ-068 item 2): the climbed entity's
+    # operation leads, the rest follow in name order for determinism.
+    entity_op: str | None = None
+    if entity and isinstance(spec, dict):
+        try:
+            entities = spec.get("entities") or {}
+            ent_spec = entities.get(entity) if isinstance(entities, dict) else None
+            if isinstance(ent_spec, dict):
+                for key in ("from_operation", "from"):
+                    cand = ent_spec.get(key)
+                    if isinstance(cand, str) and cand in op_results:
+                        entity_op = cand
+                        break
+        except Exception:
+            entity_op = None
+    if entity_op:
+        ops = [entity_op] + [o for o in ops if o != entity_op]
     for op_name in ops:
         pages = op_results.get(op_name)
         raw_pages = pages.get("raw_pages") if isinstance(pages, dict) else getattr(pages, "raw_pages", None)
@@ -544,6 +568,6 @@ def build_l3_evidence(
         },
         "spec_subtree": spec_subtree_for_entity(spec, ent_name),
         "raw_records": raw_records_of_summary(
-            summary, money_fields={field}, limit=2
+            summary, money_fields={field}, limit=2, entity=ent_name, spec=spec
         ),
     }

@@ -1027,4 +1027,74 @@ describe("RepairDetailPage", () => {
       expect(screen.getByTestId(id)).not.toHaveAttribute("open");
     }
   });
+
+  it("shows the release it will actually get when r2 already exists (REQ-068 item 3)", () => {
+    mockAll(
+      { ...mockRepair, decision: "propose" },
+      {
+        ...mockLedger,
+        attempts: [
+          { rung: 0, action: "knowledge lookup", reason: "L0 miss", calls: [] },
+          { rung: 1, action: "rule page_to_cursor matched", reason: "wire shape matches", calls: [] },
+        ],
+      },
+      [mockDerivation],
+      {
+        ...mockConnectorWithSpec,
+        // Deck 3 second occurrence: Activate r1 left r2 in place.
+        active_release_id: "rel-1",
+        releases: [
+          { id: "rel-1", version: 1, spec: { operations: {} }, parent_release_id: null },
+          { id: "rel-2", version: 2, spec: { operations: {} }, parent_release_id: "rel-1" },
+        ],
+      },
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-subline")).toHaveTextContent(/Approve to ship it as release r3/);
+    expect(screen.getByTestId("repair-subline")).not.toHaveTextContent(/release r2/);
+  });
+
+  it("names the learned fix at L0, never a rule (REQ-068 item 4)", () => {
+    mockAll(
+      {
+        ...mockRepair,
+        ladder_level_reached: 0,
+        decision: "propose",
+        ladder_trace: [{ level: 0, action: "knowledge_hit", reason: "L0 cache hit", rule_id: "page_to_cursor" }],
+      },
+      {
+        ...mockLedger,
+        resolved_rung: 0,
+        attempts: [{ rung: 0, action: "knowledge_hit", reason: "L0 cache hit for vendor", calls: [] }],
+      },
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("did-plain-headline")).toHaveTextContent("known fix");
+    expect(screen.getByTestId("storyline-2")).toHaveTextContent("Fixed from a known fix");
+  });
+
+  it("reads skipped for an L2 that never ran (REQ-068 item 8)", () => {
+    mockAll(
+      {
+        ...mockRepair,
+        decision: "propose",
+        ladder_level_reached: 1,
+        ladder_trace: [
+          { level: 0, action: "knowledge lookup", reason: "L0 miss" },
+          { level: 1, action: "rule page_to_cursor matched", reason: "wire shape matches" },
+          { level: 2, action: "l2_skipped", reason: "L2 skipped: one explanation left" },
+        ],
+      },
+      {
+        ...mockLedger,
+        attempts: [
+          { rung: 0, action: "knowledge lookup", reason: "L0 miss", calls: [] },
+          { rung: 1, action: "rule page_to_cursor matched", reason: "wire shape matches", calls: [] },
+          { rung: 2, action: "l2_skipped", reason: "L2 skipped: one explanation left", calls: [] },
+        ],
+      },
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("rung-chip-2")).toHaveAttribute("title", "skipped");
+  });
 });

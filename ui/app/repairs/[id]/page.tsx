@@ -694,7 +694,14 @@ export default function RepairDetailPage({ params }: PageProps) {
     return releases[releases.length - 1];
   })();
   const activeSpec = (activeRelease?.spec ?? null) as Record<string, unknown> | null;
-  const candidateVersion = activeRelease ? activeRelease.version + 1 : null;
+  // REQ-068 item 3: the next release is max(version)+1, not active+1 —
+  // after Activate-r1 the active is r1 while r2 exists, so the next ship
+  // is r3 (the number the server will actually assign).
+  const candidateVersion = (() => {
+    const releases = connector?.releases ?? [];
+    if (!releases.length) return null;
+    return Math.max(...releases.map((r) => r.version)) + 1;
+  })();
   const opGroups = displayPatch.length ? groupPatchOps(displayPatch as PatchOp[], activeSpec, displayNotes) : [];
   const opCount = displayPatch.length;
 
@@ -748,6 +755,10 @@ export default function RepairDetailPage({ params }: PageProps) {
     const attempt = rungByLevel.get(rung);
     if (climbingNow) return rung < runningRung ? "tried" : rung === runningRung ? "trying…" : "waiting";
     if (!attempt) return "Not needed";
+    // REQ-068 item 8: a skipped rung (e.g. L2 with one explanation left)
+    // reads "skipped", never "tried".
+    const action = String((attempt as { action?: unknown }).action ?? "");
+    if (action.includes("skipped")) return "skipped";
     if (rung === resolvedRung) return "held here";
     return "tried";
   };
@@ -857,7 +868,7 @@ export default function RepairDetailPage({ params }: PageProps) {
             : repair.decision === "failed"
               ? `${connectorLabel} ${driftClass ? humanizeDriftClass(driftClass) : "drifted"}: the climb failed.`
               : hasReport && hasPatch
-                ? `${connectorLabel} ${driftClass ? humanizeDriftClass(driftClass) : "drifted"}: fixed at L${trackLevel}${repair.rule_id ? ` by ${repair.rule_id}` : ""}, verified.`
+                ? `${connectorLabel} ${driftClass ? humanizeDriftClass(driftClass) : "drifted"}: fixed at L${trackLevel}${repair.rule_id ? (trackLevel === 0 ? ` by a learned fix (${repair.rule_id})` : ` by ${repair.rule_id}`) : ""}, verified.`
                 : `${connectorLabel} ${driftClass ? humanizeDriftClass(driftClass) : "drifted"}: the climb ${repair.decision}.`;
   // REQ-055 item 3a: no action wording until a decision exists — while
   // the climb runs (or failed) there is nothing to approve yet.
@@ -1546,7 +1557,7 @@ export default function RepairDetailPage({ params }: PageProps) {
               <p data-testid="rail-plain-line" className="sub">{railPlain}</p>
               <h2>Approve release r{candidateVersion ?? "?"}</h2>
               <p className="sub">
-                {repair.rule_id ? `Rule ${repair.rule_id}` : "Verified patch"}
+                {repair.rule_id ? (repair.ladder_level_reached === 0 ? `Learned fix · ${repair.rule_id}` : `Rule ${repair.rule_id}`) : "Verified patch"}
                 {typeof ruleConfidence === "number" && repair.rule_id ? ` · confidence ${ruleConfidence}` : ""}
               </p>
               <div id="repair-acts" className="mt-2">

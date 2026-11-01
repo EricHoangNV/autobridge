@@ -216,6 +216,16 @@ def list_reservations(
     else:
         sliced, meta = paginate_offset(data, limit, offset)
     meta.update(_gross_sums_meta())
+    # REQ-068 item 1: same honest net total as Harbor under gross_to_net.
+    if scenario_id == "gross_to_net":
+        try:
+            from simulators.common.helpers import page_net_sum as _page_net_sum
+
+            net = _page_net_sum(sliced, "total_amount")
+            if net is not None:
+                meta["net_sum"] = net
+        except Exception:
+            pass
     return {"data": sliced, **meta}
 
 
@@ -255,6 +265,15 @@ def list_folios(
     else:
         sliced, meta = paginate_offset(data, limit, offset)
     meta.update(_gross_sums_meta_folios())
+    if scenario_id == "gross_to_net":
+        try:
+            from simulators.common.helpers import page_net_sum as _page_net_sum
+
+            net = _page_net_sum(sliced, "amount")
+            if net is not None:
+                meta["net_sum"] = net
+        except Exception:
+            pass
     return {"data": sliced, **meta}
 
 

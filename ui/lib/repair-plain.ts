@@ -114,7 +114,10 @@ export function rungChip(rung: number): string {
 }
 
 export function rungHeadline(rung: number, aiUsed: boolean): string {
-  if (rung <= 1) return "Fixed by a known rule — no AI needed";
+  // REQ-068 item 4: L0 is the learned fix reusing an approved repair, not
+  // a rule — the deck-3 script's words. L1 keeps the rule wording.
+  if (rung === 0) return "Fixed from a known fix — no AI needed";
+  if (rung === 1) return "Fixed by a known rule — no AI needed";
   if (rung === 2) return "Small model ranked it — no AI needed";
   if (rung === 3) return aiUsed ? "AI model proposed a fix" : "AI model was consulted";
   return "Needs your decision";
@@ -164,7 +167,8 @@ export function storylineStep1(driftClass: string | null, failedCheck: string | 
 }
 
 export function storylineStep2(resolvedRung: number, aiCalls: number): { headline: string; fact: string } {
-  if (resolvedRung <= 1) return { headline: "Fixed by a known rule", fact: "no AI needed" };
+  if (resolvedRung === 0) return { headline: "Fixed from a known fix", fact: "learned · no AI needed" };
+  if (resolvedRung === 1) return { headline: "Fixed by a known rule", fact: "no AI needed" };
   if (resolvedRung === 2) return { headline: "Small model ranked it", fact: "no AI model call" };
   return { headline: "Asked the AI model", fact: aiCalls > 0 ? `${aiCalls} call${aiCalls === 1 ? "" : "s"}` : "rules couldn't decide" };
 }

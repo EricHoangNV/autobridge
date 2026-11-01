@@ -68,6 +68,19 @@ describe("ReleaseHistory", () => {
     unmount();
   });
 
+  it("separates verifier-passed from active with a middle dot (REQ-068 item 8)", () => {
+    const r1 = mkRelease({
+      id: "rel-1",
+      version: 1,
+      approved_by: null,
+      provenance_build_run_id: "build-1",
+      verification_report_id: "rep-1",
+    });
+    render(<ReleaseHistory releases={[r1]} activeReleaseId="rel-1" />);
+    // "automatic · verifier passed · active" — never "verifier passed active".
+    expect(screen.getByTestId("release-approved-by-rel-1").parentElement?.textContent).toMatch(/verifier passed · active/);
+  });
+
   it("a build candidate that never went live still waits for the operator (REQ-067 item 6)", () => {
     const r1 = mkRelease({
       id: "rel-1",

@@ -97,12 +97,19 @@ describe("repair-plain lookup tables (REQ-056 item 6)", () => {
   });
 
   it("tells the storyline in plain words for deck 3 and deck 5", () => {
-    // Deck 3: paging changed, fixed by a known rule.
+    // Deck 3: paging changed, fixed by a known rule (L1).
     const d3s1 = storylineStep1("PAGINATION_CHANGE", null);
     expect(d3s1.headline).toBe("Paging changed");
     const d3s2 = storylineStep2(1, 0);
     expect(d3s2.headline).toMatch(/known rule/);
     expect(d3s2.fact).toMatch(/no AI/);
+    // REQ-068 item 4: the second occurrence resolves at L0 from the
+    // learned fix — never "a known rule".
+    const d3second = storylineStep2(0, 0);
+    expect(d3second.headline).toMatch(/known fix/);
+    expect(d3second.fact).toMatch(/learned/);
+    expect(rungHeadline(0, false)).toMatch(/known fix/);
+    expect(rungHeadline(1, false)).toMatch(/known rule/);
     const d3s3 = storylineStep3("propose", true, null);
     expect(d3s3.fact).toMatch(/verified/);
     // Deck 5: amounts no longer add up, asked the AI model.
