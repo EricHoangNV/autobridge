@@ -2,7 +2,42 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01 02:40): **REQ-068** (REQ-066/067 done; the real beacon freeze waits for REQ-068). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01 08:45): **REQ-069** (REQ-066/067/068 done; the real beacon freeze waits for REQ-069). Do not start REQ-051 until the owner says so.
+
+### REQ-069 — Demo walkthrough round 3: the dry-run gate checks every failing check; release numbers; rollback wording (2026-11-01)
+Status: OPEN
+Owner keyed browser walkthrough on `6f72867a` (Contributor, blank-slate seed, 2026-11-01 08:27-08:37). Findings and
+screenshots: `tmp/walkthrough-6f72867a/FINDINGS.md` (gitignored; read in place from the main checkout, do not edit
+`tmp/`). REQ-068 items 2, 4, 5, 6, 7, 8 are confirmed fixed live; keep them working. Fix:
+
+1. **The proposal dry-run gate checks only the climbed entity (engine correctness).** Deck 5 live: Harbor's spec has
+   two `money_invariant` checks against `$.gross_sum` (Reservation `total_amount`, FolioCharge `amount`); both fail
+   under `gross_to_net`. The model's proposal repointed only `/entities/Reservation/checks/3/compare_to` to
+   `$.net_sum`; the dry-run said "tested on the current records: the checks pass" and the verifier "1/1", Approve
+   shipped r2, the verifying sync failed `money_invariant` (FolioCharge) and the engine rolled back r2 → r3. The
+   gate must evaluate every check that failed in the break's sync (all entities) against the patched spec on the
+   break's records, and pass only if all of them pass; a partial proposal gets the existing one retry with the exact
+   error (which checks still fail), then is dropped. The verifier gate must not report a pass for a patch that leaves
+   a failing check failing. No prompt tuning to steer the model to a specific answer and never synthesise or extend
+   a proposal in code; the prompt may state the facts the gate enforces (all failing checks must pass). Note in the
+   build note how this changes the dev benchmark / beacon engine arms (stricter gate: fewer proposals offered, never
+   more), and whether a re-run is needed. Re-key replay fixtures if prompt hashes change.
+2. **Release number before Approve is one too high (REQ-068 item 3 regression).** First occurrence reads "Approve to
+   ship it as release r3" then ships r2; Activate-r1 second occurrence reads "r4" then ships r3. The pending
+   candidate release already exists, so `max(version)+1` counts it. Show the version the candidate will actually
+   ship as (the candidate's own version when it exists). Tests for both cases.
+3. **After Activate r1 the connector header still shows r2** (the Releases table correctly marks r1 active). The
+   header release and "live since" must follow the active release.
+4. **After an automatic rollback the repair page reads as if nothing happened:** "No patch proposed — nothing
+   verified to apply", "roll back to r3 stays available", generic headline. Say the approved change failed its
+   verifying sync (name the check) and was rolled back automatically, and that the question is still open
+   (docs/demo.md already describes this behaviour).
+5. **Knowledge Decisions reads "Rolled back Rolled back r2 → r3"** (twin of the "Approved Approved" fix).
+6. **PABX "Record layout" row prints raw JSON** (`{"DR": ["DA", "TI"], "PS": [...]}`); show it readably.
+
+Tests: unit/UI tests per item (item 1: two-entity money checks, partial proposal refused with the failing check
+named, full proposal passes); existing e2e testids keep working; full gates green. Owner step after: keyed
+`make record-frontier SCENARIO=gross_to_net` if the prompt hash changed, then the keyed walkthrough re-run.
 
 ### REQ-068 — Demo walkthrough round 2: honest deck 5 Approve path, remaining UI and wording fixes (2026-11-01)
 Status: DONE (sbx1 2026-11-01 -- all 8 items code-done: simulator net_sum under gross_to_net (Harbor+LegacyStay) with dry-run/verifier Approve path + replay re-keyed + docs; L3 entity-first raw records; candidate max+1; L0 learned wording; vv fix; connectors layout + Playwright; PABX plain state/filtered postings/heartbeat-on-flip; small cuts; full gates green; owner steps: keyed make record-frontier SCENARIO=gross_to_net then keyed browser walkthrough re-run to close)
