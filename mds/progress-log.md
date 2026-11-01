@@ -4178,3 +4178,32 @@ No live stack in sbx1; nothing frozen/tagged/committed under experiments/beacon/
 
 ## 2026-11-01 — REQ-078 DONE in sbx1 (Agent: opencode meta/muse-spark-1.3 (escalation))
 Engine asks when it does not know; beacon grades it fairly. Engine: every repairable class climbs L0→L1→L2/L3→L4 (no class list; only _NON_FIXABLE + backoff stay deterministic); failed-L1-dry-run climbs with the failure as evidence; verified model patch becomes approvable candidate (same release + verifier path as L1, never auto-applied; confident L2 winner turned into patch); semantic stays business-decision (proposal rides bundle); class-neutral L3 evidence + allowed pointers from delta; L3 yield-gate removed; deferred job serves every class with real verifier URL. Detection: any-constant money ratio, date_shift (offset + non-ISO), emptied zero/default + added-candidates, rename refuses nesting, FIAS multi-path paths + 1:1 baseline delta + rename in signal details, pagination ignores runtime counters, http/transient crits map to TRANSIENT. Beacon: Error outcome (never passes), no-change answer, per-instance stats + paired diffs + per-family rows, frozen budgets, agent cwd+env isolation, append/resume, warm learns in-run with source reporting, wrong-proposed counting, code_list/token_expired acceptances. Tests: 2 new files (24 tests incl. fixed-seed detection sweep, resume); full gates green (autobridge 3065 @90.02%, verifier @90.94%, simulators @90.50%); lint/typecheck/openapi green; BENCH_TRIALS=1 ablation 12/12 matched. Owner step: keyed bench-beacon rehearsal.
+
+## REQ-078 items 8+10: simulator defects fixed, beacon rehearsal run
+**Date:** 2026-11-01
+**Ref:** REQUESTS.MD REQ-078 (owner check 2026-11-02 on 916ce205)
+
+**What was done:**
+- Meridian serializers hardened: strict-ISO date/datetime parse, null derived UTC fields on failure, raw values + rename targets + nesting wrappers surface as wire extras; amount/currency Decimal-safe
+- Atlas `to_wire_transaction` serves renamed folio keys (camelCase) via `_extra_wire_fields`; old key keeps blank/default so rename pairs by value
+- faultgen: `expected_for` takes vendor; meridian dates/cutoff keys `no_patch`; verifier reference solver proves wire-invisibility; sanity gate passes vendor through
+- Item-4 sweep extended (no-crash serving + no-silent detection over rename/nesting/dates); docs/benchmark.md owner-accepted answers + serving guarantee
+- Rehearsal on live stack: round 6599930 FAULTS=10 TRIALS=1 — engine 0.40 verified / 0.40 esc / $0 / 0 tok / 0 wrong; frontier 0.00 (no key here, fake fail-closed); sanity clean, 50 grades, no crashes
+
+**Key decisions:**
+- Answer-key fix (not wire fix) for meridian cutoff: the fault is genuinely invisible on the wire, so the connector output is correct and `no_patch` is the honest grade (same precedent as REQ-063 semantic decoy)
+- Strict-ISO (not loose multi-format) parse in meridian: parsed-then-normalized dates would be byte-identical wire (silent no-op tripping the sanity gate); nulled-derived + raw-extra keeps the fault observable
+- No FRONTIER_API_KEY in this environment: did not invent one from ambient keys; rehearsal ran with labelled fake frontier arms per the no-key path
+
+**Files changed:**
+- `simulators/meridianpms/app.py` — strict parse + `_wire_extras`, Decimal-safe money
+- `simulators/atlaspms/app.py` — folio `_extra_wire_fields`
+- `simulators/common/faultgen.py` — vendor-aware `expected_for`, cutoff `no_patch`
+- `verifier/beacon.py` — `_assert_dates_invisible` in `reference_solve`
+- `bench/beacon_run.py` — sanity gate passes vendor
+- `docs/benchmark.md` — serving guarantee + cutoff answer
+- `tests/unit/test_simulators_req078_item8.py` — 7 new tests; fixed `push_beacon` stub + vendor param in existing tests
+
+**Notes for next iteration:**
+- Engine fails on 6/10 rehearsal instances are all detected-but-unrepaired (no frontier key): the real keyed rehearsal + freeze is the owner step
+- `test_beacon_resume_keeps_landed_rows` was already broken on 916ce205 (stub/kwarg mismatch) — fixed here

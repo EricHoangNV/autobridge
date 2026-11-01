@@ -5,7 +5,7 @@
 Owner priority (2026-11-01): **REQ-078** (REQ-066..077 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-078 — When the engine does not know, it asks: model first, operator last; and a beacon that grades it fairly (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-01 17:09 UTC -- items 8 simulators + 10 rehearsal)
+Status: DONE (sbx1 2026-11-01 -- items 8+10: meridian strict-ISO+extras (no crash), atlas folio extras, meridian cutoff no_patch; rehearsal 6599930 FAULTS=10 TRIALS=1: engine 0.40 verified / 0.40 esc / $0.00 / 0 tok / 0 wrong prop+rel, frontier 0.00 (no key, fake fail-closed), sanity clean; full gates green)
 Owner check (2026-11-02, on `916ce205`): items 1-7 and 9 landed; two parts are missing, finish them in this REQ.
 - **Item 8, simulator defects: no file under `simulators/` changed.** Fix: meridian serializers crash on non-ISO /
   renamed / nested dates (`simulators/meridianpms/app.py` ~306-308, ~382 `fromisoformat`); atlas folio rename never
