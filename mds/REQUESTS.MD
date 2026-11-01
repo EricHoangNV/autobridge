@@ -5,7 +5,7 @@
 Owner priority (2026-11-01): **REQ-077** (REQ-066..076 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-077 — The beacon run is the final benchmark: anyone can rerun it; `make bench` and `make demo` step 4 work as documented (2026-11-01)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-01 11:35)
 Owner decision (2026-11-01): the private held-out split is retired (its seeds cannot be published, so nobody else can
 verify a run); the beacon run (REQ-025) is the one final benchmark. The docs were corrected on 2026-11-01 to describe
 the code as it is; this REQ makes the code match what a public user needs. Update `docs/benchmark.md` (and the README
