@@ -592,7 +592,8 @@ def test_controller_derives_l3_gate_count_from_surviving_hypotheses() -> None:
         }
     )
     # Two surviving hypotheses, no explicit count: L2 ranks (unconfident at
-    # 0.41), then L3 is skipped by the gate naming the counted 2.
+    # 0.41), then — REQ-078 item 1, no yield-count gate — L3 fires for the
+    # semantic drift instead of skipping.
     res = ctrl.handle(
         spec=_spec(),
         drift_class="SEMANTIC_VALUE_DRIFT",
@@ -605,12 +606,11 @@ def test_controller_derives_l3_gate_count_from_surviving_hypotheses() -> None:
     )
     assert res.decision == "escalate"
     l3 = next(t for t in res.ladder_trace if t.get("level") == 3)
-    assert l3["action"] == "l3_skipped"
-    assert "enumerator yielded 2 >= 2" in l3["reason"], l3["reason"]
-    assert int(res.model_usage.get("frontier_tokens", 0)) == 0
+    assert l3["action"] in ("frontier_generate", "proposal_rejected", "model_escalation")
+    assert int(res.model_usage.get("frontier_tokens", 0)) > 0
 
     # One surviving hypothesis, no explicit count: L2 is skipped and L3 is
-    # invoked by the gate naming the counted 1.
+    # invoked (REQ-078: L3 always fires when the climb gets past L1).
     hyps = gross_net_hypotheses()
     res1 = ctrl.handle(
         spec=_spec(),
@@ -623,10 +623,11 @@ def test_controller_derives_l3_gate_count_from_surviving_hypotheses() -> None:
         vendor="harbor",
     )
     l3_1 = next(t for t in res1.ladder_trace if t.get("level") == 3)
-    assert "enumerator yielded 1 < 2" in l3_1["reason"], l3_1["reason"]
+    assert l3_1["action"] in ("frontier_generate", "proposal_rejected", "model_escalation"), l3_1["reason"]
     assert int(res1.model_usage.get("frontier_tokens", 0)) > 0
 
-    # An explicit caller count still wins over the derived one.
+    # An explicit caller count is still derived the same way (the count
+    # rides the climb for provenance); L3 fires regardless of its value.
     res2 = ctrl.handle(
         spec=_spec(),
         drift_class="SEMANTIC_VALUE_DRIFT",
@@ -638,8 +639,7 @@ def test_controller_derives_l3_gate_count_from_surviving_hypotheses() -> None:
         vendor="harbor",
     )
     l3_2 = next(t for t in res2.ladder_trace if t.get("level") == 3)
-    assert l3_2["action"] == "l3_skipped"
-    assert "enumerator yielded 5 >= 2" in l3_2["reason"], l3_2["reason"]
+    assert l3_2["action"] in ("frontier_generate", "proposal_rejected", "model_escalation"), l3_2.get("reason")
 
 
 # ---------------------------------------------------------------------------

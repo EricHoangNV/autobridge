@@ -31,6 +31,38 @@ export CONFIRM PUSH
 
 echo ">> beacon-eval: FAULTS=$FAULTS DELAY_MIN=$DELAY_MIN"
 
+# 0b. Preflight (REQ-078 item 7): live key, frontier-agent preflight (no
+# silent FakeOpenCodeDriver), and /readyz on verifier + simulators —
+# before the freeze commits anything.
+if [ -z "${FRONTIER_API_KEY:-}" ]; then
+  echo "beacon-eval: refusing — FRONTIER_API_KEY is unset (no live frontier arms)" >&2
+  exit 7
+fi
+echo ">> beacon-eval: preflight: frontier-agent live call"
+if ! uv run python -c "from bench.ablation import preflight_frontier_agent; preflight_frontier_agent()"; then
+  echo "beacon-eval: frontier-agent preflight failed — stopping before the freeze" >&2
+  exit 7
+fi
+echo ">> beacon-eval: preflight: /readyz on verifier + simulators"
+for _svc in "verifier:8104" "sim-atlas:8105" "sim-harbor:8106" "sim-legacystay:8111" "sim-meridian:8116" "sim-fias-pabx:8118"; do
+  _name="${_svc%%:*}"; _port="${_svc##*:}"
+  _body="$(curl -s --max-time 5 "http://localhost:${_port}/readyz" || true)"
+  if ! python3 -c "import json,sys; sys.exit(0 if json.loads(sys.argv[1]).get('status')=='ok' else 1)" "$_body" 2>/dev/null; then
+    echo "beacon-eval: preflight failed — $_name (:$_port) not readyz (stack up? make local-up / make up)" >&2
+    exit 7
+  fi
+  echo ">> beacon-eval: readyz ok: $_name (:$_port)"
+done
+
+# 0. Git identity: commits need one, and the opencode sandbox has none
+# configured. Repo-local only (never touches the user's global config).
+if ! git config user.email >/dev/null 2>&1; then
+  git config user.email "${GIT_AUTHOR_EMAIL:-beacon-eval@local}"
+fi
+if ! git config user.name >/dev/null 2>&1; then
+  git config user.name "${GIT_AUTHOR_NAME:-beacon-eval}"
+fi
+
 # 1. Guards: clean tree, no ralph loop in this checkout's path.
 if [ -n "$(git status --porcelain)" ]; then
   echo "beacon-eval: refusing — git tree is dirty (commit or stash first)" >&2
@@ -60,17 +92,37 @@ echo ">> beacon-eval: target round $TARGET_ROUND"
 TAG="eval-freeze-$TARGET_ROUND"
 
 # 3. Commit + tag the freeze (per-run tag), push only with PUSH=yes.
+# REQ-078 item 8: a failed freeze commit stops the script (the old
+# `|| echo` hid it and every rerun resumed into the same silent failure).
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
   echo ">> beacon-eval: tag $TAG already exists — reusing"
 else
   git add "$PROTOCOL"
-  git commit -m "eval-freeze: beacon protocol for round $TARGET_ROUND" 2>/dev/null \
-    || { echo "beacon-eval: nothing new to commit (protocol already committed?)"; }
+  if ! git commit -m "eval-freeze: beacon protocol for round $TARGET_ROUND"; then
+    echo "beacon-eval: freeze commit failed — stopping (fix git state, then rerun to resume)" >&2
+    exit 5
+  fi
   git tag "$TAG"
 fi
-beacon_maybe_push "$TAG" "$TARGET_ROUND"
+# Never push a freeze after its round is published: a post-publication
+# push proves nothing about commit-then-reveal.
+if ! uv run python -m bench.beacon_client verify --round "$TARGET_ROUND" >/dev/null 2>&1; then
+  beacon_maybe_push "$TAG" "$TARGET_ROUND"
+else
+  echo "beacon-eval: round $TARGET_ROUND already published — freeze stays local (no push)" >&2
+  if [ "${PUSH:-}" = "yes" ]; then
+    echo "beacon-eval: refusing push of a post-publication freeze" >&2
+    exit 6
+  fi
+fi
 PUSH_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo ">> beacon-eval: freeze stands at $PUSH_TIME (local clock; GitHub event time below when gh works)"
+# REQ-078 item 8: the freeze push time lands in EVIDENCE.md — GitHub's
+# event time when gh can read it, else the local clock (labelled).
+FREEZE_PUSH_TIME_GH=""
+if command -v gh >/dev/null 2>&1 && [ "${PUSH:-}" = "yes" ]; then
+  FREEZE_PUSH_TIME_GH="$(gh api "repos/{owner}/{repo}/events" --jq '.[0].created_at' 2>/dev/null || true)"
+fi
 
 # 4. Wait for the round (poll latest; fail closed after a bounded wait).
 echo ">> beacon-eval: waiting for round $TARGET_ROUND"
@@ -133,9 +185,14 @@ except Exception as exc:
   if [ -n "$PINNED_AGENT" ]; then
     echo "- agent model: $PINNED_AGENT"
   fi
+  if [ -n "$FREEZE_PUSH_TIME_GH" ]; then
+    echo "- freeze pushed at (GitHub event time): $FREEZE_PUSH_TIME_GH"
+  else
+    echo "- freeze pushed at (local clock): $PUSH_TIME"
+  fi
   echo "- $WARM_LINE"
   echo
-  echo "## Per-arm summary"
+  echo "## Per-arm summary (scores averaged per instance first; n names instances)"
   echo
   echo '```'
   python3 -c "
@@ -143,7 +200,18 @@ import json
 s = json.load(open('$ROUND_DIR/summary.json'))
 for arm, b in sorted(s['grades']['by_arm'].items()):
     vc = b['verified_completion']
-    print(f\"{arm:20s} verified {vc['mean']:.2f} [{vc['ci95_lo']:.2f},{vc['ci95_hi']:.2f}] n={vc['n']}  wrong_patch={b['wrong_patch_released']['total']}\")
+    print(f\"{arm:20s} verified {vc['mean']:.2f} [{vc['ci95_lo']:.2f},{vc['ci95_hi']:.2f}] n={vc.get('n_instances', vc['n'])}  wrong_released={b['wrong_patch_released']['total']} wrong_proposed={b.get('wrong_patch_proposed', {}).get('total', 0)}\")
+print()
+print('per-family verified (mean over instances):')
+for fam, b in sorted(s['grades'].get('by_family', {}).items()):
+    vc = b['verified_completion']
+    print(f\"{fam:20s} verified {vc['mean']:.2f} [{vc['ci95_lo']:.2f},{vc['ci95_hi']:.2f}] n={vc.get('n_instances', vc['n'])}\")
+paired = s['grades'].get('paired_vs_cold', {})
+if paired:
+    print()
+    print('paired per-instance differences vs autobridge_cold:')
+    for k, v in sorted(paired.items()):
+        print(f\"{k:40s} {v['mean']:+.2f} [{v['ci95_lo']:+.2f},{v['ci95_hi']:+.2f}] n={v.get('n_instances', v['n'])}\")
 "
   echo '```'
 } > "$EVIDENCE"

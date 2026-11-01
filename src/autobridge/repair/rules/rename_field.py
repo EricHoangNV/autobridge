@@ -193,6 +193,43 @@ def _explicit_new_path(ctx: RepairContext) -> str | None:
     return None
 
 
+def _added_holds_missing(ctx: RepairContext, old_field: str, new_field: str) -> bool:
+    """True when the added wire key is an object holding the missing key.
+
+    The detector's added entries carry sample values; when the new key's
+    sample is a dict containing the old key, the vendor nested the field
+    (a path move), and a rename patch at the new key would be wrong.
+    """
+    try:
+        from autobridge.repair.rules.wire import _signal_triples  # noqa: PLC0415
+    except Exception:
+        return False
+    try:
+        old_top = _path_top_key(f"$.{old_field}") or str(old_field).split(".")[0]
+        for _kind, _op, details in _signal_triples(ctx.signals):
+            if not isinstance(details, dict):
+                continue
+            added = details.get("added")
+            if not isinstance(added, list):
+                continue
+            for entry in added:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("key") or "") != str(new_field):
+                    continue
+                sample = entry.get("sample")
+                if isinstance(sample, dict) and old_top in sample:
+                    return True
+                # The nested object may arrive under a sibling added key.
+                if isinstance(sample, dict):
+                    for v in sample.values():
+                        if isinstance(v, dict) and old_top in v:
+                            return True
+    except Exception:
+        return False
+    return False
+
+
 def precondition(ctx: RepairContext) -> bool:
     """True when a single-field rename can be inferred."""
     if ctx.drift_class != "SCHEMA_RENAME":
@@ -207,6 +244,11 @@ def precondition(ctx: RepairContext) -> bool:
     # detector evidence); resolve once and use the canonical name below.
     canonical_old = _canonical_field_for(ctx, entity, old_field)
     if canonical_old is None or not _spec_field_paths(ctx, entity, canonical_old):
+        return False
+    # REQ-078 item 4: an added object that contains the missing keys is a
+    # path move, not a rename — refuse so nested_path_shift (or the model
+    # climb) owns it instead of proposing e.g. guest_name → $.localInfo.
+    if _added_holds_missing(ctx, old_field, new_field):
         return False
     # New field should not already be a canonical field name in that entity
     # (otherwise it's not a rename of source path but a different kind)

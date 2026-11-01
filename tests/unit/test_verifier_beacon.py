@@ -114,6 +114,18 @@ def test_accepted_outcomes_semantic_ambiguity() -> None:
                 # correct Complete with no patch is accepted alongside the
                 # operator question.
                 assert accepted == {"degraded_question", "no_patch"}
+            elif str(inst["family"]) == "code_list" and str(inst["expected"]) == "repair":
+                # REQ-078 item 8 (owner decision): asking is correct where
+                # nothing reveals a random new code's meaning.
+                assert accepted == {"repair", "escalate", "degraded_question"}
+            elif (
+                str(inst["family"]) == "transport_auth"
+                and str(inst["expected"]) == "no_patch"
+                and params.get("kind") == "token_expired"
+            ):
+                # REQ-078 item 8 (owner decision): escalating an expired
+                # token is right.
+                assert accepted == {"no_patch", "escalate", "degraded_question"}
             else:
                 assert accepted == {str(inst["expected"])}
 
@@ -128,7 +140,7 @@ def _arm(outcome: str, patched: bool = False, question: bool = False) -> dict[st
 
 
 def test_grade_repair_pass_and_fail() -> None:
-    repair = _find(lambda i: i["expected"] == "repair" and i["family"] != "semantic")
+    repair = _find(lambda i: i["expected"] == "repair" and i["family"] not in ("semantic", "code_list"))
     assert grade_arm_outcome(repair, _arm("Complete", patched=True))[0]
     for bad in (
         _arm("Complete", patched=False),
@@ -137,6 +149,14 @@ def test_grade_repair_pass_and_fail() -> None:
         _arm("Complete", patched=True) | {"outcome": "Complete!"},
     ):
         assert not grade_arm_outcome(repair, bad)[0]
+
+
+def test_grade_code_list_repair_accepts_escalation() -> None:
+    """REQ-078 item 8: a code_list repair with a guessed-nothing escalation
+    passes; a guessed mapping that fails records is a wrong patch."""
+    repair = _find(lambda i: i["expected"] == "repair" and i["family"] == "code_list")
+    assert grade_arm_outcome(repair, _arm("Complete", patched=True))[0]
+    assert grade_arm_outcome(repair, _arm("Blocked", patched=False, question=True))[0]
 
 
 def test_grade_no_patch_pass_and_fail() -> None:

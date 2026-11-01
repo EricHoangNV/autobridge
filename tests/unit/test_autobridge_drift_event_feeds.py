@@ -46,9 +46,19 @@ def _v3_samples() -> list[dict[str, str]]:
     ]
 
 
-def test_mapped_wire_ids_single_path_only() -> None:
+def test_mapped_wire_ids_include_multi_path() -> None:
+    # REQ-078 item 4: multi-path `paths` entries count — every announced
+    # wire id resolves to the canonical field that consumes it, so a
+    # rename of DA/TI is visible to the detector.
     mapped = mapped_wire_ids_for_feed(_fias_like_spec(), "PS")
-    assert mapped == {"reservation_id": "RN", "amount": "TA"}
+    assert mapped == {
+        "reservation_id": "RN",
+        "amount": "TA",
+        "charge_id[0]": "RN",
+        "charge_id[1]": "P#",
+        "posted_at[0]": "DA",
+        "posted_at[1]": "TI",
+    }
     assert mapped_wire_ids_for_feed(_fias_like_spec(), "WR") == {}
     assert mapped_wire_ids_for_feed(_fias_like_spec(), "NOPE") == {}
     assert mapped_wire_ids_for_feed({}, "PS") == {}
@@ -68,7 +78,7 @@ def test_reorder_and_pure_addition_do_not_trip_repair() -> None:
         _fias_like_spec(), "PS", ["P#", "RN", "TI", "DA", "SO", "TA", "DU", "DD", "CX"], None
     )
     assert report["drift_found"] is False
-    assert report["added_wire"] == ["CX", "DA", "DD", "DU", "P#", "SO", "TI"]
+    assert report["added_wire"] == ["CX", "DD", "DU", "SO"]
     assert report["rename"] is None
 
 
@@ -76,7 +86,7 @@ def test_v3_rename_detected_with_money_shape() -> None:
     report = detect_feed_field_rename(_fias_like_spec(), "PS", V3_PS, _v3_samples())
     assert report["drift_found"] is True
     assert report["missing_wire"] == ["TA"]
-    assert report["added_wire"] == ["CX", "DA", "DD", "DU", "P#", "SO", "TI", "TM"]
+    assert report["added_wire"] == ["CX", "DD", "DU", "SO", "TM"]
     assert report["rename"] == {
         "entity": "FolioCharge",
         "canonical_field": "amount",
@@ -117,15 +127,18 @@ def test_ambiguous_added_without_shape_stays_unpaired() -> None:
 
 
 def test_single_swap_pairs_without_samples() -> None:
-    # Minimal feed: exactly one mapped id swapped for one new id.
-    report = detect_feed_field_rename(_fias_like_spec(), "PS", ["TA", "RM"], None)
+    # Minimal feed: exactly one mapped id swapped for one new id (every
+    # other mapped id still announced, so the rename is unambiguous).
+    report = detect_feed_field_rename(
+        _fias_like_spec(), "PS", ["RN", "P#", "DA", "TI", "RM"], None
+    )
     assert report["drift_found"] is True
-    assert report["missing_wire"] == ["RN"]
+    assert report["missing_wire"] == ["TA"]
     assert report["added_wire"] == ["RM"]
     assert report["rename"] == {
         "entity": "FolioCharge",
-        "canonical_field": "reservation_id",
-        "old_wire": "RN",
+        "canonical_field": "amount",
+        "old_wire": "TA",
         "new_wire": "RM",
         "new_path": "$.RM",
     }

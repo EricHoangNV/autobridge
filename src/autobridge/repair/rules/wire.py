@@ -120,6 +120,40 @@ def wire_rename_hint(signals: list[Any]) -> tuple[str | None, str, str] | None:
                 missing[0],
                 str(added[0]["key"]),
             )
+        # REQ-078 item 4: the FIAS/event-feed rename pairing rides the
+        # signal details (old → new wire id, resolved by the detector).
+        rename = details.get("rename")
+        if (
+            isinstance(rename, dict)
+            and isinstance(rename.get("old_field"), str)
+            and isinstance(rename.get("new_field"), str)
+        ):
+            entity = details.get("entity")
+            return (
+                entity if isinstance(entity, str) else None,
+                str(rename["old_field"]),
+                str(rename["new_field"]),
+            )
+    for kind, _op, details in _signal_triples(signals):
+        # REQ-078 item 4: a mapped field emptied while the old key stays
+        # (blank/default) pairs with the single added-key candidate —
+        # the old key never resolves via missing/added.
+        if kind != "mapped_field_emptied":
+            continue
+        old_key = details.get("wire_key")
+        candidates = details.get("added_candidates")
+        if (
+            isinstance(old_key, str)
+            and isinstance(candidates, list)
+            and len(candidates) == 1
+            and isinstance(candidates[0], str)
+        ):
+            entity = details.get("entity")
+            return (
+                entity if isinstance(entity, str) else None,
+                old_key,
+                str(candidates[0]),
+            )
     return None
 
 

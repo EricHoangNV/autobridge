@@ -68,11 +68,14 @@ def _entity_for_operation(spec: dict[str, Any], op_name: str) -> tuple[str, dict
 
 
 def mapped_wire_ids_for_feed(spec: dict[str, Any], record_type: str) -> dict[str, str]:
-    """Canonical field → wire id for single-path mappings of the feed.
+    """Canonical field → wire id for the feed (REQ-078 item 4).
 
-    Only ``{"path": "$.<id>"}`` mappings count: multi-path (concat) and
-    const-led fields carry no single wire id to compare against the
-    announcement.
+    ``{"path": "$.<id>"}`` mappings count, and so does every entry of a
+    multi-path ``{"paths": [...]}`` mapping (e.g. a concat of DA + TI):
+    each announced wire id must resolve to the canonical field that
+    consumes it, or a rename of one of those ids is invisible to the
+    detector. Keys are ``canonical`` for single-path mappings and
+    ``canonical[i]`` for the i-th path of a multi-path mapping.
     """
     mapped: dict[str, str] = {}
     for op_name, _op in _feed_operations(spec, record_type):
@@ -87,11 +90,17 @@ def mapped_wire_ids_for_feed(spec: dict[str, Any], record_type: str) -> dict[str
             if not isinstance(mapping, dict):
                 continue
             path = mapping.get("path")
-            if not isinstance(path, str):
-                continue
-            wid = _wire_id_of(path)
-            if wid is not None and canonical not in mapped:
-                mapped[str(canonical)] = wid
+            if isinstance(path, str):
+                wid = _wire_id_of(path)
+                if wid is not None and canonical not in mapped:
+                    mapped[str(canonical)] = wid
+            paths = mapping.get("paths")
+            if isinstance(paths, list):
+                for i, p in enumerate(paths):
+                    if isinstance(p, str):
+                        wid = _wire_id_of(p)
+                        if wid is not None:
+                            mapped.setdefault(f"{canonical}[{i}]", wid)
     return mapped
 
 
@@ -138,6 +147,7 @@ def detect_feed_field_rename(
     record_type: str,
     announced_field_ids: list[str],
     sample_records: list[dict[str, Any]] | None = None,
+    baseline_announced: list[str] | None = None,
 ) -> dict[str, Any]:
     """Compare an announced feed layout against the spec's mapped wire ids.
 
@@ -181,7 +191,10 @@ def detect_feed_field_rename(
     rename: dict[str, Any] | None = None
     if len(missing) == 1 and added:
         old_wire = missing[0]
-        canonical = next((c for c, w in mapped.items() if w == old_wire), None)
+        raw_canonical = next((c for c, w in mapped.items() if w == old_wire), None)
+        # Multi-path mappings key as ``canonical[i]`` (REQ-078 item 4):
+        # the rename rule pairs on the canonical field name.
+        canonical = str(raw_canonical).split("[")[0] if raw_canonical is not None else None
         ent_fields: dict[str, Any] = {}
         if entity is not None:
             entities = spec.get("entities", {})
@@ -216,6 +229,14 @@ def detect_feed_field_rename(
     drift_found = bool(missing)
     delta: FingerprintDelta | None = None
     if drift_found and entity is not None:
+        # REQ-078 item 4: the delta compares baseline-announced to
+        # current-announced ids (1:1 layout change), falling back to the
+        # mapped ids when no baseline announcement rides the call.
+        _baseline_ids = (
+            sorted({str(fid) for fid in baseline_announced})
+            if baseline_announced is not None
+            else sorted(set(mapped.values()))
+        )
         delta = FingerprintDelta(
             fingerprint_changed=True,
             pagination_changed=False,
@@ -226,7 +247,7 @@ def detect_feed_field_rename(
             keys_details={},
             types_details={
                 entity: {
-                    "previous": {wire: "str" for wire in sorted(mapped.values())},
+                    "previous": {wire: "str" for wire in _baseline_ids},
                     "current": {fid: "str" for fid in announced},
                 }
             },

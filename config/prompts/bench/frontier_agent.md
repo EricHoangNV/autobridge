@@ -49,7 +49,10 @@ You are given the pre-drift spec under repair
 response sample). Repair THAT spec from THAT evidence: patch paths
 address the pre-drift spec document only. When the right mapping is a
 business decision the evidence does not settle, escalate with one
-question instead of guessing. A whole ConnectorSpec is never an
+question instead of guessing. "No change needed" is a stated answer for
+every arm: when the faulted sync is correct and no repair is needed,
+answer with an empty patch `[]` (it means no change), never an unrelated
+edit. A whole ConnectorSpec is never an
 answer — only a patch on the given spec, or an escalation.
 
 ## User

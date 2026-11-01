@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import subprocess
 import sys
 from decimal import Decimal
@@ -253,7 +254,7 @@ def test_driver_run_via_fake_script() -> None:
     assert parsed.total_tokens > 0
 
 
-def test_driver_run_success_with_fake(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_driver_run_success_with_fake(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     # Use monkeypatch to stub subprocess.run
     fake_stdout = build_fake_claude_output("generated spec", input_tokens=100, output_tokens=200, model="claude-test")
     monkeypatch.setattr(
@@ -261,7 +262,7 @@ def test_driver_run_success_with_fake(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=0, stdout=fake_stdout, stderr=""),  # noqa: ARG005
     )
     d = ClaudeCodeDriver(cli_path="claude")
-    res = d.run("make a spec")
+    res = d.run("make a spec", cwd=tmp_path)
     assert res.text == "generated spec"
     assert res.total_tokens == 300
     assert res.model == "claude-test"
@@ -269,34 +270,34 @@ def test_driver_run_success_with_fake(monkeypatch: pytest.MonkeyPatch) -> None:
     assert d.last_prompt == "make a spec"
 
 
-def test_driver_run_nonzero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_driver_run_nonzero_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     monkeypatch.setattr(
         "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout="out", stderr="bad prompt"),  # noqa: ARG005
     )
     d = ClaudeCodeDriver(cli_path="claude")
     with pytest.raises(ClaudeCliError, match="failed with exit 1"):
-        d.run("prompt")
+        d.run("prompt", cwd=tmp_path)
 
 
-def test_driver_run_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_driver_run_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise subprocess.TimeoutExpired(cmd="claude", timeout=1, output="o", stderr="e")
 
     monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     d = ClaudeCodeDriver(cli_path="claude", timeout_s=1)
     with pytest.raises(ClaudeCliError, match="timed out"):
-        d.run("prompt")
+        d.run("prompt", cwd=tmp_path)
 
 
-def test_driver_run_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_driver_run_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise FileNotFoundError("no such file")
 
     monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     d = ClaudeCodeDriver(cli_path="claude-not-exist")
     with pytest.raises(ClaudeCliError, match="not found"):
-        d.run("prompt")
+        d.run("prompt", cwd=tmp_path)
 
 
 def test_driver_last_prompt_none() -> None:
@@ -304,7 +305,7 @@ def test_driver_last_prompt_none() -> None:
     assert d.last_prompt is None
 
 
-def test_driver_custom_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_driver_custom_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     captured: dict[str, object] = {}
 
     def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -314,7 +315,7 @@ def test_driver_custom_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     d = ClaudeCodeDriver(cli_path="claude", timeout_s=10)
-    d.run("hi", timeout_s=5)
+    d.run("hi", timeout_s=5, cwd=tmp_path)
     assert captured["timeout"] == 5
 
 
@@ -323,63 +324,63 @@ def test_driver_custom_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_fake_driver_default() -> None:
+def test_fake_driver_default(tmp_path: pathlib.Path) -> None:
     f = FakeClaudeDriver()
     assert f.last_prompt is None
-    res = f.run("hello")
+    res = f.run("hello", cwd=tmp_path)
     assert res.text == "fake claude response"
     assert res.total_tokens == 30  # 10+20 default
     assert f.last_prompt == "hello"
     assert len(f.calls) == 1
 
 
-def test_fake_driver_direct_hit() -> None:
+def test_fake_driver_direct_hit(tmp_path: pathlib.Path) -> None:
     f = FakeClaudeDriver(responses={"hello": "world"})
-    res = f.run("hello")
+    res = f.run("hello", cwd=tmp_path)
     assert res.text == "world"
 
 
-def test_fake_driver_substring() -> None:
+def test_fake_driver_substring(tmp_path: pathlib.Path) -> None:
     f = FakeClaudeDriver(responses={"spec": "custom spec"})
-    res = f.run("make a spec for harbor")
+    res = f.run("make a spec for harbor", cwd=tmp_path)
     assert res.text == "custom spec"
 
 
-def test_fake_driver_result_object() -> None:
+def test_fake_driver_result_object(tmp_path: pathlib.Path) -> None:
     canned = ClaudeCliResult(text="canned", usage=Usage(5, 5), model="m")
     f = FakeClaudeDriver(responses={"hi": canned})
-    res = f.run("hi there")
+    res = f.run("hi there", cwd=tmp_path)
     assert res.text == "canned"
     assert res.usage.input_tokens == 5
 
 
-def test_fake_driver_callable_returns_result() -> None:
+def test_fake_driver_callable_returns_result(tmp_path: pathlib.Path) -> None:
     def fn(prompt: str) -> ClaudeCliResult:
         return ClaudeCliResult(text=f"echo:{prompt}", usage=Usage(1, 1))
 
     f = FakeClaudeDriver(responses={"echo": fn})
-    res = f.run("echo this")
+    res = f.run("echo this", cwd=tmp_path)
     assert res.text == "echo:echo this"
 
 
-def test_fake_driver_callable_returns_string() -> None:
+def test_fake_driver_callable_returns_string(tmp_path: pathlib.Path) -> None:
     def fn(prompt: str) -> str:
         return f"str:{prompt}"
 
     f = FakeClaudeDriver(responses={"echo": fn})
-    res = f.run("echo this")
+    res = f.run("echo this", cwd=tmp_path)
     assert res.text == "str:echo this"
 
 
-def test_fake_driver_string_coercion() -> None:
+def test_fake_driver_string_coercion(tmp_path: pathlib.Path) -> None:
     f = FakeClaudeDriver(responses={"a": 123})
-    res = f.run("a prompt")
+    res = f.run("a prompt", cwd=tmp_path)
     assert res.text == "123"
 
 
-def test_fake_driver_custom_usage() -> None:
+def test_fake_driver_custom_usage(tmp_path: pathlib.Path) -> None:
     f = FakeClaudeDriver(default_usage=Usage(1, 2), default_model="my-model")
-    res = f.run("hi")
+    res = f.run("hi", cwd=tmp_path)
     assert res.usage.input_tokens == 1
     assert res.model == "my-model"
 
@@ -395,13 +396,13 @@ def test_fake_driver_cwd_captured() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_codex_driver_stub() -> None:
+def test_codex_driver_stub(tmp_path: pathlib.Path) -> None:
     d = CodexCliDriver()
     assert d.cli_path == "codex"
     # Adapter stub is present (P1.W8.2); when binary missing it raises CodexCliError
     # with fallback hint (plan §9) instead of NotImplementedError.
     with pytest.raises(CodexCliError, match="fallback|not found|codex"):
-        d.run("prompt")
+        d.run("prompt", cwd=tmp_path)
 
 
 def test_codex_driver_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -609,7 +610,7 @@ def test_opencode_driver_passes_derived_model(monkeypatch: pytest.MonkeyPatch) -
     assert cmd[cmd.index("-m") + 1] == "meta/muse-wonder-1.0"
 
 
-def test_opencode_driver_stdin_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_opencode_driver_stdin_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     """REQ-061 item 2: the driver never inherits stdin (the sandbox hang)."""
     seen: dict[str, object] = {}
 
@@ -623,7 +624,7 @@ def test_opencode_driver_stdin_closed(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
-    OpenCodeCliDriver(cli_path="opencode", model="meta/muse-spark-1.3").run("hi")
+    OpenCodeCliDriver(cli_path="opencode", model="meta/muse-spark-1.3").run("hi", cwd=tmp_path)
     assert seen.get("stdin") == subprocess.DEVNULL
 
 
@@ -647,7 +648,7 @@ def test_cli_drivers_stdin_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen.get("stdin") == subprocess.DEVNULL
 
 
-def test_opencode_driver_nonzero_carries_stdout_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_opencode_driver_nonzero_carries_stdout_reason(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     """REQ-061 item 3: exit 1 with empty stderr names the stdout error event."""
     stdout = json.dumps(
         {
@@ -661,30 +662,30 @@ def test_opencode_driver_nonzero_carries_stdout_reason(monkeypatch: pytest.Monke
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout=stdout, stderr=""),  # noqa: ARG005
     )
     with pytest.raises(OpenCodeCliError, match="invalid_api_key") as exc_info:
-        OpenCodeCliDriver(cli_path="opencode").run("prompt")
+        OpenCodeCliDriver(cli_path="opencode").run("prompt", cwd=tmp_path)
     assert "exit 1" in str(exc_info.value)
     # The raw stdout is still attached for debugging.
     assert exc_info.value.stdout == stdout
 
 
-def test_opencode_driver_nonzero_carries_stdout_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_opencode_driver_nonzero_carries_stdout_tail(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     """REQ-061 item 3: exit 1 with no error event still shows the stdout tail."""
     monkeypatch.setattr(
         "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout="some explainer line", stderr=""),  # noqa: ARG005
     )
     with pytest.raises(OpenCodeCliError, match="some explainer line"):
-        OpenCodeCliDriver(cli_path="opencode").run("prompt")
+        OpenCodeCliDriver(cli_path="opencode").run("prompt", cwd=tmp_path)
 
 
-def test_opencode_driver_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_opencode_driver_run_success(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     fake_stdout = build_fake_opencode_output("spec yaml", input_tokens=11, output_tokens=22, model="spark")
     monkeypatch.setattr(
         "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=0, stdout=fake_stdout, stderr=""),  # noqa: ARG005
     )
     d = OpenCodeCliDriver(cli_path="opencode", model="meta/muse-spark-1.3")
-    res = d.run("make a spec")
+    res = d.run("make a spec", cwd=tmp_path)
     assert res.text == "spec yaml"
     assert res.total_tokens == 33
     assert res.model == "spark"
@@ -692,36 +693,36 @@ def test_opencode_driver_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert d.calls[0]["cmd"][4:6] == ["-m", "meta/muse-spark-1.3"]
 
 
-def test_opencode_driver_run_nonzero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_opencode_driver_run_nonzero_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     monkeypatch.setattr(
         "bench.baseline_coding_agent.subprocess.run",
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=1, stdout="out", stderr="bad"),  # noqa: ARG005
     )
     with pytest.raises(OpenCodeCliError, match="failed with exit 1"):
-        OpenCodeCliDriver(cli_path="opencode").run("prompt")
+        OpenCodeCliDriver(cli_path="opencode").run("prompt", cwd=tmp_path)
 
 
-def test_opencode_driver_run_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_opencode_driver_run_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise subprocess.TimeoutExpired(cmd="opencode", timeout=1, output="o", stderr="e")
 
     monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     with pytest.raises(OpenCodeCliError, match="timed out"):
-        OpenCodeCliDriver(cli_path="opencode", timeout_s=1).run("prompt")
+        OpenCodeCliDriver(cli_path="opencode", timeout_s=1).run("prompt", cwd=tmp_path)
 
 
-def test_opencode_driver_run_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_opencode_driver_run_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     def fake_run(*a: object, **_kw: object) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
         raise FileNotFoundError("no such file")
 
     monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
     with pytest.raises(OpenCodeCliError, match="not found"):
-        OpenCodeCliDriver(cli_path="opencode-not-exist").run("prompt")
+        OpenCodeCliDriver(cli_path="opencode-not-exist").run("prompt", cwd=tmp_path)
 
 
-def test_fake_opencode_driver_default() -> None:
+def test_fake_opencode_driver_default(tmp_path: pathlib.Path) -> None:
     f = FakeOpenCodeDriver()
-    res = f.run("hello")
+    res = f.run("hello", cwd=tmp_path)
     assert res.text == "fake opencode response"
     assert res.total_tokens == 30
     assert res.model == "fake-opencode"

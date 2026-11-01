@@ -97,6 +97,12 @@ beacon_maybe_push() {
     return 0
   fi
   if [ -z "${CONFIRM:-}" ]; then
+    # REQ-078 item 8: non-TTY PUSH=yes without CONFIRM=yes fails loudly
+    # instead of hanging (or silently skipping) on the read.
+    if [ ! -t 0 ]; then
+      echo "beacon-eval: PUSH=yes needs CONFIRM=yes when stdin is not a TTY (refusing push)" >&2
+      return 4
+    fi
     printf 'push the freeze/results (branch + tag %s) upstream? [yes/no] ' "$tag"
     local answer
     read -r answer

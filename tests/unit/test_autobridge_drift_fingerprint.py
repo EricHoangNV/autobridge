@@ -347,11 +347,24 @@ def test_diff_fingerprints_same() -> None:
 
 
 def test_diff_fingerprints_pagination_changed() -> None:
+    import copy
+
     spec = _spec_dict()
     r1 = {"list_reservations": OperationResult(operation="list_reservations", records=[], pages_fetched=1, stop_reason="null_cursor")}
     r2 = {"list_reservations": OperationResult(operation="list_reservations", records=[], pages_fetched=2, stop_reason="repeated_cursor", repeated_cursor=True)}
     prev = compute_fingerprint(spec, r1, {"Reservation": [{"reservation_id": "R1"}]})
-    cur = compute_fingerprint(spec, r2, {"Reservation": [{"reservation_id": "R1"}]})
+    # REQ-078 item 4: runtime counters (pages_fetched, stop_reason) are
+    # not pagination shape — an aborted sync is not a pagination change.
+    counters_only = compute_fingerprint(spec, r2, {"Reservation": [{"reservation_id": "R1"}]})
+    assert not diff_fingerprints(prev, counters_only).pagination_changed
+    moved = copy.deepcopy(spec)
+    moved["operations"]["list_reservations"]["pagination"] = {
+        "strategy": "offset",
+        "page_param": "page",
+        "items_path": "$.data",
+        "stop_when": ["null_cursor"],
+    }
+    cur = compute_fingerprint(moved, r2, {"Reservation": [{"reservation_id": "R1"}]})
     delta = diff_fingerprints(prev, cur)
     assert delta.fingerprint_changed
     assert delta.pagination_changed

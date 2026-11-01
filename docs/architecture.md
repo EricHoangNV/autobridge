@@ -20,10 +20,24 @@ Design principles (plan §1):
 3. **Deterministic first, models last** — ladder L0 → L1 → L2 → L3 → L4;
    every model call goes through `LLMProvider` + `Budget` and lands in
    `ModelCall`; known repair patterns use L0/L1 only (`frontier_tokens == 0`).
-   L3 runs for semantic drift / UNKNOWN after the enumerator; a detected
-   class with no rule escalates at L4 with its question (0 model tokens).
+   The engine asks when it does not know (REQ-078): every repairable drift
+   class that L0/L1 cannot fix climbs to the model (L2/L3), and only when
+   the model cannot produce a verified fix does it ask the operator. No
+   class list gates the climb anywhere — the only classes that never climb
+   are the true non-fixables (`CAPABILITY_REMOVED`, `AUTH_REVOKED` →
+   operator with a specific question) and backoff/transient (retry). A
+   verified model patch becomes an approvable candidate through the same
+   release path and verifier gate as an L1 patch (never auto-applied; a
+   confident L2 winner is turned into a patch through the same checks);
+   money semantics stay a business decision (the model's patch rides the
+   escalation bundle as the proposal). L3 evidence is class-neutral
+   (signals + messages, fingerprint delta, unmet criteria, failed L1
+   attempts, relevant spec subtree, faulted-records sample); allowed
+   pointers derive from what the delta touches. A failed L1 dry-run climbs
+   with the failure as evidence.
    The detector also names silent-corruption shapes (`mapped_field_emptied`
-   → `SCHEMA_RENAME`, `money_scale_shift` → `SEMANTIC_VALUE_DRIFT`): after
+   → `SCHEMA_RENAME`, `money_scale_shift` → `SEMANTIC_VALUE_DRIFT`,
+   `date_shift` → `SCHEMA_TYPE_CHANGE`): after
    each clean `Complete` sync the engine persists a bounded per-connector
    money sketch (`connector_value_baselines`, join keys + money fields
    only, scoped to the release that stored it), and the next detection
@@ -31,8 +45,17 @@ Design principles (plan §1):
    escalates instead of syncing `Complete` with wrong values. The very
    first sync (no baseline yet) stays silent by design; bench/beacon reach
    detection through the same sketch, never a richer raw passthrough.
-   Climbing to L3 for non-semantic classes was tried and removed
-   (REQ-064/REQ-065: no extra fixes, only frontier tokens).
+   Money moved by any constant ratio on the same keys (power-of-ten
+   minor/major units, gross→net ×0.25/×0.5) raises `money_scale_shift`; a
+   constant date/datetime offset (or non-ISO values in a canonical date
+   field) raises `date_shift`; a mapped field turned into a constant
+   zero/default counts as emptied, carrying the added-key candidates for
+   `rename_field`. An added object holding the missing keys is a path move,
+   never a rename. Feed renames resolve multi-path `paths` ids; fingerprint
+   pagination shape ignores runtime counters; `http_error` /
+   `transient_error` unmet criteria map to TRANSIENT. The earlier removal of
+   non-semantic L3 (REQ-064/REQ-065) is superseded: the engine now climbs
+   for every repairable class because silent wrong records must never pass.
 4. **Success is not a 200** — every `SyncRun` ends `Complete | Degraded |
    Blocked` with the unmet criterion named.
 5. **Money is `Decimal`, dates are property-local business dates** end to end.

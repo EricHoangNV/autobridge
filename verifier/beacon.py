@@ -112,6 +112,23 @@ def accepted_outcomes_for(instance: dict[str, Any]) -> set[str]:
     expected = str(instance["expected"])
     if str(instance["family"]) == "semantic" and expected == "repair":
         return {"repair", "degraded_question"}
+    # REQ-078 item 8 (owner decision): code_list "repair" instances map new
+    # codes to random statuses nothing reveals — asking the operator is
+    # the correct answer there (accept escalate / one question); a guessed
+    # mapping is a wrong patch (the records judge fails it).
+    # REQ-078 item 8 (owner decision): the engine can refresh only OAuth
+    # client-credentials tokens — escalating on an expired token is right,
+    # so the key accepts an escalation with one question there (alongside
+    # the reference-solver's no_patch).
+    if (
+        str(instance["family"]) == "transport_auth"
+        and expected == "no_patch"
+        and isinstance(instance.get("params"), dict)
+        and str(instance["params"].get("kind")) == "token_expired"
+    ):
+        return {"no_patch", "escalate", "degraded_question"}
+    if str(instance["family"]) == "code_list" and expected == "repair":
+        return {"repair", "escalate", "degraded_question"}
     params = instance.get("params")
     if (
         str(instance["family"]) == "semantic"
@@ -241,8 +258,11 @@ def _assert_terminal(
 # Arm grading (pure predicate over the reported arm outcome)
 # ---------------------------------------------------------------------------
 
-#: Valid SyncRun outcome names.
-ARM_OUTCOMES: frozenset[str] = frozenset({"Complete", "Degraded", "Blocked"})
+#: Valid SyncRun outcome names, plus the beacon's arm-failure class.
+#: ``Error`` is never an escalation and never passes: an arm that crashed,
+#: timed out, was truncated, ran out of budget or never ran (REQ-078 item 5)
+#: fails every instance with the failure named.
+ARM_OUTCOMES: frozenset[str] = frozenset({"Complete", "Degraded", "Blocked", "Error"})
 
 
 def grade_arm_outcome(instance: dict[str, Any], arm: dict[str, Any]) -> tuple[bool, str]:
@@ -255,6 +275,12 @@ def grade_arm_outcome(instance: dict[str, Any], arm: dict[str, Any]) -> tuple[bo
     outcome = arm.get("outcome")
     if outcome not in ARM_OUTCOMES:
         return (False, f"unknown arm outcome: {outcome!r}")
+    if outcome == "Error":
+        # REQ-078 item 5: a crashed/timed-out/truncated/over-budget arm
+        # never passes — not even an escalate instance. Escalation passes
+        # only when the arm explicitly decided to ask.
+        failure = str(arm.get("failure") or arm.get("error") or "arm failed before attempting")
+        return (False, f"arm failed: {failure[:200]}")
     patched = bool(arm.get("patch_reached_release", False))
     question = bool(arm.get("operator_question", False))
     accepted = accepted_outcomes_for(instance)

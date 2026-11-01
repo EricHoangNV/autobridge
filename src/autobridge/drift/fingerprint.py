@@ -331,13 +331,29 @@ def diff_fingerprints(
     pagination_details: dict[str, Any] = {}
     prev_pag = prev_d.get("pagination_shape")
     cur_pag = cur_d.get("pagination_shape") if cur_d else None
+    # REQ-078 item 4: runtime counters (pages_fetched, stop_reason,
+    # repeated_cursor) are not pagination shape — an aborted sync is not
+    # a pagination change. Compare the spec-shape keys only.
+    def _pag_shape_only(shape: Any) -> Any:
+        if not isinstance(shape, dict):
+            return shape
+        out: dict[str, Any] = {}
+        for op, entry in shape.items():
+            if isinstance(entry, dict):
+                out[op] = {
+                    k: v for k, v in entry.items()
+                    if k not in ("pages_fetched", "stop_reason", "repeated_cursor")
+                }
+            else:
+                out[op] = entry
+        return out
     if prev_pag is not None and cur_pag is not None:  # noqa: SIM102
-        if prev_pag != cur_pag:  # noqa: SIM102
+        if _pag_shape_only(prev_pag) != _pag_shape_only(cur_pag):  # noqa: SIM102
             pagination_changed = True
             # Detail per operation which keys differ
             all_ops = set(prev_pag.keys()) | set(cur_pag.keys())
             for op in sorted(all_ops):
-                if prev_pag.get(op) != cur_pag.get(op):
+                if _pag_shape_only({op: prev_pag.get(op)}) != _pag_shape_only({op: cur_pag.get(op)}):
                     pagination_details[op] = {
                         "previous": prev_pag.get(op),
                         "current": cur_pag.get(op),

@@ -1,13 +1,14 @@
-"""REQ-065: L3 runs for semantic drift / UNKNOWN only (REQ-064 B2 removed).
+"""REQ-078 item 1 (supersedes REQ-065): every repairable drift climbs past L1.
 
-"Deterministic first, models last": a detected non-semantic class with no
-fitting rule escalates at L4 with its question and 0 model tokens. The
-bench engine arms never call the provider for such a class, and the live
-sync path never defers it to a background job (only SEMANTIC_VALUE_DRIFT
-defers when a live call is wanted). Silent-corruption detection (B1:
-``mapped_field_emptied``/``money_scale_shift``) is unchanged — those
-signals still classify, and a detected class with no rule escalates with
-its question. Every test uses FakeProvider (no network, no key).
+"Deterministic first, models last" stays: an L1 rule hit never reaches
+the model, and the true non-fixables (CAPABILITY_REMOVED, AUTH_REVOKED)
+plus backoff/transient never climb. But there is no class list gating
+the climb anywhere: any other drift class that L0/L1 cannot repair
+reaches L2/L3 with a fake provider, and the deferred live-model job
+path applies to every repairable class, not only SEMANTIC_VALUE_DRIFT.
+Silent-corruption detection (B1: ``mapped_field_emptied`` /
+``money_scale_shift``) is unchanged. Every test uses FakeProvider (no
+network, no key).
 """
 
 from __future__ import annotations
@@ -17,16 +18,17 @@ from typing import Any
 from autobridge.llm.provider import FakeProvider
 
 
-def test_bench_climb_gate_is_semantic_only() -> None:
-    """The bench phase-2 gate climbs only for semantic ambiguity."""
+def test_bench_climb_gate_has_no_class_list() -> None:
+    """No hard-coded class list gates the model climb (REQ-078 item 1)."""
     from bench.ablation import _MODEL_AMBIGUITY_CLASSES
 
-    assert frozenset({"SEMANTIC_VALUE_DRIFT"}) == _MODEL_AMBIGUITY_CLASSES
+    assert frozenset() == _MODEL_AMBIGUITY_CLASSES
 
 
-def test_engine_arm_no_l3_for_detected_non_semantic_class() -> None:
+def test_engine_arm_climbs_for_detected_non_semantic_class() -> None:
     """status_vocab_change detects ENUM_NEW_VALUE with no fitting rule: the
-    arm escalates without calling the provider (0 frontier tokens)."""
+    arm climbs to the model (FakeProvider answers the escalation) instead
+    of stopping at a deterministic escalation."""
     import json
 
     from autobridge.llm.provider import Completion, Usage
@@ -49,9 +51,9 @@ def test_engine_arm_no_l3_for_detected_non_semantic_class() -> None:
         }
     )
     res = run_engine_arm(inputs, case, ablation="autobridge_cold", provider=provider)
-    assert provider.calls == [], "non-semantic class must not reach L3"
+    assert provider.calls != [], "non-semantic class with no rule must reach the model"
     assert res.spec is not None and res.spec["decision"] == "escalate"
-    assert res.frontier_tokens == 0
+    assert res.frontier_tokens > 0
 
 
 def test_l1_fix_never_calls_provider() -> None:
@@ -106,7 +108,7 @@ def _seed_atlas(factory: Any, spec: dict[str, Any]) -> tuple[str, str]:
 
 def _enum_blocked_summary() -> dict[str, Any]:
     """Blocked sync on an unknown enum value (ENUM_NEW_VALUE, no rule fits
-    without evidence): the ladder escalates with no patch."""
+    without evidence): the ladder climbs to the model, then escalates."""
     return {
         "outcome": "Blocked",
         "unmet_criteria": ["unknown_enum:status"],
@@ -129,12 +131,12 @@ def _enum_blocked_summary() -> dict[str, Any]:
     }
 
 
-def test_live_non_semantic_drift_escalates_inline_when_live_wanted(
+def test_live_non_semantic_drift_defers_when_live_wanted(
     monkeypatch: Any,
 ) -> None:
-    """Even with a live provider wanted, a non-semantic drift with no
-    fitting rule escalates inline (no background job, no repair_pending) —
-    only SEMANTIC_VALUE_DRIFT defers."""
+    """With a live provider wanted, a non-semantic drift also defers to a
+    background repair job (REQ-078 item 1) — the deferred path is not
+    semantic-only."""
     from autobridge.control.models import Job, RepairRun
     from autobridge.engine.detect_repair import detect_after_sync
 
@@ -162,9 +164,8 @@ def test_live_non_semantic_drift_escalates_inline_when_live_wanted(
         )
         s.commit()
     assert out["drift_found"] is True, out
-    assert not out.get("repair_pending"), out
-    assert out["decision"] == "escalate", out
+    assert out.get("repair_pending"), out
     assert out["drift_class"] == "ENUM_NEW_VALUE", out
     with factory() as s:
-        assert s.query(RepairRun).count() == 1
-        assert s.query(Job).count() == 0
+        assert s.query(RepairRun).count() == 0
+        assert s.query(Job).count() == 1

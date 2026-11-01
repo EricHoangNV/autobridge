@@ -200,11 +200,10 @@ _FORBIDDEN_CASE_KEYS = frozenset(
     }
 )
 
-#: Derived drift classes that justify a model climb (phase 2). Deterministic
-#: first (plan §2.5): every other class — structural, auth, transport,
-#: capability, duplicate, unknown-with-nothing-observed — runs the
-#: deterministic ladder only, with zero model calls.
-_MODEL_AMBIGUITY_CLASSES = frozenset({"SEMANTIC_VALUE_DRIFT"})
+#: REQ-078 item 1: no class list gates the model climb — kept as an empty
+#: set for backwards-compatible imports only. The controller holds the
+#: true non-fixables deterministic; every other class climbs past L1.
+_MODEL_AMBIGUITY_CLASSES: frozenset[str] = frozenset()
 
 #: Case data lives in config/ablation_cases.yaml (vendor names stay out of
 #: engine source per the trust-boundary guard). The builders below are
@@ -455,8 +454,13 @@ def preflight_frontier_agent(*, timeout_s: float = 300.0, driver: Any | None = N
     drv = driver if driver is not None else frontier_agent_driver()
     if not isinstance(drv, OpenCodeCliDriver):
         return None
+    # REQ-078 item 6: the driver requires a sandbox cwd — the preflight
+    # gets a throwaway one (never the repo).
+    import pathlib as _pathlib  # noqa: PLC0415
+    import tempfile as _tempfile  # noqa: PLC0415
+
     try:
-        res = drv.run("Reply with exactly: ok", timeout_s=timeout_s)
+        res = drv.run("Reply with exactly: ok", timeout_s=timeout_s, cwd=_pathlib.Path(_tempfile.mkdtemp(prefix="bench-preflight-")))
     except Exception as exc:
         raise RuntimeError(
             "bench ablation: frontier-agent preflight failed "
@@ -552,6 +556,25 @@ def run_frontier_agent_arm(inputs: Any, *, driver: Any | None = None, case: Abla
                         "(set OPENCODE_MODEL to the same provider/model)"
                     )[:1000],
                 )
+    except Exception:
+        pass
+    # REQ-078 item 7: one token ceiling for every arm, enforced for the
+    # agent too — the inputs ceiling is the same object every arm gets; a
+    # live agent row over it is a budget-exhausted failure, never a pass.
+    try:
+        _ceiling = int(getattr(inputs, "token_ceiling", 0) or 0)
+        _total = int(getattr(res, "input_tokens", 0) or 0) + int(getattr(res, "output_tokens", 0) or 0)
+        if _ceiling > 0 and getattr(res, "ran", False) and _total > _ceiling:
+            import dataclasses as _dataclasses2  # noqa: PLC0415
+
+            res = _dataclasses2.replace(
+                res,
+                ran=False,
+                outcome="budget_exhausted",
+                error=(
+                    f"budget_exhausted: agent used {_total} tokens over ceiling {_ceiling}"
+                )[:500],
+            )
     except Exception:
         pass
     return res
@@ -725,6 +748,24 @@ def _default_derive(
     )
 
 
+def _ladder_hit_budget(result: Any) -> bool:
+    """True when the climb escalated on BudgetExhausted (REQ-078 item 5).
+
+    A run out of budget grades as its own failure class, never as an
+    escalation — the beacon outcome mapper reads this flag.
+    """
+    try:
+        trace = list(getattr(result, "ladder_trace", None) or [])
+    except TypeError:
+        return False
+    for entry in trace:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("budget_type") or "BudgetExhausted" in str(entry.get("reason", "")):
+            return True
+    return False
+
+
 def _ladder_question(result: Any) -> str:
     """The operator question the ladder wrote, or "" when it wrote none.
 
@@ -838,23 +879,38 @@ def run_engine_arm(
         )
         # Phase 1: deterministic ladder first (never a model call).
         result = ctrl.handle(provider=None, hypotheses=None, enumerator_yield_count=None, **common)
-        # Phase 2: model climb only for derived semantic ambiguity with
-        # engine-enumerated hypotheses (deterministic first, models last).
-        if result.decision != "propose" and diag.drift_class in _MODEL_AMBIGUITY_CLASSES:
+        # REQ-078 item 1: every repairable drift climbs past L1 — no class
+        # list anywhere. The bench engine arms take exactly the production
+        # path (no bench-only gate): the same controller climb with the
+        # same provider the production job would resolve. True
+        # non-fixables and backoff/transient never climb (the controller
+        # holds them deterministic, 0 model calls).
+        if result.decision != "propose":
             hyps = enumerate_hypotheses(docs_ref=case.docs_ref, scenario_id=case.scenario_id)
-            if hyps:
-                active_provider = provider or ablation_provider()
-                result = ctrl.handle(
-                    provider=active_provider,
-                    hypotheses=list(hyps),
-                    enumerator_yield_count=len(hyps),
-                    **common,
-                )
+            active_provider = provider or ablation_provider()
+            result = ctrl.handle(
+                provider=active_provider,
+                hypotheses=list(hyps),
+                enumerator_yield_count=len(hyps),
+                **common,
+            )
         elapsed_ms = (time.monotonic() - start) * 1000.0
         usage = dict(result.model_usage or {})
         frontier = int(usage.get("frontier_tokens", 0) or 0)
         small = int(usage.get("small_tokens", 0) or 0)
         calls = int(usage.get("calls", 0) or 0)
+        # REQ-078 item 7: input/output tokens were swapped (input=small
+        # total, output=frontier total). Rows carry per-tier totals now.
+        frontier_in = int(usage.get("frontier_input", 0) or 0)
+        frontier_out = int(usage.get("frontier_output", 0) or 0)
+        small_in = int(usage.get("small_input", 0) or 0)
+        small_out = int(usage.get("small_output", 0) or 0)
+        total_in = frontier_in + small_in
+        total_out = frontier_out + small_out
+        if total_in == 0 and total_out == 0:
+            # Providers that report only tier totals: keep the totals
+            # visible instead of zeroes (never swap tiers again).
+            total_in, total_out = small + frontier, 0
         cost_raw = usage.get("estimated_cost", usage.get("cost_usd"))
         cost = None
         if cost_raw is not None:
@@ -892,8 +948,8 @@ def run_engine_arm(
             inputs=inputs,
             ran=result.decision in ("propose", "escalate"),
             elapsed_ms=elapsed_ms,
-            input_tokens=small,
-            output_tokens=frontier,
+            input_tokens=total_in,
+            output_tokens=total_out,
             frontier_tokens=frontier,
             cost_usd=cost,
             tool_calls=0,
@@ -909,6 +965,9 @@ def run_engine_arm(
                 "ladder_level_reached": result.ladder_level_reached,
                 "rule_id": result.rule_id,
                 "question": _ladder_question(result),
+                # REQ-078 item 5: a budget-exhausted climb grades as its
+                # own failure class, never as an escalation.
+                "budget_exhausted": _ladder_hit_budget(result),
             },
             prompt=None,
             context_hash=engine_context_hash,

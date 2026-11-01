@@ -33,6 +33,7 @@ freeze time). ``expected`` never appears in any bench-side file.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import datetime as _dt
@@ -200,6 +201,11 @@ class BeaconProtocol:
     # The agent arm's resolved opencode model (``meta/<id>`` form), only
     # written when it differs from ``frontier_model``.
     agent_model: str | None = None
+    # REQ-078 item 7: the frozen budgets — one token ceiling and one wall
+    # clock for every arm (the agent included). ``None`` = a pre-REQ-078
+    # protocol without the lines (still parses; env/defaults apply).
+    token_ceiling: int | None = None
+    wall_clock_s: float | None = None
 
 
 def parse_protocol(path: str | pathlib.Path = PROTOCOL_PATH) -> BeaconProtocol:
@@ -240,6 +246,18 @@ def parse_protocol(path: str | pathlib.Path = PROTOCOL_PATH) -> BeaconProtocol:
     arms = tuple(a.strip() for a in fields["beacon-arms"].split(",") if a.strip())
     if not arms or any(a not in ABLATION_ARMS for a in arms):
         raise BeaconError(f"protocol {path} has unknown arms: {arms}")
+    token_ceiling: int | None = None
+    wall_clock_s: float | None = None
+    if fields.get("beacon-token-ceiling") not in (None, ""):
+        try:
+            token_ceiling = int(str(fields["beacon-token-ceiling"]).strip())
+        except ValueError as exc:
+            raise BeaconError(f"protocol {path} has non-integer beacon-token-ceiling: {exc}") from exc
+    if fields.get("beacon-wall-clock-s") not in (None, ""):
+        try:
+            wall_clock_s = float(str(fields["beacon-wall-clock-s"]).strip())
+        except ValueError as exc:
+            raise BeaconError(f"protocol {path} has non-numeric beacon-wall-clock-s: {exc}") from exc
     return BeaconProtocol(
         round_after_utc=fields["beacon-round-after-utc"],
         target_round=target_round,
@@ -252,6 +270,8 @@ def parse_protocol(path: str | pathlib.Path = PROTOCOL_PATH) -> BeaconProtocol:
         rehearsal=fields.get("beacon-rehearsal", "false").strip().lower() == "true",
         frontier_model=fields.get("beacon-frontier-model") or None,
         agent_model=fields.get("beacon-agent-model") or None,
+        token_ceiling=token_ceiling,
+        wall_clock_s=wall_clock_s,
     )
 
 
@@ -384,6 +404,38 @@ def freeze(
     agent_line = (
         f"\n- beacon-agent-model: {pinned_agent}" if pinned_agent != pinned_frontier else ""
     )
+    # REQ-078 item 7: freeze the budgets — one token ceiling and one wall
+    # clock for every arm (the agent included). Resolved the same way the
+    # run resolves them (env wins, else the dev-ablation defaults).
+    import os as _os2  # noqa: PLC0415
+
+    from bench.harness import (  # noqa: PLC0415
+        DEFAULT_TOKEN_CEILING as _DEFAULT_CEIL,
+    )
+    from bench.harness import (
+        DEFAULT_WALL_CLOCK_S as _DEFAULT_WALL,
+    )
+
+    def _frozen_int(name: str, default: int) -> int:
+        raw = (_os2.environ.get(name, "") or "").strip()
+        if not raw:
+            return default
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise BeaconError(f"{name} must be an int: {exc}") from exc
+
+    def _frozen_float(name: str, default: float) -> float:
+        raw = (_os2.environ.get(name, "") or "").strip()
+        if not raw:
+            return default
+        try:
+            return float(raw)
+        except ValueError as exc:
+            raise BeaconError(f"{name} must be a number: {exc}") from exc
+
+    frozen_ceiling = _frozen_int("BENCH_TOKEN_CEILING", _DEFAULT_CEIL)
+    frozen_wall = _frozen_float("BENCH_WALL_CLOCK", _DEFAULT_WALL)
     frozen_at = now.isoformat()
     body = f"""# Beacon evaluation protocol (REQ-025 item 4)
 
@@ -404,6 +456,8 @@ run when the resolved model differs (REQ-066).
 - beacon-frozen-at-utc: {frozen_at}
 - beacon-rehearsal: {"true" if rehearsal else "false"}
 - beacon-frontier-model: {pinned_frontier}{agent_line}
+- beacon-token-ceiling: {frozen_ceiling}
+- beacon-wall-clock-s: {frozen_wall}
 - beacon-chain: {beacon_client.LOE_MAINNET_CHAIN_HASH} scheme={beacon_client.LOE_SCHEME_ID}
 - beacon-verify-url: {base_url.rstrip("/")}/public/{target_round}
 
@@ -797,7 +851,13 @@ def _derive_fias_diagnostics(
                 if wire_records:
                     break
     announced = sorted({str(k) for rec in wire_records for k in rec})
-    report = detect_feed_field_rename(spec, "PS", announced, sample_records=wire_records)
+    report = detect_feed_field_rename(
+        spec,
+        "PS",
+        announced,
+        sample_records=wire_records,
+        baseline_announced=sorted(_wire_keys(baseline_summary)),
+    )
     entity = report.get("entity")
     op_name: str | None = None
     try:
@@ -834,6 +894,9 @@ def _derive_fias_diagnostics(
             "missing": missing,
             "added": added,
             "wire_evidence": "feed-announced-layout",
+            # REQ-078 item 4: the report's rename pairing reaches the
+            # ladder (rename_field pairs by value off it).
+            **({"rename": dict(report.get("extra", {}).get("rename") or {})} if isinstance(report.get("extra"), dict) and report.get("extra", {}).get("rename") else {}),
         },
         fingerprint_delta=report.get("delta"),
     )
@@ -999,6 +1062,11 @@ class BeaconArmGrade:
     family: str
     verified_completion: int = 0
     wrong_patch_released: int = 0
+    # REQ-078 item 5: wrong patches *proposed* as well as released — a
+    # candidate the verifier rejects on the instance records counts here
+    # whether or not it reached a release (an unneeded patch on a
+    # no-change instance counts as wrong; see docs/benchmark.md).
+    wrong_patch_proposed: int = 0
     correct_escalation: int = 0
     frontier_tokens: int = 0
     small_tokens: int = 0
@@ -1024,12 +1092,18 @@ class BeaconArmGrade:
     grade_reason: str | None = None
     error: str | None = None
     executed: bool = True
+    # REQ-078 item 9: the warm arm learns during the run — after each
+    # instance a verified fix it produced is learned (the way an approved
+    # fix is in production) and is available to later instances. When a
+    # warm row reused an in-run learned fix, this names the source
+    # instance (None otherwise, and always None for cold).
+    warm_used_learned_from: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
 
 
-def _mean_ci95(values: list[float]) -> dict[str, Any]:
+def _mean_ci95(values: list[float], *, bounded: bool = False) -> dict[str, Any]:
     import math as _math
 
     n = len(values)
@@ -1037,10 +1111,33 @@ def _mean_ci95(values: list[float]) -> dict[str, Any]:
         return {"mean": 0.0, "ci95_lo": 0.0, "ci95_hi": 0.0, "n": 0}
     mean = statistics.fmean(values)
     if n == 1:
-        return {"mean": mean, "ci95_lo": mean, "ci95_hi": mean, "n": 1}
-    sd = statistics.pstdev(values)
-    half = 1.96 * sd / _math.sqrt(n)
-    return {"mean": mean, "ci95_lo": mean - half, "ci95_hi": mean + half, "n": n}
+        lo = hi = mean
+    else:
+        sd = statistics.pstdev(values)
+        half = 1.96 * sd / _math.sqrt(n)
+        lo, hi = mean - half, mean + half
+    if bounded:
+        # Rates live in [0, 1]: a CI that escapes the unit interval is a
+        # computation artefact, never a result.
+        lo, hi = max(0.0, lo), min(1.0, hi)
+    return {"mean": mean, "ci95_lo": lo, "ci95_hi": hi, "n": n}
+
+
+def _per_instance_means(
+    items: list[BeaconArmGrade], fn: Any
+) -> tuple[list[float], int]:
+    """Mean per instance first (over trials), then the instance means.
+
+    REQ-078 item 8: every arm keeps the frozen trial count, so scores are
+    averaged per instance first and CIs are computed over instances —
+    ``n`` names instances, and one lucky instance cannot dominate the
+    headline through trial count.
+    """
+    by_instance: dict[int, list[float]] = {}
+    for g in items:
+        by_instance.setdefault(int(g.instance_index), []).append(float(fn(g)))
+    means = [sum(v) / len(v) for v in by_instance.values() if v]
+    return means, len(means)
 
 
 def _verifier_post(verifier_url: str, path: str, payload: dict[str, Any], timeout_s: float = 30.0) -> dict[str, Any]:
@@ -1163,8 +1260,81 @@ def run_instance_trial(
         arm_reports[arm] = _summarize_result(result)
         _grade_arm_result(grade, descriptor, result, eval_seed_hex, public_url, verifier_url,
                           http_sync=http_sync, vendors=vendors)
+        if arm == "autobridge_warm":
+            _beacon_warm_learn(knowledge_warm, index, result, grade)
         grades.append(grade)
     return grades, arm_reports
+
+
+def _beacon_warm_learn(knowledge_warm: Any, index: int, result: Any, grade: BeaconArmGrade) -> None:
+    """In-run warm learning (REQ-078 item 9).
+
+    Instances run in the frozen order; after each instance a verified fix
+    the warm arm produced is learned (the way an approved fix is in
+    production: vendor + drift class + delta key → patch) and is
+    available to later instances. Cold never learns. The dev-split
+    pre-warm stays the starting cache. A warm row that reused an in-run
+    learned fix reports the source instance on the grade; per-instance
+    averaging keeps one lucky reuse from dominating the headline.
+    """
+    if knowledge_warm is None:
+        return
+    try:
+        spec = getattr(result, "spec", None)
+        if not isinstance(spec, dict):
+            return
+        from autobridge.repair.knowledge import cache_key as _cache_key
+    except Exception:
+        return
+    learn_inputs = spec.get("learn_inputs") if isinstance(spec.get("learn_inputs"), dict) else None
+    sources: dict[str, int] = getattr(knowledge_warm, "beacon_learned_sources", None) or {}
+    with contextlib.suppress(Exception):
+        knowledge_warm.beacon_learned_sources = sources
+    # Used a learned fix? An L0 hit whose key came from an earlier
+    # beacon instance (never the dev-split pre-warm).
+    try:
+        if (
+            learn_inputs is not None
+            and spec.get("ladder_level_reached") == 0
+            and spec.get("rule_id")
+        ):
+            _key = _cache_key(
+                str(learn_inputs.get("vendor", "unknown")),
+                str(learn_inputs.get("drift_class", "UNKNOWN")),
+                learn_inputs.get("delta"),
+            )
+            if _key in sources:
+                grade.warm_used_learned_from = sources[_key]
+    except Exception:
+        pass
+    # Learn this instance's verified fix for later instances.
+    try:
+        if (
+            grade.verified_completion == 1
+            and learn_inputs is not None
+            and isinstance(spec.get("candidate_patch"), list)
+            and spec.get("candidate_patch")
+        ):
+            _key = _cache_key(
+                str(learn_inputs.get("vendor", "unknown")),
+                str(learn_inputs.get("drift_class", "UNKNOWN")),
+                learn_inputs.get("delta"),
+            )
+            if _key not in sources:
+                knowledge_warm.put(
+                    str(learn_inputs.get("vendor", "unknown")),
+                    learn_inputs.get("delta"),
+                    [dict(op) for op in spec["candidate_patch"] if isinstance(op, dict)],
+                    str(spec.get("rule_id") or "beacon-learned"),
+                    drift_class=str(learn_inputs.get("drift_class", "UNKNOWN")),
+                    approval_id=f"beacon:{index}",
+                    actor="beacon-warm",
+                )
+                sources[_key] = index
+                with contextlib.suppress(Exception):
+                    knowledge_warm.beacon_learned_sources = sources
+    except Exception:
+        pass
 
 
 def _run_arm(
@@ -1251,6 +1421,34 @@ def _run_arm(
                 "n_added": n_added,
                 "classification_reason": str(getattr(diag, "classification_reason", ""))[:300],
             }
+            # REQ-078 item 9: learn inputs for in-run warm learning (vendor
+            # + drift class + JSON-safe delta the knowledge key derives
+            # from — same key production approval learning uses).
+            try:
+                from autobridge.repair.knowledge import delta_to_json as _delta_to_json
+            except Exception:
+                _delta_to_json = None  # type: ignore[assignment]
+            try:
+                _delta = getattr(diag, "fingerprint_delta", None)
+                if _delta_to_json is not None:
+                    _delta_json: Any = _delta_to_json(_delta)
+                else:
+                    import dataclasses as _dc2
+                    import json as _json2
+
+                    _delta_json = (
+                        _dc2.asdict(_delta)
+                        if _dc2.is_dataclass(_delta)
+                        else (_delta if isinstance(_delta, dict) else None)
+                    )
+                    _delta_json = _json2.loads(_json2.dumps(_delta_json, sort_keys=True, default=str))
+            except Exception:
+                _delta_json = None
+            payload["learn_inputs"] = {
+                "vendor": vendor,
+                "drift_class": str(getattr(diag, "drift_class", "UNKNOWN")),
+                "delta": _delta_json,
+            }
             result = _dataclasses.replace(result, spec=payload)
         except Exception:
             pass
@@ -1322,6 +1520,44 @@ def _candidate_spec_for(result: Any, case: Any) -> dict[str, Any] | None:
     return None
 
 
+def _arm_failure_reason(result: Any, spec: Any) -> str:
+    """One-line reason an arm never attempted (REQ-078 item 5)."""
+    outcome_label = getattr(result, "outcome", None)
+    if isinstance(outcome_label, str) and outcome_label.strip():
+        return f"arm outcome {outcome_label.strip()}"[:200]
+    error = getattr(result, "error", None)
+    if isinstance(error, str) and error.strip():
+        return error.strip()[:200]
+    if isinstance(spec, dict) and spec.get("decision") in ("timed_out", "truncated", "budget_exhausted", "error", "crashed"):
+        return f"arm reported {spec.get('decision')}"[:200]
+    if isinstance(spec, dict) and spec.get("budget_exhausted"):
+        return "arm ran out of budget (BudgetExhausted)"[:200]
+    if not getattr(result, "ran", False):
+        return "arm never ran"
+    return "arm produced no gradable output"
+
+
+def _arm_failed(result: Any, spec: Any) -> bool:
+    """True when the arm crashed/timed-out/was truncated/ran out of budget/never ran."""
+    import re as _re  # noqa: PLC0415
+
+    outcome_label = getattr(result, "outcome", None)
+    if isinstance(outcome_label, str) and outcome_label.strip() in (
+        "timed_out", "truncated", "budget_exhausted", "error", "crashed", "no_output",
+    ):
+        return True
+    error = getattr(result, "error", None)
+    if isinstance(error, str) and error.strip() and not getattr(result, "ran", False):
+        return True
+    if isinstance(error, str) and _re.search(r"timed?\s*out|truncat|crashed?|budget|traceback|killed|oom", error, _re.IGNORECASE):
+        return True
+    if isinstance(spec, dict) and spec.get("decision") in ("timed_out", "truncated", "budget_exhausted", "error", "crashed"):
+        return True
+    if isinstance(spec, dict) and spec.get("budget_exhausted"):
+        return True
+    return bool(not getattr(result, "ran", False) and not (isinstance(spec, dict) and len(spec) > 0))
+
+
 def _arm_outcome_for(result: Any, has_records: bool) -> dict[str, Any]:
     """Map an arm result to a /beacon/grade outcome report.
 
@@ -1334,6 +1570,11 @@ def _arm_outcome_for(result: Any, has_records: bool) -> dict[str, Any]:
     answer (``answer_kind`` ``escalate``, no ladder decision) is Blocked
     with its question recorded. Anything else (arm error, unparseable
     output) is Blocked — fail closed.
+
+    REQ-078 item 5: an arm that crashed, timed out, was truncated, ran
+    out of budget or never ran reports outcome ``Error`` — its own
+    failure class, never an escalation. ``Error`` passes no instance
+    (the verifier fails it closed for every expected class).
     """
     spec = getattr(result, "spec", None)
     decision = spec.get("decision") if isinstance(spec, dict) else None
@@ -1341,6 +1582,14 @@ def _arm_outcome_for(result: Any, has_records: bool) -> dict[str, Any]:
     answer_kind = spec.get("answer_kind") if isinstance(spec, dict) else None
     question = spec.get("question") if isinstance(spec, dict) else None
     has_question = isinstance(question, str) and bool(question.strip())
+    if _arm_failed(result, spec):
+        return {
+            "outcome": "Error",
+            "patch_reached_release": False,
+            "operator_question": False,
+            "arm_failed": True,
+            "failure": _arm_failure_reason(result, spec),
+        }
     if decision == "propose" and patch:
         return {"outcome": "Complete", "patch_reached_release": has_records, "operator_question": False}
     if decision == "propose":
@@ -1530,8 +1779,10 @@ def _grade_arm_result(
     elif candidate is not None and not http_sync and vendor == "fias-pabx":
         # Framed transport has no live HTTP sync: verify the patched spec
         # in-process over the announced feed layout (same serving code the
-        # live edge agent runs). A Complete feed sync backs the release
-        # claim; anything else is a failed attempt, not a release.
+        # live edge agent runs). REQ-078 item 5: a Complete feed sync alone
+        # never passes — the produced records are judged against the
+        # baseline like every HTTP repair (fail when the sync is not
+        # Complete, judge the records when it is).
         try:
             from bench.faults import beacon_sync_pair as _beacon_sync_pair
 
@@ -1540,7 +1791,7 @@ def _grade_arm_result(
             )
             synced = True
             if faulted_summary.get("outcome") == "Complete":
-                records_verdict = "pass"
+                records = canonical_to_records(faulted_summary.get("canonical_records", {}))
             else:
                 records_verdict = "fail"
                 unmet = faulted_summary.get("unmet_criteria") or ["sync_not_complete"]
@@ -1597,6 +1848,10 @@ def _grade_arm_result(
         grade.correct_escalation = 0
     if outcome_report["outcome"] == "Complete" and outcome_report["patch_reached_release"] and not passed:
         grade.wrong_patch_released = 1
+    # REQ-078 item 5: a candidate the records judge rejects is a wrong
+    # patch proposed — counted whether it reached a release or not.
+    if candidate is not None and records_verdict == "fail":
+        grade.wrong_patch_proposed = 1
 
 
 def _placeholder_credential_env() -> None:
@@ -1657,11 +1912,20 @@ def summarize_grades(grades: list[BeaconArmGrade]) -> dict[str, Any]:
             return [float(fn(g)) for g in items]
 
         totals = vals(lambda g: g.input_tokens + g.output_tokens)
+        # REQ-078 item 8: scores averaged per instance first, CIs over
+        # instances with a bounded interval; n names instances.
+        _vc_means, _vc_n = _per_instance_means(items, lambda g: g.verified_completion)
+        _ce_means, _ = _per_instance_means(items, lambda g: g.correct_escalation)
+        verified = _mean_ci95(_vc_means, bounded=True)
+        correct = _mean_ci95(_ce_means, bounded=True)
+        verified["n_instances"] = _vc_n
+        correct["n_instances"] = _vc_n
         return {
             "n": len(items),
-            "verified_completion": _mean_ci95(vals(lambda g: g.verified_completion)),
+            "verified_completion": verified,
             "wrong_patch_released": {"total": int(sum(g.wrong_patch_released for g in items))},
-            "correct_escalation": _mean_ci95(vals(lambda g: g.correct_escalation)),
+            "wrong_patch_proposed": {"total": int(sum(g.wrong_patch_proposed for g in items))},
+            "correct_escalation": correct,
             "frontier_tokens": _mean_ci95(vals(lambda g: g.frontier_tokens)),
             "small_tokens": _mean_ci95(vals(lambda g: g.small_tokens)),
             "input_tokens": _mean_ci95(vals(lambda g: g.input_tokens)),
@@ -1672,8 +1936,37 @@ def summarize_grades(grades: list[BeaconArmGrade]) -> dict[str, Any]:
             "elapsed_ms": _mean_ci95(vals(lambda g: g.elapsed_ms)),
         }
 
+    def paired_diffs(per_arm_instances: dict[str, dict[int, float]], base: str) -> dict[str, Any]:
+        """Paired per-instance arm differences vs the base arm (REQ-078/8)."""
+        out: dict[str, Any] = {}
+        base_map = per_arm_instances.get(base, {})
+        for arm, inst_map in sorted(per_arm_instances.items()):
+            if arm == base:
+                continue
+            shared = sorted(set(base_map) & set(inst_map))
+            diffs = [inst_map[i] - base_map[i] for i in shared]
+            stat = _mean_ci95(diffs)
+            stat["n_instances"] = len(shared)
+            out[f"{arm}_minus_{base}"] = stat
+        return out
+
     by_arm = {arm: block([g for g in grades if g.arm == arm]) for arm in arms}
-    return {"overall": block(grades), "by_arm": by_arm}
+    by_family = {
+        family: block([g for g in grades if g.family == family])
+        for family in sorted({g.family for g in grades})
+    }
+    # Per-instance verified means per arm, for the paired differences.
+    _arm_inst: dict[str, dict[int, float]] = {}
+    for arm in arms:
+        _by_inst: dict[int, list[float]] = {}
+        for g in grades:
+            if g.arm == arm:
+                _by_inst.setdefault(int(g.instance_index), []).append(float(g.verified_completion))
+        _arm_inst[arm] = {i: sum(v) / len(v) for i, v in _by_inst.items() if v}
+    summary: dict[str, Any] = {"overall": block(grades), "by_arm": by_arm, "by_family": by_family}
+    if "autobridge_cold" in _arm_inst:
+        summary["paired_vs_cold"] = paired_diffs(_arm_inst, "autobridge_cold")
+    return summary
 
 
 def run_beacon(
@@ -1711,10 +2004,30 @@ def run_beacon(
     from bench.bench_prompts import ensure_bench_prompts_loaded as _ensure_prompts
 
     out_dir = pathlib.Path(output_dir) if output_dir else BEACON_DIR / str(protocol.target_round)
-    # No re-rolls: refuse when result files already exist. A directory that
-    # holds only protocol.md (rehearsal freeze, then run) is fine.
-    if (out_dir / "instances.json").exists() or (out_dir / "summary.json").exists() or (out_dir / "grades.jsonl").exists():
+    # REQ-078 item 8: a completed run (summary.json) never re-rolls. A
+    # directory that holds only protocol.md (rehearsal freeze, then run)
+    # starts fresh. A mid-run abort (grades.jsonl without summary.json)
+    # resumes: already-graded (index, trial) rows are kept, the rest run.
+    if (out_dir / "summary.json").exists():
         raise BeaconError(f"refusing run: {out_dir} already holds results (no re-rolls)")
+    _resume_grades: list[dict[str, Any]] = []
+    _resume_instances: list[dict[str, Any]] = []
+    if (out_dir / "grades.jsonl").exists():
+        try:
+            for line in (out_dir / "grades.jsonl").read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    _resume_grades.append(json.loads(line))
+        except Exception as exc:
+            raise BeaconError(f"refusing run: cannot read {out_dir}/grades.jsonl for resume: {exc}") from exc
+        if (out_dir / "instances.json").exists():
+            try:
+                _loaded = json.loads((out_dir / "instances.json").read_text(encoding="utf-8"))
+                if isinstance(_loaded, list):
+                    _resume_instances = [d for d in _loaded if isinstance(d, dict)]
+            except Exception:
+                _resume_instances = []
+        print(f"beacon run: resuming with {len(_resume_grades)} graded row(s) kept", flush=True)
     info = beacon_client.fetch_chain_info(base_url)
     try:
         latest = beacon_client.fetch_latest(base_url)
@@ -1735,6 +2048,22 @@ def run_beacon(
     _placeholder_credential_env()
     _ensure_prompts()
     cfg = config if config is not None else default_beacon_config()
+    # REQ-078 item 7: the frozen budgets win for the run — one token
+    # ceiling and one wall clock for every arm (the agent included).
+    # A pre-REQ-078 protocol without the lines keeps env/defaults.
+    if config is None:
+        try:
+            import dataclasses as _dc_cfg
+
+            _cfg_kwargs: dict[str, Any] = {}
+            if protocol.token_ceiling is not None:
+                _cfg_kwargs["token_ceiling"] = int(protocol.token_ceiling)
+            if protocol.wall_clock_s is not None:
+                _cfg_kwargs["wall_clock_s"] = float(protocol.wall_clock_s)
+            if _cfg_kwargs:
+                cfg = _dc_cfg.replace(cfg, **_cfg_kwargs)
+        except Exception:
+            pass
     print(f"beacon run: token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
     warm = knowledge_warm
     warm_info: dict[str, Any] = {"source": "caller-supplied", "entries": 0, "fixes": []}
@@ -1775,14 +2104,74 @@ def run_beacon(
     admin = admin_urls(vendors)
     public = public_urls(vendors)
     result = BeaconRunResult(protocol=protocol, eval_seed_hex=eval_seed_hex, randomness_hex=verified.randomness_hex)
+    # Restore resumed rows (grades keep their frozen order; warm re-learns
+    # from newly verified fixes — pre-resume in-run learning is not
+    # replayed, and the summary says so).
+    _done: set[tuple[int, int]] = set()
+    for _row in _resume_grades:
+        try:
+            _grade = BeaconArmGrade(
+                arm=str(_row.get("arm", "?")),
+                instance_index=int(_row.get("instance_index", -1)),
+                trial=int(_row.get("trial", 0)),
+                vendor=str(_row.get("vendor", "?")),
+                family=str(_row.get("family", "?")),
+            )
+            for _k, _v in _row.items():
+                if hasattr(_grade, _k):
+                    with contextlib.suppress(Exception):
+                        setattr(_grade, _k, _v)
+            result.grades.append(_grade)
+            _done.add((_grade.instance_index, _grade.trial))
+        except Exception:
+            continue
+    _resumed_from = len(result.grades)
+    _resume_by_index: dict[int, dict[str, Any]] = {}
+    for _d in _resume_instances:
+        try:
+            _resume_by_index[int(_d.get("index", -1))] = _d
+        except Exception:
+            continue
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _grades_path = out_dir / "grades.jsonl"
+    if _resume_grades:
+        print(
+            f"beacon run: resumed ({_resumed_from} rows kept; "
+            "warm re-learns from newly verified fixes only)",
+            flush=True,
+        )
+    _aborted: str | None = None
     for index in range(protocol.faults):
         vendor_cfg = vendors[index % len(vendors)]
-        descriptor = push_beacon(eval_seed_hex, index, vendor_cfg.vendor, admin_url=admin.get(vendor_cfg.vendor))
-        result.instances.append(descriptor)
+        if index in _resume_by_index:
+            descriptor = _resume_by_index[index]
+        else:
+            try:
+                descriptor = push_beacon(eval_seed_hex, index, vendor_cfg.vendor, admin_url=admin.get(vendor_cfg.vendor))
+            except BeaconError as exc:
+                # Infrastructure error (simulator unreachable): abort the
+                # run without recording a loss — no summary is written, so
+                # a rerun resumes from the landed rows.
+                _aborted = f"infrastructure abort at instance {index}: {exc}"
+                print(f"beacon run: {_aborted}", flush=True)
+                break
+            _resume_by_index[index] = descriptor
+            with contextlib.suppress(Exception):
+                (out_dir / "instances.json").write_text(
+                    json.dumps([_resume_by_index[i] for i in sorted(_resume_by_index)], sort_keys=True, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+        if index >= len(result.instances):
+            result.instances.append(descriptor)
         print(f"beacon run: instance {index} vendor={vendor_cfg.vendor} family={descriptor['family']}", flush=True)
         # REQ-063 item 3: fail loudly before spending any arm budget on an
         # instance the connector cannot distinguish from the baseline.
-        sanity_flags = sanity_unchanged_repairs(eval_seed_hex, [descriptor], vendors)
+        try:
+            sanity_flags = sanity_unchanged_repairs(eval_seed_hex, [descriptor], vendors)
+        except BeaconError as exc:
+            _aborted = f"infrastructure abort at instance {index} (sanity check): {exc}"
+            print(f"beacon run: {_aborted}", flush=True)
+            break
         if sanity_flags:
             flag = sanity_flags[0]
             raise BeaconError(
@@ -1792,15 +2181,42 @@ def run_beacon(
                 "the baseline under the pre-drift spec — generator bug, refusing run"
             )
         for trial in range(protocol.trials):
-            grades, _reports = run_instance_trial(
-                protocol, eval_seed_hex, descriptor, trial,
-                config=cfg, runners=runners, provider=provider,
-                knowledge_warm=warm, verifier_url=verifier_url,
-                vendors=vendors, vendor_cfg=vendor_cfg, public_url=public.get(vendor_cfg.vendor, ""),
-            )
-            result.grades.extend(grades)
+            if (index, trial) in _done:
+                continue
+            try:
+                grades, _reports = run_instance_trial(
+                    protocol, eval_seed_hex, descriptor, trial,
+                    config=cfg, runners=runners, provider=provider,
+                    knowledge_warm=warm, verifier_url=verifier_url,
+                    vendors=vendors, vendor_cfg=vendor_cfg, public_url=public.get(vendor_cfg.vendor, ""),
+                )
+            except BeaconError as exc:
+                _aborted = f"infrastructure abort at instance {index} trial {trial}: {exc}"
+                print(f"beacon run: {_aborted}", flush=True)
+                break
+            except Exception as exc:
+                # A non-infrastructure crash of one trial also aborts
+                # without recording losses for the unrun rows.
+                _aborted = f"abort at instance {index} trial {trial}: {type(exc).__name__}: {exc}"
+                print(f"beacon run: {_aborted}", flush=True)
+                break
+            for _g in grades:
+                result.grades.append(_g)
+                # REQ-078 item 8: each grade row lands as it is graded.
+                try:
+                    with open(_grades_path, "a", encoding="utf-8") as _fh:
+                        _fh.write(json.dumps(_g.to_dict(), sort_keys=True, default=str) + "\n")
+                except Exception:
+                    pass
+        if _aborted is not None:
+            break
+    if _aborted is not None:
+        print(f"beacon run: aborted ({len(result.grades)} rows landed; rerun resumes)", flush=True)
+        return result
     result.summary = summarize_grades(result.grades)
     result.summary["warm"] = warm_info
+    if _resumed_from:
+        result.summary["resumed_from_rows"] = _resumed_from
     _write_results(result, out_dir)
     return result
 

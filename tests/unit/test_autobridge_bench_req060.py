@@ -484,7 +484,7 @@ def test_opencode_driver_resolves_model_from_session_row(
         lambda *a, **_kw: subprocess.CompletedProcess(args=a[0], returncode=0, stdout=stdout, stderr=""),
     )
     driver = OpenCodeCliDriver(cli_path="opencode", session_db_path=str(db))
-    res = driver.run("repair the spec")
+    res = driver.run("repair the spec", cwd=tmp_path)
     assert res.text == "hello"
     assert res.model == "meta/muse-spark-1.3"
     assert res.usage.input_tokens == 17792
@@ -510,7 +510,7 @@ def test_opencode_driver_error_stream_raises_not_silent(
     )
     driver = OpenCodeCliDriver(cli_path="opencode", session_db_path=str(tmp_path / "nope.db"))
     with pytest.raises(OpenCodeCliError, match="produced no text"):
-        driver.run("repair the spec")
+        driver.run("repair the spec", cwd=tmp_path)
 
 
 def test_frontier_agent_model_identity_allows_provider_prefix(monkeypatch: pytest.MonkeyPatch) -> None:

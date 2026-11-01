@@ -28,6 +28,7 @@ from autobridge.llm.provider import (
     BudgetedProvider,
     BudgetExhausted,
     ReplayMissing,
+    estimate_cost,
     stamp_call_outcome,
 )
 from autobridge.repair.context import RepairContext
@@ -365,6 +366,10 @@ def _empty_model_usage() -> dict[str, Any]:
         "small_output": 0,
         "frontier_reasoning": 0,
         "small_reasoning": 0,
+        # REQ-078 item 7: engine model cost is recorded in-memory (as a
+        # JSON-safe numeric string — the usage dict persists to JSON
+        # columns), not left unset. Readers take estimated_cost first.
+        "estimated_cost": "0",
     }
 
 
@@ -601,6 +606,11 @@ def _call_small_model_rank(
             outcome="ranked" if fallback is None else "fallback",
         )
     # Build usage delta from result
+    _l2_cost: Any = 0
+    with contextlib.suppress(Exception):
+        _l2_cost = estimate_cost(
+            "small", result.usage, model=_provider_model_name(provider, "small")
+        )
     usage = {
         "frontier_tokens": 0,
         "small_tokens": result.usage.total_tokens,
@@ -613,6 +623,8 @@ def _call_small_model_rank(
         "small_output": result.usage.output_tokens,
         "frontier_reasoning": 0,
         "small_reasoning": result.usage.reasoning_tokens,
+        # REQ-078 item 7: engine model cost recorded in-memory.
+        "estimated_cost": str(_l2_cost),
     }
     info = {
         "confidence": parsed.get("confidence"),
@@ -803,6 +815,8 @@ def _call_frontier_generate(
         "small_input": 0,
         "small_output": 0,
         "small_reasoning": 0,
+        # REQ-078 item 7: engine model cost recorded in-memory.
+        "estimated_cost": str(estimate_cost("frontier", result.usage)),
     }
     info = {
         "proposed": len(new_hyps) > len(hypotheses),
@@ -816,9 +830,16 @@ def _call_frontier_generate(
 
 
 def _merge_model_usage(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
+    from decimal import Decimal as _Decimal  # noqa: PLC0415
+
     merged = dict(base)
     for k in ("frontier_tokens", "small_tokens", "calls", "frontier_calls", "small_calls", "frontier_input", "frontier_output", "small_input", "small_output", "frontier_reasoning", "small_reasoning"):
         merged[k] = int(merged.get(k, 0)) + int(delta.get(k, 0))
+    with contextlib.suppress(Exception):
+        merged["estimated_cost"] = str(
+            _Decimal(str(merged.get("estimated_cost", "0")))
+            + _Decimal(str(delta.get("estimated_cost", "0")))
+        )
     return merged
 
 
@@ -2495,35 +2516,18 @@ def run_frontier_climb(
         )
         _emit()
 
-    # --- L3: frontier proposal (plan §2.6 gate: enumerator yielded < 2) ---
+    # --- L3: frontier proposal (REQ-078: no yield-count gate) ---
     # The frontier answers the climb with a patch proposal (JSON Patch);
     # the raw text is returned so the caller can validate it (verifier
-    # verdict or scenario trap check) and escalate on rejection.
-    if enumerator_yield_count >= 2:
-        attempts.append(
-            {
-                "rung": 3,
-                "action": "l3_skipped",
-                "reason": f"L3 skipped: enumerator yielded {enumerator_yield_count} >= 2 for {drift_class}",
-                "calls": [],
-            }
-        )
-        _emit()
-        return {
-            "attempts": attempts,
-            "usage": usage,
-            "resolved_rung": 2,
-            "l3_text": "",
-            "proposal": None,
-            "ranked_ids": [getattr(h, "id", str(h)) for h in ranked],
-            "l2_confidence": l2_confidence,
-            "replay_missing": replay_missing,
-            "replay_captured_at": replay_captured_at,
-        }
+    # verdict or scenario trap check) and escalate on rejection. The old
+    # ``enumerator_yield_count >= 2`` skip is gone: it blocked structural
+    # drifts that enumerate well but still need a model to decide. L2
+    # already resolved the confident case above (resolved_rung 2 return);
+    # reaching here means the climb genuinely needs the frontier.
     l3_entry: dict[str, Any] = {
         "rung": 3,
         "action": "frontier_generate",
-        "reason": f"L3 invoked: enumerator yielded {enumerator_yield_count} < 2 for {drift_class}",
+        "reason": f"L3 invoked for {drift_class} (L0/L1 found no verified fix; enumerator yielded {enumerator_yield_count})",
         "calls": [],
         # REQ-043: stamped before the call starts, so the repair page can
         # show "calling <model> · Ns" while the frontier thinks.
@@ -2611,6 +2615,13 @@ def run_frontier_climb(
             stamp_call_outcome(session, run_id=run_id, tier="frontier", outcome=outcome)
 
     def _accumulate(result: Any) -> dict[str, Any]:
+        # REQ-078 item 7: engine model cost is recorded in-memory (JSON-safe
+        # numeric string) via the same estimate the ledger rows use.
+        _cost: Any = 0
+        with contextlib.suppress(Exception):
+            _cost = estimate_cost(
+                "frontier", result.usage, model=_provider_model_name(provider, "frontier")
+            )
         return {
             "frontier_tokens": result.usage.total_tokens,
             "small_tokens": 0,
@@ -2623,6 +2634,7 @@ def run_frontier_climb(
             "small_input": 0,
             "small_output": 0,
             "small_reasoning": 0,
+            "estimated_cost": str(_cost),
         }
 
     # REQ-055 item 4b: per-call proposals for the repair page — call 1 →

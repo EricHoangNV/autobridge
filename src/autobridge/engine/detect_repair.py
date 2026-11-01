@@ -433,10 +433,11 @@ def _live_frontier_wanted() -> bool:
         return False
 
 
-def _submit_deferred_semantic_repair(
+def _submit_deferred_model_repair(
     session: Any,
     *,
     drift_id: str,
+    drift_class: str = "SEMANTIC_VALUE_DRIFT",
     connector_id: str,
     release_id: str,
     prepared: dict[str, Any],
@@ -444,11 +445,13 @@ def _submit_deferred_semantic_repair(
     delta: Any | None,
     dry_run_fault: dict[str, Any] | None = None,
 ) -> str:
-    """Queue the semantic climb as a background repair job (REQ-042).
+    """Queue the model climb as a background repair job (REQ-042/REQ-078).
 
     The sync already derived everything the climb needs (funnel stages,
-    climbed hypothesis, L3 evidence); the parcel is JSON-safe so the job
-    survives threads and restarts. Returns the repair job id.
+    climbed hypothesis or class-neutral evidence, L3 evidence); the parcel
+    is JSON-safe so the job survives threads and restarts. Applies to
+    every repairable drift class, not only semantic ones. Returns the
+    repair job id.
     """
     from autobridge.control.runner import get_runner  # noqa: PLC0415
     from autobridge.discovery.hypotheses import hypothesis_to_json  # noqa: PLC0415
@@ -462,7 +465,7 @@ def _submit_deferred_semantic_repair(
     return runner.submit_repair(
         [drift_id],
         payload_extra={
-            "drift_class": "SEMANTIC_VALUE_DRIFT",
+            "drift_class": drift_class,
             "connector_id": connector_id,
             "release_id": release_id,
             "scenario": None,
@@ -476,6 +479,10 @@ def _submit_deferred_semantic_repair(
             "dry_run_fault": dry_run_fault,
         },
     )
+
+
+# Backwards-compatible alias: the deferred job was semantic-only before REQ-078.
+_submit_deferred_semantic_repair = _submit_deferred_model_repair
 
 
 def _finalize_proposal(
@@ -1180,12 +1187,23 @@ def _repair_inline(
 
     controller = RepairController(knowledge_cache=knowledge_cache) if knowledge_cache is not None else RepairController()
     semantic_info: dict[str, Any] = {}
-    if classification.drift_class == "SEMANTIC_VALUE_DRIFT":
-        # REQ-039: the live repair path runs the same semantic climb as
-        # the instrumented one — engine enumeration from the wire signals
+    # REQ-078 item 1: every repairable class climbs to the model when the
+    # provider resolves — the live repair path runs the same model climb
+    # as the sync-inline path (funnel + L2/L3 attempt + verifier judge),
+    # never the deterministic 0-call escalation. Non-fixables
+    # (CAPABILITY_REMOVED, AUTH_REVOKED) and backoff/transient stay
+    # deterministic.
+    from autobridge.repair.ladder import _BACKOFF_ONLY_CLASSES, _NON_FIXABLE  # noqa: PLC0415
+
+    _needs_model_climb = classification.drift_class not in _NON_FIXABLE and classification.drift_class not in _BACKOFF_ONLY_CLASSES
+    if _needs_model_climb:
+        # REQ-039: the live repair path runs the same semantic climb
+        # as the instrumented one — engine enumeration from the wire signals
         # and the spec, wire filter, L2 when >= 2, L3 through the frontier
         # provider and budget when < 2, verifier judge on the proposal,
-        # escalation question. Never the deterministic 0-call escalation.
+        # escalation question. REQ-078: the deferred live-model job path
+        # applies to every class, not only semantic (generic evidence when
+        # the drift is not money-related).
         from autobridge.repair.controller import run_semantic_repair  # noqa: PLC0415
 
         active_verifier = verifier_url if verifier_url is not None else _os.environ.get("VERIFIER_URL")
@@ -1267,29 +1285,38 @@ def detect_after_sync(
     # on its own session, and the background climb must never wait on a
     # lock this request holds (REQ-042).
     session.commit()
-    if classification.drift_class == "SEMANTIC_VALUE_DRIFT" and _live_frontier_wanted():
+    # REQ-078 item 1: the deferred live-model job path applies to every
+    # repairable class, not only SEMANTIC_VALUE_DRIFT. True non-fixables
+    # and backoff/transient never defer (no model call would help).
+    from autobridge.repair.ladder import _BACKOFF_ONLY_CLASSES as _DEFER_BACKOFF  # noqa: PLC0415
+    from autobridge.repair.ladder import _NON_FIXABLE as _DEFER_NON_FIXABLE  # noqa: PLC0415
+
+    _deferrable = classification.drift_class not in _DEFER_NON_FIXABLE and classification.drift_class not in _DEFER_BACKOFF
+    if _deferrable and _live_frontier_wanted():
         # The climb would call the frontier: derive its inputs now (fast,
         # local) and queue the climb. The request returns as soon as this
         # job row commits — well under 2 s — while the repair runs in the
         # background drain.
         import json as _json  # noqa: PLC0415
 
-        from autobridge.repair.controller import prepare_semantic_inputs  # noqa: PLC0415
+        from autobridge.repair.controller import prepare_climb_inputs  # noqa: PLC0415
         from autobridge.repair.dryrun import build_dry_run_fault  # noqa: PLC0415
 
-        prepared = prepare_semantic_inputs(
+        prepared = prepare_climb_inputs(
             spec=spec_dict,
             signals=list(signals),
             summary=summary if isinstance(summary, dict) else None,
             sync_run_id=sync_run_id,
+            drift_class=classification.drift_class,
         )
         try:
             dry_fault = build_dry_run_fault(summary if isinstance(summary, dict) else None)
         except Exception:
             dry_fault = None
-        job_id = _submit_deferred_semantic_repair(
+        job_id = _submit_deferred_model_repair(
             session,
             drift_id=drift.id,
+            drift_class=classification.drift_class,
             connector_id=connector_id,
             release_id=release_id,
             prepared=prepared,
@@ -1337,6 +1364,65 @@ def detect_after_sync(
         summary=summary,
         result=result,
     )
+    if dry_error is not None and classification.drift_class not in _DEFER_NON_FIXABLE and classification.drift_class not in _DEFER_BACKOFF:
+        # REQ-078 item 1: an L1 rule matched but its patch failed the
+        # dry-run — climb to the model with the failure as evidence
+        # instead of stopping at a question-only escalation. Not live here
+        # (live modeled drifts deferred above), so resolve the provider
+        # the same safe way: replay/off runs inline, never a live call.
+        try:
+            from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
+            from autobridge.repair.controller import (  # noqa: PLC0415
+                RepairController as _RepairController,
+            )
+            from autobridge.repair.controller import (
+                build_generic_l3_evidence,
+            )
+            from autobridge.repair.ladder import repair_frontier_budget as _repair_budget  # noqa: PLC0415
+
+            _provider, _mode = resolve_frontier_provider()
+            _failed = [
+                {
+                    "level": result.ladder_level_reached,
+                    "rule_id": result.rule_id,
+                    "action": "dry_run_rejected",
+                    "reason": dry_error,
+                }
+            ]
+            _evidence = build_generic_l3_evidence(
+                spec_dict,
+                list(signals),
+                delta,
+                summary if isinstance(summary, dict) else None,
+                classification.drift_class,
+                failed_attempts=_failed,
+            )
+            from autobridge.repair.dryrun import build_dry_run_fault  # noqa: PLC0415
+
+            try:
+                _fault = build_dry_run_fault(summary if isinstance(summary, dict) else None)
+            except Exception:
+                _fault = None
+            _ctrl = _RepairController(knowledge_cache=knowledge_cache) if knowledge_cache is not None else _RepairController()
+            result = _ctrl.handle(
+                spec=spec_dict,
+                drift_class=classification.drift_class,
+                signals=list(signals),
+                fingerprint_delta=delta,
+                classification=classification,
+                vendor=None,
+                drift_event_ids=[drift.id],
+                session=session,
+                hypotheses=None,
+                provider=_provider,
+                budget=Budget(max_frontier_tokens=_repair_budget()) if _provider is not None else None,
+                evidence=_evidence or None,
+                dry_run_fault=_fault,
+            )
+            semantic_info = {"provider_mode": _mode, "l3_status": "attempt-after-dry-run-failure"}
+            dry_error = None
+        except Exception:
+            pass
     candidate_release_id, gate_error = _finalize_proposal(
         session,
         connector_id=connector_id,

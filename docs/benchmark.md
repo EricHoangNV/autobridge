@@ -492,17 +492,20 @@ What a judge can check (all of it public):
    (`beacon-trials`, default 5), arms (the five above), the commit it was
    frozen at (recorded as both the engine and the generator commit), the
    freeze time, the rehearsal flag, the drand chain, the metrics in prose,
-   "one run, no retries, results published whatever they are", and the
+   "one run, no retries, results published whatever they are", the
    pinned frontier model (`beacon-frontier-model`, from `FRONTIER_MODEL`,
    plus `beacon-agent-model`, the agent arm's resolved `meta/<id>` form,
-   when it differs). The pin proves the model was fixed before the random
+   when it differs), and the frozen budgets (`beacon-token-ceiling`,
+   `beacon-wall-clock-s` — one ceiling and one wall clock for every arm,
+   the agent included). The pin proves the model was fixed before the random
    value existed: `bench-beacon` (real runs and rehearsals) refuses to
    start when the resolved model differs, a real run requires the line,
-   and a protocol without it (older rehearsals) still parses. Budgets
-   are not a protocol field: the run uses the frozen commit's defaults
-   (below) and prints the values it used (`beacon run: token_ceiling=…
-   wall_clock=…`); `BENCH_TOKEN_CEILING` / `BENCH_WALL_CLOCK` can still
-   override them, so that log line is the record. The run does not
+   and a protocol without it (older rehearsals) still parses. The run
+   uses the frozen budgets (a pre-freeze protocol falls back to
+   `BENCH_TOKEN_CEILING` / `BENCH_WALL_CLOCK` / the dev-ablation
+   defaults) and prints the values it used (`beacon run: token_ceiling=…
+   wall_clock=…`); the agent arm is held to the same ceiling (an agent
+   row over it is `budget_exhausted`, never a pass). The run does not
    itself check out or compare the frozen commit.
 2. The `eval-freeze-<round>` git tag and its push time — before the round's
    publication time (the beacon carries no timestamp; round `r` is
@@ -517,11 +520,35 @@ What a judge can check (all of it public):
    the local stack up), and checks they match the published
    `experiments/beacon/<round>/instances.json`.
 4. The per-row grades (`grades.jsonl`, one row per instance × trial ×
-   arm) + `summary.json` (per arm and overall, mean + 95 % normal-approx
-   interval over all of an arm's rows): verified completion rate (judged
-   only by the verifier),
-   wrong patches that reached a release (must be 0 for AutoBridge),
-   correct escalations, frontier tokens, estimated cost, wall time.
+   arm, appended as it lands so a mid-run abort loses nothing and a rerun
+   resumes the landed rows) + `summary.json` (per arm, per family, and
+   overall). Grading is about the act, the same for every arm: a crashed,
+   timed-out, truncated, over-budget or never-ran arm reports outcome
+   `Error` — its own failure class, never an escalation (it passes no
+   instance, not even `escalate` ones; escalation passes only when the arm
+   explicitly decided to ask). "No change needed" is a stated answer for
+   every arm (an empty patch means no change). "No patch + one question"
+   grades the same whether reported Degraded or Blocked. FIAS repairs are
+   judged on the produced records like HTTP repairs. Scores are averaged
+   per instance first and CIs are computed over instances with a bounded
+   interval (`n` names instances), with paired per-instance arm
+   differences vs cold and per-family rows in the summary and EVIDENCE.md.
+   Metrics: verified completion rate (judged only by the verifier),
+   wrong patches proposed as well as released (an unneeded patch on a
+   no-change instance counts as wrong; released must be 0 for AutoBridge),
+   correct escalations, frontier tokens, estimated cost (engine model cost
+   is recorded in-memory, never left unset), wall time. The warm arm
+   learns during the run: instances run in the frozen order, and after
+   each instance a verified fix the warm arm produced is learned (the way
+   an approved fix is in production) and is available to later instances;
+   cold never learns. Each instance reports whether warm used a learned
+   fix (rung + source instance) — a warm-vs-cold gap shows learning, not
+   pre-knowledge. The frontier agent is restricted to its sandbox dir and
+   the vendor sandbox URL only (no repo, no verifier/admin ports); every
+   arm gets the same last-good sketch. Owner-accepted answers: code_list
+   "repair" instances accept an escalation with one question (nothing
+   reveals a random new code's meaning; a guessed mapping is a wrong
+   patch), and `transport_auth/token_expired` accepts an escalation.
 
 Protocol commands: `make eval-freeze ROUND_AFTER=<UTC> FAULTS=<N>
 [TRIALS=5]` (item 4: writes the round's own `protocol.md`), `make

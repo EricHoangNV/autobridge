@@ -190,7 +190,12 @@ def test_arm_outcome_mapping() -> None:
     assert beacon_run._arm_outcome_for(escalated_q, False) == {
         "outcome": "Blocked", "patch_reached_release": False, "operator_question": True}
     failed = _NS(ran=False, spec=None)
-    assert beacon_run._arm_outcome_for(failed, False)["outcome"] == "Blocked"
+    # REQ-078 item 5: a crashed/never-ran arm grades as its own failure
+    # class, never as an escalation (it passes no instance, not even
+    # escalate ones).
+    failed_report = beacon_run._arm_outcome_for(failed, False)
+    assert failed_report["outcome"] == "Error"
+    assert failed_report.get("arm_failed") is True
 
 
 def test_run_instance_trial_offline_no_verifier() -> None:
@@ -261,8 +266,13 @@ def test_summarize_grades_math() -> None:
     summary = beacon_run.summarize_grades(grades)
     assert summary["overall"]["n"] == 5
     block = summary["overall"]["verified_completion"]
-    assert block["n"] == 5 and abs(block["mean"] - 0.4) < 1e-9
+    # REQ-078 item 8: scores averaged per instance first — 5 trials of
+    # one instance average to 0.4, and n names instances.
+    assert block["n"] == 1 and abs(block["mean"] - 0.4) < 1e-9
+    assert block["n_instances"] == 1
+    assert 0.0 <= block["ci95_lo"] <= block["ci95_hi"] <= 1.0
     assert summary["by_arm"]["a"]["wrong_patch_released"] == {"total": 0}
+    assert "by_family" in summary and "rename" in summary["by_family"]
 
 
 def test_main_freeze_and_run_guardrails(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:

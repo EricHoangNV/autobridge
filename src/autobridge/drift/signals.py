@@ -51,6 +51,9 @@ SignalKind = Literal[
     # REQ-064 B1: silent-corruption shapes (Complete sync, values wrong).
     "mapped_field_emptied",
     "money_scale_shift",
+    # REQ-078 item 4: constant date/datetime offsets vs the last-good
+    # sketch, and non-ISO values in a canonical date field.
+    "date_shift",
 ]
 
 Severity = Literal["low", "medium", "high", "critical"]
@@ -170,7 +173,7 @@ def _severity_for_kind(kind: str) -> Severity:
         return "high"
     if kind in {"keys_changed", "types_changed", "fingerprint_changed", "mapped_field_emptied"}:
         return "medium"
-    if kind in {"money_scale_shift", "zero_records", "checkpoint_stale", "invariant_failure"}:
+    if kind in {"money_scale_shift", "date_shift", "zero_records", "checkpoint_stale", "invariant_failure"}:
         return "high"
     if kind == "rate_limited":
         return "medium"
@@ -783,11 +786,20 @@ def _wire_value_empty(value: Any) -> bool:
     """Whether a wire value counts as empty (missing data, not zero).
 
     ``0``/``0.00``/``False`` are real values and never empty; only
-    ``None``, missing keys and blank strings are.
+    ``None``, missing keys and blank strings are. (A field that turns
+    into a *constant* zero/default across every row while the baseline
+    carried varied values is handled by the emptied observer itself —
+    see ``_observe_wire_emptied_fields`` — not here, so a legitimately
+    zero field never trips this.)
     """
     if value is None:
         return True
     return bool(isinstance(value, str) and not value.strip())
+
+
+#: Wire values that mean "defaulted" when constant across every row: the
+#: vendor stopped sending the real value and the serializer backfills.
+_DEFAULTED_VALUES = {"0", "0.0", "0.00", "0.000", 0, "false", "False", "N/A", "n/a", "-", "--"}
 
 
 def _entity_key_top_key(spec: Any, entity: str) -> str | None:
@@ -966,7 +978,22 @@ def _observe_wire_emptied_fields(
             else (None, [])
         )
         for key in sorted(covered):
-            if empty_rate[key] < _EMPTIED_EMPTY_RATE:
+            _vals = [
+                rec.get(key)
+                for rec in wire_records
+                if isinstance(rec, dict) and key in rec
+            ]
+            # REQ-078 item 4: a mapped field that turns into a constant
+            # zero/default in every row counts as emptied too (the
+            # vendor stopped sending values; the serializer backfills).
+            # Only when the value is constant across ≥90% of rows — a
+            # legitimately varied zero field never trips.
+            _defaulted = (
+                len(_vals) >= _EMPTIED_MIN_ROWS
+                and sum(1 for v in _vals if isinstance(v, (str, int, float, bool)) and v in _DEFAULTED_VALUES) / len(_vals) >= _EMPTIED_EMPTY_RATE
+                and len({str(v) for v in _vals}) == 1
+            )
+            if empty_rate[key] < _EMPTIED_EMPTY_RATE and not _defaulted:
                 continue
             if present_rate[key] < _EMPTIED_PRESENT_RATE:
                 # Gone from (almost) every record: the keys_changed
@@ -986,7 +1013,10 @@ def _observe_wire_emptied_fields(
                     # Not populated before (a legitimately sparse field or
                     # a key the baseline never carried): not drift evidence.
                     continue
-                evidence = f"baseline populated {baseline_rate:.0%}, now empty {empty_rate[key]:.0%}"
+                if _defaulted:
+                    evidence = f"baseline populated {baseline_rate:.0%}, now constant default {str(_vals[0])[:20]!r}"
+                else:
+                    evidence = f"baseline populated {baseline_rate:.0%}, now empty {empty_rate[key]:.0%}"
             else:
                 siblings = [
                     k
@@ -999,10 +1029,25 @@ def _observe_wire_emptied_fields(
                 ]
                 if not siblings:
                     continue
-                evidence = (
-                    f"empty {empty_rate[key]:.0%} of {total} rows; "
-                    f"sibling {sorted(siblings)[0]} populated"
-                )
+                if _defaulted:
+                    evidence = (
+                        f"constant default {str(_vals[0])[:20]!r} in {len(_vals)} rows; "
+                        f"sibling {sorted(siblings)[0]} populated (values stopped, serializer backfills)"
+                    )
+                else:
+                    evidence = (
+                        f"empty {empty_rate[key]:.0%} of {total} rows; "
+                        f"sibling {sorted(siblings)[0]} populated"
+                    )
+            # REQ-078 item 4: the emptied signal carries the added-key
+            # candidates (genuinely new wire keys on the same rows) so
+            # rename_field can pair by value when the old key stays with
+            # a blank/default value.
+            _row_keys: set[str] = set()
+            for rec in wire_records:
+                if isinstance(rec, dict):
+                    _row_keys.update(str(k) for k in rec)
+            _added_candidates = sorted(_row_keys - set(covered))[:10]
             signals.append(
                 DriftSignal(
                     kind="mapped_field_emptied",
@@ -1024,11 +1069,182 @@ def _observe_wire_emptied_fields(
                         ),
                         "total_count": total,
                         "wire_evidence": "records",
+                        "added_candidates": _added_candidates,
                         **(
                             {"baseline_populated_rate": baseline_rate}
                             if baseline_rate is not None
                             else {}
                         ),
+                    },
+                    source_run_id=source_run_id,
+                )
+            )
+    return signals
+
+
+def _spec_date_fields(spec: Any) -> dict[str, list[str]]:
+    """Canonical date/datetime fields per entity.
+
+    A field counts when its transform pipeline names a date transform
+    (``date_local``, ``datetime_utc``, ``business_date``) or its
+    canonical name looks like a date (``date``/``time``/``day``/``at``/
+    ``on`` suffix). Shape-agnostic: never depends on one spec shape.
+    """
+    out: dict[str, list[str]] = {}
+    if not isinstance(spec, dict):
+        return out
+    entities = spec.get("entities")
+    if not isinstance(entities, dict):
+        return out
+    for ent_name, ent_spec in entities.items():
+        if not isinstance(ent_name, str) or not isinstance(ent_spec, dict):
+            continue
+        fields = ent_spec.get("fields")
+        if not isinstance(fields, dict):
+            continue
+        for fname, fm in fields.items():
+            if not isinstance(fname, str) or not isinstance(fm, dict):
+                continue
+            hit = False
+            transforms = fm.get("transform")
+            if isinstance(transforms, list):
+                for tr in transforms:
+                    name = tr if isinstance(tr, str) else (tr.get("name") if isinstance(tr, dict) else None)
+                    if isinstance(name, str) and name in ("date_local", "datetime_utc", "business_date", "date", "datetime"):
+                        hit = True
+                        break
+            lowered = fname.lower()
+            if not hit and any(tok in lowered for tok in ("date", "time", "_day", "day_", "_at", "_on", "dob", "birth")):
+                hit = True
+            if hit:
+                out.setdefault(ent_name, []).append(fname)
+    return {ent: sorted(names) for ent, names in out.items()}
+
+
+def _parse_dt(value: Any) -> Any | None:
+    """Parse an ISO-ish date/datetime value (None when not parseable)."""
+    import datetime as _dt  # noqa: PLC0415
+
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return _dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    try:
+        return _dt.date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _observe_date_shift(
+    spec: Any,
+    canonical_records: dict[str, list[dict[str, Any]]] | None,
+    baseline_canonical: dict[str, list[dict[str, Any]]] | None,
+    *,
+    source_run_id: str | None = None,
+) -> list[DriftSignal]:
+    """Emit ``date_shift`` for constant date offsets and non-ISO date values.
+
+    Against the baseline (bench/beacon derive path, REQ-075 live sketches):
+    the same record keys, but a canonical date field moved by the same
+    constant timedelta (tz shift, cutoff) across >= 90% of the matched
+    pairs (>= 5 pairs). Without a baseline, non-ISO values in a canonical
+    date field (``"10-13-2026"`` passes the old checks) still fire — one
+    sync can tell a malformed date. Never depends on one spec shape: the
+    date fields come from transforms or names (see ``_spec_date_fields``).
+    """
+    signals: list[DriftSignal] = []
+    if not isinstance(canonical_records, dict):
+        return signals
+    date_fields = _spec_date_fields(spec)
+    if not date_fields:
+        return signals
+    # Non-ISO values in a canonical date field: no baseline needed.
+    for entity, fields in date_fields.items():
+        cur_rows = [r for r in (canonical_records.get(entity) or []) if isinstance(r, dict)]
+        if not cur_rows:
+            continue
+        for date_field in fields:
+            bad = sum(
+                1
+                for r in cur_rows
+                if date_field in r and r.get(date_field) not in (None, "")
+                and _parse_dt(r.get(date_field)) is None
+            )
+            if bad and bad / len(cur_rows) >= _SCALE_MATCH_RATE and bad >= 2:
+                signals.append(
+                    DriftSignal(
+                        kind="date_shift",
+                        entity=entity,
+                        severity="high",
+                        message=(
+                            f"Date field {date_field} has non-ISO values for {entity}: "
+                            f"{bad}/{len(cur_rows)} rows (expected ISO date/datetime)"
+                        ),
+                        details={
+                            "entity": entity,
+                            "date_field": date_field,
+                            "bad_pairs": bad,
+                            "matched_pairs": len(cur_rows),
+                            "wire_evidence": "canonical",
+                        },
+                        source_run_id=source_run_id,
+                    )
+                )
+    if baseline_canonical is None:
+        return signals
+    for entity, fields in date_fields.items():
+        cur_rows = [r for r in (canonical_records.get(entity) or []) if isinstance(r, dict)]
+        base_rows = [r for r in (baseline_canonical.get(entity) or []) if isinstance(r, dict)]
+        if len(cur_rows) < _SCALE_MIN_PAIRS or len(cur_rows) != len(base_rows):
+            continue
+        cur_by_key = {k: r for r in cur_rows if (k := _canonical_key_of(r)) is not None}
+        base_by_key = {k: r for r in base_rows if (k := _canonical_key_of(r)) is not None}
+        if set(cur_by_key) != set(base_by_key):
+            continue
+        for date_field in fields:
+            offsets: dict[str, int] = {}
+            matched = 0
+            for k in cur_by_key:
+                cur_v = _parse_dt(cur_by_key[k].get(date_field))
+                base_v = _parse_dt(base_by_key[k].get(date_field))
+                if cur_v is None or base_v is None:
+                    continue
+                matched += 1
+                try:
+                    delta_s = str((cur_v - base_v).total_seconds())
+                except AttributeError:
+                    # date (not datetime) difference: days → seconds.
+                    delta_s = str(float((cur_v - base_v).days * 86400))
+                offsets[delta_s] = offsets.get(delta_s, 0) + 1
+            if matched < _SCALE_MIN_PAIRS:
+                continue
+            best = max(offsets.values()) if offsets else 0
+            if best / matched < _SCALE_MATCH_RATE:
+                continue
+            best_s = next(s for s, c in offsets.items() if c == best)
+            if float(best_s) == 0.0:
+                continue
+            signals.append(
+                DriftSignal(
+                    kind="date_shift",
+                    entity=entity,
+                    severity="high",
+                    message=(
+                        f"Date field {date_field} shifted by {best_s}s for {entity}: "
+                        f"{best}/{matched} rows (same keys — constant offset)"
+                    ),
+                    details={
+                        "entity": entity,
+                        "date_field": date_field,
+                        "offset_seconds": best_s,
+                        "matched_pairs": matched,
+                        "shifted_pairs": best,
+                        "wire_evidence": "canonical",
                     },
                     source_run_id=source_run_id,
                 )
@@ -1043,14 +1259,17 @@ def _observe_money_scale_shift(
     *,
     source_run_id: str | None = None,
 ) -> list[DriftSignal]:
-    """Emit ``money_scale_shift`` for exact power-of-ten money moves.
+    """Emit ``money_scale_shift`` for constant-ratio money moves.
 
     Compares the faulted canonical records against the baseline's: same
     record count and same record keys, but a money field's values shifted
-    by the same exact power of ten (10^1..10^3, minor/major units) across
-    >= 90% of the matched non-zero pairs (>= 5 pairs). Without a baseline
-    there is nothing to compare a shift against, so this observer stays
-    silent — a single sync cannot tell minor from major units.
+    by the same constant ratio across >= 90% of the matched non-zero
+    pairs (>= 5 pairs). Power-of-ten moves (10^1..10^3, minor/major
+    units) keep their exact-factor message; any other constant ratio
+    (gross→net ×0.25 / ×0.5, previously invisible) reports the observed
+    ratio instead. Without a baseline there is nothing to compare a
+    shift against, so this observer stays silent — a single sync cannot
+    tell minor from major units.
     """
     signals: list[DriftSignal] = []
     if baseline_canonical is None or not isinstance(canonical_records, dict):
@@ -1095,24 +1314,66 @@ def _observe_money_scale_shift(
             if matched < _SCALE_MIN_PAIRS:
                 continue
             best = max(hits.values()) if hits else 0
-            if best / matched < _SCALE_MATCH_RATE:
+            if best / matched >= _SCALE_MATCH_RATE:
+                best_factor = next(f for f, c in hits.items() if c == best)
+                signals.append(
+                    DriftSignal(
+                        kind="money_scale_shift",
+                        entity=entity,
+                        severity="high",
+                        message=(
+                            f"Money field {money_field} shifted by x{best_factor} for {entity}: "
+                            f"{best}/{matched} rows (same keys and counts — minor/major units)"
+                        ),
+                        details={
+                            "entity": entity,
+                            "money_field": money_field,
+                            "factor": best_factor,
+                            "matched_pairs": matched,
+                            "shifted_pairs": best,
+                            "wire_evidence": "canonical",
+                        },
+                        source_run_id=source_run_id,
+                    )
+                )
                 continue
-            best_factor = next(f for f, c in hits.items() if c == best)
+            # REQ-078 item 4: any constant ratio across >= 90% of rows
+            # counts (gross→net ×0.25 / ×0.5 is invisible to the
+            # power-of-ten check above). Exact Decimal ratios only.
+            ratios: dict[str, int] = {}
+            for k in cur_by_key:
+                cur_v = _decimal_of(cur_by_key[k].get(money_field))
+                base_v = _decimal_of(base_by_key[k].get(money_field))
+                if cur_v is None or base_v is None or cur_v == 0 or base_v == 0:
+                    continue
+                try:
+                    ratio = (cur_v / base_v).normalize()
+                except Exception:
+                    continue
+                ratios[str(ratio)] = ratios.get(str(ratio), 0) + 1
+            best_ratio = max(ratios.values()) if ratios else 0
+            if best_ratio / matched < _SCALE_MATCH_RATE:
+                continue
+            best_ratio_s = next(r for r, c in ratios.items() if c == best_ratio)
+            if float(best_ratio_s) == 1.0:
+                # No shift: the rows are unchanged (a constant ratio of 1
+                # across the baseline is the no-drift shape, never drift).
+                continue
             signals.append(
                 DriftSignal(
                     kind="money_scale_shift",
                     entity=entity,
                     severity="high",
                     message=(
-                        f"Money field {money_field} shifted by x{best_factor} for {entity}: "
-                        f"{best}/{matched} rows (same keys and counts — minor/major units)"
+                        f"Money field {money_field} shifted by x{best_ratio_s} for {entity}: "
+                        f"{best_ratio}/{matched} rows (same keys and counts — constant ratio)"
                     ),
                     details={
                         "entity": entity,
                         "money_field": money_field,
-                        "factor": best_factor,
+                        "factor": best_ratio_s,
                         "matched_pairs": matched,
-                        "shifted_pairs": best,
+                        "shifted_pairs": best_ratio,
                         "wire_evidence": "canonical",
                     },
                     source_run_id=source_run_id,
@@ -1259,6 +1520,32 @@ def signals_from_sync(
                     kind="no_loss",
                     severity="high",
                     message="Invariant no_loss failed (record count mismatch)",
+                    details={"unmet_criteria": crit},
+                    source_run_id=source_run_id,
+                )
+            )
+        elif crit in {"http_error"} or crit.startswith("http_error:"):
+            # REQ-078 item 4: an http/transient unmet criterion is a
+            # TRANSIENT-family signal, never a generic invariant failure —
+            # the classifier routes it to TRANSIENT (retry), not to a
+            # phantom rule.
+            signals.append(
+                DriftSignal(
+                    kind="http_error",
+                    severity="high",
+                    message=f"HTTP error unmet criterion: {crit}",
+                    details={"unmet_criteria": crit},
+                    source_run_id=source_run_id,
+                )
+            )
+        elif crit in {"transient_error"} or crit.startswith("transient_error:"):
+            # REQ-078 item 4: same — a transient unmet criterion maps to
+            # TRANSIENT, not to a generic invariant failure.
+            signals.append(
+                DriftSignal(
+                    kind="transient_error",
+                    severity="low",
+                    message=f"Transient error unmet criterion: {crit}",
                     details={"unmet_criteria": crit},
                     source_run_id=source_run_id,
                 )
@@ -1454,6 +1741,14 @@ def signals_from_sync(
     faulted_canonical = sync_summary.get("canonical_records")
     signals.extend(
         _observe_money_scale_shift(
+            spec,
+            faulted_canonical if isinstance(faulted_canonical, dict) else None,
+            baseline_canonical,
+            source_run_id=source_run_id,
+        )
+    )
+    signals.extend(
+        _observe_date_shift(
             spec,
             faulted_canonical if isinstance(faulted_canonical, dict) else None,
             baseline_canonical,

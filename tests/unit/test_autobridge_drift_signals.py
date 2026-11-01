@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from autobridge.drift.fingerprint import compute_fingerprint
+from autobridge.drift.fingerprint import compute_fingerprint, diff_fingerprints
 from autobridge.drift.signals import (
     DriftSignal,
     _extract_http_signals,
@@ -240,11 +240,24 @@ def test_signals_from_sync_http_via_operation_results() -> None:
 
 
 def test_signals_from_sync_fingerprint_delta_pagination() -> None:
+    import copy
+
     spec = _spec_dict()
     r1 = {"list_reservations": OperationResult(operation="list_reservations", records=[], pages_fetched=1, stop_reason="null_cursor")}
     r2 = {"list_reservations": OperationResult(operation="list_reservations", records=[], pages_fetched=2, stop_reason="repeated_cursor", repeated_cursor=True)}
     prev = compute_fingerprint(spec, r1, {"Reservation": [{"reservation_id": "R1"}]})
-    cur = compute_fingerprint(spec, r2, {"Reservation": [{"reservation_id": "R1"}]})
+    # REQ-078 item 4: runtime counters alone (pages_fetched, stop_reason)
+    # are not a pagination change — an aborted sync is not a pagination
+    # change. The same fingerprints must NOT raise pagination_changed.
+    same_shape = compute_fingerprint(spec, r2, {"Reservation": [{"reservation_id": "R1"}]})
+    assert not diff_fingerprints(prev, same_shape).pagination_changed
+    # A genuine pagination shape change (strategy flipped on the wire
+    # shape) still raises it.
+    moved = copy.deepcopy(spec)
+    moved["operations"]["list_reservations"]["pagination"] = {
+        "strategy": "offset", "page_param": "page", "items_path": "$.data", "stop_when": ["null_cursor"],
+    }
+    cur = compute_fingerprint(moved, r2, {"Reservation": [{"reservation_id": "R1"}]})
     summary = _sync_summary(operation_results=r2)
     sigs = signals_from_sync(summary, previous_fingerprint=prev, current_fingerprint=cur)
     assert any(x.kind == "pagination_changed" for x in sigs)
@@ -299,12 +312,24 @@ def test_signals_from_canary_blocked_becomes_canary_failed() -> None:
 
 
 def test_signals_from_canary_pagination_regression() -> None:
+    import copy
+
     spec = _spec_dict()
     r1 = {"list_reservations": OperationResult(operation="list_reservations", records=[], pages_fetched=1, stop_reason="null_cursor")}
     r2 = {"list_reservations": OperationResult(operation="list_reservations", records=[], pages_fetched=2, stop_reason="repeated_cursor", repeated_cursor=True)}
     prev = compute_fingerprint(spec, r1, {"Reservation": [{"reservation_id": "R1"}]})
-    cur = compute_fingerprint(spec, r2, {"Reservation": [{"reservation_id": "R1"}]})
+    # REQ-078 item 4: counters alone are not a pagination regression.
+    same_shape = compute_fingerprint(spec, r2, {"Reservation": [{"reservation_id": "R1"}]})
     canary_summary = _sync_summary(operation_results=r2)
+    assert not any(
+        x.kind == "canary_pagination_regression"
+        for x in signals_from_canary(canary_summary, spec=spec, previous_fingerprint=prev, current_fingerprint=same_shape)
+    )
+    moved = copy.deepcopy(spec)
+    moved["operations"]["list_reservations"]["pagination"] = {
+        "strategy": "offset", "page_param": "page", "items_path": "$.data", "stop_when": ["null_cursor"],
+    }
+    cur = compute_fingerprint(moved, r2, {"Reservation": [{"reservation_id": "R1"}]})
     sigs = signals_from_canary(canary_summary, spec=spec, previous_fingerprint=prev, current_fingerprint=cur)
     assert any(x.kind == "canary_pagination_regression" for x in sigs)
 
@@ -580,12 +605,28 @@ def test_money_scale_shift_silent_without_baseline() -> None:
     assert "money_scale_shift" not in [s.kind for s in sigs]
 
 
-def test_money_scale_shift_silent_on_non_power_of_ten() -> None:
-    """A gross→net-style 0.9 factor is semantic drift of another kind, not
-    a units shift — this observer stays out of its way."""
+def test_money_scale_shift_fires_on_constant_non_power_ratio() -> None:
+    """REQ-078 item 4: a constant gross→net-style 0.9 factor across ≥90%
+    of rows is a money_scale_shift (it was invisible before)."""
     spec = _money_spec()
     base_vals = ["100.00", "200.00", "300.00", "400.00", "500.00", "600.00"]
     fault_vals = ["90.00", "180.00", "270.00", "360.00", "450.00", "540.00"]
+    sigs = signals_from_sync(
+        _money_summary(fault_vals),
+        spec=spec,
+        baseline_summary=_money_summary(base_vals),
+    )
+    kinds = [s.kind for s in sigs]
+    assert "money_scale_shift" in kinds
+    shift = next(s for s in sigs if s.kind == "money_scale_shift")
+    assert shift.details.get("factor") == "0.9"
+
+
+def test_money_scale_shift_silent_on_varied_ratios() -> None:
+    """Varied per-row ratios are not a constant shift — still silent."""
+    spec = _money_spec()
+    base_vals = ["100.00", "200.00", "300.00", "400.00", "500.00", "600.00"]
+    fault_vals = ["90.00", "150.00", "270.00", "360.00", "450.00", "540.00"]
     sigs = signals_from_sync(
         _money_summary(fault_vals),
         spec=spec,

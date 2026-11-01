@@ -228,9 +228,10 @@ def test_engine_escalation_carries_ladder_question() -> None:
 
 def test_engine_semantic_climb_uses_provider() -> None:
     """gross_to_net derives SEMANTIC_VALUE_DRIFT; the arm climbs with the
-    engine-enumerated hypotheses: L2 ranks (small-model tokens), L3 is
-    skipped by the plan §2.6 gate (the enumerator yields ≥ 2), and the run
-    escalates with no patch released (REQ-024 owner check)."""
+    engine-enumerated hypotheses: L2 ranks (small-model tokens), and —
+    REQ-078 item 1, no yield-count gate — L3 fires on the FakeProvider
+    (frontier tokens recorded) before the run escalates with no patch
+    released."""
     cfg = HarnessConfig()
     inputs = make_trial_inputs(cfg, "gross_to_net", 0)
     case = ablation_case_for_scenario("gross_to_net")
@@ -242,9 +243,9 @@ def test_engine_semantic_climb_uses_provider() -> None:
     assert res.spec is not None and res.spec["decision"] == "escalate"
     assert res.spec["candidate_patch"] == []
     assert res.model_calls and res.model_calls > 0
-    # L2 ranked (small tokens); L3 never fires on honest enumeration.
+    # L2 ranked (small tokens); L3 attempted (frontier tokens recorded).
     assert res.input_tokens > 0
-    assert res.frontier_tokens == 0
+    assert res.frontier_tokens > 0
 
 
 def test_engine_arm_handle_kwargs_carry_no_case_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:

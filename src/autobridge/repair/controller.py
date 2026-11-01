@@ -33,7 +33,13 @@ if TYPE_CHECKING:
 
     from autobridge.drift.fingerprint import FingerprintDelta
 
-from autobridge.repair.ladder import LadderResult, repair_frontier_budget, run_ladder
+from autobridge.repair.ladder import (
+    _BACKOFF_ONLY_CLASSES,
+    _NON_FIXABLE,
+    LadderResult,
+    repair_frontier_budget,
+    run_ladder,
+)
 
 
 def _spec_vendor(spec: dict[str, Any]) -> str:
@@ -269,8 +275,14 @@ class RepairController:
         signals_list: list[Any] = list(signals or [])
         extra_dict: dict[str, Any] = dict(extra or {})
 
-        if provider is not None:
-            return self._handle_semantic_climb(
+        # REQ-078 item 1: every repairable drift climbs to the model when a
+        # provider is wired — not only SEMANTIC_VALUE_DRIFT. The only
+        # classes that never climb are the true non-fixables
+        # (CAPABILITY_REMOVED, AUTH_REVOKED → operator with a specific
+        # question) and backoff/transient (retry, no patch). UNKNOWN climbs
+        # with the raw evidence (no hypotheses needed).
+        if provider is not None and drift_class not in _NON_FIXABLE and drift_class not in _BACKOFF_ONLY_CLASSES:
+            return self._handle_model_climb(
                 spec=spec,
                 drift_class=drift_class,
                 signals_list=signals_list,
@@ -401,7 +413,7 @@ class RepairController:
 
         return result
 
-    def _handle_semantic_climb(
+    def _handle_model_climb(
         self,
         *,
         spec: dict[str, Any],
@@ -427,20 +439,62 @@ class RepairController:
         existing_repair_run_id: str | None = None,
         dry_run_fault: dict[str, Any] | None = None,
     ) -> LadderResult:
-        """Climb L0 -> L1 -> L2 -> L3 for a semantic drift, then escalate.
+        """Climb L0 -> L1 -> L2 -> L3 for any repairable drift (REQ-078).
 
         Wraps :func:`run_frontier_climb` so the controller path records the
-        same full climb the demo and the matrix pin ([0, 1, 2, 3, 4]): every
-        rung tried with its one-line reason, the L3 frontier call in the
-        usage ledger, and an L4 escalation with one operator question. An
-        L3 proposal is never released here — it is recorded on the rung and
-        left for the caller (verifier/trap check), never placed in
-        ``candidate_patch``.
+        same full climb ([0, 1, 2, 3, 4]): every rung tried with its one-line
+        reason, the L3 frontier call in the usage ledger. SEMANTIC_VALUE_DRIFT
+        always ends here as an escalation (money semantics need the
+        operator's business decision; a verified model patch rides the
+        escalation bundle as the proposal). Any other class whose model
+        patch passed the pointer check and the dry-run becomes an
+        approvable candidate (decision ``propose``) through the same release
+        path and verifier gate as an L1 patch — never auto-applied. A
+        confident L2 winner is turned into a patch through the same checks.
+        Every model-contributed candidate requires the verifier downstream
+        (fail closed when unreachable). ``_handle_semantic_climb`` stays as
+        an alias for callers that reference it by name.
         """
         import uuid as _uuid  # noqa: PLC0415 - keep module import cost down
 
         from autobridge.repair.ladder import run_frontier_climb  # noqa: PLC0415
 
+        # REQ-078 item 1 (deterministic first, models last): the model
+        # climb starts where the deterministic ladder stops. Probe L0/L1
+        # first with no provider and no DB write; a verified deterministic
+        # patch returns as-is (0 model calls) and the model never runs for
+        # it. Only a deterministic miss reaches L2/L3 below. The probe is
+        # pure (session=None) so the running "climbing" row the job
+        # pre-created is never overwritten with a terminal decision
+        # before the model climb finalizes it (REQ-043).
+        det = self.handle(
+            spec=spec,
+            drift_class=drift_class,
+            signals=signals_list,
+            fingerprint_delta=fingerprint_delta,
+            extra=extra_dict,
+            vendor=vendor_val,
+            drift_event_ids=drift_event_ids,
+            session=None,
+            enable_knowledge=enable_knowledge,
+            enable_rules=enable_rules,
+        )
+        if det.decision == "propose":
+            return self.handle(
+                spec=spec,
+                drift_class=drift_class,
+                signals=signals_list,
+                fingerprint_delta=fingerprint_delta,
+                extra=extra_dict,
+                vendor=vendor_val,
+                drift_event_ids=drift_event_ids,
+                session=session,
+                enable_knowledge=enable_knowledge,
+                enable_rules=enable_rules,
+                on_rung=on_rung,
+                existing_repair_run_id=existing_repair_run_id,
+                dry_run_fault=dry_run_fault,
+            )
         # REQ-043: when the repair job pre-created the running row, the
         # climb's ModelCalls link to it directly — no post-hoc relink —
         # and the final write fills that same row.
@@ -475,24 +529,6 @@ class RepairController:
             on_rung=on_rung,
             dry_run_fault=dry_run_fault,
         )
-        if climb.get("resolved_rung") == 0:
-            # L0 knew this drift: fall back to the deterministic path, which
-            # replays the cached patch as a normal L0 propose.
-            return self.handle(
-                spec=spec,
-                drift_class=drift_class,
-                signals=signals_list,
-                fingerprint_delta=fingerprint_delta,
-                extra=extra_dict,
-                vendor=vendor_val,
-                drift_event_ids=drift_event_ids,
-                session=session,
-                enable_knowledge=enable_knowledge,
-                enable_rules=enable_rules,
-                on_rung=on_rung,
-                existing_repair_run_id=existing_repair_run_id,
-                dry_run_fault=dry_run_fault,
-            )
 
         # Normalize rung-keyed climb attempts to level-keyed ladder trace
         # entries (what rung_ledger and the repairs UI read).
@@ -544,6 +580,143 @@ class RepairController:
             }
             if not model_proposal["label"] or not model_proposal["effect"]:
                 model_proposal = None
+        # REQ-078 item 2: a model patch that passed the pointer check and
+        # the dry-run becomes an approvable candidate for every class
+        # except SEMANTIC_VALUE_DRIFT (money semantics stay a business
+        # decision: the patch rides the escalation bundle as the proposal).
+        # The downstream release path runs the verifier gate on it exactly
+        # like an L1 patch (fail closed when unreachable); nothing here is
+        # auto-applied — approval is still required.
+        _validated_proposal: list[dict[str, Any]] | None = None
+        if (
+            isinstance(climb.get("proposal"), list)
+            and climb.get("proposal")
+            and l3_entry is not None
+            and l3_entry.get("proposal_validated")
+        ):
+            _validated_proposal = [dict(op) for op in climb["proposal"] if isinstance(op, dict)]
+        if (
+            _validated_proposal
+            and drift_class != "SEMANTIC_VALUE_DRIFT"
+            and not model_escalated
+        ):
+            trace.append(
+                {
+                    "level": 3,
+                    "action": "model_patch_candidate",
+                    "reason": (
+                        f"L3 proposed a verified patch for {scenario_name} "
+                        f"({_validated_proposal[0].get('path', '?')}…): "
+                        "operator approval required"
+                    ),
+                    "drift_class": drift_class,
+                    "proposal": list(_validated_proposal),
+                }
+            )
+            model_usage = dict(climb.get("usage", {}))
+            result = LadderResult(
+                decision="propose",
+                ladder_level_reached=3,
+                candidate_patch=_validated_proposal,
+                rule_id=None,
+                verification_level="model",
+                model_usage=model_usage,
+                evidence_ids=_signal_evidence_ids(signals_list),
+                ladder_trace=trace,
+                backoff_only=False,
+                escalation_reason=None,
+                escalation_bundle=None,
+                requires_release=True,
+                confidence=None,
+            )
+            if session is not None:
+                run = _finalize_repair_row(
+                    session,
+                    result=result,
+                    existing_repair_run_id=existing_repair_run_id,
+                    drift_event_ids=list(drift_event_ids or []),
+                    vendor=vendor_val,
+                    fingerprint_delta=fingerprint_delta,
+                    drift_class=drift_class,
+                    hypotheses=surviving,
+                )
+                result = _replace(result, repair_run_id=run.id)
+            return result
+        # REQ-078 item 2: a confident L2 winner becomes a patch through the
+        # same pointer + dry-run checks (never synthesised beyond what the
+        # hypothesis fragment declares). Semantic drift still escalates.
+        if (
+            climb.get("resolved_rung") == 2
+            and drift_class != "SEMANTIC_VALUE_DRIFT"
+            and surviving
+        ):
+            try:
+                from autobridge.repair.ladder import (  # noqa: PLC0415
+                    _l3_pointer_error,
+                    _patch_from_hypothesis,
+                )
+
+                _ranked_ids = [str(x) for x in (climb.get("ranked_ids") or [])]
+                _by_id: dict[str, Any] = {}
+                for _h in surviving:
+                    _hid = _h.get("id") if isinstance(_h, dict) else getattr(_h, "id", None)
+                    if _hid is not None:
+                        _by_id[str(_hid)] = _h
+                _ordered = [_by_id[i] for i in _ranked_ids if i in _by_id]
+                _ordered += [_h for _h in surviving if _h not in _ordered]
+                for _top in _ordered:
+                    _l2_patch = _patch_from_hypothesis(spec, _top)
+                    if not _l2_patch:
+                        continue
+                    if _l3_pointer_error(
+                        _l2_patch,
+                        target_spec=validate_against if validate_against is not None else spec,
+                        evidence=evidence,
+                    ) is not None:
+                        continue
+                    trace.append(
+                        {
+                            "level": 2,
+                            "action": "l2_patch_candidate",
+                            "reason": (
+                                f"L2 confident ({climb.get('l2_confidence')}); "
+                                f"hypothesis patch for {scenario_name}: operator approval required"
+                            ),
+                            "drift_class": drift_class,
+                            "proposal": [dict(op) for op in _l2_patch],
+                        }
+                    )
+                    model_usage = dict(climb.get("usage", {}))
+                    result = LadderResult(
+                        decision="propose",
+                        ladder_level_reached=2,
+                        candidate_patch=[dict(op) for op in _l2_patch],
+                        rule_id=None,
+                        verification_level="model",
+                        model_usage=model_usage,
+                        evidence_ids=_signal_evidence_ids(signals_list),
+                        ladder_trace=trace,
+                        backoff_only=False,
+                        escalation_reason=None,
+                        escalation_bundle=None,
+                        requires_release=True,
+                        confidence=climb.get("l2_confidence"),
+                    )
+                    if session is not None:
+                        run = _finalize_repair_row(
+                            session,
+                            result=result,
+                            existing_repair_run_id=existing_repair_run_id,
+                            drift_event_ids=list(drift_event_ids or []),
+                            vendor=vendor_val,
+                            fingerprint_delta=fingerprint_delta,
+                            drift_class=drift_class,
+                            hypotheses=surviving,
+                        )
+                        result = _replace(result, repair_run_id=run.id)
+                    return result
+            except Exception:
+                pass
         if l3_entry is not None and l3_entry.get("action") == "model_escalation" and model_question:
             # REQ-044 item 3: the model explicitly asked for a human
             # decision — its question resolves L4, labelled as the model's,
@@ -563,14 +736,23 @@ class RepairController:
         elif l3_entry is not None and (climb.get("proposal") or l3_entry.get("proposal_ops")):
             l4_reason = (
                 f"L3 proposed a patch for {scenario_name} with no independent "
-                "evidence; semantic drift is never auto-patched — one operator question"
+                "evidence; money semantics are never auto-patched — one operator question"
+                if drift_class == "SEMANTIC_VALUE_DRIFT"
+                else (
+                    f"L3 proposed a patch for {scenario_name} that did not pass "
+                    "its checks — one operator question"
+                )
             )
         elif l3_entry is not None and l3_entry.get("action") == "l3_skipped":
             l4_reason = f"{l3_entry.get('reason', 'L3 skipped')} ({scenario_name}); escalate"
         else:
             l4_reason = (
                 f"No verified fix for {scenario_name} below L4 "
-                "(semantic drift needs the operator)"
+                + (
+                    "(semantic drift needs the operator)"
+                    if drift_class == "SEMANTIC_VALUE_DRIFT"
+                    else "(the operator decides)"
+                )
             )
         trace.append(
             {"level": 4, "action": "escalate", "reason": l4_reason, "drift_class": drift_class}
@@ -578,16 +760,27 @@ class RepairController:
         # REQ-047 item 2: the model's question IS the escalation question,
         # with its rationale beneath (in the bundle reason the repair page
         # renders under the question); the canned text is the fallback only.
-        _bundle_reason = f"{scenario_name}: semantic drift, no verified fix"
+        # REQ-078 item 3: fallback questions are class-neutral (no
+        # "semantic", no "which mapping" unless the drift is semantic).
+        _bundle_reason = (
+            f"{scenario_name}: semantic drift, no verified fix"
+            if drift_class == "SEMANTIC_VALUE_DRIFT"
+            else f"{scenario_name}: no verified fix below L4"
+        )
         if model_escalated and model_rationale:
             _bundle_reason += f"; model rationale: {model_rationale}"
+        _fallback_question = (
+            f"{scenario_name}: no verified fix for this semantic drift — which mapping is correct?"
+            if drift_class == "SEMANTIC_VALUE_DRIFT"
+            else f"{scenario_name}: no verified fix — what is the correct change?"
+        )
         bundle = escalation_for_no_fix(
             _bundle_reason,
             evidence_ids=_signal_evidence_ids(signals_list),
             question=(
                 model_question
                 if model_escalated and model_question
-                else f"{scenario_name}: no verified fix for this semantic drift — which mapping is correct?"
+                else _fallback_question
             ),
             proposal=model_proposal,
         )
@@ -678,6 +871,10 @@ class RepairController:
             except Exception:
                 pass
         return result
+
+    # Backwards-compatible alias: the climb was semantic-only before
+    # REQ-078; it now serves every repairable class.
+    _handle_semantic_climb = _handle_model_climb
 
     def handle_classified(
         self,
@@ -773,6 +970,203 @@ class RepairController:
         return result, classification
 
 
+def build_generic_l3_evidence(
+    spec: dict[str, Any],
+    signals: list[Any],
+    fingerprint_delta: Any | None,
+    summary: dict[str, Any] | None,
+    drift_class: str,
+    failed_attempts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Class-neutral L3 evidence for any drift class (REQ-078 item 3).
+
+    The L3 prompt gets: the drift signals and their messages, the
+    fingerprint delta, unmet criteria / failing checks, the failed L1
+    attempts and why, the relevant spec subtree, and a faulted-records
+    sample. Allowed patch pointers derive from what the delta touches
+    (entity fields, pagination strategies, check targets) instead of
+    money-only members. All values are redacted data; no secrets.
+    """
+    import json as _json  # noqa: PLC0415
+
+    def _sig_message(sig: Any) -> str:
+        for attr in ("message", "reason", "detail"):
+            try:
+                val = sig.get(attr) if isinstance(sig, dict) else getattr(sig, attr, None)
+            except Exception:
+                val = None
+            if isinstance(val, str) and val.strip():
+                return val.strip()[:300]
+        try:
+            kind = sig.get("kind") if isinstance(sig, dict) else getattr(sig, "kind", None)
+        except Exception:
+            kind = None
+        return str(kind or type(sig).__name__)[:120]
+
+    def _delta_dict(delta: Any) -> dict[str, Any]:
+        if delta is None:
+            return {}
+        if isinstance(delta, dict):
+            return {k: v for k, v in delta.items() if k != "spec_signature"}
+        try:
+            out: dict[str, Any] = {}
+            for key in (
+                "fingerprint_changed",
+                "pagination_changed",
+                "keys_changed",
+                "types_changed",
+                "changed_entities",
+                "pagination_details",
+                "keys_details",
+                "types_details",
+            ):
+                out[key] = getattr(delta, key, None)
+            return _json.loads(_json.dumps(out, sort_keys=True, default=str))
+        except Exception:
+            return {"delta": str(delta)[:500]}
+
+    summary = summary if isinstance(summary, dict) else {}
+    delta_d = _delta_dict(fingerprint_delta)
+    changed_entities = list(delta_d.get("changed_entities") or [])
+    entities = spec.get("entities") if isinstance(spec, dict) else None
+    if not isinstance(entities, dict):
+        entities = {}
+
+    # Relevant spec subtree: touched entities, else the whole entities map
+    # keys (never values beyond fields/checks shapes).
+    subtree: dict[str, Any] = {}
+    try:
+        names = [e for e in changed_entities if e in entities] or sorted(entities)[:4]
+        for name in names:
+            ent = entities.get(name)
+            if not isinstance(ent, dict):
+                continue
+            fields: dict[str, Any] = {}
+            _raw_fields = ent.get("fields")
+            if isinstance(_raw_fields, dict):
+                fields = _raw_fields
+            checks: list[Any] = []
+            _raw_checks = ent.get("checks")
+            if isinstance(_raw_checks, list):
+                checks = _raw_checks
+            subtree[name] = {
+                "fields": {fn: str((fs or {}).get("path", ""))[:120] for fn, fs in list(fields.items())[:20] if isinstance(fs, dict)},
+                "checks": [str(c.get("kind") if isinstance(c, dict) else getattr(c, "kind", c))[:60] for c in list(checks)[:10]],
+            }
+    except Exception:
+        subtree = {}
+
+    # Allowed pointers derive from what the delta touches.
+    allowed: list[str] = []
+    try:
+        for name in (changed_entities or list(subtree)):
+            ent = entities.get(name)
+            if not isinstance(ent, dict):
+                continue
+            fields = ent.get("fields") or {}
+            if isinstance(fields, dict):
+                for fn in sorted(fields)[:20]:
+                    allowed.append(f"/entities/{name}/fields/{fn}/path")
+                    allowed.append(f"/entities/{name}/fields/{fn}/transform")
+            for idx, chk in enumerate(ent.get("checks") or []):
+                if isinstance(chk, dict) and chk.get("compare_to") is not None:
+                    allowed.append(f"/entities/{name}/checks/{idx}/compare_to")
+        ops = (spec.get("operations") or {}) if isinstance(spec, dict) else {}
+        if isinstance(ops, dict) and (delta_d.get("pagination_changed") or drift_class == "PAGINATION_CHANGE"):
+            for op_name in sorted(ops)[:20]:
+                allowed.append(f"/operations/{op_name}/pagination/strategy")
+                allowed.append(f"/operations/{op_name}/pagination/cursor_field")
+    except Exception:
+        pass
+
+    # Faulted-records sample: first two canonical rows of a touched entity.
+    sample_rows: list[dict[str, Any]] = []
+    try:
+        canonical = summary.get("canonical_records") or {}
+        for name in (changed_entities or sorted(canonical)[:2]):
+            rows = canonical.get(name)
+            if isinstance(rows, list) and rows:
+                for rec in rows[:2]:
+                    if isinstance(rec, dict):
+                        sample_rows.append({str(k)[:60]: str(v)[:120] for k, v in list(rec.items())[:12]})
+                break
+    except Exception:
+        sample_rows = []
+
+    unmet: list[str] = []
+    try:
+        for crit in summary.get("unmet_criteria") or []:
+            unmet.append(str(crit)[:200])
+    except Exception:
+        pass
+
+    observed: dict[str, Any] = {
+        "drift_class": drift_class,
+        "signals": [_sig_message(s) for s in (signals or [])][:10],
+        "fingerprint_delta": delta_d,
+        "unmet_criteria": unmet[:10],
+    }
+    if failed_attempts:
+        observed["failed_attempts"] = [
+            {k: str(v)[:200] for k, v in a.items() if k in ("level", "rule_id", "action", "reason")}
+            for a in failed_attempts[-4:]
+        ]
+    return {
+        "patch_target": {
+            "document": "connector spec",
+            "drift_class": drift_class,
+            "allowed_ops": ["replace", "add", "remove"],
+            "allowed_pointers": sorted(set(allowed))[:80],
+        },
+        "spec_subtree": subtree,
+        "raw_records": sample_rows[:4],
+        "observed": observed,
+    }
+
+
+def prepare_climb_inputs(
+    *,
+    spec: dict[str, Any],
+    signals: list[Any],
+    summary: dict[str, Any] | None,
+    sync_run_id: str | None,
+    drift_class: str,
+) -> dict[str, Any]:
+    """Derive model-climb inputs for any drift class (REQ-078 item 3).
+
+    SEMANTIC_VALUE_DRIFT keeps the money-hypothesis enumeration
+    (:func:`prepare_semantic_inputs`); every other class gets the
+    class-neutral evidence (signals, delta, unmet criteria, spec subtree,
+    records sample) with no hypotheses required — L3 runs on the raw
+    evidence. Pure and fast: no provider, no model call, no DB write.
+    """
+    if drift_class == "SEMANTIC_VALUE_DRIFT":
+        return prepare_semantic_inputs(
+            spec=spec, signals=list(signals), summary=summary, sync_run_id=sync_run_id
+        )
+    try:
+        from autobridge.drift.fingerprint import diff_fingerprints  # noqa: PLC0415
+    except Exception:
+        diff_fingerprints = None  # type: ignore[assignment]
+    _ = diff_fingerprints
+    evidence = build_generic_l3_evidence(
+        spec, list(signals), None, summary, drift_class, failed_attempts=None
+    )
+    return {
+        "climbed": None,
+        "siblings": [],
+        "stages": [
+            {
+                "name": "observed",
+                "count": len(signals or []),
+                "ids": [],
+                "source": f"wire signals for {drift_class}; no hypotheses needed",
+            }
+        ],
+        "evidence": evidence or {},
+    }
+
+
 def prepare_semantic_inputs(
     *,
     spec: dict[str, Any],
@@ -848,17 +1242,22 @@ def run_semantic_repair(
     ``verdict`` when it was judged. Never raises for provider or verifier
     trouble: a misconfigured live mode degrades to ``off``, an unreachable
     verifier is recorded as evidence, and the     escalation always stands.
+
+    REQ-078: serves every repairable class. SEMANTIC_VALUE_DRIFT keeps the
+    money-hypothesis enumeration; every other class climbs on the
+    class-neutral evidence (no hypotheses needed).
     """
     controller = (
         RepairController(knowledge_cache=knowledge_cache)
         if knowledge_cache is not None
         else RepairController()
     )
-    prepared = prepare_semantic_inputs(
+    prepared = prepare_climb_inputs(
         spec=spec,
         signals=signals,
         summary=summary,
         sync_run_id=sync_run_id,
+        drift_class=drift_class,
     )
     climbed = prepared["climbed"]
     stages = prepared["stages"]
@@ -1353,112 +1752,19 @@ def _run_repair_climb(
     *running_row_id* threads it through the climb so the final write fills
     that same row, and *on_rung* streams rung snapshots to it while the
     climb runs. ModelCalls link to the running row directly.
-    """
-    if drift_class == "SEMANTIC_VALUE_DRIFT":
-        # REQ-039: the worker repair path climbs the same semantic climb
-        # as the sync-inline path (funnel + L3 attempt + verifier judge),
-        # never the deterministic 0-call escalation.
-        if isinstance(payload.get("hypotheses_json"), list) and payload.get("hypotheses_json"):
-            # REQ-042 deferred repair: the sync already derived the funnel
-            # (enumeration, wire filter, climbed reading, evidence) and
-            # queued it in the job payload. Rebuild the same objects and
-            # climb with the live provider — no model call ran in the
-            # request, and none is re-derived from a label here.
-            from autobridge.discovery.hypotheses import hypothesis_from_json  # noqa: PLC0415
-            from autobridge.drift.signals import signal_from_json  # noqa: PLC0415
-            from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
 
-            parcel_signals: list[Any] = []
-            for raw_sig in payload.get("signals_json") or []:
-                try:
-                    parcel_signals.append(
-                        signal_from_json(raw_sig) if isinstance(raw_sig, dict) else raw_sig
-                    )
-                except Exception:
-                    continue
-            parcel_hyps: list[Any] = []
-            for raw_hyp in payload.get("hypotheses_json") or []:
-                try:
-                    if isinstance(raw_hyp, dict):
-                        parcel_hyps.append(hypothesis_from_json(raw_hyp))
-                except Exception as exc:
-                    raise ValueError(f"repair job payload carries no usable hypothesis: {exc}") from exc
-            if not parcel_hyps:
-                raise ValueError("repair job payload carries no usable hypothesis")
-            try:
-                provider, mode = resolve_frontier_provider()
-            except Exception:
-                provider, mode = None, "off"
-            result = controller.handle(
-                spec=spec,
-                drift_class=drift_class,
-                signals=parcel_signals,
-                fingerprint_delta=payload.get("fingerprint_delta"),
-                vendor=vendor,
-                drift_event_ids=drift_ids,
-                session=ctx.session,
-                hypotheses=parcel_hyps,
-                provider=provider,
-                # REQ-048 item 6: same repair budget as the live path — the
-                # L3 cap, one source of truth (see above).
-                budget=Budget(max_frontier_tokens=repair_frontier_budget()),
-                scenario=payload.get("scenario"),
-                validate_against=spec,
-                evidence=payload.get("l3_evidence") or None,
-                hypothesis_stages=payload.get("hypothesis_stages"),
-                on_rung=on_rung,
-                existing_repair_run_id=running_row_id,
-                # REQ-053 item 6: judge L3 proposals on the break's
-                # records (parcelled by the sync; no vendor call here).
-                dry_run_fault=payload.get("dry_run_fault") or None,
-            )
-            info: dict[str, Any] = {"provider_mode": mode}
-            l3_entry = next(
-                (
-                    e
-                    for e in (result.ladder_trace or [])
-                    if isinstance(e, dict) and e.get("level") == 3
-                ),
-                None,
-            )
-            if l3_entry is None:
-                info["l3_status"] = "skip: no L3 rung (no provider configured)"
-            elif l3_entry.get("action") in ("frontier_generate", "proposal_rejected"):
-                info["l3_status"] = "attempt"
-            else:
-                info["l3_status"] = f"skip: {l3_entry.get('reason', 'L3 skipped')}"
-            proposal = l3_entry.get("proposal") if isinstance(l3_entry, dict) else None
-            info["proposal"] = proposal
-            assert spec is not None  # noqa: S101 — the fallback above guarantees a spec
-            drop_reason = None
-            if proposal is None and isinstance(l3_entry, dict):
-                drop_reason = str(
-                    l3_entry.get("proposal_dropped") or l3_entry.get("retry_error") or ""
-                )[:500] or None
-            info["verdict"] = _judge_semantic_proposal(
-                session=ctx.session,
-                spec=spec,
-                proposal=proposal if isinstance(proposal, list) else None,
-                verifier_url=None,
-                repair_run_id=result.repair_run_id,
-                drop_reason=drop_reason,
-            )
-        else:
-            result, info = run_semantic_repair(
-                spec=spec,
-                drift_class=drift_class,
-                signals=list(payload.get("signals") or []),
-                fingerprint_delta=payload.get("fingerprint_delta"),
-                summary=payload.get("summary"),
-                sync_run_id=payload.get("sync_run_id"),
-                vendor=vendor,
-                drift_event_ids=drift_ids,
-                session=ctx.session,
-                on_rung=on_rung,
-                existing_repair_run_id=running_row_id,
-            )
-    else:
-        info = {}
+    REQ-078: the deferred live-model job path applies to every repairable
+    class, not only semantic. The job's L3 proposal is judged with the
+    verifier URL (fail closed when unreachable).
+    """
+    import os as _os  # noqa: PLC0415
+
+    from autobridge.repair.ladder import _BACKOFF_ONLY_CLASSES as _JOB_BACKOFF  # noqa: PLC0415
+    from autobridge.repair.ladder import _NON_FIXABLE as _JOB_NON_FIXABLE  # noqa: PLC0415
+
+    _job_verifier_url = (_os.environ.get("VERIFIER_URL", "") or "").strip() or None
+    info: dict[str, Any] = {}
+    if drift_class in _JOB_NON_FIXABLE or drift_class in _JOB_BACKOFF:
         result = controller.handle(
             spec=spec,
             drift_class=drift_class,
@@ -1471,7 +1777,177 @@ def _run_repair_climb(
             on_rung=on_rung,
             existing_repair_run_id=running_row_id,
         )
+    elif isinstance(payload.get("hypotheses_json"), list) and payload.get("hypotheses_json"):
+        # REQ-039: the worker repair path climbs the same semantic climb
+        # as the sync-inline path (funnel + L3 attempt + verifier judge),
+        # never the deterministic 0-call escalation.
+        # REQ-042 deferred repair: the sync already derived the funnel
+        # (enumeration, wire filter, climbed reading, evidence) and
+        # queued it in the job payload. Rebuild the same objects and
+        # climb with the live provider — no model call ran in the
+        # request, and none is re-derived from a label here.
+        from autobridge.discovery.hypotheses import hypothesis_from_json  # noqa: PLC0415
+        from autobridge.drift.signals import signal_from_json  # noqa: PLC0415
+        from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
 
+        parcel_signals: list[Any] = []
+        for raw_sig in payload.get("signals_json") or []:
+            try:
+                parcel_signals.append(
+                    signal_from_json(raw_sig) if isinstance(raw_sig, dict) else raw_sig
+                )
+            except Exception:
+                continue
+        parcel_hyps: list[Any] = []
+        for raw_hyp in payload.get("hypotheses_json") or []:
+            try:
+                if isinstance(raw_hyp, dict):
+                    parcel_hyps.append(hypothesis_from_json(raw_hyp))
+            except Exception as exc:
+                raise ValueError(f"repair job payload carries no usable hypothesis: {exc}") from exc
+        if not parcel_hyps:
+            raise ValueError("repair job payload carries no usable hypothesis")
+        try:
+            provider, mode = resolve_frontier_provider()
+        except Exception:
+            provider, mode = None, "off"
+        result = controller.handle(
+            spec=spec,
+            drift_class=drift_class,
+            signals=parcel_signals,
+            fingerprint_delta=payload.get("fingerprint_delta"),
+            vendor=vendor,
+            drift_event_ids=drift_ids,
+            session=ctx.session,
+            hypotheses=parcel_hyps,
+            provider=provider,
+            # REQ-048 item 6: same repair budget as the live path — the
+            # L3 cap, one source of truth (see above).
+            budget=Budget(max_frontier_tokens=repair_frontier_budget()),
+            scenario=payload.get("scenario"),
+            validate_against=spec,
+            evidence=payload.get("l3_evidence") or None,
+            hypothesis_stages=payload.get("hypothesis_stages"),
+            on_rung=on_rung,
+            existing_repair_run_id=running_row_id,
+            # REQ-053 item 6: judge L3 proposals on the break's
+            # records (parcelled by the sync; no vendor call here).
+            dry_run_fault=payload.get("dry_run_fault") or None,
+        )
+        info = {"provider_mode": mode}
+        l3_entry = next(
+            (
+                e
+                for e in (result.ladder_trace or [])
+                if isinstance(e, dict) and e.get("level") == 3
+            ),
+            None,
+        )
+        if l3_entry is None:
+            info["l3_status"] = "skip: no L3 rung (no provider configured)"
+        elif l3_entry.get("action") in ("frontier_generate", "proposal_rejected"):
+            info["l3_status"] = "attempt"
+        else:
+            info["l3_status"] = f"skip: {l3_entry.get('reason', 'L3 skipped')}"
+        proposal: Any = l3_entry.get("proposal") if isinstance(l3_entry, dict) else None
+        info["proposal"] = proposal
+        assert spec is not None  # noqa: S101 — the fallback above guarantees a spec
+        drop_reason: str | None = None
+        if proposal is None and isinstance(l3_entry, dict):
+            drop_reason = str(
+                l3_entry.get("proposal_dropped") or l3_entry.get("retry_error") or ""
+            )[:500] or None
+        info["verdict"] = _judge_semantic_proposal(
+            session=ctx.session,
+            spec=spec,
+            proposal=proposal if isinstance(proposal, list) else None,
+            verifier_url=_job_verifier_url,
+            repair_run_id=result.repair_run_id,
+            drop_reason=drop_reason,
+        )
+    elif isinstance(payload.get("l3_evidence"), dict) and payload.get("l3_evidence"):
+        # REQ-078: deferred climb for a non-semantic class — the sync
+        # parcelled the class-neutral evidence (no hypotheses needed).
+        # Rebuild the signals and climb with the provider; the L3
+        # proposal is judged with the verifier URL (fail closed).
+        from autobridge.drift.signals import signal_from_json  # noqa: PLC0415
+        from autobridge.llm.provider import Budget, resolve_frontier_provider  # noqa: PLC0415
+
+        parcel_signals = []
+        for raw_sig in payload.get("signals_json") or []:
+            try:
+                parcel_signals.append(
+                    signal_from_json(raw_sig) if isinstance(raw_sig, dict) else raw_sig
+                )
+            except Exception:
+                continue
+        try:
+            provider, mode = resolve_frontier_provider()
+        except Exception:
+            provider, mode = None, "off"
+        result = controller.handle(
+            spec=spec,
+            drift_class=drift_class,
+            signals=parcel_signals,
+            fingerprint_delta=payload.get("fingerprint_delta"),
+            vendor=vendor,
+            drift_event_ids=drift_ids,
+            session=ctx.session,
+            hypotheses=None,
+            provider=provider,
+            budget=Budget(max_frontier_tokens=repair_frontier_budget()),
+            scenario=payload.get("scenario"),
+            validate_against=spec,
+            evidence=payload.get("l3_evidence") or None,
+            hypothesis_stages=payload.get("hypothesis_stages"),
+            on_rung=on_rung,
+            existing_repair_run_id=running_row_id,
+            dry_run_fault=payload.get("dry_run_fault") or None,
+        )
+        info = {"provider_mode": mode}
+        l3_entry = next(
+            (
+                e
+                for e in (result.ladder_trace or [])
+                if isinstance(e, dict) and e.get("level") == 3
+            ),
+            None,
+        )
+        if l3_entry is None:
+            info["l3_status"] = "skip: no L3 rung (no provider configured)"
+        elif l3_entry.get("action") in ("frontier_generate", "proposal_rejected"):
+            info["l3_status"] = "attempt"
+        else:
+            info["l3_status"] = f"skip: {l3_entry.get('reason', 'L3 skipped')}"
+        _ev_proposal: Any = l3_entry.get("proposal") if isinstance(l3_entry, dict) else None
+        info["proposal"] = _ev_proposal
+        _ev_drop: str | None = None
+        if _ev_proposal is None and isinstance(l3_entry, dict):
+            _ev_drop = str(
+                l3_entry.get("proposal_dropped") or l3_entry.get("retry_error") or ""
+            )[:500] or None
+        info["verdict"] = _judge_semantic_proposal(
+            session=ctx.session,
+            spec=spec,
+            proposal=_ev_proposal if isinstance(_ev_proposal, list) else None,
+            verifier_url=_job_verifier_url,
+            repair_run_id=result.repair_run_id,
+            drop_reason=_ev_drop,
+        )
+    else:
+        result, info = run_semantic_repair(
+            spec=spec,
+            drift_class=drift_class,
+            signals=list(payload.get("signals") or []),
+            fingerprint_delta=payload.get("fingerprint_delta"),
+            summary=payload.get("summary"),
+            sync_run_id=payload.get("sync_run_id"),
+            vendor=vendor,
+            drift_event_ids=drift_ids,
+            session=ctx.session,
+            on_rung=on_rung,
+            existing_repair_run_id=running_row_id,
+        )
     # Build job result
     out: dict[str, Any] = {
         "decision": result.decision,

@@ -939,13 +939,49 @@ class OpenCodeCliDriver:
         cwd: Path | None = None,
         timeout_s: float | None = None,
     ) -> ClaudeCliResult:
-        """Execute ``opencode run --format json`` with *prompt*."""
-        import dataclasses as _dataclasses  # noqa: PLC0415
+        """Execute ``opencode run --format json`` with *prompt*.
 
+        REQ-078 item 6 (frontier-agent isolation): the agent is restricted
+        to its sandbox dir and the vendor sandbox URL only. The run
+        requires *cwd* (the sandbox dir the harness wrote the shared
+        context files to — never the repo); the child environment is
+        scrubbed of bench-internal endpoints (verifier/admin/control
+        URLs, held-out paths, API keys beyond the frontier key the model
+        call itself needs) so the agent cannot regenerate the instance
+        from the committed protocol, read generator/verifier sources, or
+        use the unauthenticated ``/beacon/records`` endpoint as an
+        oracle. Equal information holds both ways: the prompt + sandbox
+        files are the agent's whole world, exactly the engine's equal
+        inputs.
+        """
+        import dataclasses as _dataclasses  # noqa: PLC0415
+        import os as _os  # noqa: PLC0415
+
+        if cwd is None:
+            raise OpenCodeCliError(
+                "opencode run refused: no sandbox dir (cwd) — the agent "
+                "runs only inside its sandbox dir, never the repo"
+            )
         cmd = self._build_command(prompt)
         t = timeout_s if timeout_s is not None else self.timeout_s
         self.calls.append({"cmd": cmd, "prompt": prompt, "cwd": str(cwd) if cwd else None})
         start = time.monotonic()
+        child_env = dict(_os.environ)
+        for _scrub in (
+            "VERIFIER_URL",
+            "CONTROL_URL",
+            "AUTOBRIDGE_CONTROL_URL",
+            "HELDOUT_DIR",
+            "ADMIN_TOKEN",
+            "BEACON_ADMIN_TOKEN",
+            "ATLAS_API_KEY",
+            "HARBOR_API_KEY",
+            "MERIDIAN_API_KEY",
+            "PABX_AGENT_KEY",
+            "BENCH_API_KEY",
+            "ANTHROPIC_API_KEY",
+        ):
+            child_env.pop(_scrub, None)
         try:
             proc = subprocess.run(
                 cmd,
@@ -955,7 +991,8 @@ class OpenCodeCliDriver:
                 # REQ-061 item 2: never inherit stdin — opencode would wait
                 # on it (the sandbox hang) instead of running headless.
                 stdin=subprocess.DEVNULL,
-                cwd=str(cwd) if cwd else None,
+                cwd=str(cwd),
+                env=child_env,
             )
         except subprocess.TimeoutExpired as e:
             raise OpenCodeCliError(

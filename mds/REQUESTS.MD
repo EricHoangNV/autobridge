@@ -5,7 +5,7 @@
 Owner priority (2026-11-01): **REQ-078** (REQ-066..077 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-078 — When the engine does not know, it asks: model first, operator last; and a beacon that grades it fairly (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-01 15:22)
+Status: DONE (sbx1 2026-11-01 -- engine climbs every repairable class with verified candidates, class-neutral evidence, 9 detection fixes, Error grading, frozen budgets, append/resume, warm learns in-run, agent isolation, per-instance stats; 24 new tests incl. detection sweep + resume; full gates green (autobridge 3065 @90.02%, verifier @90.94%, simulators @90.50%); lint/typecheck/openapi green; BENCH_TRIALS=1 ablation 12/12 matched; docs (architecture/safety-model/benchmark) updated; demo.md unchanged (deck-5 escalation shape holds); owner step: keyed make bench-beacon REHEARSE=<round> FAULTS=10 TRIALS=1)
 Owner principle (2026-11-01): **the engine must ASK when it does not know** — any drift that L0/L1 cannot repair climbs
 to the model (L2/L3), and only when the model cannot produce a verified fix does it ask the operator. A hard-coded list
 of drift classes (or families, vendors, scenarios) that may reach the model is the wrong approach and must go. The

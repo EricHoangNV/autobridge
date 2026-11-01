@@ -429,7 +429,16 @@ Consumers: control API surfaces the bundle on `GET /repairs/{id}` and the
 `/repairs/[id]` screen renders the evidence bundle side-by-side with the
 question and Approve/Reject actions; a bundle `proposal` is approved through
 `POST /repairs/{id}/approve-proposal` (verifier-gated, fail-closed 422,
-never learned into L0). The bundle never contains a credential
+never learned into L0). A model patch that passed the pointer check and
+the dry-run becomes an approvable candidate through the same release path
+and verifier gate as an L1 patch (propose, operator approval still
+required, never auto-applied); every model-contributed candidate requires
+the verifier, fail closed when unreachable. Approving a propose-path
+candidate learns the fix into L0 like a rule fix (approval id, actor and
+release recorded). Money semantics stay a business decision:
+a semantic drift is never auto-patched — the model's patch rides as the
+proposal, the operator decides, and a business-decision approval is never
+learned. The bundle never contains a credential
 value (redacted at the `EvidenceRecord` boundary, `evidence/redact.py`);
 `tests/e2e/test_05` asserts no `sk-`/secret leaks in bundles.
 

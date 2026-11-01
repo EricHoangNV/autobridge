@@ -441,13 +441,33 @@ def _match_schema_from_types(
     return None
 
 
+def _match_date_shift(grouped: dict[str, list[DriftSignal]]) -> tuple[str, list[str], str] | None:
+    """A constant date/datetime offset or malformed date values (REQ-078).
+
+    A date format change is a type-level schema change; a constant offset
+    with identical keys is a SCHEMA_TYPE_CHANGE the ladder's date handling
+    (or the model climb) can repair — never a silent Complete.
+    """
+    if "date_shift" not in grouped:
+        return None
+    first = grouped["date_shift"][0]
+    details = first.details if isinstance(first.details, dict) else {}
+    field = details.get("date_field", "?")
+    entity = details.get("entity") or "entity"
+    return (
+        "SCHEMA_TYPE_CHANGE",
+        ["date_shift"],
+        f"Date field {field} shifted for {entity} ({first.message[:160]})",
+    )
+
+
 def _match_semantic(grouped: dict[str, list[DriftSignal]]) -> tuple[str, list[str], str] | None:
     # SEMANTIC_VALUE_DRIFT is schema-valid but values changed meaning
     # (money, dates, counts, units). REQ-064 B1b: an exact power-of-ten
     # money shift with identical keys and counts is a minor/major-units
     # confusion — schema-valid, values wrong.
     if "money_scale_shift" in grouped:
-        return ("SEMANTIC_VALUE_DRIFT", ["money_scale_shift"], "Money values shifted by a power of ten (minor/major units)")
+        return ("SEMANTIC_VALUE_DRIFT", ["money_scale_shift"], "Money values shifted by a constant ratio (minor/major units or gross/net)")
     if "invariant_failure" in grouped:
         return ("SEMANTIC_VALUE_DRIFT", ["invariant_failure"], "Invariant failure indicates semantic drift")
     if "no_loss" in grouped:
@@ -488,6 +508,7 @@ _MATCHERS: list[Callable[..., tuple[str, list[str], str] | None]] = [
     _match_pagination_change,
     _match_wire_schema_rename,
     _match_emptied_field,
+    _match_date_shift,
     _match_schema_from_types,
     _match_semantic,
 ]
