@@ -233,6 +233,20 @@ echo "$$" > "$LOCK_DIR/pid"
 
 check_sandboxes || exit 1
 
+# OpenCode keeps every session in opencode.db (reached 15 GB in five days and filled the sandbox's 20 GB
+# disk) and leaves an extracted .so in /tmp per launch. Each iteration starts a fresh opencode run and
+# resumes from the mds/ files and the worktree, never from that history, so at the start of a run clear
+# the /tmp leftovers and, once it is over 5 GB, the history. Skipped while an opencode agent is running.
+if [ "$(tier_agent "$TIER")" = opencode ]; then
+  sbx exec "$(sandbox_for "$SBX_KEY" opencode)" bash -c '\
+    pgrep -x opencode >/dev/null && exit 0; \
+    rm -f /tmp/.*-00000000.so; rm -rf /tmp/pytest-of-agent; \
+    db="$HOME/.local/share/opencode/opencode.db"; \
+    size=$(( $(stat -c %s "$db" 2>/dev/null || echo 0) + $(stat -c %s "$db-wal" 2>/dev/null || echo 0) )); \
+    if [ "$size" -gt $((5 * 1024 * 1024 * 1024)) ]; then \
+      rm -f "$db" "$db-wal" "$db-shm"; echo "Cleared OpenCode history ($((size / 1024 / 1024 / 1024)) GB)"; fi'
+fi
+
 # Label every notification with the loop key, agent and model, so the two loops (and tiers) are told apart in Slack
 AGENT_LABEL=""
 lnotify() { notify "[$SBX_KEY${AGENT_LABEL:+ · $AGENT_LABEL}] $1"; }
