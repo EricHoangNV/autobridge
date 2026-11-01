@@ -5,7 +5,27 @@
 Owner priority (2026-11-01): **REQ-078** (REQ-066..077 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-078 — When the engine does not know, it asks: model first, operator last; and a beacon that grades it fairly (2026-11-01)
-Status: DONE (sbx1 2026-11-01 -- items 8+10: meridian strict-ISO+extras (no crash), atlas folio extras, meridian cutoff no_patch; rehearsal 6599930 FAULTS=10 TRIALS=1: engine 0.40 verified / 0.40 esc / $0.00 / 0 tok / 0 wrong prop+rel, frontier 0.00 (no key, fake fail-closed), sanity clean; full gates green)
+Status: OPEN (reopened 2026-11-02 by owner keyed rehearsal on db9f2db6 -- bench engine arm sends the model an empty prompt; two item-4 misses)
+Owner keyed rehearsal (2026-11-02, `db9f2db6`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1, live key):
+frontier_agent 0.60 ($0.016/run, 4 wrong patches proposed, 0 released), frontier_oneshot 0.20, every engine arm 0.30
+(~6k tokens, $0.0008/run, 0 wrong). The engine now reaches the model on every fault, but repaired none: every model
+answer is an escalation saying it got nothing — e.g. "Which renamed field mapping should be applied since no spec or
+vendor evidence was provided?" (rows: `patch_summary` in grades.jsonl). Finish in this REQ:
+- **Item 1 not met: the bench engine arm does not take the production path.** `bench/ablation.py` `run_engine_arm`
+  (~888-895) calls `ctrl.handle(provider=…)` with no `evidence=` and no `dry_run_fault=`; production derives both with
+  `prepare_climb_inputs(...)` + `build_dry_run_fault(summary)` (`engine/detect_repair.py` ~1302-1320). The arm's
+  `DerivedDiagnostics` (ablation ~584) does not even carry the faulted sync summary, so the L3 prompt renders
+  "(none recorded)" for spec subtree, raw records and observed evidence (ladder ~1982-1984). Carry the faulted summary
+  through the diagnostics (ablation and beacon `derive_beacon_diagnostics`) and call the same input-preparation
+  function production calls — one shared function, not a copy. Add a test that renders the L3 prompt from a beacon
+  engine arm for a structural drift and fails if any evidence block reads "(none recorded)" or the spec subtree /
+  records sample is missing.
+- The row's reason text still reads "escalate at L4 (no rule)" when the model was asked; name the rung that decided
+  (e.g. "L3 model escalated: <question>").
+- Item 4 misses on this round: legacystay `semantic` gross_net (instance 7) is still 0 signals / Complete (silent);
+  meridian `nesting` (instance 3) is classified ENUM_NEW_VALUE (11 signals). Fix both and add them to the sweep.
+- Then rerun the keyed rehearsal in the opencode sandbox (key from `.env`; `make up` works there) on round 6603643
+  and report every arm in the Status line. Do not freeze, tag or commit under `experiments/beacon/`.
 Owner check (2026-11-02, on `916ce205`): items 1-7 and 9 landed; two parts are missing, finish them in this REQ.
 - **Item 8, simulator defects: no file under `simulators/` changed.** Fix: meridian serializers crash on non-ISO /
   renamed / nested dates (`simulators/meridianpms/app.py` ~306-308, ~382 `fromisoformat`); atlas folio rename never
