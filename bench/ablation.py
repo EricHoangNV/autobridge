@@ -596,6 +596,10 @@ def derive_from_summaries(
     from autobridge.drift.classifier import classify  # noqa: PLC0415
     from autobridge.drift.fingerprint import compute_fingerprint, diff_fingerprints  # noqa: PLC0415
     from autobridge.drift.signals import signals_from_sync, spec_with_baseline_wire_keys  # noqa: PLC0415
+    from autobridge.drift.value_baseline import (  # noqa: PLC0415
+        baseline_summary_from_sketch,
+        build_money_sketch,
+    )
 
     prev_fp = compute_fingerprint(
         spec, baseline_summary.get("operation_results", {}), baseline_summary.get("canonical_records", {})
@@ -610,9 +614,18 @@ def derive_from_summaries(
     # build probe provides. Derived from observed responses only. The
     # repair itself still runs on the unannotated equal-input spec.
     detection_spec = spec_with_baseline_wire_keys(spec, baseline_summary.get("operation_results", {}))
+    # REQ-075: the money baseline reaches detection through the same
+    # sketch the live path persists (bounded join keys + money fields,
+    # never raw payloads) — the bench no longer credits a detection the
+    # product cannot make. Wire observations keep their raw form for the
+    # emptied-field observer (unchanged behaviour there).
+    sketch = build_money_sketch(spec, baseline_summary.get("canonical_records", {}))
+    shared_baseline = baseline_summary_from_sketch(sketch)
+    if isinstance(baseline_summary.get("operation_results"), dict):
+        shared_baseline["operation_results"] = baseline_summary["operation_results"]
     signals = signals_from_sync(
         faulted_summary, spec=detection_spec, previous_fingerprint=prev_fp, current_fingerprint=curr_fp,
-        baseline_summary=baseline_summary,
+        baseline_summary=shared_baseline,
     )
     classification = classify(signals)
     return DerivedDiagnostics(

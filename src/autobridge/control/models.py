@@ -948,3 +948,35 @@ class SchedulerState(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )
+
+
+class ConnectorValueBaseline(Base):
+    """Bounded per-connector money-value baseline (REQ-075).
+
+    One row per connector: the join keys + money fields of the last clean
+    ``Complete`` sync's canonical records (see
+    :mod:`autobridge.drift.value_baseline`), so the next detection can
+    feed ``baseline_summary`` to ``signals_from_sync`` and
+    ``money_scale_shift`` fires live — not only in bench/beacon. Only
+    canonical money values and join keys are stored: never credentials
+    (the spec carries only ``credential_ref``), never raw payloads.
+
+    ``release_id`` scopes reuse: a sketch is only read back for the
+    release that stored it, so a unit change shipped inside a new
+    release never reads as a scale shift against the old baseline.
+    """
+
+    __tablename__ = "connector_value_baselines"
+
+    connector_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("connectors.id"), primary_key=True
+    )
+    release_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    #: ``{entity: [{join-key fields + money fields}]}``, JSON-safe.
+    sketch: Mapped[dict[str, Any]] = mapped_column(
+        GenericJSON, nullable=False, default=dict
+    )
+    sync_run_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )

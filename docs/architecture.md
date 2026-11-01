@@ -23,10 +23,16 @@ Design principles (plan §1):
    L3 runs for semantic drift / UNKNOWN after the enumerator; a detected
    class with no rule escalates at L4 with its question (0 model tokens).
    The detector also names silent-corruption shapes (`mapped_field_emptied`
-   → `SCHEMA_RENAME`, `money_scale_shift` → `SEMANTIC_VALUE_DRIFT`) so a
-   Complete sync with wrong values never passes silently. Climbing to L3
-   for non-semantic classes was tried and removed (REQ-064/REQ-065: no
-   extra fixes, only frontier tokens).
+   → `SCHEMA_RENAME`, `money_scale_shift` → `SEMANTIC_VALUE_DRIFT`): after
+   each clean `Complete` sync the engine persists a bounded per-connector
+   money sketch (`connector_value_baselines`, join keys + money fields
+   only, scoped to the release that stored it), and the next detection
+   feeds it as `baseline_summary` — so a live minor↔major-units switch
+   escalates instead of syncing `Complete` with wrong values. The very
+   first sync (no baseline yet) stays silent by design; bench/beacon reach
+   detection through the same sketch, never a richer raw passthrough.
+   Climbing to L3 for non-semantic classes was tried and removed
+   (REQ-064/REQ-065: no extra fixes, only frontier tokens).
 4. **Success is not a 200** — every `SyncRun` ends `Complete | Degraded |
    Blocked` with the unmet criterion named.
 5. **Money is `Decimal`, dates are property-local business dates** end to end.

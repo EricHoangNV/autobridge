@@ -739,6 +739,7 @@ class RepairController:
         extra: dict[str, Any] | None = None,
         vendor: str | None = None,
         session: Session | None = None,
+        baseline_summary: dict[str, Any] | None = None,
     ) -> tuple[LadderResult, DriftClassification]:
         """From a sync summary dict, collect signals, classify, and run ladder."""
         from autobridge.drift.signals import signals_from_sync
@@ -748,6 +749,7 @@ class RepairController:
             spec=spec,
             previous_fingerprint=previous_fingerprint,
             current_fingerprint=current_fingerprint,
+            baseline_summary=baseline_summary,
         )
         # Collect delta if fingerprints provided
         delta: FingerprintDelta | None = None

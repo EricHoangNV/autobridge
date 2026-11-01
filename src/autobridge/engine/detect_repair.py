@@ -636,8 +636,27 @@ def _detect_open(
             "status": "no_drift",
             "out": {"drift_found": False, "outcome": outcome, "reason": "no_vendor_response"},
         }
+    # REQ-075: the live baseline. A clean Complete sync stored a bounded
+    # money sketch for this (connector, release); feed it as
+    # baseline_summary so money_scale_shift fires live, not only in
+    # bench/beacon. First sync (or a new release) has no sketch: the
+    # scale observer stays silent, as before. Never raises.
+    baseline_summary: dict[str, Any] | None = None
+    try:
+        from autobridge.drift.value_baseline import (  # noqa: PLC0415
+            load_connector_baseline_summary,
+        )
+
+        baseline_summary = load_connector_baseline_summary(
+            session, connector_id=connector_id, release_id=release_id
+        )
+    except Exception:
+        baseline_summary = None
     signals = signals_from_sync(
-        summary, spec=spec_dict, source_run_id=sync_run_id
+        summary,
+        spec=spec_dict,
+        source_run_id=sync_run_id,
+        baseline_summary=baseline_summary,
     )
     if not signals:
         # No drift on a sync that reached the vendor. When this sync ran
@@ -646,6 +665,26 @@ def _detect_open(
         # connector returns to Working). Any other outcome leaves them
         # open: the fix is not verified yet.
         resolved = _resolve_verified_drifts(session, connector_id, release_id, summary)
+        # REQ-075: a clean Complete sync (re)stores the money sketch for
+        # the next detection. Drifted, Degraded or Blocked syncs never
+        # overwrite it (a faulted observation must not become the truth
+        # the next sync is judged against). Fail-soft, never raises.
+        if outcome == "Complete":
+            try:
+                from autobridge.drift.value_baseline import (  # noqa: PLC0415
+                    store_connector_baseline,
+                )
+
+                store_connector_baseline(
+                    session,
+                    connector_id=connector_id,
+                    release_id=release_id,
+                    spec=spec_dict,
+                    summary=summary if isinstance(summary, dict) else None,
+                    sync_run_id=sync_run_id,
+                )
+            except Exception:
+                pass
         return {
             "status": "no_drift",
             "out": {"drift_found": False, "outcome": outcome, "drifts_resolved": resolved},
