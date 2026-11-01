@@ -264,9 +264,10 @@ export default function ConnectorDetailPage({ params }: PageProps) {
     document.getElementById(specSectionAnchor(key))?.scrollIntoView?.({ block: "start" });
   }
 
-  const maxVersion = detail.releases?.length
-    ? Math.max(...detail.releases.map((r) => r.version))
-    : null;
+  // REQ-069 item 3: the header release follows the active release, not
+  // the highest version — after Activate-r1 with a pending r2 candidate
+  // the header reads r1 like the Releases table does.
+  const headerVersion = activeRelease?.version ?? null;
   const runtimeKind =
     detail.runtime_target !== null && typeof detail.runtime_target === "object" && !Array.isArray(detail.runtime_target)
       ? String((detail.runtime_target as Record<string, unknown>)["kind"] ?? "")
@@ -312,7 +313,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
         </p>
         <div className="relbig">
           <span data-testid="connector-active-release" className="r num">
-            {maxVersion !== null ? `r${maxVersion}` : "—"}
+            {headerVersion !== null ? `r${headerVersion}` : "—"}
           </span>
           <span className="l">
             {activeRelease ? `live since ${formatDayTime(liveSince ?? activeRelease.created_at)}` : "no release yet"}

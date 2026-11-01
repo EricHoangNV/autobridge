@@ -128,4 +128,20 @@ describe("PabxPanel", () => {
     await waitFor(() => expect(screen.getByTestId("pabx-postings")).toHaveTextContent("2 received"));
     expect(screen.getByTestId("pabx-postings").textContent).not.toContain("5 received");
   });
+
+  it("shows the record layout readably, never raw JSON (REQ-069 item 6)", async () => {
+    mockResponses([
+      { match: "/demo/pabx-events", json: [] },
+      { match: "agent_id=conn-1", json: OWN_POSTINGS },
+      {
+        match: "/edge/agents",
+        json: { agents: [{ agent_id: "conn-1", link_up: true, link_detail: 'up layouts={"DR": ["DA", "TI"], "PS": ["PA"]}', updated_at: new Date().toISOString() }] },
+      },
+      { match: "/edge/postings", json: GLOBAL_POSTINGS },
+    ]);
+    renderPanel("conn-1", "PABX edge");
+    await waitFor(() => expect(screen.getByTestId("pabx-layout")).toHaveTextContent("DR: DA, TI"));
+    expect(screen.getByTestId("pabx-layout")).toHaveTextContent("PS: PA");
+    expect(screen.getByTestId("pabx-layout").textContent).not.toContain('{"DR"');
+  });
 });

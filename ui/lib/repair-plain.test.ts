@@ -14,6 +14,9 @@ import {
   storylineStep3,
   DRY_RUN_PASSED,
   dryRunRetried,
+  rollbackStory,
+  rollbackStep3,
+  ROLLBACK_RAIL_LINE,
 } from "./repair-plain";
 
 // Every drift class used in simulators/scenarios/*.yaml (REQ-056 item 7).
@@ -129,5 +132,24 @@ describe("repair-plain lookup tables (REQ-056 item 6)", () => {
     expect(dryRunRetried("`$.net_sum` is not sent")).toMatch(/rejected/);
     expect(dryRunRetried("`$.net_sum` is not sent")).toMatch(/passed/);
     expect(dryRunRetried("")).toMatch(/rejected/);
+  });
+
+  it("names the failed verifying sync and the rollback, with the question open (REQ-069 item 4)", () => {
+    const story = rollbackStory(["money_invariant"], 2, 3);
+    expect(story.headline).toMatch(/verifying sync/);
+    expect(story.headline).toMatch(/rolled back/);
+    expect(story.fact).toContain("money_invariant");
+    expect(story.fact).toContain("r2");
+    expect(story.fact).toContain("r3");
+    expect(story.fact).toMatch(/amounts don't add up/);
+    expect(story.fact).toMatch(/question is still open/);
+    // Unknown check codes fall back to the code itself, versions optional.
+    const bare = rollbackStory([], null, null);
+    expect(bare.fact).toContain("a check");
+    expect(bare.fact).toMatch(/rolled back automatically/);
+    expect(rollbackStep3().headline).toMatch(/Rolled back/);
+    expect(rollbackStep3().fact).toMatch(/still open/);
+    expect(ROLLBACK_RAIL_LINE).toMatch(/Rolled back automatically/);
+    expect(ROLLBACK_RAIL_LINE).toMatch(/needs your decision/);
   });
 });

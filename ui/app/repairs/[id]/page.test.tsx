@@ -778,8 +778,54 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("patch-dry-run")).toHaveTextContent("tested on the current records: the checks pass");
   });
 
-  it("verifier tile shows the dry-run result next to a tested proposal (REQ-055 item 3c)", () => {
-    mockAll({
+  it("after an automatic rollback the page names the check and keeps the question open (REQ-069 item 4)", () => {
+    mockAll(
+      {
+        ...mockRepair,
+        decision: "escalate",
+        verifier_report_id: null,
+        candidate_patch: [],
+        ladder_level_reached: 4,
+        ladder_trace: [
+          { level: 3, action: "frontier_generate", reason: "L3 proposed a patch" },
+          { level: 4, action: "escalate", reason: "verifying sync on r2 Degraded (money_invariant); automatic rollback to r3" },
+        ],
+        escalation_bundle: {
+          reason: "verifying sync on r2 Degraded (money_invariant); automatic rollback to r3 — the question stands, no patch offered",
+          question: "Should total_amount track the vendor net amount or remain defined as gross?",
+          proposal: null,
+          verifying_sync_failed: {
+            release_version: 2,
+            outcome: "Degraded",
+            unmet_criteria: ["money_invariant"],
+            rolled_back_to_version: 3,
+            rollback_release_id: "rel-3",
+            rollback_approval_id: "ap-rb-1",
+          },
+        },
+      },
+      undefined,
+      undefined,
+      mockConnectorWithSpec,
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    // Headline and decision line name the failed verifying sync, not a generic state.
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent(/failed its verifying sync/);
+    expect(screen.getByTestId("decided-plain-headline")).toHaveTextContent(/rolled back/);
+    // Chapter 3 names the check and says the question is still open —
+    // never "nothing verified to apply", never "roll back to r3 stays available".
+    expect(screen.getByTestId("decided-rollback-fact")).toHaveTextContent(/money_invariant/);
+    expect(screen.getByTestId("decided-rollback-fact")).toHaveTextContent(/r2/);
+    expect(screen.getByTestId("decided-rollback-fact")).toHaveTextContent(/r3/);
+    expect(screen.getByTestId("decided-rollback-fact")).toHaveTextContent(/question is still open/);
+    expect(screen.queryByTestId("no-patch-note")).not.toBeInTheDocument();
+    expect(screen.getByTestId("decided-facts").textContent).not.toMatch(/stays available/);
+    // The rail reads rolled-back, and the question is still asked.
+    expect(screen.getByTestId("rail-plain-line")).toHaveTextContent(/Rolled back automatically/);
+    expect(screen.getByTestId("escalation-question-top")).toHaveTextContent(/Should total_amount track/);
+  });
+
+  it("verifier tile shows the dry-run result next to a tested proposal (REQ-055 item 3c)", () => {    mockAll({
       ...mockRepair,
       decision: "escalate",
       verifier_report_id: null,
@@ -1028,7 +1074,7 @@ describe("RepairDetailPage", () => {
     }
   });
 
-  it("shows the release it will actually get when r2 already exists (REQ-068 item 3)", () => {
+  it("shows the candidate's own version when it already exists (REQ-069 item 2)", () => {
     mockAll(
       { ...mockRepair, decision: "propose" },
       {
@@ -1041,8 +1087,37 @@ describe("RepairDetailPage", () => {
       [mockDerivation],
       {
         ...mockConnectorWithSpec,
-        // Deck 3 second occurrence: Activate r1 left r2 in place.
+        // Deck 3: the pending candidate r2 already exists as a row, so
+        // max(version)+1 would read r3 — the page shows r2, the version
+        // the candidate will actually ship as.
         active_release_id: "rel-1",
+        releases: [
+          { id: "rel-1", version: 1, spec: { operations: {} }, parent_release_id: null },
+          { id: "rel-2", version: 2, spec: { operations: {} }, parent_release_id: "rel-1", provenance_repair_run_id: "repair-abc-123" },
+        ],
+      },
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-subline")).toHaveTextContent(/Approve to ship it as release r2/);
+    expect(screen.getByTestId("repair-subline")).not.toHaveTextContent(/release r3/);
+  });
+
+  it("shows max+1 when no candidate row exists yet (REQ-069 item 2)", () => {
+    mockAll(
+      { ...mockRepair, decision: "propose" },
+      {
+        ...mockLedger,
+        attempts: [
+          { rung: 0, action: "knowledge lookup", reason: "L0 miss", calls: [] },
+          { rung: 1, action: "rule page_to_cursor matched", reason: "wire shape matches", calls: [] },
+        ],
+      },
+      [mockDerivation],
+      {
+        ...mockConnectorWithSpec,
+        // No release carries this repair's provenance (candidate row not
+        // persisted yet): the next ship is max(version)+1.
+        active_release_id: "rel-2",
         releases: [
           { id: "rel-1", version: 1, spec: { operations: {} }, parent_release_id: null },
           { id: "rel-2", version: 2, spec: { operations: {} }, parent_release_id: "rel-1" },

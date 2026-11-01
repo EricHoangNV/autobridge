@@ -260,8 +260,10 @@ switched would, also reports the page's net total next to it as
 docs). The money drift then degrades the sync on the named
 invariant, the engine's own climb runs (funnel → L2 skipped → exactly
 one L3 attempt), and the run escalates with one operator question — plus
-the one proposed change when the model offered it (repointing the money
-check at `$.net_sum`, which passes the dry-run gate and the verifier).
+the one proposed change when the model offered it (repointing both money
+checks at `$.net_sum` — Reservation and FolioCharge, since the gate
+refuses a partial fix that leaves either failing check failing — which
+passes the dry-run gate and the verifier).
 The demo approves the
 proposal as a business decision (release r2, verifying sync, Harbor back
 to `working`); a plain escalation stays red with the question.

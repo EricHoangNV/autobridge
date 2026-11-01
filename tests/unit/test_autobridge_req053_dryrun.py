@@ -100,6 +100,35 @@ def _fault_with_gross(fault: dict[str, Any], gross: str) -> dict[str, Any]:
     return fault
 
 
+def _folio_sum(fault: dict[str, Any]) -> str:
+    """Canonical FolioCharge amount as a money string (for a stable parcel)."""
+    from decimal import Decimal as _Decimal
+
+    recs = fault.get("canonical_records", {}).get("FolioCharge", [])
+    total = sum(
+        _Decimal(str(r.get("amount", "0")))
+        for r in recs
+        if isinstance(r, dict) and r.get("amount") is not None
+    )
+    return format(total, ".2f")
+
+
+def _fault_with_folio_sums(fault: dict[str, Any], gross: str, net: str) -> dict[str, Any]:
+    """Pin the folio raw page totals (mirror of _fault_with_gross).
+
+    Lets a test isolate the Reservation behaviour under test from the
+    FolioCharge money check the REQ-069 gate also judges: with the folio
+    page consistent, FolioCharge passes and the gate covers Reservation
+    alone.
+    """
+    import copy as _copy
+
+    fault = _copy.deepcopy(fault)
+    fault["raw_first_pages"]["list_folios"]["gross_sum"] = gross
+    fault["raw_first_pages"]["list_folios"]["net_sum"] = net
+    return fault
+
+
 def _net_sum_patch() -> list[dict[str, Any]]:
     # Deck 5's decoy: a field Harbor never sends.
     return [
@@ -159,14 +188,38 @@ def test_dry_run_rejects_a_count_repointed_money_check() -> None:
     assert detail == "the patched check did not run: `$.total` is not a money sum"
 
 
-def test_dry_run_passes_a_money_sum_pointer() -> None:
-    # A repoint at a value that reads as a money sum still passes judgement.
+def test_dry_run_refuses_a_partial_two_entity_fix() -> None:
+    # REQ-069 item 1 (deck 5 live): Harbor has two money checks against
+    # `$.gross_sum` (Reservation `total_amount`, FolioCharge `amount`) and
+    # both fail under gross_to_net. A proposal that repoints only the
+    # Reservation check passes the old touched-only gate but leaves the
+    # FolioCharge check failing — the gate refuses it with the still-failing
+    # check named, so the retry (then the drop) carries the exact error.
     spec = _harbor_spec()
     _summary, fault = _harbor_fault(spec)
     fault = _fault_with_gross(fault, _record_sum(fault))
     fault["raw_first_pages"]["list_reservations"]["net_sum"] = "900.00"
     patch = [
         {"op": "replace", "path": "/entities/Reservation/checks/3/compare_to", "value": "$.net_sum"}
+    ]
+    ok, detail = dry_run_proposal(spec, patch, fault)
+    assert ok is False, detail
+    assert "FolioCharge.money_invariant (amount vs $.gross_sum)" in detail
+
+
+def test_dry_run_passes_a_complete_two_entity_fix() -> None:
+    # REQ-069 item 1: the same break with both money checks repointed at
+    # the net total passes — every check that failed in the break's sync
+    # passes with the patched spec on the break's records.
+    spec = _harbor_spec()
+    _summary, fault = _harbor_fault(spec)
+    fault = _fault_with_gross(fault, _record_sum(fault))
+    fault["raw_first_pages"]["list_reservations"]["net_sum"] = "900.00"
+    folio_net = _folio_sum(fault)
+    fault = _fault_with_folio_sums(fault, folio_net, folio_net)
+    patch = [
+        {"op": "replace", "path": "/entities/Reservation/checks/3/compare_to", "value": "$.net_sum"},
+        {"op": "replace", "path": "/entities/FolioCharge/checks/2/compare_to", "value": "$.net_sum"},
     ]
     ok, detail = dry_run_proposal(spec, patch, fault)
     assert ok is True, detail
@@ -312,6 +365,10 @@ def test_dry_run_mapping_change_remapped_or_blocked() -> None:
     spec = _harbor_spec()
     _summary, fault = _harbor_fault(spec)
     fault = _fault_with_gross(fault, _record_sum(fault))
+    # The REQ-069 gate also judges FolioCharge: pin its page so this
+    # Reservation-remap test isolates the re-map behaviour under test.
+    folio_net = _folio_sum(fault)
+    fault = _fault_with_folio_sums(fault, folio_net, folio_net)
     # Same wire field under the patched mapping: re-maps cleanly.
     ok, detail = dry_run_proposal(
         spec,
@@ -414,6 +471,8 @@ def test_dry_run_money_check_without_pointer_is_skipped() -> None:
     spec = _harbor_spec()
     _summary, fault = _harbor_fault(spec)
     fault = _fault_with_gross(fault, _record_sum(fault))
+    folio_net = _folio_sum(fault)
+    fault = _fault_with_folio_sums(fault, folio_net, folio_net)
     ok, detail = dry_run_proposal(
         spec,
         [
@@ -428,14 +487,40 @@ def test_dry_run_money_check_without_pointer_is_skipped() -> None:
     assert ok is True, detail
 
 
-def test_dry_run_passes_patches_that_touch_no_entity() -> None:
+def test_dry_run_refuses_a_patch_that_fixes_no_failing_check() -> None:
+    # REQ-069 item 1: a patch that touches no entity while checks fail is
+    # not a fix — the gate evaluates every check that failed in the break's
+    # sync (all entities) and refuses, naming each still-failing check, so
+    # the retry carries the exact error. A pagination-only change leaves
+    # both money invariants failing.
     spec = _harbor_spec()
     _summary, fault = _harbor_fault(spec)
     pagination_patch = [
         {"op": "replace", "path": "/operations/list_reservations/pagination/strategy", "value": "cursor"}
     ]
-    ok, _ = dry_run_proposal(spec, pagination_patch, fault)
-    assert ok is True
+    ok, detail = dry_run_proposal(spec, pagination_patch, fault)
+    assert ok is False, detail
+    assert "Reservation.money_invariant (total_amount vs $.gross_sum)" in detail
+    assert "FolioCharge.money_invariant (amount vs $.gross_sum)" in detail
+
+
+def test_dry_run_passes_a_no_touch_patch_when_no_check_fails() -> None:
+    # The "touches no entity: nothing to judge" path survives REQ-069: when
+    # no entity's checks fail under the unpatched spec (both pages pinned
+    # to their record sums), a patch that touches no entity has nothing
+    # to judge.
+    spec = _harbor_spec()
+    _summary, fault = _harbor_fault(spec)
+    fault = _fault_with_gross(fault, _record_sum(fault))
+    folio_net = _folio_sum(fault)
+    fault = _fault_with_folio_sums(fault, folio_net, folio_net)
+    ok, detail = dry_run_proposal(
+        spec,
+        [{"op": "replace", "path": "/operations/list_reservations/pagination/strategy", "value": "cursor"}],
+        fault,
+    )
+    assert ok is True, detail
+    assert detail == "patch touches no entity: nothing to judge"
 
 
 def test_dry_run_without_fault_records_skips() -> None:
@@ -541,6 +626,10 @@ def test_climb_offers_the_retried_proposal_with_the_dry_run_result() -> None:
 
     spec = _harbor_spec()
     _summary, fault = _harbor_fault(spec)
+    # The REQ-069 gate also judges FolioCharge: pin its page so this
+    # retry-mechanics test isolates the Reservation proposal under test.
+    folio_net = _folio_sum(fault)
+    fault = _fault_with_folio_sums(fault, folio_net, folio_net)
     evidence = {
         "patch_target": {
             "document": "connector spec",
@@ -632,9 +721,14 @@ def _seed_harbor(factory: Any, spec: dict[str, Any]) -> tuple[str, str]:
 
 
 def _honest_removal_patch() -> list[dict[str, Any]]:
-    # The honest outcome for deck 5 (REQ-055 item 2): stop comparing
-    # against the gross total — remove the check, labelled as a removal.
-    return [{"op": "remove", "path": "/entities/Reservation/checks/3"}]
+    # The honest outcome for deck 5 (REQ-055 item 2, REQ-069 item 1): stop
+    # comparing against the gross total — remove the check, labelled as a
+    # removal. The REQ-069 gate judges every failed check, so both money
+    # checks (Reservation and FolioCharge) go.
+    return [
+        {"op": "remove", "path": "/entities/Reservation/checks/3"},
+        {"op": "remove", "path": "/entities/FolioCharge/checks/2"},
+    ]
 
 
 def test_value_shape_and_short_json_helpers() -> None:
@@ -917,6 +1011,10 @@ def test_l3_retry_after_dry_run_rejection_passes_and_labels_calls() -> None:
     spec = _harbor_spec()
     _summary, fault = _harbor_fault(spec)
     fault = _fault_with_gross(fault, _record_sum(fault))
+    # The REQ-069 gate also judges FolioCharge: pin its page so this
+    # retry-mechanics test isolates the Reservation proposal under test.
+    folio_net = _folio_sum(fault)
+    fault = _fault_with_folio_sums(fault, folio_net, folio_net)
     bad = (
         '{"patch": [{"op": "replace", "path": "/entities/Reservation/checks/3/compare_to", '
         '"value": "$.net_sum"}], "rationale": "Read the net total."}'
@@ -1048,6 +1146,10 @@ def test_l3_escalation_proposal_retry_passes_and_labels_calls() -> None:
     spec = _harbor_spec()
     _summary, fault = _harbor_fault(spec)
     fault = _fault_with_gross(fault, _record_sum(fault))
+    # The REQ-069 gate also judges FolioCharge: pin its page so this
+    # retry-mechanics test isolates the Reservation proposal under test.
+    folio_net = _folio_sum(fault)
+    fault = _fault_with_folio_sums(fault, folio_net, folio_net)
     bad_proposal = {
         "label": "Accept net",
         "effect": "Retarget the totals check to the net total.",
@@ -1240,6 +1342,10 @@ def test_l3_first_try_adopt_labels_passed_dry_run() -> None:
     spec = _harbor_spec()
     _summary, fault = _harbor_fault(spec)
     fault = _fault_with_gross(fault, _record_sum(fault))
+    # The REQ-069 gate also judges FolioCharge: pin its page so this
+    # first-try test isolates the Reservation proposal under test.
+    folio_net = _folio_sum(fault)
+    fault = _fault_with_folio_sums(fault, folio_net, folio_net)
     climb, rows, _seen = _run_l3_climb(spec, fault, _good_patch_json(), run_id="l3-first-adopt")
     assert climb["proposal"] == [
         {

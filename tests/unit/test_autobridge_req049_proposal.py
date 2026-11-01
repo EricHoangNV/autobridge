@@ -938,7 +938,9 @@ def test_knowledge_lists_deny_and_rollback(tmp_path: pathlib.Path) -> None:
         payload = knowledge_payload(s)
     by_kind = {d["kind"]: d for d in payload["decisions"]}
     assert by_kind["reject"]["summary"].startswith("Denied:")
-    assert by_kind["rollback"]["summary"] == "Rolled back r2 → r3"
+    # REQ-069 item 5: the kind badge already reads "Rolled back", so the
+    # summary names only the versions (twin of the Approved fix).
+    assert by_kind["rollback"]["summary"] == "r2 → r3"
     assert by_kind["rollback"]["actor"] == "op2"
     # Newest first: the rollback (created last) leads.
     assert payload["decisions"][0]["kind"] == "rollback"

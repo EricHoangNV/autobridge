@@ -4069,3 +4069,37 @@ Beacon freeze pins the frontier model: freeze writes the line, bench-beacon refu
 
 ## 2026-11-01 sbx1 REQ-068 DONE (Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 All 8 items code-done, full gates green (python 2987+138+415, autobridge 90.05%/verifier 91.04%/simulators 90.50%, UI 312; lint/typecheck/openapi-check green). Simulator-only net_sum under gross_to_net (Harbor+LegacyStay list pages; baseline/docs untouched); bench net fake mirrors it; beacon/dev faulted pages see it too, no key/heldout changes. L3 evidence entity-first (prompt hash changed — replay fixture re-keyed with same synthetic decoy). UI: candidate max+1, L0 learned wording, vv fix, 1440px layout (badge wrap, zero-token no-chart, vendors gutter) + test_10 assertions, PABX plain state + agent-filtered postings + heartbeat-on-flip, small cuts (table gutter, release separator, decision prefix, skipped L2, live-since approval time). Owner steps: keyed record-frontier re-capture + walkthrough re-run.
+
+## 2026-11-01 sbx1 REQ-069 DONE (Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+**Date:** 2026-11-01
+**Ref:** REQ-069 (round-3 keyed walkthrough on `6f72867a`)
+
+**What was done:**
+- Item 1: dry-run gate now judges every check that failed in the break's sync (all entities), names still-failing checks with entity for the retry, drops partials after one retry; no partial proposal can reach any verifier gate (ladder/detect-layer/candidate-release paths all funnel through the adopted-only proposals); l3_patch v2→v3 states the gate fact; replay fixture re-keyed (73ab80 matrix, 9edf70 demo); docs/demo.md deck 5 updated to both money checks.
+- Item 2: repair page Approve label shows the candidate release's own version when the row exists, max+1 otherwise; tests for both cases.
+- Item 3: connector header release follows the active release, not max version; test with active r1 + pending r2.
+- Item 4: post-auto-rollback repair page names the failed verifying-sync check and keeps the question open (headline, chapter-3 fact, rail line; misleading lines suppressed); `rollbackStory`/`rollbackStep3`/`ROLLBACK_RAIL_LINE` in repair-plain tables + tests.
+- Item 5: Knowledge rollback summary reads `r2 → r3` (badge already says Rolled back); req049 test updated.
+- Item 6: PABX Record layout renders `DR: DA, TI · PS: …` with raw JSON as hover title; test added.
+
+**Key decisions:**
+- No verifier-code change: the verifier judges produced records on baseline data and structurally cannot see faulted checks; correctness belongs in the fault-aware dry-run gate plus the adopted-only invariant at every verifier entry point.
+- Prompt change kept to one factual gate sentence (allowed, no answer steering); retry template untouched since the rejection text already carries the naming.
+- Old replay keys kept (repo practice); bench impact is strictly-narrower gates, re-runs left to the existing keyed owner steps (bench-ablation, beacon rehearsal 5).
+
+**Files changed:**
+- `src/autobridge/repair/dryrun.py` — two-pass gate, entity-named errors, extracted per-entity evaluator
+- `config/prompts/l3_patch.md` — v3 gate-fact sentence
+- `tests/fixtures/replay/gross_to_net.json` — re-keyed 2 l3 hashes
+- `tests/unit/test_autobridge_req053_dryrun.py` — gate-scope + ladder tests updated/pinned
+- `docs/demo.md` — deck 5 both-checks wording
+- `ui/app/repairs/[id]/page.tsx` + `page.test.tsx` — candidate version, post-rollback state, tests
+- `ui/app/connectors/[id]/page.tsx` + `page.test.tsx` — header follows active release, test
+- `ui/lib/repair-plain.ts` + `repair-plain.test.ts` — rollback wording helpers, tests
+- `src/autobridge/control/routes/capabilities.py` — rollback summary dedup
+- `tests/unit/test_autobridge_req049_proposal.py` — rollback summary expectation
+- `ui/components/PabxPanel.tsx` + `PabxPanel.test.tsx` — readable layout, test
+
+**Notes for next iteration:**
+- Owner steps: keyed `make record-frontier SCENARIO=gross_to_net` (prompt v2→v3 changed the hash), then keyed walkthrough re-run to close REQ-069. Beacon freeze still waits for REQ-069 + rehearsal 5.
+- Observed (not changed, possible follow-up): in the direct-patch path `l3_entry["proposal"]` is never set, so `_judge_semantic_proposal` reports "no L3 proposal to judge" for adopted direct patches (the candidate-release baseline gate still covers them). Left as-is — out of REQ-069 scope.

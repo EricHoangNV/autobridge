@@ -78,6 +78,34 @@ export const STATE_HEADLINE: Record<string, string> = {
   failed: "Repair failed safely",
 };
 
+/** Post-rollback state (REQ-069 item 4): the approved change failed its
+ * verifying sync and the engine rolled it back automatically. Facts only:
+ * the named check (code + plain meaning), the release that failed and the
+ * one restored, and that the question is still open. */
+export function rollbackStory(
+  unmet: string[],
+  failedVersion: number | null,
+  restoredVersion: number | null,
+): { headline: string; fact: string } {
+  const code = unmet.length && unmet[0] ? unmet[0] : "a check";
+  const meaning = checkPlain(unmet.length ? unmet[0] : null);
+  const where = failedVersion !== null ? ` on r${failedVersion}` : "";
+  const back =
+    restoredVersion !== null ? `back on r${restoredVersion} automatically` : "rolled back automatically";
+  return {
+    headline: "Approved fix failed its verifying sync — rolled back",
+    fact: `${code}${where} failed (${meaning}); ${back}, the question is still open`,
+  };
+}
+
+/** Decision rail top line for the post-rollback state (REQ-069 item 4). */
+export const ROLLBACK_RAIL_LINE = "Rolled back automatically — still needs your decision";
+
+/** Storyline step 3 for the post-rollback state (REQ-069 item 4). */
+export function rollbackStep3(): { headline: string; fact: string } {
+  return { headline: "Rolled back automatically", fact: "the question is still open" };
+}
+
 /** Decision rail top line per repair state (one line). */
 export const RAIL_LINE: Record<string, string> = {
   propose: "Fix ready — approve to ship it",

@@ -1,12 +1,14 @@
 """Dry-run a proposed patch against the faulted sync's records (REQ-053 item 6).
 
 Before the engine offers Approve on a proposal, it applies the patch to a
-copy of the active spec and evaluates the touched entities' checks against
-the records the break's sync run observed — no new vendor call. A patch
-that references a wire field that does not exist (e.g. ``$.net_sum`` on a
-vendor that never sends it), or that leaves the failing checks failing, is
-rejected with a one-line error the model gets exactly once as a retry; a
-still-failing proposal is never offered (question only).
+copy of the active spec and evaluates the checks that failed in the
+break's sync — every entity, not just the ones the patch touches —
+against the records the break's sync run observed — no new vendor call.
+A patch that references a wire field that does not exist (e.g.
+``$.net_sum`` on a vendor that never sends it), or that leaves a failing
+check failing on any entity, is rejected with a one-line error naming
+the still-failing checks; the model gets exactly one retry with that
+error, then a still-failing proposal is never offered (question only).
 
 The engine never synthesises the answer: the dry-run only judges the
 model's (or rule's) proposal against observed records.
@@ -416,6 +418,137 @@ def field_notes_for_proposal(
     return notes
 
 
+def _check_desc(entity: str, checks: list[dict[str, Any]], kind: str) -> str:
+    """Name a still-failing check with its entity (REQ-069 item 1).
+
+    ``FolioCharge.money_invariant (amount vs $.gross_sum)`` — the retry
+    error names which entity's check still fails and what it compares,
+    in generic words (no vendor or scenario names).
+    """
+    for chk in checks:
+        if not isinstance(chk, dict) or chk.get("kind") != kind:
+            continue
+        field = chk.get("field")
+        ptr = chk.get("compare_to")
+        if isinstance(field, str) and field and isinstance(ptr, str) and ptr:
+            return f"{entity}.{kind} ({field} vs {ptr})"
+        if isinstance(field, str) and field:
+            return f"{entity}.{kind} ({field})"
+        return f"{entity}.{kind}"
+    return f"{entity}.{kind}"
+
+
+def _evaluate_checks_on_records(
+    entity: str,
+    records: list[dict[str, Any]],
+    checks: list[dict[str, Any]],
+    raw_first: dict[str, Any] | None,
+) -> list[str]:
+    """Unmet check kinds for one entity's checks on the break's records.
+
+    Shared by the old-spec pass (which entities failed in the break's
+    sync) and the patched-spec pass (which still fail with the patch).
+    Best-effort like the sync's own evaluation: a checker error or an
+    unresolvable compare is skipped here, never raised — the guards in
+    :func:`dry_run_proposal` judge the patch's own pointers.
+    """
+    from autobridge.runtime.checks import evaluate_entity_checks, looks_like_money_sum  # noqa: PLC0415
+    from autobridge.runtime.interpreter import extract_jsonpath  # noqa: PLC0415
+
+    compare_value: Any = None
+    if isinstance(raw_first, dict):
+        for chk in checks:
+            if not isinstance(chk, dict):
+                continue
+            ptr = chk.get("compare_to")
+            if not ptr or not isinstance(ptr, str):
+                continue
+            try:
+                extracted = extract_jsonpath(raw_first, ptr)
+            except Exception:
+                extracted = None
+            if extracted is not None and compare_value is None:
+                compare_value = extracted
+    try:
+        unmet = evaluate_entity_checks(
+            entity,
+            records,
+            checks,
+            expected_count=compare_value if isinstance(compare_value, int) else None,
+            compare_to_value=compare_value,
+        )
+    except Exception:
+        return []
+    # The faulted sync's money re-run (mirror of engine.sync_run: a
+    # money check whose compare_to resolved to a sum is judged against
+    # that sum, even when the no_loss extraction won the shared slot).
+    if isinstance(raw_first, dict):
+        for chk in checks:
+            if not isinstance(chk, dict) or chk.get("kind") != "money_invariant":
+                continue
+            field = chk.get("field")
+            ptr = chk.get("compare_to")
+            if not field or not ptr or not isinstance(ptr, str):
+                continue
+            try:
+                money_sum = extract_jsonpath(raw_first, ptr)
+            except Exception:
+                money_sum = None
+            # REQ-055 item 2: never judge a money invariant against a value
+            # that is not a money sum (defense in depth: the patched-pointer
+            # check above rejects such proposals).
+            if money_sum is None or not looks_like_money_sum(money_sum):
+                continue
+            try:
+                from autobridge.runtime.checks import check_money_invariant  # noqa: PLC0415
+
+                for name in check_money_invariant(
+                    records, field=str(field), entity_name=entity,
+                    expected_sum=str(money_sum),
+                    tolerance_pct=chk.get("tolerance_pct", 5.0),
+                ):
+                    if name not in unmet:
+                        unmet.append(name)
+            except Exception:
+                continue
+    return list(unmet)
+
+
+def _entities_failing_old_checks(
+    spec: dict[str, Any],
+    canonical_records: dict[str, Any],
+    raw_first_pages: dict[str, Any],
+) -> set[str]:
+    """Entities whose checks fail under the unpatched spec (REQ-069 item 1).
+
+    Re-runs each entity's own checks on the break's canonical records —
+    the same judgement the faulted sync ran, per entity. The gate covers
+    this set plus the patch-touched entities, so a proposal that fixes
+    one entity while another entity's failing check still fails is
+    partial and refused. Guards do not apply here: every pointer is the
+    spec's own, so an unresolvable old pointer is the drift's story (or
+    a skip), never a patch error.
+    """
+    failed: set[str] = set()
+    old_entities = spec.get("entities") if isinstance(spec, dict) else {}
+    if not isinstance(old_entities, dict):
+        return failed
+    for entity in sorted(old_entities):
+        old_ent = old_entities.get(entity)
+        old_checks = old_ent.get("checks") if isinstance(old_ent, dict) else []
+        if not isinstance(old_checks, list) or not old_checks:
+            continue
+        records = canonical_records.get(entity)
+        records = [r for r in records if isinstance(r, dict)] if isinstance(records, list) else []
+        op_name = _entity_op_name(spec, entity)
+        raw_first = raw_first_pages.get(op_name) if isinstance(op_name, str) else None
+        if not isinstance(raw_first, dict):
+            raw_first = None
+        if _evaluate_checks_on_records(entity, records, old_checks, raw_first):
+            failed.add(entity)
+    return failed
+
+
 def dry_run_proposal(
     spec: dict[str, Any],
     patch: list[dict[str, Any]],
@@ -423,11 +556,14 @@ def dry_run_proposal(
 ) -> tuple[bool, str]:
     """Apply *patch* to a copy of *spec* and judge it on the faulted records.
 
-    Returns ``(True, detail)`` when every check of every touched entity
-    passes on the break's records, else ``(False, one-line error)``. The
-    error names a missing wire field with the available keys when a new
-    ``compare_to`` pointer resolves to nothing (e.g. ```$.net_sum` is not
-    a field in the response; available: …``), or the still-failing checks.
+    Returns ``(True, detail)`` when every check that failed in the break's
+    sync passes with the patched spec on the break's records — every
+    entity, not just the ones the patch touches (REQ-069 item 1) — else
+    ``(False, one-line error)``. The error names a missing wire field with
+    the available keys when a new ``compare_to`` pointer resolves to
+    nothing (e.g. ```$.net_sum` is not a field in the response;
+    available: …``), or the still-failing checks with their entity
+    (e.g. ``FolioCharge.money_invariant (amount vs $.gross_sum)``).
     ``fault=None`` (no faulted records, e.g. bench paths without a sync)
     skips the judgement as passed — the verifier gate still applies.
     """
@@ -442,12 +578,7 @@ def dry_run_proposal(
     except Exception as exc:
         return False, f"patch does not apply: {exc}"
     touched = _touched_entities(patch)
-    if not touched:
-        return True, "patch touches no entity: nothing to judge"
-    from autobridge.runtime.checks import (
-        evaluate_entity_checks,  # noqa: PLC0415
-        looks_like_money_sum,  # noqa: PLC0415
-    )
+    from autobridge.runtime.checks import looks_like_money_sum  # noqa: PLC0415
     from autobridge.runtime.interpreter import extract_jsonpath  # noqa: PLC0415
 
     canonical_records = fault.get("canonical_records")
@@ -467,7 +598,23 @@ def dry_run_proposal(
     if not isinstance(new_entities, dict):
         new_entities = {}
 
-    for entity in sorted(touched):
+    # REQ-069 item 1: the gate covers every check that failed in the
+    # break's sync — every entity with a failing check under the unpatched
+    # spec, plus every entity the patch touches — and passes only when all
+    # of them pass with the patched spec. A proposal that fixes one
+    # entity while another entity's failing check still fails is partial:
+    # refused with the still-failing checks named, never offered.
+    gate = set(touched) | _entities_failing_old_checks(
+        spec, canonical_records, raw_first_pages
+    )
+    if not gate:
+        return True, "patch touches no entity: nothing to judge"
+
+    # Every still-failing check across the gate is named (REQ-069 item 1:
+    # the retry gets the exact error — which checks still fail), so the
+    # judgement collects them all instead of stopping at the first.
+    still_failing: list[str] = []
+    for entity in sorted(gate):
         new_ent = new_entities.get(entity)
         if not isinstance(new_ent, dict):
             return False, f"patch removes entity {entity!r}"
@@ -547,58 +694,19 @@ def dry_run_proposal(
                     records = remapped
                 except Exception as exc:
                     return False, f"re-map failed for {entity} with the patched spec: {exc}"
-
-        compare_value: Any = None
-        for chk in new_checks:
-            if not isinstance(chk, dict):
-                continue
-            ptr = chk.get("compare_to")
-            if not ptr or not isinstance(ptr, str) or not isinstance(raw_first, dict):
-                continue
-            try:
-                extracted = extract_jsonpath(raw_first, ptr)
-            except Exception:
-                extracted = None
-            if extracted is not None and compare_value is None:
-                compare_value = extracted
-        unmet = evaluate_entity_checks(
+        unmet = _evaluate_checks_on_records(
             entity,
             records,
             new_checks,
-            expected_count=compare_value if isinstance(compare_value, int) else None,
-            compare_to_value=compare_value,
+            raw_first if isinstance(raw_first, dict) else None,
         )
-        # The faulted sync's money re-run (mirror of engine.sync_run: a
-        # money check whose compare_to resolved to a sum is judged against
-        # that sum, even when the no_loss extraction won the shared slot).
-        for chk in new_checks:
-            if not isinstance(chk, dict) or chk.get("kind") != "money_invariant":
-                continue
-            field = chk.get("field")
-            ptr = chk.get("compare_to")
-            if not field or not ptr or not isinstance(ptr, str) or not isinstance(raw_first, dict):
-                continue
-            try:
-                money_sum = extract_jsonpath(raw_first, ptr)
-            except Exception:
-                money_sum = None
-            # REQ-055 item 2: never judge a money invariant against a value
-            # that is not a money sum (defense in depth: the patched-pointer
-            # check above already rejects such proposals).
-            if money_sum is None or not looks_like_money_sum(money_sum):
-                continue
-            try:
-                from autobridge.runtime.checks import check_money_invariant  # noqa: PLC0415
-
-                for name in check_money_invariant(
-                    records, field=str(field), entity_name=entity,
-                    expected_sum=str(money_sum),
-                    tolerance_pct=chk.get("tolerance_pct", 5.0),
-                ):
-                    if name not in unmet:
-                        unmet.append(name)
-            except Exception:
-                continue
-        if unmet:
-            return False, f"check(s) still fail on the current records: {', '.join(sorted(set(unmet)))}"
+        for kind in unmet:
+            desc = _check_desc(entity, new_checks, kind)
+            if desc not in still_failing:
+                still_failing.append(desc)
+    if still_failing:
+        return False, (
+            "check(s) still fail on the current records: "
+            f"{', '.join(sorted(still_failing))}"
+        )
     return True, "the checks pass on the current records"

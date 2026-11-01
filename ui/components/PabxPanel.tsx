@@ -51,6 +51,27 @@ function layoutsFromDetail(detail: string | null): string | null {
   return detail.slice(i + "layouts=".length).trim() || null;
 }
 
+/** Record layouts, readably (REQ-069 item 6): `{"DR": ["DA", "TI"]}`
+ * reads "DR: DA, TI" — never raw JSON. Unparseable values fall back to
+ * the raw string, never blank. */
+function formatLayouts(raw: string | null): string | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return raw;
+  const parts: string[] = [];
+  for (const [recordType, fields] of Object.entries(parsed)) {
+    if (Array.isArray(fields)) parts.push(`${recordType}: ${fields.map(String).join(", ")}`);
+    else if (fields !== undefined && fields !== null) parts.push(`${recordType}: ${String(fields)}`);
+    else parts.push(recordType);
+  }
+  return parts.length ? parts.join(" · ") : raw;
+}
+
 function layoutsFromAgent(agent: EdgeAgent | null): string | null {
   if (!agent) return null;
   for (const key of ["peer_layouts", "layouts", "record_layout", "record_layouts"]) {
@@ -171,8 +192,8 @@ export function PabxPanel({ connectorId, connectorName }: { connectorId: string;
         </div>
         <div>
           <dt className="text-ink-2">Record layout</dt>
-          <dd data-testid="pabx-layout" className="font-mono">
-            {layouts ?? <span className="text-ink-2">not announced yet</span>}
+          <dd data-testid="pabx-layout" className="font-mono" title={layouts ?? undefined}>
+            {layouts ? (formatLayouts(layouts) ?? layouts) : <span className="text-ink-2">not announced yet</span>}
           </dd>
         </div>
         <div>

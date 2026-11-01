@@ -27,6 +27,9 @@ import {
   storylineStep1,
   storylineStep2,
   storylineStep3,
+  rollbackStory,
+  rollbackStep3,
+  ROLLBACK_RAIL_LINE,
   railLine,
   DRY_RUN_PASSED,
   dryRunRetried,
@@ -109,6 +112,7 @@ type ReleaseLite = {
   version: number;
   spec: Record<string, unknown>;
   parent_release_id?: string | null;
+  provenance_repair_run_id?: string | null;
 };
 
 type ConnectorLite = {
@@ -539,6 +543,28 @@ export default function RepairDetailPage({ params }: PageProps) {
   const totalCalls =
     toNumber(mu["calls"] ?? mu["total_calls"]) || toNumber(mu["frontier_calls"]) + toNumber(mu["small_calls"]);
 
+  // REQ-069 item 4: the verifying sync failed after an approval and the
+  // engine rolled back automatically. The bundle carries the failure
+  // (release, outcome, unmet checks, rollback target) — defined before
+  // decisionLine, which names the check for the rolled-back state.
+  const rollbackInfo = (() => {
+    const bundle = repair.escalation_bundle as Record<string, unknown> | null;
+    const raw = bundle?.["verifying_sync_failed"];
+    if (!raw || typeof raw !== "object") return null;
+    const rec = raw as Record<string, unknown>;
+    const unmet = Array.isArray(rec["unmet_criteria"])
+      ? rec["unmet_criteria"].map((c) => String(c)).filter((c) => c)
+      : [];
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    return {
+      unmet,
+      failedVersion: num(rec["release_version"]),
+      restoredVersion: num(rec["rolled_back_to_version"]),
+    };
+  })();
+  const rollbackText = rollbackInfo
+    ? rollbackStory(rollbackInfo.unmet, rollbackInfo.failedVersion, rollbackInfo.restoredVersion)
+    : null;
   // REQ-054 item 4: model cost lives once, in the proof tile. The decided
   // line names the decision only; the rail names the rule, never the tokens.
   // Terminal states read first: a rejected or failed repair is never "ready".
@@ -548,6 +574,8 @@ export default function RepairDetailPage({ params }: PageProps) {
       // REQ-049 item 6: an approved proposal is a business decision by
       // the operator — never a "verified fix".
       ? `Business decision by ${repair.approval.actor}`
+      : isEscalated && rollbackText
+      ? rollbackText.headline
       : isEscalated
       ? "Needs your decision: the engine is not confident"
       : repair.decision === "reject"
@@ -599,6 +627,7 @@ export default function RepairDetailPage({ params }: PageProps) {
     const q = (repair.escalation_bundle as Record<string, unknown> | null)?.["question"];
     return typeof q === "string" && q.trim() ? q : null;
   })();
+  // (rollbackInfo/rollbackText are defined above decisionLine).
   // REQ-049 item 5: the model's proposed change rides the escalation
   // bundle (label/effect/patch) — the rail Approve button and diff read it.
   // REQ-053 item 6: the dry-run result rides with it, shown beside the
@@ -694,10 +723,18 @@ export default function RepairDetailPage({ params }: PageProps) {
     return releases[releases.length - 1];
   })();
   const activeSpec = (activeRelease?.spec ?? null) as Record<string, unknown> | null;
-  // REQ-068 item 3: the next release is max(version)+1, not active+1 —
-  // after Activate-r1 the active is r1 while r2 exists, so the next ship
-  // is r3 (the number the server will actually assign).
+  // REQ-069 item 2: the pending candidate release already exists as a
+  // row (provenance-linked to this repair), so max(version)+1 counts it
+  // and reads one too high ("ship r3", ships r2). Show the version the
+  // candidate will actually ship as — the candidate's own version. Only
+  // when no candidate row exists yet (an escalation proposal is approved
+  // into a release minted at approve time) is max+1 the number to show.
+  const candidateRelease: ReleaseLite | null = (() => {
+    const releases = connector?.releases ?? [];
+    return releases.find((r) => r.provenance_repair_run_id === repair.id) ?? null;
+  })();
   const candidateVersion = (() => {
+    if (candidateRelease) return candidateRelease.version;
     const releases = connector?.releases ?? [];
     if (!releases.length) return null;
     return Math.max(...releases.map((r) => r.version)) + 1;
@@ -837,8 +874,10 @@ export default function RepairDetailPage({ params }: PageProps) {
     : isEscalated
       ? { headline: "Needs your decision", fact: modelProposal ? "tested proposal" : "no patch to ship" }
       : storylineStep2(resolvedRung, totalCalls);
-  const story3plain = storylineStep3(repair.decision, displayPatch.length > 0, modelProposal?.label ?? null);
-  const railPlain = railLine(repair.decision, !!modelProposal);
+  const story3plain = rollbackInfo
+    ? rollbackStep3()
+    : storylineStep3(repair.decision, displayPatch.length > 0, modelProposal?.label ?? null);
+  const railPlain = rollbackInfo ? ROLLBACK_RAIL_LINE : railLine(repair.decision, !!modelProposal);
 
   // Ledger calls: the per-call proof rows. The tile carries the totals, so
   // the box renders only when there are per-call facts (or the climb is
@@ -1294,23 +1333,32 @@ export default function RepairDetailPage({ params }: PageProps) {
             {displayPatch.length || isEscalated || isTerminal ? (
               <>
                 <p data-testid="decided-plain-headline" className="mt-2 text-sm font-semibold">
-                  {isEscalated && modelProposal
-                    ? modelProposal.label
-                    : hasPatch
-                      ? changePhrases[0] ?? "Verified fix"
-                      : stateHeadline(repair.decision)}
+                  {rollbackText
+                    ? rollbackText.headline
+                    : isEscalated && modelProposal
+                      ? modelProposal.label
+                      : hasPatch
+                        ? changePhrases[0] ?? "Verified fix"
+                        : stateHeadline(repair.decision)}
                 </p>
                 <ul data-testid="decided-facts" className="mt-1 list-disc space-y-0.5 pl-5 text-sm">
+                  {rollbackText ? (
+                    <li data-testid="decided-rollback-fact">
+                      {rollbackText.fact}
+                    </li>
+                  ) : null}
                   {displayPatch.length ? (
                     <li>
                       What changes: {changePhrases.join(" · ")} ({opCount} change{opCount === 1 ? "" : "s"})
                     </li>
                   ) : null}
-                  <li>
-                    Tested:{" "}
-                    {modelProposal?.dryRun ?? candidateDryRun ?? (hasReport ? `verifier ${passedCount}/${totalTests} checks pass` : "not yet — no patch to test")}
-                  </li>
-                  {reversibleTo ? <li>Reversible: roll back to {reversibleTo} stays available</li> : null}
+                  {rollbackText ? null : (
+                    <li>
+                      Tested:{" "}
+                      {modelProposal?.dryRun ?? candidateDryRun ?? (hasReport ? `verifier ${passedCount}/${totalTests} checks pass` : "not yet — no patch to test")}
+                    </li>
+                  )}
+                  {rollbackText || !reversibleTo ? null : <li>Reversible: roll back to {reversibleTo} stays available</li>}
                   {isEscalated && modelProposal ? (
                     <li data-testid="decided-business-note">Your business decision — not learned for next time</li>
                   ) : null}
@@ -1402,7 +1450,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                 </details>
                 </div>
               </details>
-            ) : (
+            ) : rollbackText ? null : (
               <p data-testid="no-patch-note" className="mt-2 text-sm text-ink-2">No patch proposed{isEscalated ? " — nothing verified to apply" : " yet"}.</p>
             )}
           </section>
@@ -1485,7 +1533,10 @@ export default function RepairDetailPage({ params }: PageProps) {
                       </a>
                     </>
                   ) : null}
-                  , or Deny below to close this repair. Roll back stays available below.
+                  , or Deny below to close this repair.{" "}
+                  {rollbackInfo?.restoredVersion != null
+                    ? `Already rolled back to r${rollbackInfo.restoredVersion} automatically.`
+                    : "Roll back stays available below."}
                 </p>
               )}
               <div id="repair-acts" className="mt-2">

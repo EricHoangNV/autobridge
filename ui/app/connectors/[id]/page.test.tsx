@@ -159,6 +159,32 @@ describe("ConnectorDetailPage", () => {
     expect(screen.getByTestId("sync-run-row-sync-2")).toBeInTheDocument();
   });
 
+  it("header follows the active release, not the highest version (REQ-069 item 3)", () => {
+    // After Activate-r1 with a pending r2 candidate the Releases table
+    // marks r1 active — the header must read r1 too, never r2.
+    const detail = {
+      ...mockDetail,
+      active_release_id: "rel-2",
+      releases: [
+        { ...mockDetail.releases[0], id: "rel-2", version: 1, parent_release_id: null },
+        {
+          ...mockDetail.releases[0],
+          id: "rel-3",
+          version: 2,
+          parent_release_id: "rel-2",
+          provenance_repair_run_id: "repair-abc-123",
+        },
+      ],
+    };
+    mockedUseSWR
+      .mockReturnValueOnce({ data: detail, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)
+      .mockReturnValueOnce({ data: mockSyncRuns, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>);
+
+    render(<ConnectorDetailPage params={{ id: "conn-abc-123" }} />);
+    expect(screen.getByTestId("connector-active-release")).toHaveTextContent("r1");
+    expect(screen.getByTestId("connector-active-release").textContent).not.toMatch(/r2/);
+  });
+
   it("groups fingerprints, collapsed by default with a one-line summary", async () => {
     mockedUseSWR
       .mockReturnValueOnce({ data: mockDetail, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useSWR>)

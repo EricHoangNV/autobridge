@@ -436,7 +436,10 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
             else:
                 summary = "Rejected the proposed patch"
         elif kind == "rollback":
-            summary = f"Rolled back {_release_version(approval.from_release_id)} → {_release_version(approval.to_release_id)}"
+            # REQ-069 item 5: the kind badge already reads "Rolled back",
+            # so the summary must not repeat it (twin of the REQ-068 item 8
+            # "Approved Approved" fix).
+            summary = f"{_release_version(approval.from_release_id)} → {_release_version(approval.to_release_id)}"
         else:
             summary = f"{kind or 'decision'} recorded"
         decisions.append(
