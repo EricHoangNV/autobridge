@@ -5,7 +5,7 @@
 Owner priority (2026-11-01 10:45): **REQ-071** (REQ-066..070 done; the real beacon freeze waits for REQ-071). Do not start REQ-051 until the owner says so.
 
 ### REQ-071 — Deck 7: the PABX link drop stays visible in Sync runs (2026-11-01)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-01 11:38)
 Owner demo run, deck 7 (`make demo-break SCENARIO=fias_link_resync`): the PABX connector page shows only the live link
 state, so a presenter who switches to the page a few seconds late never sees the drop (up → down → re-handshaking →
 up takes ~8-10 s). Owner decision: show it in the existing **Sync runs** table, which is persisted and newest-first.
