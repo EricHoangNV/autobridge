@@ -5,7 +5,7 @@
 Owner priority (2026-11-01 11:20): **REQ-072, then REQ-073** (REQ-066..071 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
 
 ### REQ-073 — Repair page and Sync runs UI fixes from the owner's demo run (2026-11-01)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-01 04:47)
 Owner demo run on the local stack, 2026-11-01 ~11:10, repair page of an approved L1 Atlas fix
 (`/repairs/<id>#did`, 0 model calls) and the PABX connector page.
 
