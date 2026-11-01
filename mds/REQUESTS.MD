@@ -45,7 +45,7 @@ working, full gates green. Update `docs/demo.md` where it promises rollback on t
 walkthrough.
 
 ### REQ-072 — A stack restart mid-sync must not wedge a connector in "sync running" (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-01 04:07)
+Status: DONE (sbx1 2026-11-01 -- orphan sync/build fail at startup + stale-job bound unblocks scheduler + build claims exactly its job; full gates green; owner step: none -- restart/scheduler behaviour is unit-covered, no live stack needed)
 Owner local stack, 2026-11-01 10:50: `make local-down && make local-up` while MeridianPMS had a sync in flight.
 On startup `reclaim_orphaned_jobs()` (`src/autobridge/control/app.py`, `JobRunner.reclaim_orphaned` in
 `src/autobridge/control/jobs.py`) moved the `running` sync job back to `queued` (attempts 1/3), but nothing ever

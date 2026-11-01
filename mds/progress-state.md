@@ -2,13 +2,13 @@
 
 ## Current State
 
-REQ-071 DONE in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation)): edge link recorded on the SyncRun (reconnect counter + idempotency-key counts on `data_readiness["edge_link"]`) with the drop note in the Sync runs table, scheduler link events matching the live agent, docs deck 7 updated; full gates green.
+REQ-072 DONE in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation)): restart with an in-flight sync no longer wedges the connector (orphaned sync/build fail with reasons at startup, repairs re-queued for the drain; stale-job bound unblocks the scheduler; builds claim exactly their job); full gates green.
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
-  - REQ-001…REQ-071 all DONE except IN_PROGRESS/BLOCKED owner keyed/live remainders below; REQ-051 DEFERRED by owner
+  - REQ-001…REQ-072 all DONE except IN_PROGRESS/BLOCKED owner keyed/live remainders below; REQ-051 DEFERRED by owner
   - Phase 2 (P2.S1.1…P2.S7.1) complete
-- Tests: `make test` 3001 + 138 + 415 passed, autobridge 90% / verifier 91% / simulators 90%; UI 322 passed; lint/typecheck/contracts green. No live stack in sbx1.
+- Tests: `make test` 3006 + 138 + 415 passed, autobridge/verifier/simulators gates green; UI 322 passed; lint/typecheck/contracts/openapi-check green. No live stack in sbx1.
 - Stack: no live stack in sbx1; `.local/ACTIVE` marker present but all pids dead (stale)
 
 ## Next tasks

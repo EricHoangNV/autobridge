@@ -364,8 +364,12 @@ def test_migration_0002_job_queue(
 
 
 def test_lifespan_reclaims_orphaned_jobs(sessions: m.sessionmaker[Session], monkeypatch: pytest.MonkeyPatch) -> None:
-    """REQ-032: startup reaps ``running`` rows so a restart never wedges a
-    connector in "sync running" (the scheduler skips busy connectors)."""
+    """REQ-072: startup fails orphaned syncs, re-queues orphaned repairs.
+
+    A restart never leaves a ``queued`` sync with nobody to run it (syncs
+    are periodic; the next scheduled sync replaces it). Repairs are
+    re-queued for the repair drain.
+    """
     import autobridge.control.app as app_mod
     import autobridge.control.runner as runner_mod
     from autobridge.control.jobs import JobRunner
@@ -380,13 +384,26 @@ def test_lifespan_reclaims_orphaned_jobs(sessions: m.sessionmaker[Session], monk
             payload={"release_id": "rel-dead-001"},
         )
         s.add(dead)
+        repair = Job(
+            kind="repair",
+            state="running",
+            worker_id="worker-dead",
+            attempts=1,
+            payload={"drift_event_ids": ["d1"]},
+        )
+        s.add(repair)
         s.commit()
         dead_id = dead.id
+        repair_id = repair.id
     monkeypatch.setattr(runner_mod, "get_runner", lambda _db: runner)
-    assert app_mod.reclaim_orphaned_jobs() == 1
+    assert app_mod.reclaim_orphaned_jobs() == 1  # the repair, re-queued
     with sessions() as s:
         row = s.get(Job, dead_id)
         assert row is not None
-        assert row.state == "queued"
-        assert row.worker_id is None
-        assert row.attempts == 1  # retry budget preserved
+        assert row.state == "failed"
+        assert "restart" in (row.last_error or "")
+        rrow = s.get(Job, repair_id)
+        assert rrow is not None
+        assert rrow.state == "queued"
+        assert rrow.worker_id is None
+        assert rrow.attempts == 1  # retry budget preserved

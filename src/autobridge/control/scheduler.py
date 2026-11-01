@@ -22,6 +22,7 @@ one connector's error is recorded in its result and the pass continues.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -161,12 +162,135 @@ def wait_for_quiescent(
         waited_s += poll_s
 
 
-def connector_busy_reason(session: Any, connector_id: str) -> str | None:
+def stale_sync_job_after_s() -> float:
+    """Bound after which a ``queued``/``running`` sync job is stale (REQ-072).
+
+    A few sync intervals with a floor, so one slow sync never trips it but
+    an orphaned row cannot wedge a connector forever. Overridable via
+    ``AUTOBRIDGE_STALE_SYNC_JOB_AFTER_S`` (tests use a small bound).
+    """
+    import os as _os
+
+    try:
+        raw = (_os.environ.get("AUTOBRIDGE_STALE_SYNC_JOB_AFTER_S", "") or "").strip()
+    except Exception:
+        raw = ""
+    if raw:
+        try:
+            override = float(raw)
+        except ValueError:
+            override = 0.0
+        if override > 0:
+            return override
+    try:
+        from autobridge.config import sync_interval_seconds as _interval
+
+        interval = _interval()
+    except Exception:
+        interval = None
+    if interval:
+        return max(3.0 * float(interval), 60.0)
+    return 300.0
+
+
+#: Reason recorded when a stale in-flight sync job is failed (REQ-072).
+STALE_SYNC_JOB_FAILED_REASON = (
+    "stale sync job with no live worker; the next scheduled sync replaces it"
+)
+
+
+def _job_age_s(job: Any, now: datetime) -> float | None:
+    """Age of a job row in seconds (``updated_at`` wins, else ``created_at``)."""
+    stamp = getattr(job, "updated_at", None) or getattr(job, "created_at", None)
+    if stamp is None:
+        return None
+    try:
+        if getattr(stamp, "tzinfo", None) is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        return (now - stamp).total_seconds()
+    except Exception:
+        return None
+
+
+def _is_stale_sync_job(job: Any, *, now: datetime, stale_after_s: float) -> bool:
+    """A ``queued``/``running`` sync older than the bound is stale (REQ-072)."""
+    try:
+        if getattr(job, "kind", None) != "sync":
+            return False
+        if getattr(job, "state", None) not in ("queued", "running"):
+            return False
+    except Exception:
+        return False
+    age = _job_age_s(job, now)
+    if age is None:
+        return False
+    return age > stale_after_s
+
+
+def fail_stale_sync_jobs(
+    session: Any, *, stale_after_s: float | None = None, now: datetime | None = None
+) -> int:
+    """Fail stale in-flight sync jobs (REQ-072 belt and braces).
+
+    A ``queued``/``running`` sync older than the bound has no live worker
+    (a real sync finishes in seconds) — it is marked ``failed`` with a
+    reason so the scheduler syncs the connector anyway on this tick.
+    Returns the number of rows failed.
+    """
+    from autobridge.control.models import Job
+
+    bound = float(stale_after_s) if stale_after_s else stale_sync_job_after_s()
+    at = now
+    if at is None:
+        at = datetime.now(UTC)
+    elif getattr(at, "tzinfo", None) is None:
+        at = at.replace(tzinfo=UTC)
+    count = 0
+    try:
+        jobs = (
+            session.execute(
+                select(Job).where(
+                    Job.kind == "sync", Job.state.in_(("queued", "running"))
+                )
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:
+        return 0
+    for job in jobs:
+        try:
+            if not _is_stale_sync_job(job, now=at, stale_after_s=bound):
+                continue
+            job.state = "failed"
+            job.last_error = STALE_SYNC_JOB_FAILED_REASON[:2000]
+            job.worker_id = None
+            try:
+                from autobridge.control.models import utcnow as _utcnow
+
+                job.updated_at = _utcnow()
+            except Exception:
+                pass
+            count += 1
+        except Exception:
+            continue
+    with contextlib.suppress(Exception):
+        session.flush()
+    return count
+
+
+def connector_busy_reason(
+    session: Any, connector_id: str, *, stale_after_s: float | None = None, now: datetime | None = None
+) -> str | None:
     """Why the scheduler must skip *connector_id*, or ``None`` when syncable.
 
     Checks, in order: in-flight jobs (sync/build/repair), then repairs
     awaiting an operator decision (propose or escalate with no approval,
     reject or rollback row referencing them).
+
+    REQ-072: a ``queued``/``running`` sync job older than the stale bound is
+    not in flight — it has no live worker — so it never blocks the
+    scheduler (``run_scheduler_pass`` fails it with a reason on the tick).
     """
     from autobridge.control.models import (
         Approval,
@@ -180,6 +304,16 @@ def connector_busy_reason(session: Any, connector_id: str) -> str | None:
     conn = session.get(Connector, connector_id)
     if conn is None:
         return "connector not found"
+
+    try:
+        _bound = float(stale_after_s) if stale_after_s else stale_sync_job_after_s()
+    except Exception:
+        _bound = 300.0
+    _now = now
+    if _now is None:
+        _now = datetime.now(UTC)
+    elif getattr(_now, "tzinfo", None) is None:
+        _now = _now.replace(tzinfo=UTC)
 
     # -- in-flight jobs touching this connector -------------------------
     release_ids = set(
@@ -205,6 +339,8 @@ def connector_busy_reason(session: Any, connector_id: str) -> str | None:
         if job.kind == "build" and payload.get("connector_id") == connector_id:
             return f"{job.kind} {job.state}"
         if job.kind == "sync" and payload.get("release_id") in release_ids:
+            if _is_stale_sync_job(job, now=_now, stale_after_s=_bound):
+                continue
             return f"{job.kind} {job.state}"
         if job.kind == "repair" and (
             set(payload.get("drift_event_ids") or []) & drift_ids
@@ -297,13 +433,17 @@ def snapshot_edge_links(session: Any) -> int:
     return recorded
 
 
-def run_scheduler_pass(session: Any) -> dict[str, Any]:
+def run_scheduler_pass(session: Any, *, stale_after_s: float | None = None) -> dict[str, Any]:
     """Sync every idle active connector once; return per-connector results.
 
     Connectors without an active release have nothing runnable and are
     reported ``skipped`` (no release). Busy connectors are reported
     ``skipped`` with the reason. Each sync runs the same handlers as
     ``POST /sync``; per-connector failures are recorded, never raised.
+
+    REQ-072: a stale in-flight sync (older than the bound, no live worker)
+    is failed with a reason first, so the pass syncs the connector anyway
+    instead of skipping it forever.
     """
     from autobridge.control.models import Connector
     from autobridge.control.runner import sync_connector_now
@@ -330,6 +470,16 @@ def run_scheduler_pass(session: Any) -> dict[str, Any]:
     # own sessions; this session only re-checks busyness per connector.
     link_snapshots = snapshot_edge_links(session)
     session.commit()
+    # REQ-072 belt and braces: fail stale in-flight syncs before the busy
+    # check, so an orphaned row (e.g. a restart that predates the
+    # fail-at-startup path) never wedges a connector. Fresh jobs still skip.
+    stale_failed = 0
+    try:
+        stale_failed = fail_stale_sync_jobs(session, stale_after_s=stale_after_s)
+        if stale_failed:
+            session.commit()
+    except Exception:
+        stale_failed = 0
     connectors = (
         session.execute(select(Connector).order_by(Connector.created_at))
         .scalars()
@@ -380,4 +530,5 @@ def run_scheduler_pass(session: Any) -> dict[str, Any]:
         "skipped": sum(1 for r in results if r["status"] == "skipped"),
         "errors": sum(1 for r in results if r["status"] == "error"),
         "link_snapshots": link_snapshots,
+        "stale_failed": stale_failed,
     }

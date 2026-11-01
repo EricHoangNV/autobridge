@@ -35,16 +35,33 @@ from autobridge.control.routes.runs import router as runs_router
 
 
 def reclaim_orphaned_jobs() -> int:
-    """Re-queue ``running`` jobs left behind by a dead process (REQ-032).
+    """Fail orphaned sync/build jobs, re-queue orphaned repairs (REQ-072).
 
-    The scheduler skips busy connectors, so an orphaned ``running`` row
-    would wedge its connector in "sync running" forever after a restart
-    or crash. Returns the number of jobs moved back to ``queued``; the
-    runner's retry budget (``attempts``/``max_attempts``) still applies.
+    Sync jobs are periodic (the next scheduled sync replaces them) and build
+    jobs are resubmitted by the operator, and neither kind has a background
+    drain — leaving them ``queued`` would wedge the connector in "sync
+    running" forever (the scheduler skips busy connectors). They are marked
+    ``failed`` with a reason. Repair jobs are re-queued and the repair drain
+    runs them (consistent with ``fail_orphaned_repairs``). Returns the number
+    of jobs moved back to ``queued``; the runner's retry budget
+    (``attempts``/``max_attempts``) still applies to those.
     """
     from autobridge.control.runner import get_runner  # noqa: PLC0415
 
-    return get_runner(None).reclaim_orphaned()
+    runner = get_runner(None)
+    try:
+        failed = runner.fail_orphaned_sync_and_build_jobs()
+    except Exception:
+        failed = {}
+    if failed.get("sync") or failed.get("build"):
+        import logging  # noqa: PLC0415
+
+        logging.getLogger("autobridge.control").warning(
+            "failed %d orphaned sync job(s) and %d orphaned build job(s) after restart",
+            int(failed.get("sync") or 0),
+            int(failed.get("build") or 0),
+        )
+    return runner.reclaim_orphaned()
 
 
 @asynccontextmanager
@@ -66,11 +83,12 @@ async def lifespan(app: FastAPI):
     from autobridge.llm.prompts import ensure_prompts_loaded  # noqa: PLC0415
 
     ensure_prompts_loaded()
-    # Re-queue jobs orphaned by a dead process (restart/crash path): a
-    # ``running`` row with no living worker would otherwise wedge its
-    # connector in "sync running" forever, because the scheduler skips
-    # busy connectors. Best-effort: a broken jobs table must not stop
-    # serving (migrations already ran above).
+    # Orphaned jobs after a restart/crash (REQ-072): orphaned sync/build jobs
+    # are failed (they have no drain; a re-queued row would wedge its
+    # connector in "sync running" forever because the scheduler skips busy
+    # connectors), orphaned repairs are re-queued for the repair drain.
+    # Best-effort: a broken jobs table must not stop serving (migrations
+    # already ran above).
     try:
         reclaimed = reclaim_orphaned_jobs()
         if reclaimed:

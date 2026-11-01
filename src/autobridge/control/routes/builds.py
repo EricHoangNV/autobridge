@@ -332,13 +332,13 @@ def trigger_build(connector_id: str, body: BuildRequest, db: Session = Depends(g
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    # Try to run immediately (inline execution for test/dev without worker)
-    # If worker is separate, this will claim and execute; if DB is in-memory for tests it succeeds.
-    # Otherwise job stays queued and worker will pick it up.
+    # Try to run immediately (inline execution for test/dev without worker).
+    # REQ-072: run exactly the submitted job (``run_job``), never
+    # ``run_once`` — the oldest queued row could be an orphaned sync/repair
+    # (or another connector's job) whose execution would stall this request
+    # and misattribute the result.
     try:
-        result = runner.run_once()
-        # If we ran our job, fetch build_run_id
-        _ = result
+        runner.run_job(job_id)
     except Exception:
         pass
 

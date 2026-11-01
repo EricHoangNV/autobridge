@@ -50,6 +50,16 @@ if TYPE_CHECKING:
 #: Default retry budget per job when the submit call does not say otherwise.
 DEFAULT_MAX_ATTEMPTS = 3
 
+#: Reason recorded when an orphaned sync job is failed at startup (REQ-072).
+#: Syncs are periodic, so re-running a stale one is not needed — the next
+#: scheduled sync replaces it.
+ORPHANED_SYNC_FAILED_REASON = (
+    "orphaned by a restart; the next scheduled sync replaces it"
+)
+
+#: Reason recorded when an orphaned build job is failed at startup (REQ-072).
+ORPHANED_BUILD_FAILED_REASON = "orphaned by a restart; resubmit the build"
+
 #: BuildRun lifecycle owned by the runner (stored free-form on the row).
 BUILD_QUEUED = "queued"
 BUILD_RUNNING = "running"
@@ -346,6 +356,12 @@ class JobRunner:
 
         ``attempts`` is preserved, so the resumed job keeps its retry
         budget. With no arguments every ``running`` job is reclaimed.
+
+        REQ-072: at startup the control lifespan fails orphaned sync/build
+        jobs first (see :meth:`fail_orphaned_sync_and_build_jobs`) — they
+        have no background drain, so a re-queued row would wedge the
+        connector busy forever. After that this method only ever sees
+        repair jobs, which the repair drain claims.
         """
         with self._sessions() as session:
             stmt = update(Job).where(Job.state == "running")
@@ -355,6 +371,62 @@ class JobRunner:
             count = cast("CursorResult", session.execute(stmt)).rowcount
             session.commit()
             return count
+
+    def fail_orphaned_sync_and_build_jobs(
+        self,
+        *,
+        sync_reason: str = ORPHANED_SYNC_FAILED_REASON,
+        build_reason: str = ORPHANED_BUILD_FAILED_REASON,
+    ) -> dict[str, int]:
+        """Fail orphaned sync/build jobs left by a restart (REQ-072).
+
+        Syncs are periodic (the next scheduled sync replaces a lost one) and
+        builds are resubmitted by the operator, and neither kind has a
+        background drain — a re-queued row would sit ``queued`` forever
+        with nobody to claim it, wedging ``connector_busy_reason``. So
+        ``queued`` **and** ``running`` sync/build jobs are marked ``failed``
+        with a reason the UI shows via the job row. Orphaned build rows
+        also mark their ``BuildRun`` ``failed`` with the same reason.
+        Repair jobs are untouched: ``reclaim_orphaned`` re-queues them and
+        the repair drain runs them (consistent with ``fail_orphaned_repairs``,
+        which fails the old ``climbing`` RepairRun row while the retried job
+        starts a new one).
+        """
+        counts = {"sync": 0, "build": 0}
+        with self._sessions() as session:
+            orphans = (
+                session.execute(
+                    select(Job).where(
+                        Job.kind.in_(("sync", "build")),
+                        Job.state.in_(("queued", "running")),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for job in orphans:
+                reason = sync_reason if job.kind == "sync" else build_reason
+                job.state = "failed"
+                job.last_error = reason[:2000]
+                job.worker_id = None
+                job.updated_at = utcnow()
+                counts[job.kind] += 1
+                if job.kind == "build" and job.run_id:
+                    try:
+                        run = session.get(BuildRun, job.run_id)
+                    except Exception:
+                        run = None
+                    if run is not None:
+                        try:
+                            run.state = BUILD_FAILED
+                            result = dict(run.result or {})
+                            result.setdefault("error", reason[:500])
+                            result["orphaned"] = True
+                            run.result = result
+                        except Exception:
+                            continue
+            session.commit()
+            return counts
 
     # -- internals -----------------------------------------------------
 
