@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01 12:20): **REQ-074** (REQ-066..073 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01 14:40): **REQ-075**, then **REQ-076** (REQ-066..074 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
 
 ### REQ-074 — Repair page round 2: what REQ-073 left on approved repairs (2026-11-01)
 Status: DONE (sbx1 2026-11-01 -- all 5 items code-done: tracker replaced-by + live window (version fallback), approved business-decision headline, preview hidden on approved, zero-funnel plain line, verifier one-verdict-no-glyph; 8 new UI tests, full gates green; owner step: browser check of the same repairs to close)
@@ -33,6 +33,17 @@ testids keep working, full gates green. Owner step after: browser check of the s
 ### REQ-075 — Directive: §4 silent-corruption detection — live sync path never supplies a baseline, so `money_scale_shift` cannot fire live (2026-11-01)
 Status: OPEN
 Found by the 2026-11-01 directives audit (diff `8f1b2dca..origin/main`). REQ-064 B1 (kept by REQ-065) added `money_scale_shift` → `SEMANTIC_VALUE_DRIFT` in `src/autobridge/drift/signals.py:1039`, but it requires `baseline_canonical`, which only the bench/beacon paths supply (`bench/ablation.py:586`, `bench/faults.py:413` via `baseline_summary=`). The live path (`src/autobridge/engine/detect_repair.py` `detect_after_sync`, `src/autobridge/repair/controller.py:744`) calls `signals_from_sync` with no baseline, so a live vendor switching minor↔major units (×100) syncs `Complete` with no drift — the REQ-064 build note already calls this "history-blind (no persisted value sketches)". Fix: persist a bounded per-connector baseline (previous sync's canonical money values or value sketches, never credentials) and pass it as `baseline_summary` on the live detection path, or state the limitation in `docs/architecture.md` and scope B1 to bench/beacon only. Tests: live-path ×100 shift → `SEMANTIC_VALUE_DRIFT` escalation with 0 auto-patch; first sync (no baseline) stays silent.
+
+Owner decision (2026-11-01): **take the first option — persist a live baseline**; do not scope B1 down to bench/beacon.
+1. Persist a bounded per-connector baseline after each `Complete` sync (canonical money values or value sketches per
+   entity/field, never credentials or raw payloads beyond what is needed) and pass it as `baseline_summary` on the live
+   detection path (`detect_after_sync` and the repair controller call). Update `docs/architecture.md` (drop the
+   "history-blind" note for B1).
+2. Benchmark re-check: the bench/beacon paths must use the same persisted-baseline mechanism as live (no separate
+   `baseline_summary=` shortcut), so the bench no longer credits a detection the product cannot make. Add a test that a
+   bench-style ×100 fault is detected through the shared mechanism and that a first sync with no stored baseline stays
+   silent. Do not run `make bench` / `make bench-heldout` (paid; the owner session runs the dev benchmark after this
+   REQ) and do not touch `verifier/hidden_cases/heldout/` or `experiments/beacon/`.
 
 ### REQ-076 — Directive: §5 test hermeticity — UI suite flaked once under full `make test` (2026-11-01)
 Status: OPEN
