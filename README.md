@@ -35,8 +35,10 @@ AutoBridge reads in `simulators/docs/`:
 | MeridianPMS (POST/JSON: body-field auth, Limitation cursor, UTC instants; names via customers, money via order items) | http://localhost:8116/developers | `meridian-openapi.yaml` |
 | FIAS PABX (on-premise exchange over TCP: STX/ETX framing, link handshake, PS postings answered with PA; viewed as an uploaded document) | http://localhost:8118/developers | `fias-pabx.md` |
 
-CI (`.github/workflows/ci.yml`) runs the same order from a clean clone:
+The full gate order from a clean clone is
 `make test → make up → make smoke → make e2e → make e2e-ui → make demo`.
+Run it locally; the GitHub Actions workflow (`.github/workflows/ci.yml`)
+is in the repo but switched off.
 
 `make bench` runs the dev ablation + learning curve and writes the
 scorecard from the ablation results (the synthetic matched mode stays
