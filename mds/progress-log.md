@@ -4214,3 +4214,10 @@ Agent: opencode meta/muse-wonder-1.0 (escalation)
 - Gaps: none new filed. Remaining items are owner keyed/live VERIFY steps (REQ-078 rehearsal with key, REQ-074 browser check) and deferred REQ-051.
 - Gates: lint/typecheck/ui-typecheck/openapi-check green; make test green (autobridge 3065 @90.02%, verifier 139 @90.80%, simulators 422 @90.48%, UI 350). Smoke live leg + e2e not runnable in this sandbox (no stack) — reported, not faked.
 - Readiness: Phase 1 exit gates remain met; Phase 2 complete. No <promise>COMPLETE</promise>: owner VERIFY steps outstanding.
+
+## 2026-11-01 20:05 UTC — REQ-078 continuation code-done (sbx1, Agent: opencode meta/muse-spark-1.3 (escalation))
+- Bench engine arm now takes the production path (shared prepare_climb_inputs + dry-run fault; faulted summary through diagnostics); reason text names L3 vs L4.
+- legacystay gross_net silent miss fixed (ratio tolerance); meridian nesting misclassification fixed (SCHEMA_RENAME; true enums guarded).
+- 3 new tests; full make test green; lint + mypy green.
+- Unkeyed rehearsal round 6603643 FAULTS=10 TRIALS=1: engine arms 0.40/0.40/$0/0tok/0 wrong; frontier 0.00 (no key). Instance 7 now scores; instance 3 detected, needs a keyed model patch.
+- Simulators already fixed (32a482c7, verified). Owner step: keyed rehearsal with live key.

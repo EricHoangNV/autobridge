@@ -3169,3 +3169,35 @@ Agent: opencode meta/muse-spark-1.3 (escalation)
 - Item 8 detection: new `tests/unit/test_simulators_req078_item8.py` (7 tests: no-crash serving, rename/new-key, nesting wrapper, raw non-ISO, atlas folio extras, cutoff key+solve+grade, `beacon_sync_pair` no-raise + no-silent sweep over 12 pairs). Also fixed pre-existing fail `test_beacon_resume_keeps_landed_rows` (stub kwarg mismatch from 916ce205) and adapted `test_generate_instances_expected_matches_rule` to the vendor param.
 - Item 10 rehearsal (live stack, round 6599930, FAULTS=10, TRIALS=1, no FRONTIER_API_KEY): engine arms verified 0.40 / correct-esc 0.40 / $0.00 / 0 tokens / 0 wrong proposed+released (passes: 1 harbor code_list + 8 meridian code_list via owner-accepted escalate, 3 meridian decoy no_patch, 7 legacystay minor_major degraded_question; fails, all detected+escalated with question: 0 atlas cutoff, 2 legacystay nesting, 4/9 fias_layout, 5 atlas folio rename (served by the new extras), 6 harbor pagination). Frontier arms 0.00 (fake drivers, fail-closed per item 5). Sanity gate clean, 50 grades, no crashes/500s/aborts. Warm == cold (nothing verified, nothing learned mid-run).
 - Gates: lint + typecheck + openapi-contracts green; make test green (autobridge 90.05%, verifier 90.80%/139, simulators 90.48%/422, ui 350); e2e W2 file live green (9 passed). No freeze/tag/commit under experiments/beacon (rehearsal outputs gitignored). No FRONTIER_API_KEY in this environment (secrets not invented: rehearsal ran with fake frontier arms, labelled).
+
+### REQ-078 continuation (sbx1 2026-11-01, Agent: opencode meta/muse-spark-1.3 (escalation))
+Round-6603643 rehearsal follow-up: bench engine arm production path + two item-4 misses.
+Code: `bench/ablation.py` (`run_engine_arm` now calls the shared
+`prepare_climb_inputs` + `build_dry_run_fault` with the faulted summary
+carried through `DerivedDiagnostics.faulted_summary`, incl. the FIAS
+derive path; `l3_attempted` recorded on the arm result), `bench/beacon_run.py`
+(reason text names the deciding rung: `L3 model escalated: <question>` vs
+`L4 (no rule)`), `src/autobridge/drift/signals.py` (money ratio clusters
+with 1% tolerance around the median — cent-rounded wire values never ratio
+exactly 0.5, so legacystay gross_net was silent), `src/autobridge/drift/classifier.py`
+(wire-rename + emptied matchers precede ENUM — meridian reservation nesting
+read as ENUM_NEW_VALUE; true vocab changes still read ENUM, guarded by test).
+Tests: `test_engine_arm_climbs_with_production_evidence`,
+`test_l3_prompt_blocks_recorded_for_beacon_structural_drift` (atlas rename:
+no `(none recorded)` block), `test_detection_rehearsal_misses_now_detected`
+(legacystay gross_net SEMANTIC 2 sigs / meridian nesting SCHEMA_RENAME /
+harbor code_list-unknown stays ENUM). Full gates green (make test all green,
+incl. 350 UI; lint + mypy clean).
+Rehearsal (this sandbox, no FRONTIER_API_KEY, round 6603643 FAULTS=10
+TRIALS=1, stack up/down clean): autobridge_cold/warm + engine_no_knowledge
+0.40 verified / 0.40 correct-escalation, $0, 0 tokens, 0 wrong proposed /
+released (ReplayProvider has no recordings for novel beacon prompts, so L3
+skips loudly and the climb escalates deterministically — honest 0-token
+rows); frontier arms 0.00 (no key: one-shot ungradable, agent fake).
+Instance 7 legacystay semantic now detected (SEMANTIC, 2 money_scale_shift)
+and scores; instance 3 meridian nesting now SCHEMA_RENAME (11 signals, was
+ENUM_NEW_VALUE) but still unverified without a key (no model patch).
+Warm == cold (4-entry dev cache, nothing fires). Simulators untouched (item-8
+fixes from 32a482c7 verified present + green). Docs need no change (nothing
+describes the old behaviour). Owner step: keyed rehearsal with live key on
+this commit, then close.

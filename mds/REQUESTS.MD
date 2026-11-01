@@ -5,7 +5,7 @@
 Owner priority (2026-11-01): **REQ-078** (REQ-066..077 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-078 — When the engine does not know, it asks: model first, operator last; and a beacon that grades it fairly (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-01 19:24)
+Status: DONE (sbx1 2026-11-01 -- bench engine arm takes the production path (shared prepare_climb_inputs + faulted summary, L3 blocks recorded), reason names L3 vs L4, legacystay gross_net + meridian nesting fixed + sweep extended, 3 new tests, full gates green; unkeyed rehearsal round 6603643 FAULTS=10 TRIALS=1: engine 0.40/0.40/$0/0tok/0 wrong, frontier 0.00 (no key); owner step: keyed rehearsal with live key on this commit, then close)
 Owner keyed rehearsal (2026-11-02, `db9f2db6`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1, live key):
 frontier_agent 0.60 ($0.016/run, 4 wrong patches proposed, 0 released), frontier_oneshot 0.20, every engine arm 0.30
 (~6k tokens, $0.0008/run, 0 wrong). The engine now reaches the model on every fault, but repaired none: every model
