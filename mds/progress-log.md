@@ -4207,3 +4207,10 @@ Engine asks when it does not know; beacon grades it fairly. Engine: every repair
 **Notes for next iteration:**
 - Engine fails on 6/10 rehearsal instances are all detected-but-unrepaired (no frontier key): the real keyed rehearsal + freeze is the owner step
 - `test_beacon_resume_keeps_landed_rows` was already broken on 916ce205 (stub/kwarg mismatch) — fixed here
+
+## 2026-11-01 — Daily directives audit bc7c745b..d2a13125 (sbx1)
+Agent: opencode meta/muse-wonder-1.0 (escalation)
+- Sections validated: DIRECTIVES §§1–8 + plan §1 against 27 commits (REQ-074…078). One finding, fixed by the audit: §3's "L3 only when hypotheses < 2" was stale after REQ-078 — rewritten in place. REQ-075/076/077/078 implementations verified in code (empty `_MODEL_AMBIGUITY_CLASSES`, approvable model candidates, detection sweep, crashed-arm grading, agent isolation, persisted live baseline, Deny-sticks); heldout untouched, contracts KEPT, secrets scan clean.
+- Gaps: none new filed. Remaining items are owner keyed/live VERIFY steps (REQ-078 rehearsal with key, REQ-074 browser check) and deferred REQ-051.
+- Gates: lint/typecheck/ui-typecheck/openapi-check green; make test green (autobridge 3065 @90.02%, verifier 139 @90.80%, simulators 422 @90.48%, UI 350). Smoke live leg + e2e not runnable in this sandbox (no stack) — reported, not faked.
+- Readiness: Phase 1 exit gates remain met; Phase 2 complete. No <promise>COMPLETE</promise>: owner VERIFY steps outstanding.

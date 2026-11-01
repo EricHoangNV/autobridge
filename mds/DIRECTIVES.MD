@@ -59,7 +59,7 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 
 - Every model call goes through `LLMProvider.complete` (`src/autobridge/llm/provider.py`) wrapped by `Budget`; `BudgetExhausted` escalates to L4, never a silent retry. Model ids live in config, not code.
 - The ladder stops at the first level whose patch passes visible tests; the verifier decides acceptance; a rejected patch gets at most one bounded retry at the next level, then escalation (`src/autobridge/repair/ladder.py`).
-- L3 is invoked only when the surviving-hypothesis count after wire filtering is fewer than two — the `enumerator_yield_count` passed to `run_frontier_climb` (`src/autobridge/repair/ladder.py`); `RepairController` derives it as `len()` of the hypotheses passed in, never a default (`src/autobridge/repair/controller.py`, asserted in tests). Every hypothesis links to at least one evidence record.
+- Every repairable drift climbs L0 → L1 → L2/L3 → L4 (REQ-078): no class list gates the model; only `_NON_FIXABLE` (capability removed, auth revoked) and backoff/transient classes skip it. The hypothesis-generation L3 path still asserts `enumerator_yield_count < 2` (`run_frontier_climb`), but that count never blocks the class-neutral L3 patch climb. Every hypothesis links to at least one evidence record.
 - Prompts carry only redacted docs and responses as untrusted data blocks; tool permissions are enforced in code, not in the prompt.
 
 ---
