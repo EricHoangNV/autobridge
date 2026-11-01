@@ -7,7 +7,7 @@ For each scenario × trial the harness runs two arms with **identical** inputs:
 * **AutoBridge** (`run_autobridge_arm`): with an injected HTTP client it posts `POST /connectors` to the control API; with none it returns a synthetic result (`model: autobridge-synthetic`, 0 tool calls).
 * **Baseline** (`run_baseline_arm`): with an injected driver it runs the coding-agent CLI under the same docs volume, sandbox URL, credentials (refs only), visible tests, token ceiling and wall-clock; with none it returns a synthetic result (`model: baseline-synthetic`).
 
-`run_trial` / `run_harness` call both arms with no client or driver unless a test injects runners, so the CLI matched mode (`python -m bench.harness`, the default `--arms matched`) runs **synthetic arms only**; its `_guard_zero_tool_calls` check then refuses to score (exit 1, "refusing empty scorecard") whenever the service probe ran. The arm comparison that actually runs models and the engine is the ablation (`--arms ablation`, below).
+`run_trial` / `run_harness` call both arms with no client or driver unless a test injects runners, so the CLI matched mode (`python -m bench.harness --arms matched`) runs **synthetic arms only**; its `_guard_zero_tool_calls` check then refuses to score (exit 1, "refusing empty scorecard") whenever the service probe ran. Matched mode stays behind `--arms matched` for `test_07` / harness tests only. The comparison `make bench` runs is the ablation (`--arms ablation`, below): `make bench` runs the dev ablation + learning curve and writes `experiments/scorecard.md` from the ablation results (refusing to publish an empty scorecard when the ablation produced no trials).
 
 The harness self-test `assert_inputs_equal` (and `assert_budget_fields_equal` over `HarnessInputs.budget_fields()`: `docs_volume`, `docs_ref`, `sandbox_url`, `sandbox_image`, `credential_refs`, `visible_tests`, `token_ceiling`, `wall_clock_s`) proves both arms received byte-identical `HarnessInputs` before either arm runs; `verify_matched_trial` is the post-hoc audit used by scoring.
 
@@ -268,13 +268,12 @@ wrong-shipped counts plus label counts
 
 ```bash
 make bench-ablation   # all arms on the dev split + learning curve (REQ-024 B)
-make bench            # matched-mode scorecard first, then all ablation arms, then the learning curve
+make bench            # the real comparison: dev ablation + learning curve, scorecard from the ablation
 ```
 
-Today `make bench` stops at its first step: the matched mode runs
-synthetic arms and refuses to score them (see "Harness" above), and the
-`&&` chain never reaches the ablation. `make bench-ablation` is the
-command that runs the comparison.
+`make bench-ablation` is the command that runs the comparison. `make bench`
+runs the same pipeline (dev ablation + learning curve) and writes the
+scorecard from the ablation results.
 
 The benchmark runs in the sandbox (owner decision 2026-10-29: OpenCode
 is there; the host has none). One documented command runs it against the
@@ -389,33 +388,30 @@ evaluation" below); the dev-split ablation is the rehearsal.
 
 Scoring (P1.W8.4, `bench/scoring.py`, the matched two-arm path; the ablation grades with `grade_ablation_trial` above) queries the verifier in hidden mode and reports: verified completion, repair success, false-fix/unsafe rate, escalation quality, elapsed, tool calls, model calls, frontier tokens, estimated cost, zero-frontier solves. `bench/report.py` writes `experiments/scorecard.md` listing wins and losses — both are reported.
 
-## `make bench` pipeline (P1.W8.5, REQ-024 B6)
+## `make bench` pipeline (P1.W8.5, REQ-024 B6, REQ-077 item 2)
 
-One command is meant to run the dev-split benchmark (matched-budget
-run → `experiments/scorecard.md` → all ablation arms → learning curve);
-today it stops after the matched step (see "Ablation arms" above):
+One command runs the dev-split benchmark (all ablation arms →
+`experiments/scorecard.md` → learning curve):
 
 ```bash
-make bench                                    # dev split: scorecard, then all ablation arms, then learning curve
+make bench                                    # dev split: ablation arms, scorecard from the ablation, learning curve
 BENCH_SCENARIOS=baseline BENCH_TRIALS=2 make bench
 BENCH_SEED=99 make bench                      # reproducible from seeds
-BENCH_NO_SCORE=1 make bench                   # harness JSONL only, skip scoring
+BENCH_NO_SCORE=1 make bench                   # ablation JSONL only, skip the scorecard
 make bench-ablation                           # all arms on the dev split + learning curve (needs the stack for grading: make local-up first)
 ```
 
 Other knobs: `BENCH_TOKEN_CEILING` (default 200000, 0 = no limit),
 `BENCH_WALL_CLOCK` (default 600 s), `BENCH_ARMS` (`matched` | `ablation`;
 the make targets pass `--arms` themselves), `BASELINE_DRIVER`,
-`FRONTIER_MODEL` / `OPENCODE_MODEL`. `BENCH_TRIALS` defaults to 1 for
-the matched step and to 5 for the ablation step (the make target sets
-it). The make targets pass `--control-api-url http://localhost:8101
---verifier-url http://localhost:8104`, which win over `CONTROL_API_URL`
-/ `VERIFIER_URL`. Matched mode first probes both `/healthz` and exits 1
-when either is down (skip with `AUTOBRIDGE_BENCH_SKIP_PROBE=1` or
-`BENCH_NO_SCORE=1`). Either flag also skips the zero-tool-call guard:
-`AUTOBRIDGE_BENCH_SKIP_PROBE=1` alone then scores the synthetic arms,
-while `BENCH_NO_SCORE=1 make bench` writes the JSONL only and is the
-way through to the ablation step today.
+`FRONTIER_MODEL` / `OPENCODE_MODEL`. `BENCH_TRIALS` defaults to 5 for
+the ablation (the make target sets it). The make targets pass
+`--control-api-url http://localhost:8101 --verifier-url http://localhost:8104`,
+which win over `CONTROL_API_URL` / `VERIFIER_URL`. The synthetic matched
+mode stays behind `--arms matched` for `test_07` / harness tests: from
+the CLI both arms are synthetic (see "Harness") and
+`_guard_zero_tool_calls` still refuses to publish that empty scorecard.
+`BENCH_NO_SCORE=1 make bench` writes the ablation JSONL only.
 
 Steps inside `python -m bench.harness` (matched mode):
 
@@ -480,22 +476,26 @@ when the code froze. Commit-then-reveal with public randomness — we could
 not have prepared for the test even if we wanted to.
 
 Status: only rehearsals on past rounds have run. The real freeze has not
-happened — there is no `eval-freeze` tag, no `experiments/beacon/protocol.md`
-and no `experiments/beacon/<round>/` result yet — so there are no beacon
+happened — there is no `eval-freeze-<round>` tag, no
+`experiments/beacon/<round>/protocol.md` and no
+`experiments/beacon/<round>/` result yet — so there are no beacon
 results to report. The list below is what a judge can check once it has.
 
 What a judge can check (all of it public):
 
-1. `experiments/beacon/protocol.md` — the freeze (`bench/beacon_run.py:freeze`):
-   round rule (first round at/after a UTC time) and target round, N
-   instances (`beacon-faults`), trials (`beacon-trials`, default 5),
-   arms (the five above), the commit it was frozen at (recorded as both
-   the engine and the generator commit), the freeze time, the rehearsal
-   flag, the drand chain, the metrics in prose, "one run, no retries,
-   results published whatever they are", and the pinned frontier model
-   (`beacon-frontier-model`, from `FRONTIER_MODEL`, plus
-   `beacon-agent-model`, the agent arm's resolved `meta/<id>` form, when
-   it differs). The pin proves the model was fixed before the random
+1. `experiments/beacon/<round>/protocol.md` — the freeze
+   (`bench/beacon_run.py:freeze`): one protocol per run (the freeze
+   computes the target round first, then writes the round's own file;
+   `parse_protocol` still reads the old single `experiments/beacon/protocol.md`
+   when present). Contents: round rule (first round at/after a UTC time)
+   and target round, N instances (`beacon-faults`), trials
+   (`beacon-trials`, default 5), arms (the five above), the commit it was
+   frozen at (recorded as both the engine and the generator commit), the
+   freeze time, the rehearsal flag, the drand chain, the metrics in prose,
+   "one run, no retries, results published whatever they are", and the
+   pinned frontier model (`beacon-frontier-model`, from `FRONTIER_MODEL`,
+   plus `beacon-agent-model`, the agent arm's resolved `meta/<id>` form,
+   when it differs). The pin proves the model was fixed before the random
    value existed: `bench-beacon` (real runs and rehearsals) refuses to
    start when the resolved model differs, a real run requires the line,
    and a protocol without it (older rehearsals) still parses. Budgets
@@ -504,7 +504,7 @@ What a judge can check (all of it public):
    wall_clock=…`); `BENCH_TOKEN_CEILING` / `BENCH_WALL_CLOCK` can still
    override them, so that log line is the record. The run does not
    itself check out or compare the frozen commit.
-2. The `eval-freeze` git tag and its push time — before the round's
+2. The `eval-freeze-<round>` git tag and its push time — before the round's
    publication time (the beacon carries no timestamp; round `r` is
    published at the chain's `genesis_time + (r − 1) × period`, from the
    chain info; compare the two).
@@ -524,24 +524,47 @@ What a judge can check (all of it public):
    correct escalations, frontier tokens, estimated cost, wall time.
 
 Protocol commands: `make eval-freeze ROUND_AFTER=<UTC> FAULTS=<N>
-[TRIALS=5]` (item 4), `make bench-beacon` (item 5: refuses an
-unpublished round or an existing result dir — no re-rolls), `make
-verify-beacon ROUND=<n> [OUTDIR=<dir>]` (item 7), `make beacon-eval
-[FAULTS=25] [DELAY_MIN=20] [CONFIRM=yes]` (item 6b: one unattended
-command — checks the tree is clean and that no process matching `ralph`
-runs, freezes with ROUND_AFTER = now + DELAY_MIN, commits, tags
-`eval-freeze`, pushes to `origin main` after one "yes" (skipped with
-`CONFIRM=yes`), waits, runs, writes `EVIDENCE.md` + `evidence.png`,
-commits + pushes; resumable). It is the owner's single-shot command as
-written: one `experiments/beacon/protocol.md`, one fixed `eval-freeze`
-tag, pushes to this repo's `main` — not something a reader can rerun
-today; a reader checks a published run with `make verify-beacon`.
-Rehearsals on past rounds: `make bench-beacon REHEARSE=<round> [FAULTS=10]
-[TRIALS=1]` (item 6: labelled rehearsal under
-`experiments/beacon/rehearsals/<round>/`, at least five before the
-freeze; that directory is gitignored — practice runs, never results).
-Results land in `instances.json`, `grades.jsonl` and
+[TRIALS=5]` (item 4: writes the round's own `protocol.md`), `make
+bench-beacon [ROUND=<n>]` (item 5: refuses an unpublished round or an
+existing result dir — no re-rolls; without `ROUND` it resolves the single
+unrun protocol of the checkout), `make verify-beacon ROUND=<n>
+[OUTDIR=<dir>]` (item 7), `make beacon-eval [FAULTS=25] [DELAY_MIN=20]
+[PUSH=yes] [CONFIRM=yes]` (item 6b: one unattended command — checks the
+tree is clean and that no ralph loop runs in this checkout's path,
+freezes a NEW future round (resuming only an unrun protocol of this
+checkout, never another run's results), commits, tags
+`eval-freeze-<round>`, pushes the freeze and later the results only with
+`PUSH=yes` (to the current branch's upstream; without it both are
+committed locally and the script prints how to push to a fork before the
+round for a public timestamp; `CONFIRM=yes` skips the one "yes"), waits,
+runs, writes `EVIDENCE.md` + `evidence.png` pointing at the round's own
+protocol and tag, commits; resumable). Rehearsals on past rounds: `make
+bench-beacon REHEARSE=<round> [FAULTS=10] [TRIALS=1]` (item 6: labelled
+rehearsal under `experiments/beacon/rehearsals/<round>/`, at least five
+before the freeze; that directory is gitignored — practice runs, never
+results). Results land in `instances.json`, `grades.jsonl` and
 `summary.json` in the round's directory.
+
+### Run it yourself
+
+Prerequisites: the stack up (`make local-up` or `make up`) and
+`FRONTIER_API_KEY` for the frontier arms (without it the frontier arms
+run on replay/fake drivers and the scorecard labels say so — the engine
+arms still run the real path). One command freezes a new future round
+and runs it end to end:
+
+```bash
+make beacon-eval FAULTS=25
+```
+
+Roughly: the freeze targets the first drand round at/after now + 20
+minutes; the run then attempts every instance × trial on all five arms
+(frontier calls happen on the climbable faults — of the order of one L3
+call per semantic instance per trial for the engine arms, plus whatever
+the frontier arms spend). Results land in
+`experiments/beacon/<round>/` (`instances.json`, `grades.jsonl`,
+`summary.json`, `EVIDENCE.md`); anyone can re-check a published run
+with `make verify-beacon ROUND=<n>`.
 
 Grading: every arm attempts the same instances under matched budget —
 the same repair task (the pre-drift spec under repair plus the faulted
@@ -591,11 +614,12 @@ the instance.
 Engine arms that cannot attempt a vendor in-process (no spec source in
 the vendor table) are recorded `executed: false` with the reason named —
 a fail-closed loss, the same for every arm.
-`autobridge_warm` gets no warm-up on the beacon run: `make bench-beacon`
-passes it no learned knowledge (the dev ablation's `warm_knowledge`
-step is not wired into `bench/beacon_run.py`), so it starts from an
-empty cache exactly like `autobridge_cold`, and the beacon run does not
-measure learning.
+`autobridge_warm` is pre-warmed from the dev split only: `make bench-beacon`
+builds its learned knowledge from the dev scenarios (never beacon
+instances) before the first instance — the same for real runs and
+rehearsals — so the beacon run measures learning. The run prints how
+many dev-split fixes the warm cache holds (and `EVIDENCE.md` records it);
+`autobridge_cold` starts from an empty cache.
 Known asymmetry (REQ-024 owner check on `f32b4b4b`, FIXED
 2026-10-29): engine arms used to run in-process from descriptor-built
 repair inputs (drift class, fingerprint delta, hypotheses), i.e. from

@@ -305,7 +305,8 @@ def approve_preview(repair_id: str, db: Session = Depends(get_db)) -> ApprovePre
         proposal_lines.append(f"Rollback to r{active_rel.version} stays available.")
         deny_lines = [
             "Deny: keep everything as-is, contact the vendor.",
-            "No release is created or activated; the connector stays in error and the drift stays open.",
+            "No release is created or activated; the connector stays in error and the drift stays open as denied "
+            "(re-detections attach to this repair — no new repair, no new model call).",
         ]
         return ApprovePreviewOut(
             repair_run_id=repair_id,

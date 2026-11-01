@@ -850,3 +850,31 @@ def test_scheduler_records_edge_link_snapshot(client: Any, tmp_path: pathlib.Pat
     with factory() as s:
         out = run_scheduler_pass(s)
     assert out["link_snapshots"] == 0
+
+
+def test_state_denied_drift_is_error_waiting_on_vendor(client: Any, tmp_path: pathlib.Path) -> None:  # type: ignore[no-untyped-def]
+    """REQ-077 item 5: Deny sticks — an open drift whose repair was denied
+    keeps the connector in error, reading denied / waiting on the vendor."""
+    cid, _ = _seed(client)
+    factory = _factory_for(tmp_path)
+    _add_release(factory, cid, _spec())
+    with factory() as s:
+        drift = DriftEvent(
+            connector_id=cid, drift_class="PAGINATION_CHANGE",
+            source_sync_run_id="sync-1",
+        )
+        s.add(drift)
+        s.flush()
+        run = RepairRun(
+            drift_event_ids=[drift.id], ladder_level_reached=1,
+            decision="reject", rule_id="page_to_cursor",
+            model_usage={"frontier_tokens": 0, "small_tokens": 0},
+            ladder_trace=[],
+        )
+        s.add(run)
+        s.flush()
+        s.add(Approval(repair_run_id=run.id, actor="tester", decision="reject"))
+        s.commit()
+    st = _state(factory, cid)
+    assert st["state"] == "error"
+    assert st["activity"] == "denied · waiting on the vendor"

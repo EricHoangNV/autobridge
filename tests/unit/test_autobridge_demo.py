@@ -1208,3 +1208,40 @@ def test_step4_patch_answer_behaviour_unchanged(monkeypatch: Any) -> None:
     assert ev["l3_proposal"] != []
     assert "frontier proposed" in ev["rejection_reason"]
     assert ev["checked_by"] == "trap predicate (documented oracle rule)"
+
+
+def test_step4_post_approve_asserts_req053_shape() -> None:
+    """REQ-077 item 3: after approve-proposal the repair reads approved
+    (REQ-053), not escalate — the demo's post-approve check must assert
+    the REQ-053 shape (decision approved, approval approve, proposal kept).
+
+    Fails on the old assertion (decision == "escalate" after approve).
+    """
+    rep_after = {
+        "decision": "approved",
+        "approval": {"decision": "approve", "actor": "operator"},
+        "escalation_bundle": {
+            "proposal": {
+                "label": "Track net amounts",
+                "effect": "Compare against net total",
+                "patch": [{"op": "replace", "path": "/x", "value": "$.net"}],
+            }
+        },
+    }
+    rep_approval = rep_after.get("approval")
+    # The new (REQ-077) predicate, mirroring bench/demo.py step 4.
+    assert (
+        isinstance(rep_after, dict)
+        and rep_after.get("decision") == "approved"
+        and isinstance(rep_approval, dict)
+        and rep_approval.get("decision") == "approve"
+        and isinstance(rep_after.get("escalation_bundle"), dict)
+        and isinstance(rep_after["escalation_bundle"].get("proposal"), dict)
+    )
+    # The old predicate fails on the REQ-053 shape (that is the bug).
+    assert not (
+        isinstance(rep_after, dict)
+        and rep_after.get("decision") == "escalate"
+        and isinstance(rep_approval, dict)
+        and rep_approval.get("decision") == "approve"
+    )

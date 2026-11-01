@@ -4165,3 +4165,13 @@ sbx1 (no stack). Owner step: dev benchmark re-run in the owner session (paid, no
 
 ## 2026-11-01 — REQ-076 DONE (sbx1, Agent: opencode meta/muse-spark-1.3 (escalation))
 UI full-suite flake root-caused to a timing race in the REQ-050 NewConnectorForm test (read `build-runtime-decision` before the build-run detail fetch landed; saw interim `job starting…`). Fixed with `waitFor` on the settled line (test-only, same pattern as the PABX test). 10/10 full UI suites 348/348 + full `make test` green (3020 @90.12% / 138 @91.04% / 415 @90.50%). No owner step left. All Phase 1 + Phase 2 + REQ-001…076 code-done (REQ-051 deferred; VERIFY/browser/keyed steps with owner).
+
+## 2026-11-01 — REQ-077 DONE (sbx1, Agent: opencode meta/muse-spark-1.3 (escalation))
+The beacon run is the final benchmark: anyone can rerun it; make bench + demo step 4 work as documented.
+All 6 items: (1) per-run protocol dirs + tag per run + PUSH opt-in + checkout-scoped ralph guard +
+protocol-round CLI parsing + EVIDENCE warm/protocol/tag + Run-it-yourself docs; (2) make bench =
+ablation + curve with ablation scorecard, matched behind --arms matched; (3) demo step4 asserts
+approved/approve/proposal-kept; (4) beacon warm from dev split only; (5) Deny sticks (attach, error
+denied/waiting-on-vendor, docs updated). 20 new/updated tests. Full make test green
+(3036/138/415/UI 350); one transient 2s-timing flake in full suite only, green on rerun (see build note).
+No live stack in sbx1; nothing frozen/tagged/committed under experiments/beacon/; heldout untouched.

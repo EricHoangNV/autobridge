@@ -8,10 +8,11 @@ appears only in rehearsals (owner/CI with a stack).
 
 from __future__ import annotations
 
+import pathlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import pathlib
+    import pathlib as _pathlib_check  # noqa: F401
 
 import pytest
 
@@ -282,9 +283,107 @@ def test_main_freeze_and_run_guardrails(tmp_path: pathlib.Path, monkeypatch: pyt
     )
     assert beacon_run.main(["freeze", "--round-after", "2030-01-01T00:00:00+00:00",
                             "--faults", "2", "--trials", "1"]) == 0
-    assert (beacon_dir / "protocol.md").is_file()
+    # REQ-077 item 1: one protocol per run — the freeze computes the target
+    # round first and writes experiments/beacon/<round>/protocol.md.
+    frozen_round = beacon_run.beacon_client.round_for_time(1595431050, 30, 1893456000)
+    frozen = beacon_dir / str(frozen_round) / "protocol.md"
+    assert frozen.is_file()
     # Second freeze refuses (commit-once).
     assert beacon_run.main(["freeze", "--round-after", "2030-01-01T00:00:00+00:00",
                             "--faults", "2"]) == 1
     # Run refuses: the target round is unpublished (mocked latest is 1).
-    assert beacon_run.main(["run", "--protocol", str(beacon_dir / "protocol.md")]) == 1
+    assert beacon_run.main(["run", "--protocol", str(frozen)]) == 1
+    # And resolves by round without the explicit path.
+    assert beacon_run.main(["run", "--round", str(frozen_round)]) == 1
+
+
+# ---------------------------------------------------------------------------
+# REQ-077 item 1: one protocol per run, resolvable by round
+# ---------------------------------------------------------------------------
+
+
+def _fake_freeze_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(beacon_run, "_git_dirty", lambda: False)
+    monkeypatch.setattr(beacon_run, "_git_commit", lambda: "abc123")
+    monkeypatch.setattr(
+        beacon_run.beacon_client, "fetch_chain_info", lambda _base_url: dict(FAKE_INFO)
+    )
+
+
+def test_freeze_writes_per_round_protocol_dir(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two consecutive freezes target different rounds and different dirs."""
+    monkeypatch.setattr(beacon_run, "BEACON_DIR", tmp_path / "beacon")
+    _fake_freeze_chain(monkeypatch)
+    first = beacon_run.freeze("2030-01-01T00:00:00+00:00", 3, trials=1)
+    second = beacon_run.freeze("2030-01-05T00:00:00+00:00", 3, trials=1)
+    assert first.parent.name != second.parent.name
+    assert first == tmp_path / "beacon" / first.parent.name / "protocol.md"
+    assert second == tmp_path / "beacon" / second.parent.name / "protocol.md"
+    assert beacon_run.parse_protocol(first).target_round != beacon_run.parse_protocol(second).target_round
+
+
+def test_committed_results_never_block_new_freeze(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A finished prior run (results in its dir) never blocks a new freeze,
+    and discovery skips it."""
+    monkeypatch.setattr(beacon_run, "BEACON_DIR", tmp_path / "beacon")
+    _fake_freeze_chain(monkeypatch)
+    first = beacon_run.freeze("2030-01-01T00:00:00+00:00", 3, trials=1)
+    (first.parent / "instances.json").write_text("[]\n", encoding="utf-8")
+    (first.parent / "summary.json").write_text("{}\n", encoding="utf-8")
+    second = beacon_run.freeze("2030-01-05T00:00:00+00:00", 3, trials=1)
+    assert second.parent != first.parent
+    resolved = beacon_run.resolve_protocol_path()
+    assert resolved == second, "finished runs are never resumed"
+
+
+def test_resolve_protocol_prefers_old_path_and_round(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(beacon_run, "BEACON_DIR", tmp_path / "beacon")
+    old = tmp_path / "beacon" / "protocol.md"
+    old.parent.mkdir(parents=True)
+    old.write_text("x\n", encoding="utf-8")
+    monkeypatch.setattr(beacon_run, "PROTOCOL_PATH", old)
+    assert beacon_run.resolve_protocol_path() == old
+    assert beacon_run.resolve_protocol_path(round=424242) == tmp_path / "beacon" / "424242" / "protocol.md"
+    assert beacon_run.resolve_protocol_path(protocol="custom.md") == pathlib.Path("custom.md")
+
+
+def test_resolve_protocol_ambiguous_or_missing(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(beacon_run, "BEACON_DIR", tmp_path / "beacon")
+    with pytest.raises(BeaconError):
+        beacon_run.resolve_protocol_path()
+    for name in ("111", "222"):
+        d = tmp_path / "beacon" / name
+        d.mkdir(parents=True)
+        (d / "protocol.md").write_text("x\n", encoding="utf-8")
+    with pytest.raises(BeaconError):
+        beacon_run.resolve_protocol_path()
+
+
+def test_protocol_round_cli_parses_real_freeze_output(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The script's parsing (protocol-round CLI, like parse_protocol) reads
+    a real freeze() output — the old grep '^beacon-target-round:' never
+    matched the freeze's '- beacon-target-round:' line."""
+    import subprocess
+
+    monkeypatch.setattr(beacon_run, "BEACON_DIR", tmp_path / "beacon")
+    _fake_freeze_chain(monkeypatch)
+    frozen = beacon_run.freeze("2030-01-01T00:00:00+00:00", 3, trials=1)
+    assert "- beacon-target-round:" in frozen.read_text(encoding="utf-8")
+    proc = subprocess.run(
+        ["uv", "run", "python", "-m", "bench.beacon_run",
+         "protocol-round", "--protocol", str(frozen)],
+        capture_output=True, text=True, cwd=pathlib.Path(__file__).resolve().parents[2],
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(beacon_run.parse_protocol(frozen).target_round)

@@ -1656,6 +1656,57 @@ def write_ablation_results(
     return [trials_path, summary_path]
 
 
+def write_ablation_scorecard(
+    trials: list[AblationTrialResult],
+    summary: dict[str, Any],
+    scorecard_path: str | pathlib.Path,
+) -> pathlib.Path:
+    """Render ``experiments/scorecard.md`` from the ablation results (REQ-077 item 2).
+
+    ``make bench`` runs the dev ablation + learning curve (the real
+    comparison); the scorecard comes from the ablation summary (per-arm
+    rates, frontier quality, warm provenance), not from the synthetic
+    matched mode (which stays behind ``--arms matched`` for
+    ``test_07`` / harness tests). Refuses to publish an empty scorecard:
+    no trials or no grades is an error, never a blank report.
+    """
+    import json as _json
+
+    if not trials or not summary.get("per_arm"):
+        raise ValueError(
+            "refusing empty scorecard: the ablation produced no trials "
+            "(no scorecard is published instead of an empty one)"
+        )
+    out = pathlib.Path(scorecard_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Benchmark scorecard (dev ablation, REQ-024 B)",
+        "",
+        "Arms: `frontier_oneshot`, `frontier_agent`, `engine_no_knowledge`,",
+        "`autobridge_cold`, `autobridge_warm` — the real comparison (matched",
+        "synthetic mode stays behind `--arms matched` for harness tests only).",
+        "Wins and losses are both reported; wrong patches must be 0 for AutoBridge.",
+        "",
+        "## Verified completion",
+        "",
+        render_ablation_table(summary),
+        "",
+        "## Frontier quality",
+        "",
+        render_frontier_quality_table(summary),
+        "",
+        "## Provenance",
+        "",
+        f"- trials: {summary.get('trials', len(trials))}",
+        f"- skipped scenarios: {', '.join(summary.get('skipped_scenarios', []) or ['(none)'])}",
+        f"- warm: {_json.dumps(summary.get('warm_provenance', {}), default=str, sort_keys=True)}",
+        f"- context matched across arms: {summary.get('context_matched')}",
+        "",
+    ]
+    out.write_text("\n".join(lines), encoding="utf-8")
+    return out
+
+
 def render_ablation_table(summary: dict[str, Any]) -> str:
     """One table per the demo: arm | verified rate | correct esc | frontier tokens | cost."""
     per_arm = summary.get("per_arm", {})

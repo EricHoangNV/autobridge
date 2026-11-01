@@ -98,8 +98,7 @@ e2e-ui: ui-e2e-deps
 # Host targets load repo .env first (REQ-014: scripts/load_dotenv.sh exports
 # only non-empty KEY=value lines; explicit environment always wins).
 bench:
-	@echo ">> bench: matched-budget run + scorecard (W8.5), then all ablation arms (REQ-024 B)"
-	. ./scripts/load_dotenv.sh && uv run python -m bench.harness --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
+	@echo ">> bench: dev ablation + learning curve (REQ-024 B; REQ-077: scorecard from ablation)"
 	. ./scripts/load_dotenv.sh && BENCH_TRIALS=$${BENCH_TRIALS:-5} uv run python -m bench.harness --arms ablation --control-api-url http://localhost:8101 --verifier-url http://localhost:8104 && \
 	. ./scripts/load_dotenv.sh && uv run python -m bench.ablation_curve
 
@@ -169,6 +168,8 @@ bench-beacon:
 	. ./scripts/load_dotenv.sh && \
 	if [ -n "$${REHEARSE:-}" ]; then \
 		uv run python -m bench.beacon_run rehearse --round "$${REHEARSE}" --faults "$${FAULTS:-10}" --trials "$${TRIALS:-1}" --verifier-url http://localhost:8104; \
+	elif [ -n "$${ROUND:-}" ]; then \
+		uv run python -m bench.beacon_run run --round "$${ROUND}" --verifier-url http://localhost:8104; \
 	else \
 		uv run python -m bench.beacon_run run --verifier-url http://localhost:8104; \
 	fi

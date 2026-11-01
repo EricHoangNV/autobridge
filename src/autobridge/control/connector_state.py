@@ -64,6 +64,49 @@ def _model_tokens_used(model_usage: Any) -> int:
     )
 
 
+def _has_denied_open_drift(session: Any, connector_id: str) -> bool:
+    """Whether an open drift of this connector was denied by the operator.
+
+    True when an ``open`` :class:`DriftEvent` for the connector has a
+    repair whose latest :class:`Approval` is ``reject`` (REQ-077 item 5:
+    Deny sticks — the drift stays open as denied, waiting on the
+    vendor). Engine-derived drifts only (``source_sync_run_id`` set),
+    mirroring the detect-side scope.
+    """
+    from autobridge.control.models import Approval, DriftEvent, RepairRun
+
+    drifts = list(
+        session.execute(
+            select(DriftEvent)
+            .where(
+                DriftEvent.connector_id == connector_id,
+                DriftEvent.status == "open",
+                DriftEvent.source_sync_run_id.is_not(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not drifts:
+        return False
+    drift_ids = {d.id for d in drifts}
+    for run in session.execute(select(RepairRun)).scalars().all():
+        if not set(run.drift_event_ids or []) & drift_ids:
+            continue
+        latest = (
+            session.execute(
+                select(Approval)
+                .where(Approval.repair_run_id == run.id)
+                .order_by(Approval.created_at.desc())
+            )
+            .scalars()
+            .first()
+        )
+        if latest is not None and latest.decision == "reject":
+            return True
+    return False
+
+
 def connector_state(session: Any, connector_id: str) -> dict[str, Any]:
     """Compute ``state`` / ``activity`` / ``last_sync_at`` for a connector."""
     from autobridge.control.models import (
@@ -186,6 +229,16 @@ def connector_state(session: Any, connector_id: str) -> dict[str, Any]:
         return {
             "state": "error",
             "activity": f"{last_outcome}: {reason}",
+            "last_sync_at": last_sync_at,
+        }
+    # REQ-077 item 5: Deny sticks. An open drift whose repair was denied
+    # (latest approval reject) keeps the connector in error — the drift
+    # stays open as denied, waiting on the vendor, and re-detections
+    # attach instead of climbing again.
+    if open_drift and not awaiting and _has_denied_open_drift(session, connector_id):
+        return {
+            "state": "error",
+            "activity": "denied · waiting on the vendor",
             "last_sync_at": last_sync_at,
         }
 

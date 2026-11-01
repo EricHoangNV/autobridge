@@ -127,11 +127,13 @@ Connectors header reads "1 connector".
   business decision, never learned; rolling back afterwards happens from the
   connector page (Releases → Activate an earlier release). Or
   click **Deny: keep everything as-is, contact the vendor**: no release,
-  the drift stays open and nothing is patched (a semantic drift is never
-  patched without the operator). The fault is still live, though, so the
-  next scheduled sync detects it as a new incident and climbs again: a new
-  repair at the top of `/repairs` (another model call with a key) and
-  Harbor back to ■ Error. The L3 question is well-posed: the
+  the drift stays open as denied and nothing is patched (a semantic drift
+  is never patched without the operator). Deny sticks: while the fault is
+  still live, the next scheduled sync re-detects the same drift and
+  attaches to the denied drift/repair — no new repair, no climb, no model
+  call — and the connector reads ■ Error, denied, waiting on the vendor.
+  A changed drift (or a different active release) opens a new incident as
+  usual. The L3 question is well-posed: the
   prompt names the patch target (the connector spec), lists the exact
   JSON Pointer of every patchable member, shows redacted raw vendor
   records, and lets the model answer `{"escalate": ...}` — a

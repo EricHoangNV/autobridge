@@ -255,6 +255,69 @@ def parse_protocol(path: str | pathlib.Path = PROTOCOL_PATH) -> BeaconProtocol:
     )
 
 
+def _dir_has_results(out_dir: pathlib.Path) -> bool:
+    """Whether a round dir already holds run results (no re-rolls)."""
+    return (
+        (out_dir / "instances.json").exists()
+        or (out_dir / "summary.json").exists()
+        or (out_dir / "grades.jsonl").exists()
+    )
+
+
+def resolve_protocol_path(
+    protocol: str | pathlib.Path | None = None,
+    round: int | None = None,
+) -> pathlib.Path:
+    """Resolve which frozen protocol a run uses (REQ-077 item 1).
+
+    Order: an explicit ``--protocol`` path wins; else ``--round N`` maps
+    to ``experiments/beacon/<N>/protocol.md``; else the old single
+    ``experiments/beacon/protocol.md`` when present (backward compat);
+    else the single unrun per-round protocol of this checkout (a protocol
+    whose dir holds no results — a committed prior run's results never
+    block a new run). Zero or several unrun candidates is an error (the
+    caller names ``--round``).
+    """
+    if protocol is not None:
+        return pathlib.Path(protocol)
+    if round is not None:
+        try:
+            number = int(round)
+        except (TypeError, ValueError) as exc:
+            raise BeaconError(f"invalid round {round!r}: {exc}") from exc
+        return BEACON_DIR / str(number) / "protocol.md"
+    if PROTOCOL_PATH.is_file():
+        return PROTOCOL_PATH
+    candidates: list[pathlib.Path] = []
+    if BEACON_DIR.is_dir():
+        for child in sorted(BEACON_DIR.iterdir()):
+            if not child.is_dir() or not child.name.isdigit():
+                continue
+            if (child / "protocol.md").is_file() and not _dir_has_results(child):
+                candidates.append(child / "protocol.md")
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise BeaconError(
+            "no frozen protocol: make eval-freeze ROUND_AFTER=<UTC> FAULTS=<N> first "
+            "(a committed prior run's results never block a new freeze)"
+        )
+    names = ", ".join(p.parent.name for p in candidates)
+    raise BeaconError(
+        f"several unrun protocols ({names}): pass --round to choose one"
+    )
+
+
+def protocol_target_round(path: str | pathlib.Path) -> int:
+    """The target round of a frozen protocol (parsed like :func:`parse_protocol`).
+
+    This is the parsing ``scripts/beacon-eval.sh`` uses (REQ-077 item 1:
+    the old ``grep '^beacon-target-round:'`` never matched the freeze's
+    ``- beacon-target-round:`` line and exited 1 under ``set -euo pipefail``).
+    """
+    return parse_protocol(path).target_round
+
+
 def freeze(
     round_after_utc: str,
     faults: int,
@@ -271,16 +334,21 @@ def freeze(
     published at/after it (computed against live chain info, whose period
     and genesis are pinned by verification). Records the engine +
     generator commits (must be committed — dirty tree refuses).
+
+    REQ-077 item 1: one protocol per run — the default protocol path is
+    ``experiments/beacon/<target-round>/protocol.md`` (the freeze computes
+    the target round first). An explicit ``protocol_path`` still wins
+    (rehearsals pass ``experiments/beacon/rehearsals/<round>/protocol.md``
+    and keep that layout).
     """
-    path = PROTOCOL_PATH if protocol_path is None else pathlib.Path(protocol_path)
-    if path.exists():
-        raise BeaconError(f"refusing to re-freeze: {path} already exists (commit-once)")
     if not isinstance(faults, int) or isinstance(faults, bool) or faults < 1 or faults > 10_000:
         raise BeaconError("faults must be an int in [1, 10000]")
     if not isinstance(trials, int) or isinstance(trials, bool) or trials < 1:
         raise BeaconError("trials must be a positive int")
     if not arms or any(a not in ABLATION_ARMS for a in arms):
         raise BeaconError(f"unknown arms: {arms}")
+    if protocol_path is not None and pathlib.Path(protocol_path).exists():
+        raise BeaconError(f"refusing to re-freeze: {protocol_path} already exists (commit-once)")
     when = _dt.datetime.fromisoformat(round_after_utc)
     if when.tzinfo is None:
         when = when.replace(tzinfo=_dt.UTC)
@@ -291,6 +359,12 @@ def freeze(
     target_round = beacon_client.round_for_time(
         int(info["genesis_time"]), int(info["period"]), int(when.timestamp())
     )
+    if protocol_path is None:
+        path = BEACON_DIR / str(target_round) / "protocol.md"
+    else:
+        path = pathlib.Path(protocol_path)
+    if path.exists():
+        raise BeaconError(f"refusing to re-freeze: {path} already exists (commit-once)")
     result_dir = BEACON_DIR / str(target_round)
     if result_dir.exists():
         raise BeaconError(f"refusing freeze: result dir {result_dir} already exists (no re-rolls)")
@@ -1627,6 +1701,11 @@ def run_beacon(
 
     REQ-066: the pinned-model gate runs first — a model mismatch (or a
     missing pin on a real run) refuses before any network or arm spend.
+
+    REQ-077 item 4: ``autobridge_warm`` is pre-warmed from the dev split
+    only (learned knowledge built before the first instance, the same for
+    real runs and rehearsals — never from beacon instances), so the
+    beacon run measures learning; ``autobridge_cold`` starts empty.
     """
     require_pinned_model(protocol)
     from bench.bench_prompts import ensure_bench_prompts_loaded as _ensure_prompts
@@ -1657,6 +1736,41 @@ def run_beacon(
     _ensure_prompts()
     cfg = config if config is not None else default_beacon_config()
     print(f"beacon run: token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
+    warm = knowledge_warm
+    warm_info: dict[str, Any] = {"source": "caller-supplied", "entries": 0, "fixes": []}
+    if warm is None and "autobridge_warm" in protocol.arms:
+        from bench.ablation import warm_knowledge as _warm_knowledge
+        from bench.ablation import warm_provenance as _warm_provenance
+        from bench.harness import list_scenarios as _list_dev
+
+        dev_ids = _list_dev(visibility="dev")
+        warm = _warm_knowledge(dev_ids, provider=provider, verifier_url=verifier_url)
+        try:
+            provenance = _warm_provenance(warm)
+            fixes = provenance.get("fixes", [])
+        except Exception:
+            fixes = []
+        warm_info = {
+            "source": "dev split only (never beacon instances)",
+            "entries": len(fixes),
+            "fixes": fixes,
+        }
+        print(f"beacon run: warm cache holds {len(fixes)} dev-split fix(es) "
+              f"(autobridge_warm pre-warmed; autobridge_cold starts empty)", flush=True)
+    elif warm is not None:
+        try:
+            from bench.ablation import warm_provenance as _warm_provenance
+
+            warm_info = {
+                "source": "caller-supplied",
+                "entries": len(_warm_provenance(warm).get("fixes", [])),
+                "fixes": _warm_provenance(warm).get("fixes", []),
+            }
+        except Exception:
+            warm_info = {"source": "caller-supplied", "entries": 0, "fixes": []}
+    else:
+        warm_info = {"source": "none (no autobridge_warm arm)", "entries": 0, "fixes": []}
+        print("beacon run: no autobridge_warm arm — no warm-up (cold only)", flush=True)
     vendors = load_vendors()
     admin = admin_urls(vendors)
     public = public_urls(vendors)
@@ -1681,11 +1795,12 @@ def run_beacon(
             grades, _reports = run_instance_trial(
                 protocol, eval_seed_hex, descriptor, trial,
                 config=cfg, runners=runners, provider=provider,
-                knowledge_warm=knowledge_warm, verifier_url=verifier_url,
+                knowledge_warm=warm, verifier_url=verifier_url,
                 vendors=vendors, vendor_cfg=vendor_cfg, public_url=public.get(vendor_cfg.vendor, ""),
             )
             result.grades.extend(grades)
     result.summary = summarize_grades(result.grades)
+    result.summary["warm"] = warm_info
     _write_results(result, out_dir)
     return result
 
@@ -1846,7 +1961,10 @@ def main(argv: list[str] | None = None) -> int:
     p_freeze.add_argument("--rehearsal", action="store_true", help="label this a rehearsal (past rounds allowed)")
     p_freeze.add_argument("--base-url", default=beacon_client.DRAND_DEFAULT_BASE_URL)
     p_run = sub.add_parser("run", help="run the frozen protocol (item 5)")
-    p_run.add_argument("--protocol", default=str(PROTOCOL_PATH))
+    p_run.add_argument("--protocol", default=None,
+                       help="explicit protocol path (default: resolve by --round, the old single path, or the single unrun per-round protocol)")
+    p_run.add_argument("--round", type=int, default=None,
+                       help="target round: use experiments/beacon/<round>/protocol.md")
     p_run.add_argument("--verifier-url", default=None)
     p_run.add_argument("--base-url", default=beacon_client.DRAND_DEFAULT_BASE_URL)
     p_run.add_argument("--output-dir", default=None)
@@ -1854,6 +1972,13 @@ def main(argv: list[str] | None = None) -> int:
                        help="shared token ceiling (default 200000; 0 = no limit; BENCH_TOKEN_CEILING wins)")
     p_run.add_argument("--wall-clock", type=float, default=None,
                        help="shared wall-clock seconds (default 600; BENCH_WALL_CLOCK wins)")
+    p_resolve = sub.add_parser("resolve-protocol",
+                               help="print the frozen protocol path a run would use (REQ-077 item 1)")
+    p_resolve.add_argument("--protocol", default=None)
+    p_resolve.add_argument("--round", type=int, default=None)
+    p_round = sub.add_parser("protocol-round",
+                             help="print a frozen protocol's target round (the beacon-eval.sh parsing)")
+    p_round.add_argument("--protocol", required=True)
     p_verify = sub.add_parser("verify-repro", help="reproduce + check published instances (item 7)")
     p_verify.add_argument("--round", type=int, required=True)
     p_verify.add_argument("--base-url", default=beacon_client.DRAND_DEFAULT_BASE_URL)
@@ -1879,10 +2004,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"beacon freeze: wrote {path}", flush=True)
         elif args.cmd == "run":
-            protocol = parse_protocol(args.protocol)
+            protocol_path = resolve_protocol_path(args.protocol, args.round)
+            protocol = parse_protocol(protocol_path)
             run_beacon(protocol, verifier_url=args.verifier_url, base_url=args.base_url,
                        output_dir=args.output_dir,
                        config=_cli_config(args.token_ceiling, args.wall_clock))
+        elif args.cmd == "resolve-protocol":
+            print(resolve_protocol_path(args.protocol, args.round), flush=True)
+        elif args.cmd == "protocol-round":
+            print(protocol_target_round(args.protocol), flush=True)
         elif args.cmd == "rehearse":
             info = beacon_client.fetch_chain_info(args.base_url)
             pub_epoch = beacon_client.round_time_utc(

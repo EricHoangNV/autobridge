@@ -1762,11 +1762,13 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
                 rep_after.get("approval") if isinstance(rep_after, dict) else None
             )
             _assert_live(
-                calls, "repair records the business decision (escalate + approve, not a verified fix)",
+                calls, "repair records the business decision (approved + approve, proposal kept, not a verified fix)",
                 isinstance(rep_after, dict)
-                and rep_after.get("decision") == "escalate"
+                and rep_after.get("decision") == "approved"
                 and isinstance(rep_approval, dict)
-                and rep_approval.get("decision") == "approve",
+                and rep_approval.get("decision") == "approve"
+                and isinstance(rep_after.get("escalation_bundle"), dict)
+                and isinstance(rep_after["escalation_bundle"].get("proposal"), dict),
                 f"repair after approve: {rep_after}",
             )
             verifying = _step_live_sync_terminal(base_url, connector_id, calls)

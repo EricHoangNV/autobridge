@@ -1630,6 +1630,7 @@ def main(argv: list[str] | None = None) -> int:
             render_frontier_quality_table,
             run_ablation_harness,
             write_ablation_results,
+            write_ablation_scorecard,
         )
 
         if visibility != "dev":
@@ -1653,6 +1654,17 @@ def main(argv: list[str] | None = None) -> int:
         # REQ-052 item 3: per-arm frontier quality (fixed / held back /
         # truncated / timed_out / no_output) next to the rate table.
         print(render_frontier_quality_table(summary), flush=True)
+        # REQ-077 item 2: the scorecard comes from the ablation results
+        # (the real comparison). The empty-scorecard guard lives in the
+        # writer: no trials means no published scorecard, never a blank one.
+        no_score = args.no_score or env_no_score.strip() == "1"
+        if not no_score:
+            try:
+                scorecard_path = write_ablation_scorecard(trials, summary, args.scorecard)
+            except ValueError as exc:
+                print(f"bench harness: {exc}", flush=True)
+                return 1
+            print(f"bench scorecard: {scorecard_path}", flush=True)
         return 0
 
     no_score = args.no_score or env_no_score.strip() == "1"

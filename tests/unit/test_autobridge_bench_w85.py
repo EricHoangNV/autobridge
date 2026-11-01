@@ -273,3 +273,40 @@ def test_check_heldout_sha_ok_and_missing_and_mismatch(tmp_path: pathlib.Path) -
     data.write_bytes(b"id: tampered\n")
     with pytest.raises(AssertionError, match="SHA mismatch"):
         check_heldout_sha(heldout, manifest_path=manifest)
+
+
+def test_write_ablation_scorecard_refuses_empty(tmp_path: pathlib.Path) -> None:
+    """REQ-077 item 2: no ablation trials means no published scorecard."""
+    from bench.ablation import write_ablation_scorecard
+
+    with pytest.raises(ValueError, match="refusing empty scorecard"):
+        write_ablation_scorecard([], {}, tmp_path / "scorecard.md")
+    with pytest.raises(ValueError, match="refusing empty scorecard"):
+        write_ablation_scorecard([object()], {}, tmp_path / "scorecard.md")
+    assert not (tmp_path / "scorecard.md").exists()
+
+
+def test_write_ablation_scorecard_from_summary(tmp_path: pathlib.Path) -> None:
+    """REQ-077 item 2: `make bench` scorecard renders the ablation comparison."""
+    from bench.ablation import write_ablation_scorecard
+
+    summary = {
+        "per_arm": {
+            "autobridge_cold": {
+                "verified_completion_rate": {"mean": 1.0, "ci95_lo": 1.0, "ci95_hi": 1.0},
+                "correct_escalation_rate": {"mean": 1.0, "ci95_lo": 1.0, "ci95_hi": 1.0},
+                "frontier_tokens": {"mean": 0.0, "ci95_lo": 0.0, "ci95_hi": 0.0},
+                "cost_usd": {"mean": 0.0, "ci95_lo": 0.0, "ci95_hi": 0.0},
+                "wrong_patches_released": 0,
+            }
+        },
+        "quality": {},
+        "trials": 1,
+        "skipped_scenarios": [],
+        "warm_provenance": {"entries": 0},
+        "context_matched": True,
+    }
+    path = write_ablation_scorecard([object()], summary, tmp_path / "scorecard.md")
+    text = path.read_text(encoding="utf-8")
+    assert "autobridge_cold" in text
+    assert "--arms matched" in text

@@ -132,6 +132,114 @@ def _find_undecided_open_drift(
     return drift, repair
 
 
+def _canonical_delta(delta: Any | None) -> str:
+    """Canonical string form of a fingerprint delta (None-safe).
+
+    Two detections of the same wire change build equal strings; a
+    changed drift does not. ``default=str`` keeps money Decimals and
+    datetimes comparable without touching values.
+    """
+    import json as _json  # noqa: PLC0415
+
+    return _json.dumps(delta, sort_keys=True, default=str)
+
+
+def _drift_source_release_id(session: Any, drift: Any) -> str | None:
+    """The release a drift was detected on (via its source sync run).
+
+    ``None`` when the source sync row is absent (direct
+    ``detect_and_repair_after_sync`` calls in unit tests, which pass a
+    bare ``sync_run_id`` without persisting a ``SyncRun``). Callers treat
+    ``None`` as "release unknown", never as a mismatch.
+    """
+    try:
+        from autobridge.control.models import SyncRun  # noqa: PLC0415
+
+        source_id = getattr(drift, "source_sync_run_id", None)
+        if not source_id:
+            return None
+        row = session.get(SyncRun, source_id)
+        if row is None:
+            return None
+        return getattr(row, "release_id", None)
+    except Exception:
+        return None
+
+
+def _find_denied_open_drift(
+    session: Any,
+    connector_id: str,
+    drift_class: str,
+    delta: Any | None,
+    release_id: str,
+) -> tuple[Any | None, Any | None]:
+    """Newest open engine-derived drift of this class denied by the operator.
+
+    Returns ``(drift, repair)`` when an ``open`` :class:`DriftEvent` for
+    *(connector_id, drift_class)* exists whose newest repair's latest
+    :class:`Approval` is ``reject`` **and** the re-detection is the same
+    drift on the same active release (equal canonical fingerprint delta,
+    drift detected on *release_id*). A changed drift or a different
+    active release is a new incident and returns ``(None, None)``, as
+    does an approved repair (approve-then-redetect stays a new incident).
+
+    REQ-077 item 5: after Deny the connector stays in error and the drift
+    stays open — a re-detection attaches to the denied drift/repair (no
+    new repair, no climb, no model call) instead of climbing again.
+    """
+    from autobridge.control.models import Approval, DriftEvent, RepairRun
+
+    want = _canonical_delta(delta)
+    for drift in (
+        session.execute(
+            _select(DriftEvent)
+            .where(
+                DriftEvent.connector_id == connector_id,
+                DriftEvent.drift_class == drift_class,
+                DriftEvent.status == "open",
+                DriftEvent.source_sync_run_id.is_not(None),
+            )
+            .order_by(DriftEvent.created_at.desc())
+        )
+        .scalars()
+        .all()
+    ):
+        repair: Any | None = None
+        for run in (
+            session.execute(
+                _select(RepairRun)
+                .where(RepairRun.drift_class == drift_class)
+                .order_by(RepairRun.created_at.desc())
+                .limit(50)
+            )
+            .scalars()
+            .all()
+        ):
+            if drift.id in (run.drift_event_ids or []):
+                repair = run
+                break
+        if repair is None:
+            continue
+        latest = (
+            session.execute(
+                _select(Approval)
+                .where(Approval.repair_run_id == repair.id)
+                .order_by(Approval.created_at.desc())
+            )
+            .scalars()
+            .first()
+        )
+        if latest is None or latest.decision != "reject":
+            continue
+        if _canonical_delta(getattr(repair, "fingerprint_delta", None)) != want:
+            continue
+        source_release = _drift_source_release_id(session, drift)
+        if source_release is not None and source_release != release_id:
+            continue
+        return drift, repair
+    return None, None
+
+
 def _triples(signals: list[Any]) -> list[tuple[str | None, str | None, dict[str, Any]]]:
     """Normalize signals (objects or dicts) to (kind, operation, details)."""
     out: list[tuple[str | None, str | None, dict[str, Any]]] = []
@@ -756,6 +864,56 @@ def _detect_open(
                 "ladder_level_reached": existing_repair.ladder_level_reached,
                 "model_usage": dict(existing_repair.model_usage or {}),
                 "candidate_release_id": dedupe_candidate_id,
+                "gate_error": None,
+            },
+        }
+    # REQ-077 item 5: Deny sticks. A re-detection of the same denied
+    # drift (same class + fingerprint delta) on the same active release
+    # attaches to the denied drift/repair — no new repair, no climb, no
+    # model call. A changed drift or a different active release opens a
+    # new incident as today; approved repairs keep the new-incident
+    # behaviour (handled above by the undecided check returning None).
+    denied_drift, denied_repair = _find_denied_open_drift(
+        session, connector_id, classification.drift_class, delta, release_id
+    )
+    if denied_drift is not None and denied_repair is not None:
+        denied_candidate_id: str | None = None
+        try:
+            from autobridge.control.models import ConnectorRelease
+
+            denied_candidate = (
+                session.execute(
+                    _select(ConnectorRelease)
+                    .where(
+                        ConnectorRelease.connector_id == connector_id,
+                        ConnectorRelease.provenance_repair_run_id
+                        == denied_repair.id,
+                    )
+                    .order_by(ConnectorRelease.version.desc())
+                )
+                .scalars()
+                .first()
+            )
+            if denied_candidate is not None:
+                denied_candidate_id = denied_candidate.id
+        except Exception:
+            denied_candidate_id = None
+        return {
+            "status": "denied",
+            "out": {
+                "drift_found": True,
+                "deduped": True,
+                "denied": True,
+                "outcome": outcome,
+                "drift_id": denied_drift.id,
+                "drift_class": classification.drift_class,
+                "drift_reason": classification.reason,
+                "repair_run_id": denied_repair.id,
+                "decision": denied_repair.decision,
+                "rule_id": denied_repair.rule_id,
+                "ladder_level_reached": denied_repair.ladder_level_reached,
+                "model_usage": dict(denied_repair.model_usage or {}),
+                "candidate_release_id": denied_candidate_id,
                 "gate_error": None,
             },
         }

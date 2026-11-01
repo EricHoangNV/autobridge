@@ -1124,3 +1124,125 @@ def test_fias_beacon_sync_pair_serves_announced_and_baseline() -> None:
     assert "RN" in baseline_keys and "RN" not in faulted_keys
     new_name = str(descriptor["params"]["renamed"]["RN"])
     assert new_name in faulted_keys and new_name not in baseline_keys
+
+
+def test_beacon_warm_uses_dev_split_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Any, _clean_bench_env: Any) -> None:
+    """REQ-077 item 4: the beacon warm arm is pre-warmed from the dev split
+    only (never beacon instances), built once before the first instance."""
+    import bench.ablation as _ablation
+
+    seen: dict[str, Any] = {}
+
+    class _Warm:
+        def all_entries(self) -> list[Any]:
+            return [object(), object(), object()]
+
+    def _fake_warm(scenario_ids: list[str], **_kwargs: Any) -> Any:
+        seen["ids"] = list(scenario_ids)
+        return _Warm()
+
+    monkeypatch.setattr(_ablation, "warm_knowledge", _fake_warm)
+    monkeypatch.setattr(beacon_run.beacon_client, "fetch_chain_info", lambda _base_url: dict(FAKE_INFO))
+    monkeypatch.setattr(
+        beacon_run.beacon_client, "fetch_latest",
+        lambda _base_url: {"round": 9999999, "randomness": "ab" * 32,
+                          "signature": "cd" * 96, "previous_signature": "ef" * 96},
+    )
+    verified = beacon_run.beacon_client.VerifiedRound(
+        round=9999999, randomness_hex="ab" * 32, eval_seed_hex=EVAL_SEED_HEX, published_at_utc=1893456000)
+    monkeypatch.setattr(beacon_run.beacon_client, "fetch_verified_round",
+                        lambda _base_url, _round, **_: verified)
+    monkeypatch.setattr(beacon_run, "push_beacon", lambda _seed, index, _vendor, **_: _descriptor(index))
+    monkeypatch.setattr(
+        beacon_run, "sync_candidate", lambda _spec, _url, **_k: {"outcome": "Complete", "canonical_records": {}})
+    _fake_verifier(monkeypatch, records_verdict="pass")
+    protocol = _protocol(faults=1, arms=("autobridge_cold", "autobridge_warm"))
+    out = tmp_path / "beacon-warm" / "9999999"
+    result = beacon_run.run_beacon(
+        protocol, config=None,
+        runners={"autobridge_cold": lambda _i: _engine_result(),
+                 "autobridge_warm": lambda _i: _engine_result()},
+        verifier_url="http://fake-verifier",
+        base_url="https://example.invalid", output_dir=out,
+    )
+    from bench.harness import list_scenarios as _list_dev
+
+    dev_ids = set(_list_dev(visibility="dev"))
+    assert set(seen["ids"]) == dev_ids, "warm-up runs on the whole dev split"
+    assert not any(str(s).startswith("beacon:") for s in seen["ids"])
+    assert result.summary["warm"]["source"] == "dev split only (never beacon instances)"
+    assert result.summary["warm"]["entries"] == 3
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["grades"]["warm"]["entries"] == 3
+
+
+def test_beacon_cold_empty_warm_full_routing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-077 item 4: the cold arm climbs with no cache, the warm arm with
+    the dev-split cache — the beacon run can show learning."""
+    import types
+
+    from bench.harness import HarnessConfig as _Cfg
+
+    seen: dict[str, Any] = {}
+
+    def _fake_engine(inputs: Any, _case: Any, ablation: str = "", **kwargs: Any) -> Any:
+        seen[ablation] = kwargs.get("knowledge")
+        return types.SimpleNamespace(
+            arm=ablation, inputs=inputs, ran=True, spec={"decision": "propose", "candidate_patch": None},
+            frontier_tokens=0, input_tokens=0, output_tokens=0, reasoning_tokens=0,
+            cost_usd=None, model="fake", error=None, outcome=None,
+        )
+
+    import bench.ablation as _ablation
+
+    monkeypatch.setattr(_ablation, "run_engine_arm", _fake_engine)
+    descriptor = _descriptor(0)
+    protocol = _protocol(faults=1, trials=1, arms=("autobridge_cold", "autobridge_warm"))
+    sentinel = object()
+    beacon_run.run_instance_trial(
+        protocol, EVAL_SEED_HEX, descriptor, 0, config=_Cfg(trials_per_scenario=1),
+        runners={}, provider=None, knowledge_warm=sentinel, verifier_url=None,
+    )
+    assert seen["autobridge_cold"] is None, "cold climbs with no cache"
+    assert seen["autobridge_warm"] is sentinel, "warm climbs with the dev-split cache"
+
+
+def test_beacon_caller_supplied_warm_cache_recorded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, _clean_bench_env: Any
+) -> None:
+    """REQ-077 item 4: an explicitly passed warm cache is used as-is and
+    recorded in the summary (test/offline runs)."""
+    import bench.ablation as _ablation
+
+    class _Warm:
+        def all_entries(self) -> list[Any]:
+            return [object()]
+
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("must not build a cache when one is supplied")
+
+    monkeypatch.setattr(_ablation, "warm_knowledge", _boom)
+    monkeypatch.setattr(beacon_run.beacon_client, "fetch_chain_info", lambda _base_url: dict(FAKE_INFO))
+    monkeypatch.setattr(
+        beacon_run.beacon_client, "fetch_latest",
+        lambda _base_url: {"round": 9999999, "randomness": "ab" * 32,
+                          "signature": "cd" * 96, "previous_signature": "ef" * 96},
+    )
+    verified = beacon_run.beacon_client.VerifiedRound(
+        round=9999999, randomness_hex="ab" * 32, eval_seed_hex=EVAL_SEED_HEX, published_at_utc=1893456000)
+    monkeypatch.setattr(beacon_run.beacon_client, "fetch_verified_round",
+                        lambda _base_url, _round, **_: verified)
+    monkeypatch.setattr(beacon_run, "push_beacon", lambda _seed, index, _vendor, **_: _descriptor(index))
+    monkeypatch.setattr(
+        beacon_run, "sync_candidate", lambda _spec, _url, **_k: {"outcome": "Complete", "canonical_records": {}})
+    _fake_verifier(monkeypatch, records_verdict="pass")
+    protocol = _protocol(faults=1, arms=("autobridge_cold",))
+    out = tmp_path / "beacon-supplied" / "9999999"
+    result = beacon_run.run_beacon(
+        protocol, config=None, knowledge_warm=_Warm(),
+        runners={"autobridge_cold": lambda _i: _engine_result()},
+        verifier_url="http://fake-verifier",
+        base_url="https://example.invalid", output_dir=out,
+    )
+    assert result.summary["warm"]["source"] == "caller-supplied"
+    assert result.summary["warm"]["entries"] == 1

@@ -3103,3 +3103,47 @@ Agent: opencode meta/muse-spark-1.3 (escalation)
 - Fix (test only, no retries/quarantines, no component change): assert the settled runtime line with `waitFor(... toContain "runs: cloud")` — the same pattern the PABX test in the same file already uses for its `runs: on-premise edge agent, via the relay` line. 7 insertions, 1 deletion.
 - Verification: single file 26/26; full UI suite 10/10 consecutive runs 348/348 (before: 1 failure in 8 runs with the exact audited signature); full `make test` green (autobridge 3020 @90.12%, verifier 138 @91.04%, simulators 415 @90.50%, UI 348); `make lint`, `make typecheck`, `make ui-typecheck`, `make openapi-check` green.
 - Full-suite flakes of this shape seen in earlier notes (scheduler-teardown `Task was destroyed`, sqlite I/O on full disks, DNS-guard ERROR) are different mechanisms; this one was a genuine test bug, now fixed. No owner step left.
+
+### REQ-077 — the beacon run is the final benchmark (sbx1 2026-11-01)
+Agent: opencode meta/muse-spark-1.3 (escalation). All 6 items code-done; full gates green.
+
+1. **Per-round beacon runs** (`bench/beacon_run.py`, `scripts/beacon-eval.sh` + new `scripts/beacon-lib.sh`, `Makefile`).
+   `freeze()` computes the target round first, then writes `experiments/beacon/<round>/protocol.md`
+   (explicit `protocol_path` still wins for rehearsals). `run` resolves by `--round`, the old single
+   path (backward compat), or the single unrun per-round protocol (dirs with results are finished runs,
+   never resumed). Tag per run `eval-freeze-<round>`. Push opt-in: only `PUSH=yes` pushes (branch +
+   tag to the current branch's upstream; `CONFIRM=yes` keeps its meaning); otherwise both commits stay
+   local and the script prints the fork-push line for a public timestamp. Ralph guard matches only loops
+   in this checkout's path (cwd on Linux, cmdline fallback). Round parsed via new
+   `protocol-round` CLI (parse_protocol semantics — fixes the `grep '^beacon-target-round:'` bug that
+   exited 1 under `set -euo pipefail`). EVIDENCE.md points at the round's protocol + tag and records warm.
+   Tests: per-round freeze dirs differ; finished results never block a new freeze; resolve old/round/
+   single/ambiguous; `protocol-round` CLI on real `freeze()` output; lib tests for discovery, ralph
+   guard (other-path ignored, same-path matched), no-push-without-PUSH=yes, PUSH=yes push shape, abort
+   without confirm.
+2. **`make bench`** runs dev ablation + learning curve and writes `experiments/scorecard.md` from the
+   ablation (`bench/ablation.py::write_ablation_scorecard`, refusing empty); `--arms matched` stays for
+   `test_07`/harness tests with the zero-tool-call guard kept. `Makefile` bench target simplified.
+3. **Demo step 4** asserts the REQ-053 shape (decision `approved`, approval `approve`, escalation bundle
+   with proposal kept) instead of the stale `escalate` check; unit test pins it.
+4. **Beacon warm**: `run_beacon` pre-warms `autobridge_warm` from the dev split only (never beacon
+   instances) before the first instance — same for real runs and rehearsals; cold starts empty. Run
+   output + `summary.json`/`grades.warm` + EVIDENCE.md record entries. Tests: warm built from exactly
+   the dev list, cold-None/warm-cache routing, caller-supplied cache recorded.
+5. **Deny sticks**: `_find_denied_open_drift` — same class + canonical fingerprint delta on the same
+   active release (via the drift's source sync release; missing source row = unknown, attaches) after a
+   `reject` attaches to the denied drift/repair (status `denied`, no new repair/climb/model call);
+   changed drift or different release opens a new incident; approve-then-redetect unchanged.
+   `connector_state` reads it as `error / denied · waiting on the vendor`. Deny preview + docs/demo.md +
+   README wording updated.
+- Docs: `docs/benchmark.md` (harness/matched note, bench pipeline, beacon per-round + PUSH + discovery +
+  "Run it yourself", warm rewrite), `README.md` (bench + Deny), `docs/demo.md` (Deny).
+- Flake note: one full-suite run failed `test_running_row_visible_with_rung_l3_within_2s` (<2s row
+  appearance under suite load); passes standalone 6/6 (~0.35s, huge margin) and in-file, and the rerun
+  full `make test` was green. Root cause is thread-scheduling under load, not this REQ (the added
+  denied lookup is one empty indexed SELECT); same load-flake class as REQ-076.
+- Gates: `make lint`, `make typecheck`, `make openapi-check`, `make ui-typecheck` green; `make test`
+  green (autobridge 3036 @90.14%; verifier 138 @91.04%; simulators 415 @90.50%; UI 350 passed).
+  No live stack in sbx1 — e2e not runnable here; unit fakes cover the changes. No `make bench*` /
+  `beacon-eval` / `eval-freeze` run for real; nothing committed under `experiments/beacon/`;
+  `verifier/hidden_cases/heldout/` untouched.

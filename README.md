@@ -19,7 +19,7 @@ make smoke                  # healthz/readyz + trust-boundary network probes
 make test                   # unit, ≥90% coverage per Python package
 make e2e                    # every pytest file in tests/e2e, random order
 make e2e-ui                 # Playwright UI journey (needs `make up` first)
-make bench                  # calls models; matched step currently exits 1 ("refusing empty scorecard"), see below
+make bench                  # dev ablation + learning curve; scorecard from the ablation (calls models)
 make demo                   # eight demo steps through the control API (plan §6)
 make down                   # docker compose down -v
 ```
@@ -38,11 +38,10 @@ AutoBridge reads in `simulators/docs/`:
 CI (`.github/workflows/ci.yml`) runs the same order from a clean clone:
 `make test → make up → make smoke → make e2e → make e2e-ui → make demo`.
 
-`make bench` is not in CI and does not complete yet: its first (matched-budget)
-step refuses to score because the matched arms record no tool calls, so it
-exits 1 with "refusing empty scorecard". `BENCH_NO_SCORE=1 make bench` skips
-that scorecard and runs on to the ablation arms and learning curve. Both call
-models (they need provider keys and cost money). See `docs/benchmark.md`.
+`make bench` runs the dev ablation + learning curve and writes the
+scorecard from the ablation results (the synthetic matched mode stays
+behind `--arms matched` for harness tests). It calls models (provider
+keys needed; costs money). See `docs/benchmark.md`.
 
 ## No Docker (plain laptop: Python 3.12 + `uv`, Node 22/`npm`)
 
@@ -132,7 +131,9 @@ Each block is one command, then watch (deck order, `docs/demo.md`):
   return to ● Working (release r2 from the proposal, verifying sync,
   recorded as a business decision — not a verified fix, and never
   learned); or **Deny: keep everything as-is, contact the vendor**
-  and watch it stay ■ Error. The instrumented step-4 climb in
+  and watch it stay ■ Error, denied, waiting on the vendor — Deny sticks:
+  re-detections of the same drift attach to the denied repair (no new
+  repair, no new model call). The instrumented step-4 climb in
   `make demo` runs the same inputs for the printed derivation; it is
   recorded as a second row only when the break's L3 was skipped.
 - **Deck 6 — New kind of API.** Open `/connectors/new`, pick the Meridian

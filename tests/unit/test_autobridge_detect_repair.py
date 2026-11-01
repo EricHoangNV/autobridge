@@ -861,3 +861,147 @@ def test_deterministic_semantic_trace_names_every_rung() -> None:
     assert by_level[3]["action"] == "l3_skipped"
     assert by_level[4]["action"] == "escalate"
     assert result.model_usage["frontier_tokens"] == 0
+
+
+# ---------------------------------------------------------------------------
+# REQ-077 item 5: Deny sticks — same denied drift re-attaches, never re-climbs
+# ---------------------------------------------------------------------------
+
+
+def _deny_first(factory: Any, spec: dict[str, Any], cache: Any) -> tuple[str, str, str, str]:
+    """Detect once and deny the repair; return (conn, rel, drift, repair) ids."""
+    from autobridge.engine.releases import reject_release
+
+    conn_id, rel_id = _seed_connector(factory, spec)
+    with factory() as s:
+        first = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-1",
+            knowledge_cache=cache,
+        )
+        assert first["drift_found"] is True
+        reject_release(
+            s, repair_run_id=first["repair_run_id"], actor="tester",
+            from_release_id=None, to_release_id=None,
+        )
+        s.commit()
+        return conn_id, rel_id, first["drift_id"], first["repair_run_id"]
+
+
+def test_deny_then_same_drift_attaches_no_new_repair(monkeypatch: Any) -> None:
+    """Same class + delta on the same release after Deny: no new drift,
+    no new repair, no climb, no model call."""
+    from autobridge.control.models import ModelCall
+
+    factory = _mem_factory()
+    spec = _page_spec()
+    cache = KnowledgeCache()
+    conn_id, rel_id, drift_id, repair_id = _deny_first(factory, spec, cache)
+
+    # The re-detection must never reach the ladder (that is where model
+    # calls happen) — fail loudly if it does.
+    def _no_climb(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("denied re-detection must not climb")
+
+    monkeypatch.setattr(
+        "autobridge.repair.controller.RepairController.handle_from_signals", _no_climb
+    )
+    with factory() as s:
+        calls_before = s.query(ModelCall).count()
+        second = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-2",
+            knowledge_cache=cache,
+        )
+        s.commit()
+        assert second.get("denied") is True
+        assert second.get("deduped") is True
+        assert second["drift_id"] == drift_id
+        assert second["repair_run_id"] == repair_id
+        assert second["decision"] == "reject"
+        assert s.query(DriftEvent).filter_by(connector_id=conn_id).count() == 1
+        assert s.query(RepairRun).count() == 1
+        assert s.query(ModelCall).count() == calls_before
+
+
+def test_deny_then_changed_drift_opens_new_incident() -> None:
+    """Same release but a different drift after Deny: a new incident, as today."""
+    factory = _mem_factory()
+    spec = _page_spec()
+    cache = KnowledgeCache()
+    conn_id, rel_id, _drift_id, repair_id = _deny_first(factory, spec, cache)
+    with factory() as s:
+        other = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_rename_summary(), sync_run_id="sync-2",
+            knowledge_cache=cache,
+        )
+        s.commit()
+        assert other.get("denied") is not True
+        assert other.get("deduped") is not True
+        assert other["drift_class"] == "SCHEMA_RENAME"
+        assert other["repair_run_id"] != repair_id
+        assert s.query(RepairRun).count() == 2
+
+
+def test_deny_then_different_release_opens_new_incident() -> None:
+    """Same drift on a different active release after Deny: a new incident."""
+    from autobridge.control.models import SyncRun
+
+    factory = _mem_factory()
+    spec = _page_spec()
+    cache = KnowledgeCache()
+    conn_id, rel_id, _drift_id, repair_id = _deny_first(factory, spec, cache)
+    with factory() as s:
+        # The denied drift was detected on rel_id: record the source sync
+        # row the release check resolves (prod always persists it).
+        s.add(SyncRun(id="sync-1", release_id=rel_id, outcome="Complete", unmet_criteria=[]))
+        rel2 = ConnectorRelease(
+            connector_id=conn_id, version=3, spec=spec, signature=spec_signature(spec),
+        )
+        s.add(rel2)
+        s.commit()
+        rel2_id = rel2.id
+    with factory() as s:
+        other = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel2_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-2",
+            knowledge_cache=cache,
+        )
+        s.commit()
+        assert other.get("denied") is not True
+        assert other.get("deduped") is not True
+        assert other["repair_run_id"] != repair_id
+        assert s.query(RepairRun).count() == 2
+
+
+def test_approve_then_redetect_stays_new_incident() -> None:
+    """Approve-then-redetect keeps today's behaviour (new incident, never denied)."""
+    from autobridge.engine.releases import approve_release
+
+    factory = _mem_factory()
+    spec = _page_spec()
+    cache = KnowledgeCache()
+    conn_id, rel_id = _seed_connector(factory, spec)
+    with factory() as s:
+        first = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-1",
+            knowledge_cache=cache,
+        )
+        approve_release(
+            s, repair_run_id=first["repair_run_id"], actor="tester",
+            from_release_id=rel_id, to_release_id=first["candidate_release_id"],
+            connector_id=conn_id, knowledge_cache=cache,
+        )
+        s.commit()
+    with factory() as s:
+        second = detect_and_repair_after_sync(
+            s, connector_id=conn_id, release_id=rel_id,
+            spec_dict=spec, summary=_cursor_summary(), sync_run_id="sync-2",
+            knowledge_cache=cache,
+        )
+        s.commit()
+        assert second.get("denied") is not True
+        assert second.get("deduped") is not True
+        assert second["repair_run_id"] != first["repair_run_id"]
