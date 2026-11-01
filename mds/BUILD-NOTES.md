@@ -3054,3 +3054,44 @@ All 5 items code-done, UI only (no API change; existing testids keep working).
 Tests: 2 in `AfterApproveTracker.test.tsx` (version-only supersede, replaced-by from history) + 6 in `page.test.tsx` (one per item, incl. waiting-repair-keeps-preview control). Full gates: `make lint`, `make typecheck`, `make ui-typecheck`, `make openapi-check` green; `make test` green on re-run (autobridge 3006 passed @90.04% gate, UI 348 passed; first run hit one scheduler-teardown error in `test_state_escalation_is_error` that passes standalone and on re-run — same full-run-only flake shape as REQ-076, UI change cannot affect it).
 Root-cause note for REQ-076 watch: the flake is `Task was destroyed but it is pending` from the scheduler loop under full-run parallelism, seen once in 2 runs.
 Owner step after: browser check of the same repairs (Atlas `34cca645`, Harbor `77853663`).
+
+### REQ-075 — live money baseline (sbx1 2026-11-01)
+Agent: opencode meta/muse-spark-1.3 (escalation)
+Owner decision taken: persist a live baseline (not scope B1 to bench/beacon).
+
+What changed:
+- New `src/autobridge/drift/value_baseline.py` (the one shared mechanism): pure part
+  `build_money_sketch` (per entity with a `money` transform: join-key + money fields only,
+  JSON-safe, bounded to 32 entities x 200 rows; Decimal/date stringified, float/nested dropped)
+  + `baseline_summary_from_sketch`; persisted part `store_connector_baseline` (upsert, one row
+  per connector) + `load_connector_baseline_summary` (release-scoped, fail-soft None).
+- New `ConnectorValueBaseline` model + Alembic `0016_connector_value_baseline` + `_REVISION_EFFECTS`
+  entry. `test_autobridge_db_models.py` head assertion bumped 0015 -> 0016 (req055 REVISIONS list
+  auto-covers the new revision).
+- Live path: `_detect_open` loads the stored sketch as `baseline_summary` for `signals_from_sync`
+  and (re)stores it on a clean `Complete` with no signals. Drifted/Degraded/Blocked syncs never
+  overwrite it (a faulted observation must not become the truth the next sync is judged against).
+  Release-scoped: a sketch is reused only for the release that stored it, so a unit change shipped
+  inside a new release never reads as a scale shift (at most one silent sync per release change).
+- `RepairController.handle_sync_summary` takes an optional `baseline_summary` passthrough.
+- Bench/beacon `derive_from_summaries` normalizes the baseline canonical through `build_money_sketch`
+  before detection (wire `operation_results` keep raw form for the emptied-field observer, unchanged).
+  Beacon FIAS path untouched (layout renames, no money baseline).
+- `docs/architecture.md` B1 paragraph rewritten for persisted baselines + first-sync silence (there was
+  no literal "history-blind" note in docs/ — the phrase lived in the REQ-064 build note).
+
+Tests (13 new in `tests/unit/test_autobridge_req075_live_baseline.py`): sketch bounds/secrets/shape;
+first clean sync stores + silent; x100 second sync -> SEMANTIC_VALUE_DRIFT escalate, no candidate,
+frontier_tokens 0; x100 on first sync silent; release scoping; bench x100 through shared sketch
+(with a spy proving `build_money_sketch` is on the bench path); controller param; fail-soft store/load
+and detection-green-even-if-helpers-raise; migration 0016 (head has table, 0015 DB gains it via
+`ensure_migrated`).
+
+Gates: make test green (autobridge 3020 passed @90% gate incl. new file at 92%+; verifier 91.04%;
+simulators gate green; UI 348 passed), make lint + typecheck + ui-typecheck + openapi-check green.
+E2E not runnable in sbx1 (no live stack; curl :8100 empty, no docker) — reported, not faked.
+No bench runs (paid; owner session runs the dev benchmark after this REQ). No heldout/beacon touches.
+
+Benchmark note (engine arms): the bench money-shift detection now goes through the same bounded sketch
+the product persists, so a dev-bench re-run should reproduce the same B1 detections (bench no longer
+credits anything the live path cannot see). No scorecard regeneration here.

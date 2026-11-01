@@ -4153,3 +4153,12 @@ Sections validated §§1–8 + plan §1 (repairs are JSON Patches, trust boundar
 
 ## 2026-11-01 05:45 UTC — REQ-074 DONE (sbx1; Agent: opencode meta/muse-spark-1.3 (escalation))
 Claimed REQ-074, fixed all 5 approved-repair page items UI-only (tracker replaced-by + live window, approved business-decision headline, preview hidden on approved, zero-funnel plain line, verifier one-verdict-no-glyph), added 8 UI tests, full gates green (`make test` re-run all green; one scheduler-teardown flake on first run, standalone-clean). Merged to main. Owner step: browser check of Atlas `34cca645` + Harbor `77853663`. Next: REQ-075, REQ-076.
+
+## 2026-11-01 — REQ-075 DONE (sbx1)
+Agent: opencode meta/muse-spark-1.3 (escalation). Persisted live money baseline: new
+`drift/value_baseline.py` shared sketch (join keys + money fields, bounded, JSON-safe, release-scoped,
+fail-soft), `connector_value_baselines` table + migration 0016, `_detect_open` loads/stores it,
+`handle_sync_summary` passthrough, bench/beacon derive normalizes through the same sketch,
+`docs/architecture.md` B1 paragraph updated. 13 new unit tests; full gates green (autobridge 3020
+passed @90%, verifier 91.04%, UI 348, lint/typecheck/ui-typecheck/openapi-check). E2E not runnable in
+sbx1 (no stack). Owner step: dev benchmark re-run in the owner session (paid, not run here).
