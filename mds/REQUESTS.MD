@@ -42,9 +42,25 @@ lines that mention these commands) in the same commits so the docs stay true.
    `"escalate"` after `approve-proposal`, but since REQ-053 approval sets `"approved"` (`engine/releases.py:403`).
    Assert the REQ-053 shape instead (decision `approved`, approval decision `approve`, escalation bundle with the
    proposal present). Add a unit test that fails on the old assertion.
-4. Tests for item 1: two consecutive freezes target different rounds and write different protocol dirs; a committed
+4. **`autobridge_warm` learns nothing on the beacon run.** `bench/beacon_run.py` `run` / `rehearse` never pass
+   `knowledge_warm` and never call `warm_knowledge`, so the warm arm starts from an empty cache exactly like cold and
+   the beacon run cannot show learning. Warm it the way the dev ablation does: learned knowledge from the dev split
+   only (never from beacon instances), built before the first instance, the same for real runs and rehearsals.
+   Record in the run output (and EVIDENCE.md) that warm was warmed on the dev split and how many entries it held.
+5. **Deny does not stick.** After **Deny** (approval decision `reject`) the next scheduled sync re-detects the same
+   still-live fault; `engine/detect_repair.py` (~121-126, "never dedupe onto a decided repair") treats it as a new
+   incident, so a new drift + repair opens and climbs again (another frontier call with a key) and "needs your
+   decision" returns within one sync interval. The Deny preview promises "the connector stays in error and the drift
+   stays open" (`control/routes/repairs.py:308`). Fix: a re-detection of the same drift (same class + fingerprint
+   delta) on the same active release after a `reject` attaches to the denied drift/repair — no new repair, no climb,
+   no model call; the connector stays ■ Error and reads as denied / waiting on the vendor. A changed drift or a
+   different active release opens a new incident as today. Approved repairs keep today's behaviour (a re-detection
+   after an approval is a new incident). Update the Deny wording in `docs/demo.md` / README to match.
+6. Tests for item 1: two consecutive freezes target different rounds and write different protocol dirs; a committed
    prior run's results never block a new run; no push without `PUSH=yes`; ralph guard ignores a loop in another
-   path. Full gates green.
+   path. Item 4: the beacon warm arm receives a non-empty dev-split cache and the cold arm an empty one. Item 5: Deny
+   then a re-detection of the same drift opens no new repair and makes no model call; a different drift or release
+   does; approve-then-redetect unchanged. Full gates green.
 
 Constraints: do not run `make bench`, `make bench-heldout`, `make bench-beacon`, `make beacon-eval` or
 `make eval-freeze` for real (unit tests with fakes only); do not freeze, tag or commit under `experiments/beacon/`;
