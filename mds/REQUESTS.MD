@@ -2,7 +2,33 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01 09:45): **REQ-070** (REQ-066..069 done; the real beacon freeze waits for REQ-070). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01 10:45): **REQ-071** (REQ-066..070 done; the real beacon freeze waits for REQ-071). Do not start REQ-051 until the owner says so.
+
+### REQ-071 — Deck 7: the PABX link drop stays visible in Sync runs (2026-11-01)
+Status: OPEN
+Owner demo run, deck 7 (`make demo-break SCENARIO=fias_link_resync`): the PABX connector page shows only the live link
+state, so a presenter who switches to the page a few seconds late never sees the drop (up → down → re-handshaking →
+up takes ~8-10 s). Owner decision: show it in the existing **Sync runs** table, which is persisted and newest-first.
+
+1. **Each sync of an edge (v3 / `fias_tcp`) connector records the link at sync time:** the agent's `link_up` and its
+   reconnect counter (the relay heartbeat's `link_detail` already carries `accepted=N`, which increments on each
+   re-established link; parse it or, better, have the agent/relay report it as a field). Store it on the SyncRun
+   (no new store if an existing JSON column fits; otherwise a migration).
+2. **Sync runs table note (edge connectors only):** when the reconnect counter went up since the previous sync of the
+   same connector, the row reads "link dropped, re-handshaked · +N postings, 0 lost, 0 duplicated" (N = records
+   delta vs the previous run; lost/duplicated from the relay's idempotency keys, never assumed); when the link was
+   down at sync time, the row reads "link down". Short drops between two syncs must still show (that is why the
+   counter, not the state at sync time, drives the note). Other connectors' rows are unchanged; keep the table's
+   columns aligned (REQ-068 item 8) and the existing testids.
+3. **Fix the link-event log** (`/demo/pabx-events`, `src/autobridge/control/routes/demo.py` and its recorder): live
+   it records `{"link_up": false, "agent_seen": false}` every 10 s while the agent reports the link up (the panel
+   hides this because the live agent wins). Record the real agent state (match the agent the way the PABX panel does
+   since REQ-068 item 7).
+4. `docs/demo.md` deck 7: one line on where the drop shows after the fact.
+
+Tests: counter increment between two syncs → note on the later row; link down at sync time → "link down"; no
+change → no note; non-edge connectors untouched; event recorder matches the live agent. UI test for the row note.
+Full gates green. Owner step after: keyed walkthrough of deck 7.
 
 ### REQ-070 — Semantic escalation keeps a passing retry proposal (deck 5 Approve path) (2026-11-01)
 Status: DONE (sbx1 2026-11-01 -- retry plain-patch adopted as escalation proposal + model question kept + drop reason cleared; no prompt change, full gates green; owner steps: keyed make record-frontier gross_to_net (optional, hashes unchanged) then keyed walkthrough re-run to close)
