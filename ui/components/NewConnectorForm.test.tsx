@@ -509,7 +509,13 @@ describe("NewConnectorForm", () => {
 
     const createBody = JSON.parse(findCreateCall()[1].body as string);
     expect(createBody).not.toHaveProperty("runtime_target");
-    expect(screen.getByTestId("build-runtime-decision").textContent).toContain("runs: cloud");
+    // REQ-076: the runtime line settles after the build-run detail lands (a
+    // second fetch after the job poll). Assert the settled state with
+    // waitFor — the immediate read races the "job starting…" interim line
+    // and flaked ~1/8 full-suite runs under parallel-worker load.
+    await waitFor(() =>
+      expect(screen.getByTestId("build-runtime-decision").textContent).toContain("runs: cloud"),
+    );
   });
 
   it("shows each vocabulary version's release note (REQ-050)", () => {
