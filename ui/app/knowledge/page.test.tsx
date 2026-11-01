@@ -112,19 +112,19 @@ describe("KnowledgePage", () => {
           id: "ap-9", at: "2026-10-30T10:00:00Z", actor: "alice", kind: "approve",
           business_decision: true, learned: false, connector_id: "c-h", connector_name: "HarborPMS",
           repair_run_id: "rep-9", from_release_id: "r1", to_release_id: "r2",
-          summary: "Business decision: accept net totals going forward",
+          summary: "accept net totals going forward",
         },
         {
           id: "ap-8", at: "2026-10-30T09:00:00Z", actor: "alice", kind: "approve",
           business_decision: false, learned: true, connector_id: "c1", connector_name: "AtlasPMS",
           repair_run_id: "rep-8", from_release_id: "r1", to_release_id: "r2",
-          summary: "page_to_cursor → r2 (learned)",
+          summary: "page_to_cursor → r2",
         },
         {
           id: "ap-7", at: "2026-10-30T08:00:00Z", actor: "alice", kind: "reject",
           business_decision: false, learned: false, connector_id: "c-h", connector_name: "HarborPMS",
           repair_run_id: "rep-7", from_release_id: null, to_release_id: null,
-          summary: "Denied: kept everything as-is, contact the vendor",
+          summary: "kept everything as-is, contact the vendor",
         },
       ],
     });
@@ -138,6 +138,10 @@ describe("KnowledgePage", () => {
     expect(screen.getByTestId("knowledge-decision-1")).toHaveTextContent("Approved (learned)");
     expect(screen.getByTestId("knowledge-decision-1")).toHaveTextContent("page_to_cursor");
     expect(screen.getByTestId("knowledge-decision-2")).toHaveTextContent("Denied");
+    // The badge carries the kind once; the summary never repeats it.
+    expect(screen.getByTestId("knowledge-decision-0").textContent).not.toMatch(/Business decision.*Business decision/);
+    expect(screen.getByTestId("knowledge-decision-1").textContent).not.toMatch(/\(learned\).*\(learned\)/);
+    expect(screen.getByTestId("knowledge-decision-2").textContent).not.toMatch(/Denied.*Denied/);
     // Learned entries stay their own section.
     expect(screen.getByTestId("knowledge-entry-0")).toBeInTheDocument();
   });

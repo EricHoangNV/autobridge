@@ -420,19 +420,22 @@ def knowledge_payload(db: Session) -> dict[str, Any]:
             if isinstance(raw_proposal_any, dict):
                 effect = str(raw_proposal_any.get("effect") or "")
                 label = str(raw_proposal_any.get("label") or "")
-            summary = f"Business decision: {effect or label or 'accepted the proposed change'}"
+            # The kind badge already reads "Business decision"; the summary
+            # carries only what was decided (no "Business decision Business
+            # decision: …").
+            summary = effect or label or "accepted the proposed change"
         elif kind == "approve":
             rule = (dec_run.rule_id if dec_run is not None and dec_run.rule_id else "") or (
                 dec_run.drift_class if dec_run is not None and dec_run.drift_class else "fix"
             )
-            # REQ-068 item 8: the kind badge already reads "Approved", so
-            # the summary must not repeat it ("Approved Approved …").
+            # REQ-068 item 8: the kind badge already reads "Approved" (and
+            # "(learned)" when it taught a fix), so the summary repeats
+            # neither ("Approved Approved …", "(learned) … (learned)").
             summary = f"{rule} → {_release_version(approval.to_release_id)}"
-            if learned:
-                summary += " (learned)"
         elif kind == "reject":
             if was_escalation:
-                summary = "Denied: kept everything as-is, contact the vendor"
+                # The kind badge already reads "Denied".
+                summary = "kept everything as-is, contact the vendor"
             else:
                 summary = "Rejected the proposed patch"
         elif kind == "rollback":

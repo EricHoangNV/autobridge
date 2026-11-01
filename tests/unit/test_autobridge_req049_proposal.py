@@ -908,7 +908,8 @@ def test_knowledge_lists_business_decision_unlearned(tmp_path: pathlib.Path) -> 
     assert len(business) == 1
     assert business[0]["kind"] == "approve"
     assert business[0]["learned"] is False
-    assert business[0]["summary"].startswith("Business decision:")
+    # The badge says "Business decision"; the summary does not repeat it.
+    assert not business[0]["summary"].startswith("Business decision")
     assert "Retarget the totals check." in business[0]["summary"]
     assert business[0]["connector_name"] == "harborpms"
 
@@ -937,7 +938,8 @@ def test_knowledge_lists_deny_and_rollback(tmp_path: pathlib.Path) -> None:
         s.commit()
         payload = knowledge_payload(s)
     by_kind = {d["kind"]: d for d in payload["decisions"]}
-    assert by_kind["reject"]["summary"].startswith("Denied:")
+    # The badge reads "Denied"; the summary does not repeat it.
+    assert by_kind["reject"]["summary"] == "kept everything as-is, contact the vendor"
     # REQ-069 item 5: the kind badge already reads "Rolled back", so the
     # summary names only the versions (twin of the Approved fix).
     assert by_kind["rollback"]["summary"] == "r2 → r3"

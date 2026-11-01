@@ -1813,7 +1813,9 @@ def _step4_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
                 and ours[0].get("kind") == "approve"
                 and ours[0].get("business_decision") is True
                 and ours[0].get("learned") is False
-                and str(ours[0].get("summary", "")).startswith("Business decision:"),
+                # The "Business decision" label is the kind badge; the
+                # summary carries only what was decided.
+                and bool(str(ours[0].get("summary", "")).strip()),
                 f"knowledge decisions for this repair: {ours}",
             )
             approval_leg["knowledge_decision"] = ours[0] if ours else None
