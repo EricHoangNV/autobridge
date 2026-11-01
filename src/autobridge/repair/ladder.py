@@ -2692,6 +2692,11 @@ def run_frontier_climb(
         if not parsed.get("proposal"):
             _stamp_outcome("no proposal")
         else:
+            # REQ-070: keep the model's wording for this escalation — a
+            # passing retry plain patch carries no label/effect of its
+            # own and is offered under call 1's.
+            proposal_label = str(parsed.get("proposal_label") or "")
+            proposal_effect = str(parsed.get("proposal_effect") or "")
             _proposal_adopted, _proposal_error = _validate_escalation_proposal(
                 list(parsed["proposal"]),
                 validate_against=validate_against,
@@ -2749,14 +2754,21 @@ def run_frontier_climb(
                     usage = _merge_model_usage(usage, _retry_delta)
                     l3_entry["retry_model_usage_delta"] = _retry_delta
                     if _retry_parsed["kind"] == "patch" and _retry_parsed.get("patch"):
-                        # The retry answered with a plain patch: it
-                        # supersedes the escalation — a normal proposal.
-                        model_escalated = False
-                        model_question = ""
+                        # REQ-070: the retry follows a refused escalation
+                        # proposal — its plain patch is a corrected proposal
+                        # for that same escalation (operator-approved, never
+                        # auto-applied). The escalation keeps call 1's
+                        # question and rationale; call 1's label/effect
+                        # still name the proposal (a plain patch carries
+                        # neither). A semantic drift is still never
+                        # auto-patched: the controller escalates with the
+                        # proposal in the bundle.
                         proposal = list(_retry_parsed["patch"])
                         _retry_dry = _dry_judge(proposal)
                         if _retry_dry is not None:
-                            # The one retry is spent: drop, question-only.
+                            # The one retry is spent: drop, question-only
+                            # with the model's question (not the engine's
+                            # generic one).
                             proposal = None
                             l3_entry["proposal_dropped"] = (
                                 f"L3 retry proposal dropped ({_retry_dry}); "
@@ -2765,7 +2777,14 @@ def run_frontier_climb(
                             _record_proposal(list(_retry_parsed["patch"]), passed=False, error=_retry_dry)
                             _stamp_proposal_outcome(adopted=False, dry_error=_retry_dry)
                         else:
-                            l3_entry["action"] = "frontier_generate"
+                            # Adopted: clear call 1's drop record so the row
+                            # never says "dropped" and "verified" at once.
+                            # The action stays model_escalation — this is
+                            # still the model's escalation, now with a
+                            # passing proposal to approve.
+                            l3_entry.pop("proposal_dropped", None)
+                            l3_entry["proposal_label"] = proposal_label
+                            l3_entry["proposal_effect"] = proposal_effect
                             l3_entry["proposal"] = [dict(op) for op in proposal]
                             l3_entry["proposal_ops"] = len(proposal)
                             l3_entry["proposal_pointers"] = sorted(

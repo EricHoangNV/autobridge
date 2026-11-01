@@ -1392,3 +1392,197 @@ def test_l3_retry_question_only_labels_no_proposal() -> None:
     assert [p["passed"] for p in l3["proposals"]] == [False, False]
     frontier_rows = [r for r in rows if r.tier == "frontier"]
     assert [r.outcome for r in frontier_rows] == ["rejected by dry-run", "no proposal"]
+
+
+def _req070_fault() -> tuple[Any, Any]:
+    """Break parcel isolating the Reservation check (REQ-070).
+
+    The REQ-069 gate also judges FolioCharge: pin its page so the gate
+    covers the Reservation proposal under test.
+    """
+    spec = _harbor_spec()
+    _summary, fault = _harbor_fault(spec)
+    fault = _fault_with_gross(fault, _record_sum(fault))
+    folio_net = _folio_sum(fault)
+    fault = _fault_with_folio_sums(fault, folio_net, folio_net)
+    return spec, fault
+
+
+_REQ070_QUESTION = "Should total_amount track the vendor net amount?"
+
+
+def _req070_first_text() -> str:
+    return json.dumps(
+        {
+            "escalate": _REQ070_QUESTION,
+            "rationale": "Observed amounts sum below the gross baseline.",
+            "proposal": {
+                "label": "Accept net",
+                "effect": "Retarget the totals check to the net total.",
+                "patch": [
+                    {
+                        "op": "replace",
+                        "path": "/entities/Reservation/checks/3/compare_to",
+                        "value": "$.net_sum",
+                    }
+                ],
+            },
+        }
+    )
+
+
+def test_l3_retry_plain_patch_becomes_escalation_proposal() -> None:
+    """REQ-070 item 1: a passing plain-patch retry stays the escalation.
+
+    Call 1 escalates carrying a proposal the dry-run refuses; the one
+    retry answers a plain patch that passes. The retry's patch becomes
+    the escalation's proposal (operator-approved, never auto-applied):
+    call 1's question, rationale, label and effect are kept, the action
+    stays model_escalation, and call 1's drop record is cleared.
+    """
+    spec, fault = _req070_fault()
+    retry = json.dumps(
+        {
+            "patch": [
+                {
+                    "op": "replace",
+                    "path": "/entities/Reservation/checks/3/compare_to",
+                    "value": "$.gross_sum",
+                }
+            ],
+            "rationale": "Use the documented page total.",
+        }
+    )
+    climb, rows, _seen = _run_l3_climb(spec, fault, _req070_first_text(), retry, run_id="l3-req070-adopt")
+    assert climb["model_escalated"] is True
+    assert climb["model_question"] == _REQ070_QUESTION
+    assert climb["proposal"] == [
+        {
+            "op": "replace",
+            "path": "/entities/Reservation/checks/3/compare_to",
+            "value": "$.gross_sum",
+        }
+    ]
+    assert climb["proposal_label"] == "Accept net"
+    assert climb["proposal_effect"] == "Retarget the totals check to the net total."
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "model_escalation"
+    assert l3["retried"] is True
+    assert "proposal_dropped" not in l3
+    assert [p["passed"] for p in l3["proposals"]] == [False, True]
+    frontier_rows = [r for r in rows if r.tier == "frontier"]
+    assert [r.outcome for r in frontier_rows] == ["rejected by dry-run", "passed dry-run"]
+
+
+def test_l3_retry_plain_patch_failure_keeps_model_question() -> None:
+    """REQ-070 item 1: a failed retry drops to question-only, model kept.
+
+    Call 1 escalates carrying a proposal the dry-run refuses; the retry
+    answers a plain patch that also fails the gate. The repair stays an
+    escalation with call 1's question (not the engine's generic one).
+    """
+    spec, fault = _req070_fault()
+    retry = json.dumps(
+        {
+            "patch": [
+                {
+                    "op": "replace",
+                    "path": "/entities/Reservation/checks/3/compare_to",
+                    "value": "$.net_sum",
+                }
+            ],
+            "rationale": "Try the net total again.",
+        }
+    )
+    climb, rows, _seen = _run_l3_climb(spec, fault, _req070_first_text(), retry, run_id="l3-req070-drop")
+    assert climb["model_escalated"] is True
+    assert climb["model_question"] == _REQ070_QUESTION
+    assert climb["proposal"] is None
+    l3 = next(a for a in climb["attempts"] if a["rung"] == 3)
+    assert l3["action"] == "model_escalation"
+    assert "proposal_dropped" in l3
+    assert [p["passed"] for p in l3["proposals"]] == [False, False]
+    frontier_rows = [r for r in rows if r.tier == "frontier"]
+    assert [r.outcome for r in frontier_rows] == ["rejected by dry-run", "rejected by dry-run"]
+
+
+def test_controller_escalation_carries_retry_adopted_proposal() -> None:
+    """REQ-070 items 1-2: the bundle carries the retry-adopted proposal.
+
+    Decision escalate with no candidate patch (a semantic drift is never
+    auto-patched); the bundle holds call 1's question with the retry's
+    passing patch under call 1's label.
+    """
+    from autobridge.llm.provider import Budget, Completion, FakeProvider, Usage
+    from autobridge.repair.controller import RepairController
+    from autobridge.repair.knowledge import KnowledgeCache
+    from tests.unit.test_autobridge_frontier_climb import gross_net_hypotheses
+
+    spec, fault = _req070_fault()
+    retry = json.dumps(
+        {
+            "patch": [
+                {
+                    "op": "replace",
+                    "path": "/entities/Reservation/checks/3/compare_to",
+                    "value": "$.gross_sum",
+                }
+            ],
+            "rationale": "Use the documented page total.",
+        }
+    )
+    seen: list[str] = []
+
+    def _frontier(messages: Any, **kwargs: Any) -> Completion:
+        _ = kwargs
+        seen.append(str(messages[1]["content"]))
+        return Completion(
+            text=_req070_first_text() if len(seen) == 1 else retry, usage=Usage(10, 10)
+        )
+
+    fake = FakeProvider(
+        responses={
+            "small": Completion(
+                text='["gross_is_canonical", "net_is_canonical"]', usage=Usage(4, 4)
+            ),
+            "frontier": _frontier,
+        }
+    )
+    controller = RepairController(knowledge_cache=KnowledgeCache())
+    result = controller._handle_semantic_climb(
+        spec=spec,
+        drift_class="SEMANTIC_VALUE_DRIFT",
+        signals_list=[],
+        fingerprint_delta={"semantic": "gross_to_net"},
+        extra_dict={},
+        vendor_val="harbor",
+        drift_event_ids=None,
+        session=None,
+        hypotheses=gross_net_hypotheses(),
+        enumerator_yield_count=1,
+        provider=fake,
+        budget=Budget(),
+        run_id="l3-req070-bundle",
+        scenario="gross_to_net",
+        validate_against=spec,
+        evidence={
+            "patch_target": {
+                "allowed_pointers": ["/entities/Reservation/checks/3/compare_to"]
+            }
+        },
+        dry_run_fault=fault,
+    )
+    assert result.decision == "escalate"
+    assert result.candidate_patch is None
+    assert result.escalation_bundle is not None
+    as_dict = result.escalation_bundle.to_dict()
+    assert as_dict["question"] == _REQ070_QUESTION
+    assert as_dict["proposal"]["label"] == "Accept net"
+    assert as_dict["proposal"]["patch"] == [
+        {
+            "op": "replace",
+            "path": "/entities/Reservation/checks/3/compare_to",
+            "value": "$.gross_sum",
+        }
+    ]
+    assert "Observed amounts sum below the gross baseline" in as_dict["reason"]

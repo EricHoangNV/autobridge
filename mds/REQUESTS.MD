@@ -5,7 +5,7 @@
 Owner priority (2026-11-01 09:45): **REQ-070** (REQ-066..069 done; the real beacon freeze waits for REQ-070). Do not start REQ-051 until the owner says so.
 
 ### REQ-070 — Semantic escalation keeps a passing retry proposal (deck 5 Approve path) (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-01 02:35)
+Status: DONE (sbx1 2026-11-01 -- retry plain-patch adopted as escalation proposal + model question kept + drop reason cleared; no prompt change, full gates green; owner steps: keyed make record-frontier gross_to_net (optional, hashes unchanged) then keyed walkthrough re-run to close)
 Owner keyed walkthrough on `df09f082`: `tmp/walkthrough-df09f082/FINDINGS.md` (gitignored; read in place). Everything
 else matched the script; this is the one remaining deck 5 defect.
 
