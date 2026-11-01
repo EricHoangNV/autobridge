@@ -4221,3 +4221,26 @@ Agent: opencode meta/muse-wonder-1.0 (escalation)
 - 3 new tests; full make test green; lint + mypy green.
 - Unkeyed rehearsal round 6603643 FAULTS=10 TRIALS=1: engine arms 0.40/0.40/$0/0tok/0 wrong; frontier 0.00 (no key). Instance 7 now scores; instance 3 detected, needs a keyed model patch.
 - Simulators already fixed (32a482c7, verified). Owner step: keyed rehearsal with live key.
+
+## Daily directives audit d2a13125..b773926b
+**Date:** 2026-11-02
+**Ref:** VALIDATION mode (daily directives audit); DIRECTIVES §§1–8, plan §1
+
+**What was done:**
+- Audited 5 commits (prior audit + REQ-078 reopen/claim/fix/build-note) against every directive section and the plan §1 standing rules.
+- Verified REQ-078 reopen item 1 (bench engine arm takes the production path via the shared `prepare_climb_inputs`/`build_dry_run_fault`, faulted summary carried through all diagnostics constructors, rung-named reasons) and the item-4 legacystay/meridian fixes with their guard tests.
+- Confirmed item 8 simulator fixes pre-date the range (`32a482c7`); item 10 keyed rehearsal remains the tracked REQ-078 owner step. Heldout/beacon untouched; trailers correct.
+- Filed REQ-079 for the full-`make test` teardown DNS-guard flake (3068 passed, 3–4 varying teardown ERRORs; pre-existing, REQ-076 family).
+
+**Key decisions:**
+- REQ-079 filed rather than fixed: root-causing a cross-test background-thread leak is beyond an audit's <30 min fix window, and retries/quarantines are forbidden by REQ-076's rule.
+- Bench `except Exception` evidence-prep swallow noted in AUDIT.md without a REQ (bench-only, happy-path tests guard it).
+
+**Files changed:**
+- `mds/AUDIT.md` — audit record for `b773926b`
+- `mds/REQUESTS.MD` — REQ-079 filed (open)
+- `mds/progress-log.md`, `mds/progress-state.md` — this entry + next-tasks update
+
+**Notes for next iteration:**
+- Agent: opencode meta/muse-wonder-1.0 (escalation)
+- REQ-079 blocks a reliably green `make test`; REQ-078 keyed rehearsal and P1.W10.3 remain owner steps; REQ-051 deferred.
