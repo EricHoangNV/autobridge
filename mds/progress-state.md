@@ -2,13 +2,13 @@
 
 ## Current State
 
-REQ-072 DONE in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation)): restart with an in-flight sync no longer wedges the connector (orphaned sync/build fail with reasons at startup, repairs re-queued for the drain; stale-job bound unblocks the scheduler; builds claim exactly their job); full gates green.
+REQ-073 DONE in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation)): repair page shows only this repair's model calls, one consistent verifier verdict, plain hypotheses line, record-derived approval steps, no Reject/Roll back after approval (release-list rollback before), full-width sync-runs note; full gates green.
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
-  - REQ-001…REQ-072 all DONE except IN_PROGRESS/BLOCKED owner keyed/live remainders below; REQ-051 DEFERRED by owner
+  - REQ-001…REQ-073 all DONE except IN_PROGRESS/BLOCKED owner keyed/live remainders below; REQ-051 DEFERRED by owner
   - Phase 2 (P2.S1.1…P2.S7.1) complete
-- Tests: `make test` 3006 + 138 + 415 passed, autobridge/verifier/simulators gates green; UI 324 passed; lint/typecheck/contracts/openapi-check green. No live stack in sbx1.
+- Tests: `make test` green (autobridge 3006 @90.03%, verifier @91.04%, simulators green); UI 340 passed; lint/typecheck/contracts/openapi-check green. No live stack in sbx1.
 - Stack: no live stack in sbx1; `.local/ACTIVE` marker present but all pids dead (stale)
 
 ## Next tasks

@@ -160,7 +160,7 @@ const mockModelUsage = {
   ],
 };
 
-function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger, runEvidence: unknown = [mockDerivation], connector: unknown = mockConnector, evidence: unknown = [mockEvidence], sync: unknown = mockSyncRun) {
+function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger, runEvidence: unknown = [mockDerivation], connector: unknown = mockConnector, evidence: unknown = [mockEvidence], sync: unknown = mockSyncRun, syncRuns: unknown = [], usage: unknown = mockModelUsage) {
   const repairId = (repair as { id: string }).id;
   mockedUseSWR.mockImplementation(((key: unknown) => {
     const ok = (data: unknown) => ({ data, error: undefined, isLoading: false, mutate: vi.fn() });
@@ -171,10 +171,10 @@ function mockAll(repair: unknown = mockRepair, ledger: unknown = mockLedger, run
     if (key.startsWith("evidence-for-repair-")) return ok(evidence);
     if (key.endsWith("/evidence")) return ok(runEvidence);
     if (key.startsWith("/runs/")) return ok(sync);
-    if (key.endsWith("/sync-runs")) return ok([]);
+    if (key.endsWith("/sync-runs")) return ok(syncRuns);
     if (key.startsWith("/connectors/")) return ok(connector);
     if (key === "/capabilities") return ok({ rules: [{ id: "page_to_cursor", fixes: "page→cursor", confidence: 0.95 }] });
-    if (key === "/metrics/model-usage") return ok(mockModelUsage);
+    if (key === "/metrics/model-usage") return ok(usage);
     // ApprovePreviewSection, AfterApproveTracker and anything else: no data.
     return { data: undefined, error: undefined, isLoading: false, mutate: vi.fn() };
   }) as unknown as typeof useSWR);
@@ -249,10 +249,11 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("verifier-checks-line")).toHaveTextContent("1/1 checks pass");
   });
 
-  it("shows the tile when the rule needed no enumeration (REQ-054)", () => {
+  it("shows the plain line when the rule needed no enumeration (REQ-054, REQ-073 item 3)", () => {
     mockAll(mockRepair, mockLedger, [], mockConnector, []);
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    expect(screen.getByTestId("proof-hypotheses")).toHaveTextContent("The rule needed no enumeration");
+    expect(screen.getByTestId("proof-hypotheses")).toHaveTextContent("no hypotheses needed: a rule matched");
+    expect(screen.getByTestId("proof-hypotheses")).not.toHaveTextContent("0 · 0");
     expect(screen.queryByTestId("hypothesis-funnel")).not.toBeInTheDocument();
   });
 
@@ -305,24 +306,30 @@ describe("RepairDetailPage", () => {
   });
 
   it("escalate rail has no Approve button and a Deny that closes it (REQ-048, REQ-054)", () => {
-    mockAll({
-      ...mockRepair,
-      decision: "escalate",
-      verifier_report_id: null,
-      candidate_patch: [],
-      ladder_trace: [{ level: 4, action: "escalate", reason: "no verified fix" }],
-      escalation_bundle: { reason: "no verified fix", question: "Which mapping is correct?", suggested_action: "pick one" },
-    });
+    mockAll(
+      {
+        ...mockRepair,
+        decision: "escalate",
+        verifier_report_id: null,
+        candidate_patch: [],
+        ladder_trace: [{ level: 4, action: "escalate", reason: "no verified fix" }],
+        escalation_bundle: { reason: "no verified fix", question: "Which mapping is correct?", suggested_action: "pick one" },
+      },
+      undefined,
+      undefined,
+      mockConnectorWithSpec,
+    );
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
     expect(screen.queryByTestId("repair-approve-proposal-btn")).not.toBeInTheDocument();
     expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
     expect(screen.queryByText(/Approve\/Reject available only when decision is/)).not.toBeInTheDocument();
-    // Deny closes it; roll back stays available.
+    // Deny closes it; roll back stays available, picked from the release list.
     const deny = screen.getByTestId("repair-deny-btn");
     expect(deny).not.toBeDisabled();
     expect(deny).toHaveTextContent(/Deny: keep everything-as-is|Deny: keep everything as-is/);
     expect(screen.getByTestId("rollback-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("rollback-target-select")).toBeInTheDocument();
     expect(screen.getByTestId("repair-section-approve")).toHaveTextContent("or Deny below to close this repair");
   });
 
@@ -656,8 +663,11 @@ describe("RepairDetailPage", () => {
   it("renders each fact once: one model-cost tile, one patch table (REQ-054)", () => {
     mockAll();
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
-    // "model calls" reads once (the tile label); the ledger box is omitted.
-    expect(screen.getAllByText(/model calls/i)).toHaveLength(1);
+    // "model calls" reads in the tile label and the appendix heading (the
+    // appendix holds this repair's calls only — REQ-073 item 1); the ledger
+    // box is omitted.
+    expect(screen.getAllByText(/model calls/i)).toHaveLength(2);
+    expect(screen.getByTestId("proof-model-calls")).toHaveTextContent("Model calls");
     // The patch reads once as the table; the raw JSON stays collapsed.
     expect(screen.getByTestId("op-row-0")).toBeInTheDocument();
     expect(screen.getByTestId("patch-raw")).toBeInTheDocument();
@@ -705,7 +715,7 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("repair-subline")).toHaveTextContent(/Approve to ship it as release r2/);
   });
 
-  it("approved repair reads shipped r2 with rollback to r1, never Approve r3 (REQ-067 item 5)", () => {
+  it("approved repair reads shipped r2, points rollback at the connector page, no Reject/Roll back (REQ-067 item 5, REQ-073 items 4-5)", () => {
     mockAll(
       {
         ...mockRepair,
@@ -724,17 +734,33 @@ describe("RepairDetailPage", () => {
       {
         ...mockConnector,
         active_release_id: "rel-2",
+        state: "working",
+        activity: "in sync",
         releases: [
           { id: "rel-1", version: 1, spec: {}, parent_release_id: null },
           { id: "rel-2", version: 2, spec: {}, parent_release_id: "rel-1" },
         ],
       },
+      undefined,
+      undefined,
+      [{ id: "sync-v", release_id: "rel-2", outcome: "Complete", unmet_criteria: [], started_at: new Date().toISOString() }],
     );
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("repair-subline")).toHaveTextContent(/Shipped as release r2/);
     expect(screen.getByTestId("repair-subline")).not.toHaveTextContent(/Approve to ship/);
-    expect(screen.getByTestId("decided-facts")).toHaveTextContent("Reversible: roll back to r1 stays available");
+    expect(screen.getByTestId("decided-facts")).toHaveTextContent("Reversible from the");
+    expect(screen.getByTestId("decided-facts")).toHaveTextContent("connector page");
+    expect(screen.getByTestId("decided-facts").textContent).not.toMatch(/stays available/);
     expect(screen.getByTestId("repair-sticky-summary")).toHaveTextContent("Shipped as r2");
+    // REQ-073 item 5: the approved rail shows the outcome only.
+    expect(screen.getByTestId("repair-actions")).toHaveTextContent("Approved ✓");
+    expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rollback-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rollback-target-select")).not.toBeInTheDocument();
+    // REQ-073 item 4: every approval step derives done from the records.
+    for (const step of ["approval", "activated", "sync", "complete", "working"]) {
+      expect(screen.getByTestId(`after-approve-step-${step}`)).toHaveAttribute("data-done", "yes");
+    }
   });
 
   it("escalated chapter 3 shows the tested proposal Now → Proposed, with the dry-run and the field note (REQ-055 items 2, 3b)", () => {
@@ -868,19 +894,24 @@ describe("RepairDetailPage", () => {
     expect(screen.getByTestId("verifier-dry-run-note")).toHaveTextContent("no patch to verify (the model escalated)");
   });
 
-  it("Deny and rollback stay usable side by side in the rail (REQ-055 item 3d)", () => {
-    mockAll({
-      ...mockRepair,
-      decision: "escalate",
-      verifier_report_id: null,
-      candidate_patch: [],
-      ladder_trace: [{ level: 4, action: "escalate", reason: "no verified fix" }],
-      escalation_bundle: { reason: "no verified fix", question: "Which mapping is correct?", suggested_action: "pick one" },
-    });
+  it("Deny and rollback stay usable side by side in the rail (REQ-055 item 3d, REQ-073 item 6)", () => {
+    mockAll(
+      {
+        ...mockRepair,
+        decision: "escalate",
+        verifier_report_id: null,
+        candidate_patch: [],
+        ladder_trace: [{ level: 4, action: "escalate", reason: "no verified fix" }],
+        escalation_bundle: { reason: "no verified fix", question: "Which mapping is correct?", suggested_action: "pick one" },
+      },
+      undefined,
+      undefined,
+      mockConnectorWithSpec,
+    );
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     // Both actions render in the rail; the wrap fix is asserted in CSS below.
     expect(screen.getByTestId("repair-deny-btn")).toBeInTheDocument();
-    expect(screen.getByTestId("rollback-target-input")).toBeInTheDocument();
+    expect(screen.getByTestId("rollback-target-select")).toBeInTheDocument();
     expect(screen.getByTestId("rollback-btn")).toHaveTextContent("Roll back");
   });
 
@@ -1172,5 +1203,82 @@ describe("RepairDetailPage", () => {
     );
     render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
     expect(screen.getByTestId("rung-chip-2")).toHaveAttribute("title", "skipped");
+  });
+
+  it("shows only this repair's model calls, never other repairs' bars (REQ-073 item 1)", () => {
+    const mixedUsage = {
+      ...mockModelUsage,
+      entries: [
+        ...mockModelUsage.entries,
+        {
+          provider: "anthropic",
+          model: "muse-spark-1.3",
+          tier: "frontier",
+          total_calls: 2,
+          total_input_tokens: 6000,
+          total_output_tokens: 7000,
+          total_cost: "0.06",
+          by_run: [{ run_id: "some-other-repair", purpose: "l3-generate-patch", tokens: 13000 }],
+        },
+      ],
+    };
+    mockAll(undefined, undefined, undefined, undefined, undefined, undefined, undefined, mixedUsage);
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    // Only this repair's run renders, highlighted — never the other repair.
+    const rows = screen.getAllByTestId("model-usage-chart-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute("data-run-id", "repair-abc-123");
+    expect(rows[0]).toHaveAttribute("data-highlight", "true");
+  });
+
+  it("a 0-call repair reads no-model-calls, not another repair's tokens (REQ-073 item 1)", () => {
+    const otherOnlyUsage = {
+      ...mockModelUsage,
+      entries: mockModelUsage.entries.map((e) => ({
+        ...e,
+        by_run: (e.by_run ?? []).map((b) => ({ ...b, run_id: "some-other-repair" })),
+      })),
+    };
+    mockAll(
+      {
+        ...mockRepair,
+        model_usage: { frontier_tokens: 0, small_tokens: 0, calls: 0 },
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      otherOnlyUsage,
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("model-usage-chart-empty")).toHaveTextContent("No model calls in this repair.");
+    expect(screen.queryByTestId("model-usage-chart-row")).not.toBeInTheDocument();
+  });
+
+  it("an approved verified fix reads one consistent pass, never fail (REQ-073 item 2)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "approved",
+      candidate_patch: [{ op: "replace", path: "/operations/list/pagination/strategy", value: "cursor" }],
+      visible_test_results: [{ name: "records_match", passed: true }],
+      verifier_report_id: "report-xyz",
+      approval: {
+        id: "ap-1",
+        actor: "eric",
+        decision: "approve",
+        from_release_id: "rel-1",
+        to_release_id: "rel-2",
+        created_at: new Date().toISOString(),
+      },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("verifier-verdict-badge")).toHaveAttribute("data-verdict", "pass");
+    expect(screen.getByTestId("verifier-verdict")).not.toHaveTextContent("fail");
+    expect(screen.getByTestId("verifier-checks-line")).toHaveTextContent("1/1 checks pass");
+    expect(screen.getByTestId("verifier-report-id")).toHaveTextContent("report report-x");
+    // The report id reads once on the page.
+    expect(screen.getByTestId("repair-section-did").textContent?.match(/report-xyz|report report-xy/g)?.length ?? 0).toBeLessThanOrEqual(2);
   });
 });

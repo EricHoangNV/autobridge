@@ -37,6 +37,14 @@ type Props = {
   usage: UsageResponse | null | undefined;
   /** Run ids related to the current repair — highlighted in the chart. */
   highlightRunIds?: string[] | null;
+  /**
+   * REQ-073 item 1: on a repair page show only this repair's model calls.
+   * When set, rows for other runs are excluded client-side; a repair with
+   * no calls of its own renders the "No model calls in this repair" empty
+   * state instead of other repairs' bars. Unset keeps the cross-run view
+   * (used nowhere on repair pages anymore, kept for the component API).
+   */
+  onlyRunIds?: string[] | null;
   /** Max rows rendered (highest-token runs first). Default 12. */
   maxRuns?: number;
   loading?: boolean;
@@ -62,13 +70,15 @@ type RunRow = {
   purposes: string[];
 };
 
-function aggregatePerRun(usage: UsageResponse): RunRow[] {
+function aggregatePerRun(usage: UsageResponse, onlyRunIds?: string[] | null): RunRow[] {
+  const only = onlyRunIds && onlyRunIds.length ? new Set(onlyRunIds) : null;
   const rows = new Map<string, RunRow>();
   for (const entry of usage.entries ?? []) {
     const tier = (entry.tier || "").toLowerCase();
     const isFrontier = tier === "frontier";
     for (const b of entry.by_run ?? []) {
       const runId = typeof b.run_id === "string" && b.run_id ? b.run_id : "unknown";
+      if (only && !only.has(runId)) continue;
       const tokens = toNumber(b.tokens);
       let row = rows.get(runId);
       if (!row) {
@@ -95,7 +105,7 @@ function aggregatePerRun(usage: UsageResponse): RunRow[] {
  * where tokens went without leaving the UI. Pure divs, no animation, no
  * chart dependency.
  */
-export function ModelUsageChart({ usage, highlightRunIds, maxRuns = 12, loading }: Props) {
+export function ModelUsageChart({ usage, highlightRunIds, onlyRunIds, maxRuns = 12, loading }: Props) {
   if (loading) {
     return (
       <div data-testid="model-usage-chart-loading" className="border border-dashed px-4 py-4 text-center text-sm text-ink-2">
@@ -112,11 +122,11 @@ export function ModelUsageChart({ usage, highlightRunIds, maxRuns = 12, loading 
     );
   }
 
-  const rows = aggregatePerRun(usage);
+  const rows = aggregatePerRun(usage, onlyRunIds);
   if (!rows.length) {
     return (
       <div data-testid="model-usage-chart-empty" className="border border-dashed border-rule px-4 py-4 text-center text-sm text-ink-2">
-        No per-run token data in this usage response.
+        {onlyRunIds && onlyRunIds.length ? "No model calls in this repair." : "No per-run token data in this usage response."}
       </div>
     );
   }

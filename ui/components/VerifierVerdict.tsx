@@ -45,20 +45,30 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
   const hasReport = !!verifierReportId;
   const hasEscalation = !!escalationBundle;
 
-  // Infer verdict from report existence + decision + visible tests
+  // REQ-073 item 2: one consistent verdict from the verifier report. A
+  // linked report means the verifier passed the patch: with visible checks
+  // it reads pass/fail from them (N of M, shown below); with none recorded
+  // it still reads pass — never "fail" next to a passing report.
+  const { passed, total } = countPassed(visibleTestResults ?? []);
   const verdict: string = (() => {
-    if (hasReport && decision === "propose") return "pass";
-    if (hasReport && decision === "escalate") return "fail";
-    if (!hasReport && decision === "escalate") return "not_verified";
-    if (!hasReport && !hasEscalation) return "pending";
+    if (hasReport) return total > 0 ? (passed === total ? "pass" : "fail") : "pass";
+    if (decision === "escalate") return "not_verified";
+    if (!hasEscalation) return "pending";
     return decision === "propose" ? "pass" : "fail";
   })();
 
-  const { passed, total } = countPassed(visibleTestResults ?? []);
+  const scoreHead = total > 0 ? passed : verdict === "pass" ? "✓" : "—";
+  const scoreNote =
+    total > 0
+      ? passed === total
+        ? "checks pass on this patch"
+        : "checks fail on this patch"
+      : hasReport
+        ? "passed on this patch"
+        : "checks pass so far";
 
   return (
     <div data-testid="verifier-verdict">
-      <h2 className="kicker">Verifier, hidden fixtures</h2>
       {verdict === "pending" ? (
         <p className="pend-only" style={{ display: "block", fontSize: 26, lineHeight: 1.2, fontWeight: 750, color: "var(--ink-2)", maxWidth: "18ch" }}>
           Not run yet. The verifier waits for a patch.
@@ -66,17 +76,17 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
       ) : null}
       <dl className="repair-score repair-past">
         <dt className="num">
-          {total > 0 ? passed : "—"}
+          {scoreHead}
           <small>/{total > 0 ? total : "—"}</small>
         </dt>
-        <dd>checks pass{hasReport ? " on this patch" : " so far"}</dd>
+        <dd>{scoreNote}</dd>
       </dl>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <span data-testid="verifier-verdict-badge" data-verdict={verdict} className="font-mono text-xs text-ink-2">
           {verdict}
         </span>
         {hasReport ? (
-          <span data-testid="verifier-report-id" className="font-mono text-xs text-ink-2">
+          <span data-testid="verifier-report-id" title={verifierReportId} className="font-mono text-xs text-ink-2">
             report {verifierReportId!.slice(0, 8)}
           </span>
         ) : null}
@@ -87,15 +97,9 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
         ) : null}
       </div>
 
-      {verifierReportId ? (
-        <div className="mt-2 text-xs text-ink-2">
-          Verifier report{" "}
-          <span className="font-mono text-ink" title={verifierReportId}>
-            {verifierReportId.slice(0, 12)}…
-          </span>{" "}
-          linked to this repair. Full fixture rows are never returned in API responses.
-        </div>
-      ) : null}
+      <p className="mt-2 text-xs text-ink-2">
+        Judged on hidden fixtures — full fixture rows are never returned in API responses.
+      </p>
 
       {escalationBundle ? (
         <div data-testid="escalation-bundle" className="mt-3 border border-rule px-3 py-2.5">

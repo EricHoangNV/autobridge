@@ -80,7 +80,7 @@ describe("SyncRunsTable edge link note (REQ-071)", () => {
       data_readiness: { freshness: "current", completeness: "complete", edge_link: link },
     });
 
-  it("notes a drop on the later row when the reconnect counter went up", () => {
+  it("notes a drop on the later row, on its own full-width line (REQ-071, REQ-073 item 7)", () => {
     const earlier = edgeRun("s-earlier", edgeLink({ reconnects: 2, posting_keys: ["k-a", "k-b"] }), 10);
     const later = edgeRun(
       "s-later",
@@ -88,11 +88,17 @@ describe("SyncRunsTable edge link note (REQ-071)", () => {
       13,
     );
     // Newest first, the API order.
-    render(<SyncRunsTable syncRuns={[later, earlier]} isEdge />);
+    const { container } = render(<SyncRunsTable syncRuns={[later, earlier]} isEdge />);
     expect(screen.getByTestId("link-note-s-later")).toHaveTextContent(
       "link dropped, re-handshaked · +3 postings, 0 lost, 0 duplicated",
     );
     expect(screen.queryByTestId("link-note-s-earlier")).not.toBeInTheDocument();
+    // The note lives in a full-width row under the data row — never inside
+    // the Outcome cell — with its own row testid.
+    const noteRow = screen.getByTestId("sync-run-note-row-s-later");
+    expect(noteRow.tagName.toLowerCase()).toBe("tr");
+    expect(noteRow.querySelector("td")?.getAttribute("colspan")).toBe("5");
+    expect(container.querySelector('[data-testid="sync-run-row-s-later"] td:nth-child(2)')?.textContent).not.toContain("re-handshaked");
   });
 
   it("reads link down when the link was down at sync time", () => {

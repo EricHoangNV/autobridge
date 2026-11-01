@@ -9,6 +9,45 @@ describe("VerifierVerdict", () => {
     expect(screen.getByTestId("verifier-verdict-badge").getAttribute("data-verdict")).toBe("pass");
   });
 
+  it("shows pass for an approved verified fix, never fail (REQ-073 item 2)", () => {
+    render(
+      <VerifierVerdict
+        verifierReportId="rep-123"
+        decision="approved"
+        visibleTestResults={[{ name: "money_invariant", passed: true }]}
+      />,
+    );
+    expect(screen.getByTestId("verifier-verdict-badge").getAttribute("data-verdict")).toBe("pass");
+    expect(screen.getByTestId("verifier-verdict")).not.toHaveTextContent("fail");
+    expect(screen.getByTestId("verifier-verdict")).toHaveTextContent("1/1");
+    expect(screen.getByTestId("verifier-verdict")).toHaveTextContent("checks pass on this patch");
+  });
+
+  it("an approved report with no visible checks still reads pass, never fail (REQ-073 item 2)", () => {
+    render(<VerifierVerdict verifierReportId="ee21f3a2-0000" decision="approved" visibleTestResults={[]} />);
+    expect(screen.getByTestId("verifier-verdict-badge").getAttribute("data-verdict")).toBe("pass");
+    expect(screen.getByTestId("verifier-verdict")).not.toHaveTextContent("fail");
+    expect(screen.getByTestId("verifier-verdict")).toHaveTextContent("passed on this patch");
+  });
+
+  it("a report with a failing visible check reads fail honestly (REQ-073 item 2)", () => {
+    render(
+      <VerifierVerdict
+        verifierReportId="rep-123"
+        decision="propose"
+        visibleTestResults={[{ name: "a", passed: true }, { name: "b", passed: false }]}
+      />,
+    );
+    expect(screen.getByTestId("verifier-verdict-badge").getAttribute("data-verdict")).toBe("fail");
+    expect(screen.getByTestId("verifier-verdict")).toHaveTextContent("1/2");
+    expect(screen.getByTestId("verifier-verdict")).toHaveTextContent("checks fail on this patch");
+  });
+
+  it("shows one verdict label, no duplicate heading (REQ-073 item 2)", () => {
+    render(<VerifierVerdict verifierReportId="rep-123" decision="propose" />);
+    expect(screen.queryByText("Verifier, hidden fixtures")).not.toBeInTheDocument();
+  });
+
   it("shows escalation bundle with reason and action but no repeated question (REQ-048)", () => {
     render(
       <VerifierVerdict

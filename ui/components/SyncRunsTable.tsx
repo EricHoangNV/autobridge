@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment } from "react";
 import { SyncOutcomeBadge } from "./SyncOutcomeBadge";
 import type { SyncRunOut } from "@/lib/api/client";
 
@@ -136,48 +137,57 @@ export function SyncRunsTable({ syncRuns, isEdge }: Props) {
           </tr>
         </thead>
         <tbody>
-          {syncRuns.map((run, index) => (
-            <tr key={run.id} data-testid={`sync-run-row-${run.id}`}>
-              <td>
-                <span tabIndex={0} title={run.id}>
-                  {run.id.slice(0, 8)}
-                </span>{" "}
-                · {formatDate(run.started_at)}
-              </td>
-              <td>
-                <SyncOutcomeBadge outcome={run.outcome} />
-                {(() => {
-                  const note = edgeLinkNote(run, index + 1 < syncRuns.length ? syncRuns[index + 1] : null, isEdge);
-                  return note ? (
-                    <div data-testid={`link-note-${run.id}`} className="text-ink-2">
-                      {note}
-                    </div>
-                  ) : null;
-                })()}
-              </td>
-              <td className="hide-s">
-                {run.unmet_criteria.length ? (
-                  <span data-testid={`unmet-criteria-${run.id}`}>
-                    <code>{run.unmet_criteria.join(", ")}</code>
-                  </span>
-                ) : (
-                  <span className="text-ink-2">—</span>
-                )}
-              </td>
-              <td className="r">{recordsTotal(run)}</td>
-              <td className="r">
-                {run.fingerprint_id ? (
-                  <span data-testid={`fingerprint-${run.id}`} tabIndex={0} title={run.fingerprint_id}>
-                    <code>
-                      {run.fingerprint_id.slice(0, 8)}…
-                    </code>
-                  </span>
-                ) : (
-                  <span className="text-ink-2">—</span>
-                )}
-              </td>
-            </tr>
-          ))}
+          {syncRuns.map((run, index) => {
+            // REQ-073 item 7: the drop note gets a full-width line under
+            // the row — never squeezed into the narrow Outcome column —
+            // while Records/Fingerprint stay aligned on the data row.
+            const note = edgeLinkNote(run, index + 1 < syncRuns.length ? syncRuns[index + 1] : null, isEdge);
+            return (
+              <Fragment key={run.id}>
+                <tr data-testid={`sync-run-row-${run.id}`}>
+                  <td>
+                    <span tabIndex={0} title={run.id}>
+                      {run.id.slice(0, 8)}
+                    </span>{" "}
+                    · {formatDate(run.started_at)}
+                  </td>
+                  <td>
+                    <SyncOutcomeBadge outcome={run.outcome} />
+                  </td>
+                  <td className="hide-s">
+                    {run.unmet_criteria.length ? (
+                      <span data-testid={`unmet-criteria-${run.id}`}>
+                        <code>{run.unmet_criteria.join(", ")}</code>
+                      </span>
+                    ) : (
+                      <span className="text-ink-2">—</span>
+                    )}
+                  </td>
+                  <td className="r">{recordsTotal(run)}</td>
+                  <td className="r">
+                    {run.fingerprint_id ? (
+                      <span data-testid={`fingerprint-${run.id}`} tabIndex={0} title={run.fingerprint_id}>
+                        <code>
+                          {run.fingerprint_id.slice(0, 8)}…
+                        </code>
+                      </span>
+                    ) : (
+                      <span className="text-ink-2">—</span>
+                    )}
+                  </td>
+                </tr>
+                {note ? (
+                  <tr data-testid={`sync-run-note-row-${run.id}`}>
+                    <td colSpan={5} className="link-note-cell">
+                      <div data-testid={`link-note-${run.id}`} className="text-ink-2">
+                        {note}
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>

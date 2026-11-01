@@ -61,11 +61,12 @@ Connectors header reads "1 connector".
   known fix …" → "L1: rule page_to_cursor matched", proof tiles — model
   calls, verifier, hypotheses/probes — the hypothesis funnel
   "24 explanations → … → 1 distinct" with expandable stages, probes,
-  ▸ model usage across runs, ▸ evidence graph); **3 What the engine
+  ▸ model calls in this repair, ▸ evidence graph); **3 What the engine
   decided** (per-operation Now → Proposed table grouped by operation,
   raw JSON Patch one click away with copy). The decision rail sits beside
   the story: Approve release r2 with what Approve does, Reject with what
-  it does, ▸ roll back, "Approving as …". Click **Approve** in the rail:
+  it does, "Approving as …" (rolling back happens from the connector page:
+  Releases → Activate an earlier release). Click **Approve** in the rail:
   the page follows approval → release → verifying sync →
   Complete, and the connector returns to ● Working. Break it again —
   this time the fix is already known, so the second occurrence resolves
@@ -111,7 +112,8 @@ Connectors header reads "1 connector".
   model asked, the verdict on the proposal otherwise). Click
   **Approve: \<the model's label\>** ("accept net"): release r2 from the
   proposal, verifying sync, Harbor back to ● Working — recorded as a
-  business decision, never learned, rollback to r1 stays available. Or
+  business decision, never learned; rolling back happens from the
+  connector page (Releases → Activate an earlier release). Or
   click **Deny** ("keep everything as-is, contact the vendor"): the
   connector stays ■ Error and the drift stays open
   (a semantic drift is never patched without the operator). The L3 question is well-posed: the
@@ -326,7 +328,8 @@ the derivation funnel, the L3 model-call box (or the explicit skip with the
 capture hint), the model's question with its rationale and the "no patch to
 verify (the model escalated)" verifier line — or, when the model offered a
 change, the question with the proposal (label, effect, diff) and the
-Approve/Deny actions beside the escalation bundle and roll back. After
+Approve/Deny actions beside the escalation bundle. Rolling back happens
+from the connector page (Releases → Activate an earlier release). After
 Approve the decision line reads "Business decision by \<operator\>" — never
 a verified fix — and the business decision is not learned (the next
 identical drift asks again). Money

@@ -3001,3 +3001,42 @@ All 4 items code-done; full gates green; owner step after: keyed walkthrough of 
 - **Cross-claim fix:** `POST /connectors/{id}/build` used `run_once()` (oldest queued job of any kind — could run an orphaned sync/repair and stall the request); now `run_job(job_id)` like the sync path, executing exactly the submitted build.
 - **Files:** `src/autobridge/control/jobs.py` (orphan constants + `fail_orphaned_sync_and_build_jobs`), `src/autobridge/control/app.py` (lifespan fails sync/build first, then reclaims repairs; comment updated), `src/autobridge/control/scheduler.py` (stale helpers + busy-reason bound + pass fails stale), `src/autobridge/control/routes/builds.py` (`run_job`), `tests/unit/test_autobridge_req072_orphaned_jobs.py` (new, 5 tests), `tests/unit/test_autobridge_jobs.py` (lifespan test updated to REQ-072: sync failed, repair re-queued).
 - Tests (item 3): restart with in-flight sync → connector not busy, next tick syncs; orphaned build fails (job + BuildRun) / repair re-queued + drained; stale bound unblocks the scheduler; `run_job` never claims another kind. Gates: `make test` 3006 + 138 + 415 passed, UI 322 passed (324 after rebase on UI polish); lint/typecheck/contracts/openapi-check green. No live stack in sbx1 (e2e not runnable here; scheduler/startup covered by unit tests). No UI files touched. Directives followed (§2 no engine/verifier/simulator imports; §5 gates; §6 credential values never on rows — only reasons; §7 no API/OpenAPI change, schema regenerated with no diff).
+
+### REQ-073 — Repair page and Sync runs UI fixes (sbx1 2026-11-01)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+All 7 items code-done, UI-only (no API change):
+1. Model calls on repair page are this repair's only: `ModelUsageChart` takes
+   `onlyRunIds` (client-side filter on `by_run[].run_id`), page passes
+   `[repair.id]`, heading renamed "Model calls in this repair"; none →
+   "No model calls in this repair." (keeps the cross-run view off the page).
+2. Verifier tile: verdict derives from the report + visible checks (report +
+   all-passed/none → pass; visible failure → fail; escalate w/o report →
+   not_verified; else pending) — an approved verified fix never reads fail;
+   dropped the duplicate "VERIFIER, HIDDEN FIXTURES" kicker; report id reads
+   once (tile, with full id on hover); page `verifier-checks-line` agrees
+   ("N/M checks pass" / "passed on this patch" / "no visible checks recorded").
+3. Hypotheses tile with no funnel/probes: one plain line ("no hypotheses
+   needed: a rule matched", "…a known fix matched" at L0), never a bare "0".
+4. `AfterApproveTracker` derives steps from records via `deriveTrackerSteps`:
+   candidate = approval.to_release_id ?? provenanced release; activated =
+   active-is-candidate OR a sync ran on it (superseded still done, "went
+   live"); verifying/complete from the first/any-Complete sync on the new
+   release with version labels (rN).
+5. Approved rail: `RepairActions` renders outcome only ("Approved ✓" +
+   approving-as); no Reject, no Roll back (rollback lives on the connector
+   page); chapter-3 reversible line points at the connector page after
+   approval. 6. Removed the "Approve/Reject available only when…" dev text
+   entirely; rollback before approval picks from a release list
+   (`rollback-target-select`, `releases` prop), never a typed id (no list →
+   no rollback control).
+7. `SyncRunsTable` link note renders in a full-width `colSpan=5` row under
+   the data row (`sync-run-note-row-<id>`); Outcome cell keeps the badge
+   only; Records/Fingerprint stay aligned; testid `link-note-<id>` kept.
+Tests: 16 new/updated unit tests (filter + empty state, verdict pass/fail,
+tracker derivation incl. superseded + provenance fallback, select picker,
+note row); page tests for approved-no-actions/all-steps-done; s6 e2e mock
+updated (repair's own run id + filtered assertion); `docs/demo.md`
+rollback promises point at the connector page. Gates: `make test` green
+(autobridge 3006 @90.03%, verifier @91.04%, simulators green; UI 340),
+lint/typecheck/ui-typecheck/openapi green; Playwright mocked
+test_10 22/22, s6 + test_06 green. Owner step after: keyed walkthrough.

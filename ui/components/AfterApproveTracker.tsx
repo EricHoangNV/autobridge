@@ -20,11 +20,18 @@ type ApprovalSummary = {
   created_at: string;
 } | null;
 
+type TrackerRelease = {
+  id: string;
+  version: number;
+  provenance_repair_run_id?: string | null;
+};
+
 type ConnectorLite = {
   id: string;
   active_release_id?: string | null;
   state?: string | null;
   activity?: string | null;
+  releases?: TrackerRelease[] | null;
 };
 
 type SyncLite = {
@@ -40,7 +47,107 @@ type RepairLite = {
   approval?: ApprovalSummary;
 };
 
-type Step = { key: string; label: string; done: boolean; detail: string | null };
+export type TrackerStep = { key: string; label: string; done: boolean; detail: string | null };
+
+/**
+ * REQ-073 item 4: every step derives from the real records — the approval
+ * row, the connector's active release, and the sync runs on the new
+ * release — so a shipped fix shows all steps done. A candidate release
+ * that went live and was later superseded (e.g. Activating r1 for a second
+ * break) still reads done: a sync ran on it, so it was active.
+ */
+export function deriveTrackerSteps({
+  repairId,
+  approval,
+  connector,
+  syncRuns,
+}: {
+  repairId: string;
+  approval: ApprovalSummary;
+  connector: ConnectorLite | null | undefined;
+  syncRuns: SyncLite[] | null | undefined;
+}): { steps: TrackerStep[]; approved: boolean } {
+  if (!approval || approval.decision !== "approve") return { steps: [], approved: false };
+
+  const releases = connector?.releases ?? [];
+  const versionOf = (id: string | null): number | null => {
+    if (!id) return null;
+    const found = releases.find((r) => r.id === id);
+    return found ? found.version : null;
+  };
+  // The candidate is the approval's to_release; older approvals that never
+  // recorded one fall back to the release provenanced to this repair.
+  const candidateId =
+    approval.to_release_id ??
+    releases.find((r) => r.provenance_repair_run_id === repairId)?.id ??
+    null;
+  const candidateLabel = (() => {
+    const v = versionOf(candidateId);
+    if (v !== null) return `r${v}`;
+    return candidateId ? candidateId.slice(0, 8) : "the new release";
+  })();
+  const activeId = connector?.active_release_id ?? null;
+  // First sync on the new release (ascending): the verifying sync and its
+  // outcome. Any sync with outcome Complete marks the sync step done.
+  const onCandidate = (syncRuns ?? [])
+    .filter((s) => candidateId !== null && s.release_id === candidateId)
+    .sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : 0));
+  const firstVerifying = onCandidate.length ? onCandidate[0] : null;
+  const firstComplete = onCandidate.find((s) => s.outcome === "Complete") ?? null;
+  const activated = candidateId !== null && (activeId === candidateId || onCandidate.length > 0);
+  const complete = firstComplete !== null;
+  const working = (connector?.state ?? "") === "working";
+  const activeLabel = (() => {
+    const v = versionOf(activeId);
+    return v !== null ? `r${v}` : activeId ? activeId.slice(0, 8) : null;
+  })();
+
+  const steps: TrackerStep[] = [
+    {
+      key: "approval",
+      label: "Approval recorded",
+      done: true,
+      detail: `by ${approval.actor}`,
+    },
+    {
+      key: "activated",
+      label: "Release activated",
+      done: activated,
+      detail:
+        activeId === candidateId && candidateId !== null
+          ? `${candidateLabel} is active`
+          : activated
+            ? `${candidateLabel} went live${activeLabel ? ` (now on ${activeLabel})` : ""}`
+            : "waiting for activation",
+    },
+    {
+      key: "sync",
+      label: "Verifying sync",
+      done: firstVerifying !== null,
+      detail: firstVerifying
+        ? `${firstVerifying.outcome}${firstVerifying.unmet_criteria?.length ? `: ${firstVerifying.unmet_criteria.join(", ")}` : ""}`
+        : "waiting for the next sync",
+    },
+    {
+      key: "complete",
+      label: "Sync Complete",
+      done: complete,
+      detail:
+        firstComplete !== null
+          ? null
+          : firstVerifying
+            ? `latest sync on ${candidateLabel} is ${firstVerifying.outcome}`
+            : null,
+    },
+    {
+      key: "working",
+      label: "Connector working",
+      done: working,
+      detail: connector?.activity ?? null,
+    },
+  ];
+  return { steps, approved: true };
+}
 
 /**
  * After-approve progress (REQ-032 §4): follows the outcome live —
@@ -70,50 +177,8 @@ export function AfterApproveTracker({
   );
 
   const approval = repair?.approval ?? null;
-  if (!approval || approval.decision !== "approve") return null;
-
-  const candidateId = approval.to_release_id ?? null;
-  const activeId = connector?.active_release_id ?? null;
-  const activated = candidateId !== null && activeId === candidateId;
-  const verifying = (syncRuns ?? []).filter((s) => (candidateId ? s.release_id === candidateId : true));
-  const latest = verifying.length
-    ? [...verifying].sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0]
-    : null;
-  const complete = latest?.outcome === "Complete";
-  const working = (connector?.state ?? "") === "working";
-
-  const steps: Step[] = [
-    {
-      key: "approval",
-      label: "Approval recorded",
-      done: true,
-      detail: `by ${approval.actor}`,
-    },
-    {
-      key: "activated",
-      label: "Release activated",
-      done: activated,
-      detail: activated && candidateId ? `r is active (${candidateId.slice(0, 8)})` : "waiting for activation",
-    },
-    {
-      key: "sync",
-      label: "Verifying sync",
-      done: latest !== null,
-      detail: latest ? `${latest.outcome}${latest.unmet_criteria?.length ? `: ${latest.unmet_criteria.join(", ")}` : ""}` : "waiting for the next sync",
-    },
-    {
-      key: "complete",
-      label: "Sync Complete",
-      done: complete,
-      detail: latest && !complete ? `latest sync is ${latest.outcome}` : null,
-    },
-    {
-      key: "working",
-      label: "Connector working",
-      done: working,
-      detail: connector?.activity ?? null,
-    },
-  ];
+  const { steps, approved } = deriveTrackerSteps({ repairId, approval, connector, syncRuns });
+  if (!approved) return null;
 
   return (
     <ol data-testid="after-approve-tracker" className="mt-3 list-none space-y-1 p-0 text-sm">

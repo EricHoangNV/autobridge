@@ -16,12 +16,12 @@ afterEach(() => {
 describe("RepairActions", () => {
   it("renders Approve/Reject/Rollback actions", async () => {
     mockOperator("alice");
-    render(<RepairActions repairId="rep-1" decision="propose" />);
+    render(<RepairActions repairId="rep-1" decision="propose" releases={[{ id: "rel-1", version: 1 }]} />);
     expect(screen.getByTestId("repair-actions")).toBeInTheDocument();
     expect(screen.getByTestId("repair-approve-btn")).toBeInTheDocument();
     expect(screen.getByTestId("repair-reject-btn")).toBeInTheDocument();
     expect(screen.getByTestId("rollback-btn")).toBeInTheDocument();
-    expect(screen.getByTestId("rollback-target-input")).toBeInTheDocument();
+    expect(screen.getByTestId("rollback-target-select")).toBeInTheDocument();
     expect(await screen.findByTestId("approving-as")).toHaveTextContent("Approving as alice");
   });
 
@@ -36,10 +36,15 @@ describe("RepairActions", () => {
 
   it("decided repairs show the outcome with actions disabled (REQ-053 item 4)", () => {
     mockOperator("alice");
+    // REQ-073 item 5: an approved repair shows the outcome only — no
+    // Reject patch, no Roll back controls (they live on the connector page).
     const { rerender } = render(<RepairActions repairId="rep-1" decision="approved" />);
     const approved = screen.getByTestId("repair-approve-btn");
     expect(approved).toBeDisabled();
     expect(approved).toHaveTextContent("Approved ✓");
+    expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rollback-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rollback-target-select")).not.toBeInTheDocument();
     rerender(<RepairActions repairId="rep-1" decision="reject" />);
     const rejected = screen.getByTestId("repair-approve-btn");
     expect(rejected).toBeDisabled();
@@ -52,7 +57,7 @@ describe("RepairActions", () => {
 
   it("escalations show no Approve button and an enabled Deny (REQ-048, REQ-054)", () => {
     mockOperator("alice");
-    render(<RepairActions repairId="rep-1" decision="escalate" />);
+    render(<RepairActions repairId="rep-1" decision="escalate" releases={[{ id: "rel-1", version: 1 }]} />);
     expect(screen.queryByTestId("repair-approve-btn")).not.toBeInTheDocument();
     expect(screen.queryByText(/Approve\/Reject available only when decision is/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("repair-reject-btn")).not.toBeInTheDocument();
@@ -62,10 +67,23 @@ describe("RepairActions", () => {
     expect(screen.getByTestId("rollback-btn")).toBeInTheDocument();
   });
 
-  it("shows disabled when not propose and not escalate", () => {
+  it("shows no developer text outside propose/escalate (REQ-073 item 6)", () => {
     mockOperator("alice");
     render(<RepairActions repairId="rep-1" decision="climbing" />);
-    expect(screen.getByText(/Approve\/Reject available only when decision is/)).toBeInTheDocument();
+    expect(screen.queryByText(/Approve\/Reject available only when decision is/)).not.toBeInTheDocument();
+  });
+
+  it("the rollback control picks a release from a list, never a typed id (REQ-073 item 6)", () => {
+    mockOperator("alice");
+    const { rerender } = render(<RepairActions repairId="rep-1" decision="propose" releases={[{ id: "rel-1", version: 1 }, { id: "rel-2", version: 2 }]} />);
+    const select = screen.getByTestId("rollback-target-select");
+    expect(select).toBeInTheDocument();
+    expect(screen.getByText("r1")).toBeInTheDocument();
+    expect(screen.getByText("r2")).toBeInTheDocument();
+    // No releases given: no rollback control at all.
+    rerender(<RepairActions repairId="rep-1" decision="propose" />);
+    expect(screen.queryByTestId("rollback-target-select")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rollback-btn")).not.toBeInTheDocument();
   });
 
   it("hides the action until a patch has passed", () => {
@@ -74,14 +92,12 @@ describe("RepairActions", () => {
     const approve = screen.getByTestId("repair-approve-btn");
     expect(approve).toBeDisabled();
     expect(approve).toHaveTextContent("No patch to approve yet");
-    expect(screen.getByText(/has not passed a patch yet/)).toBeInTheDocument();
   });
 
   it("enables the action once the patch is ready", () => {
     mockOperator("alice");
     render(<RepairActions repairId="rep-1" decision="propose" patchReady />);
     expect(screen.getByTestId("repair-approve-btn")).not.toBeDisabled();
-    expect(screen.queryByText(/has not passed a patch yet/)).not.toBeInTheDocument();
   });
 
   it("escalation with a model proposal shows Approve with the model label plus Deny (REQ-049)", async () => {

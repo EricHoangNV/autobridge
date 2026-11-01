@@ -82,4 +82,17 @@ describe("ModelUsageChart", () => {
     render(<ModelUsageChart usage={null} loading />);
     expect(screen.getByTestId("model-usage-chart-loading")).toBeInTheDocument();
   });
+
+  it("filters to only the given runs (REQ-073 item 1)", () => {
+    render(<ModelUsageChart usage={usage} onlyRunIds={["run-b"]} />);
+    const rows = screen.getAllByTestId("model-usage-chart-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute("data-run-id")).toBe("run-b");
+  });
+
+  it("reads no-model-calls when the repair has no runs (REQ-073 item 1)", () => {
+    render(<ModelUsageChart usage={usage} onlyRunIds={["some-other-repair"]} />);
+    expect(screen.queryByTestId("model-usage-chart-row")).not.toBeInTheDocument();
+    expect(screen.getByTestId("model-usage-chart-empty")).toHaveTextContent("No model calls in this repair.");
+  });
 });

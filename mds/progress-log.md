@@ -4110,3 +4110,36 @@ Semantic escalation keeps a passing retry proposal: a plain-patch retry that pas
 ## 2026-11-01 — REQ-071 DONE in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Edge syncs record the link at sync time (`link_up` + `accepted=N` reconnect counter + relay idempotency-key counts on `data_readiness["edge_link"]`, no migration); the Sync runs table notes a drop on the later row when the counter went up (`link dropped, re-handshaked · +N postings, 0 lost, 0 duplicated`, lost/duplicated from keys) and `link down` when the link was down; the scheduler link-event recorder now matches the live agent (first-agent fallback, panel parity) instead of `link_up: false / agent_seen: false`; docs/demo.md deck 7 updated. Full gates green: `make test` 3001 + 138 + 415 passed, autobridge 90% / verifier 91% / simulators 90%; UI 322 passed; lint/typecheck/contracts/openapi-check green. No live stack in sbx1. Owner step: keyed walkthrough of deck 7 to close.
 - REQ-072 DONE in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation)): restart no longer wedges connectors — orphaned sync/build jobs fail at startup with reasons (repairs re-queued for the drain), stale sync bound unblocks the scheduler, builds claim exactly their job. Full gates green (3006 + 138 + 415, UI 322).
+
+## REQ-073 — Repair page and Sync runs UI fixes
+**Date:** 2026-11-01
+**Ref:** REQUESTS.MD REQ-073 (owner demo run 2026-11-01 ~11:10)
+
+**What was done:**
+- Repair page model-usage appendix filtered to this repair (`onlyRunIds`), "No model calls in this repair." empty state
+- Verifier tile: single consistent verdict (report + visible checks), duplicate label dropped, report id once
+- Hypotheses tile: plain line on rule fixes, no bare "0"
+- Approval steps derived from real records (active release, first sync on new release, outcome) via `deriveTrackerSteps`
+- Approved rail shows outcome only; rollback pre-approval picks from release list; dev text removed
+- Sync-runs link note on full-width row under the data row
+- `docs/demo.md` rollback promises point at the connector page; s6 e2e mock updated for the filter
+
+**Key decisions:**
+- Client-side filter (owner allowed either); kept `onlyRunIds` optional so the chart component stays generic
+- Verdict "pass" for report + zero visible checks (a linked report means the verifier passed the patch)
+- Superseded candidate (sync ran on it, later replaced) still reads done — "went live", since a sync ran on it
+- Rollback control requires the releases list; no list means no control (never a typed id)
+
+**Files changed:**
+- `ui/components/ModelUsageChart.tsx` — `onlyRunIds` filter + per-repair empty state
+- `ui/components/VerifierVerdict.tsx` — verdict logic, kicker dropped, report id once
+- `ui/components/RepairActions.tsx` — outcome-only after approval, dev text removed, release select
+- `ui/components/AfterApproveTracker.tsx` — `deriveTrackerSteps` from approval/active-release/sync-runs
+- `ui/components/SyncRunsTable.tsx` — note in full-width `colSpan=5` row
+- `ui/app/repairs/[id]/page.tsx` — wiring: filter, checks line, hypotheses line, releases prop, reversible text
+- Tests: `AfterApproveTracker.test.tsx` (new), `RepairActions/VerifierVerdict/ModelUsageChart/SyncRunsTable/page.test.tsx` updates
+- `tests/e2e/test_s6_richer_ui.spec.ts` — mock + assertions for the per-repair filter
+- `docs/demo.md` — rollback wording
+
+**Notes for next iteration:**
+- None — task is self-contained. Owner step after: keyed walkthrough to close.

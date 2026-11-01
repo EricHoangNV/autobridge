@@ -1212,8 +1212,11 @@ export default function RepairDetailPage({ params }: PageProps) {
                   proposalDryRun={modelProposal?.dryRun ?? null}
                 />
                 <span data-testid="verifier-checks-line" className="s num">
-                  {totalTests > 0 ? `${passedCount}/${totalTests} checks pass` : "no visible checks recorded"}
-                  {repair.verifier_report_id ? ` · report ${repair.verifier_report_id.slice(0, 12)}…` : ""}
+                  {totalTests > 0
+                    ? `${passedCount}/${totalTests} checks pass`
+                    : hasReport
+                      ? "passed on this patch"
+                      : "no visible checks recorded"}
                 </span>
               </div>
               <div data-testid="proof-hypotheses">
@@ -1227,10 +1230,13 @@ export default function RepairDetailPage({ params }: PageProps) {
                     </span>
                   </>
                 ) : (
-                  <>
-                    <span className="v num">0 · 0</span>
-                    <span className="s">The rule needed no enumeration</span>
-                  </>
+                  // REQ-073 item 3: on a rule fix no hypotheses were
+                  // generated — one plain line, never a bare "0".
+                  <span className="s">
+                    {repair.ladder_level_reached === 0
+                      ? "no hypotheses needed: a known fix matched"
+                      : "no hypotheses needed: a rule matched"}
+                  </span>
                 )}
               </div>
             </div>
@@ -1281,12 +1287,13 @@ export default function RepairDetailPage({ params }: PageProps) {
             ) : null}
             <details data-testid="model-usage-runs" className="mt-4 border-t border-rule">
               <summary className="cursor-pointer py-3 font-semibold text-ink-2 hover:text-ink">
-                Model usage across runs
+                Model calls in this repair
               </summary>
               <div className="pb-4">
                 <ModelUsageChart
                   usage={modelUsage ?? null}
                   highlightRunIds={repair ? [repair.id] : []}
+                  onlyRunIds={repair ? [repair.id] : []}
                   loading={modelUsageLoading && !modelUsage}
                 />
               </div>
@@ -1359,7 +1366,25 @@ export default function RepairDetailPage({ params }: PageProps) {
                       {modelProposal?.dryRun ?? candidateDryRun ?? (hasReport ? `verifier ${passedCount}/${totalTests} checks pass` : "not yet — no patch to test")}
                     </li>
                   )}
-                  {rollbackText || !reversibleTo ? null : <li>Reversible: roll back to {reversibleTo} stays available</li>}
+                  {rollbackText || !reversibleTo ? null : (
+                    <li>
+                      {isApproved ? (
+                        <>
+                          Reversible from the{" "}
+                          {primaryConnectorId ? (
+                            <a className="underline hover:text-ink" href={`/connectors/${encodeURIComponent(primaryConnectorId)}`}>
+                              connector page
+                            </a>
+                          ) : (
+                            "connector page"
+                          )}{" "}
+                          (Releases → Activate an earlier release)
+                        </>
+                      ) : (
+                        <>Reversible: roll back to {reversibleTo} stays available</>
+                      )}
+                    </li>
+                  )}
                   {isEscalated && modelProposal ? (
                     <li data-testid="decided-business-note">Your business decision — not learned for next time</li>
                   ) : null}
@@ -1550,6 +1575,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                   patchReady={hasReport && hasPatch}
                   connectorId={primaryConnectorId}
                   proposal={modelProposal}
+                  releases={connector?.releases ?? null}
                   onActionComplete={() => mutateRepair()}
                 />
               </div>
@@ -1591,6 +1617,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                   patchReady={hasReport && hasPatch}
                   connectorId={primaryConnectorId}
                   proposal={modelProposal}
+                  releases={connector?.releases ?? null}
                   onActionComplete={() => mutateRepair()}
                 />
               </div>
@@ -1622,6 +1649,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                   patchReady={hasReport && hasPatch}
                   connectorId={primaryConnectorId}
                   proposal={modelProposal}
+                  releases={connector?.releases ?? null}
                   onActionComplete={() => mutateRepair()}
                 />
               </div>

@@ -4,46 +4,6 @@
 
 Owner priority (2026-11-01 11:20): **REQ-072, then REQ-073** (REQ-066..071 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
 
-### REQ-073 — Repair page and Sync runs UI fixes from the owner's demo run (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-01 04:47)
-Owner demo run on the local stack, 2026-11-01 ~11:10, repair page of an approved L1 Atlas fix
-(`/repairs/<id>#did`, 0 model calls) and the PABX connector page.
-
-1. **"Model usage across runs" shows other repairs' tokens (bug).** The repair page appendix renders
-   `GET /metrics/model-usage` (every run with model calls) and only highlights the current one. On a 0-call Atlas repair
-   the only bar is Harbor's deck-5 run (`l3-generate-patch, l3-generate-patch-retry · 13,284 tok`) right under "Model
-   calls 0". On a repair page show only this repair's model calls (filter server- or client-side); none → "No model
-   calls in this repair". Keep any cross-run view off the repair page.
-2. **Verifier tile contradicts itself** on an approved, verified fix: a bar glyph "━━/—", "checks pass on this patch",
-   then "fail report ee21f3a2", "no visible checks recorded", and the label "VERIFIER, HIDDEN FIXTURES" under the title
-   "Verifier". Show one consistent verdict from the verifier report (pass/fail, N of M checks when known, the report
-   id once), never "fail" for a passing report; drop the duplicate label.
-3. **Hypotheses tile is noise on a rule fix:** "Hypotheses · probes 0 · enumerated, then filtered", a stray "0" under
-   the tiles, and "0 resolved without enumeration". When no hypotheses were generated, show one plain line (e.g. "no
-   hypotheses needed: a rule matched") or hide the tile; never a bare "0".
-4. **Approval steps go stale after approval.** The rail's step list on an approved repair shows "✓ Approval recorded",
-   then "○ Release activated — waiting for activation", "○ Verifying sync — waiting for the next sync", "○ Sync
-   Complete", yet "✓ Connector working". Derive each step from the real records (release active, first sync on the new
-   release and its outcome) so a shipped fix shows all steps done.
-5. **Once a patch is approved, remove "Reject patch" and the Roll back controls** from the repair page (rail and
-   any sticky bar), for rule/learned fixes and business decisions alike (owner decision). Rolling back stays possible
-   from the connector page (Releases → Activate an earlier release); where the repair page says "roll back to rN stays
-   available" after approval, point there instead. Before approval, Approve / Reject / Deny stay as today.
-6. **Developer text in the rail:** "Approve/Reject available only when decision is “propose” (current: approved)."
-   (`ui/components/RepairActions.tsx`) and a raw "release id" text box next to "Roll back to". Remove; the state is
-   already shown ("Approved ✓"). If a rollback control remains anywhere before approval, it picks a release from a list
-   (r1, r2 …), never a typed id.
-7. **Sync runs table (REQ-071 note) wraps over five lines** in the narrow Outcome column on the connector page
-   ("link dropped, re- / handshaked · +5 / postings, 0 lost, / 0 duplicated"). Give the note room (e.g. a full-width
-   line under the row, or a wider column); keep Records/Fingerprint aligned and the REQ-071 testids.
-
-Do not edit the owner's uncommitted work in progress: `ui/components/ConnectorsTable.tsx`,
-`ui/components/ConnectorStateBadge.tsx`, `ui/app/connectors/page.tsx` (+ its test); if `ui/app/globals.css` needs
-changes, add them in a new block at the end of the file. Tests: UI tests per item (0-call repair shows no other run;
-approved repair shows no Reject/Roll back; steps all done after a Complete verifying sync), existing e2e testids keep
-working, full gates green. Update `docs/demo.md` where it promises rollback on the repair page. Owner step after: keyed
-walkthrough.
-
 ### REQ-072 — A stack restart mid-sync must not wedge a connector in "sync running" (2026-11-01)
 Status: DONE (sbx1 2026-11-01 -- orphan sync/build fail at startup + stale-job bound unblocks scheduler + build claims exactly its job; full gates green; owner step: none -- restart/scheduler behaviour is unit-covered, no live stack needed)
 Owner local stack, 2026-11-01 10:50: `make local-down && make local-up` while MeridianPMS had a sync in flight.
@@ -1539,6 +1499,48 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+
+### REQ-073 — Repair page and Sync runs UI fixes from the owner's demo run (2026-11-01)
+Status: DONE (sbx1 2026-11-01 -- all 7 items code-done: per-repair model calls + empty state, single verifier verdict without duplicate label, plain hypotheses line, record-derived approval steps, no Reject/Rollback after approval + release-list rollback + no dev text, full-width sync-run note; full gates green; owner step: keyed walkthrough to close)
+Owner demo run on the local stack, 2026-11-01 ~11:10, repair page of an approved L1 Atlas fix
+(`/repairs/<id>#did`, 0 model calls) and the PABX connector page.
+
+1. **"Model usage across runs" shows other repairs' tokens (bug).** The repair page appendix renders
+   `GET /metrics/model-usage` (every run with model calls) and only highlights the current one. On a 0-call Atlas repair
+   the only bar is Harbor's deck-5 run (`l3-generate-patch, l3-generate-patch-retry · 13,284 tok`) right under "Model
+   calls 0". On a repair page show only this repair's model calls (filter server- or client-side); none → "No model
+   calls in this repair". Keep any cross-run view off the repair page.
+2. **Verifier tile contradicts itself** on an approved, verified fix: a bar glyph "━━/—", "checks pass on this patch",
+   then "fail report ee21f3a2", "no visible checks recorded", and the label "VERIFIER, HIDDEN FIXTURES" under the title
+   "Verifier". Show one consistent verdict from the verifier report (pass/fail, N of M checks when known, the report
+   id once), never "fail" for a passing report; drop the duplicate label.
+3. **Hypotheses tile is noise on a rule fix:** "Hypotheses · probes 0 · enumerated, then filtered", a stray "0" under
+   the tiles, and "0 resolved without enumeration". When no hypotheses were generated, show one plain line (e.g. "no
+   hypotheses needed: a rule matched") or hide the tile; never a bare "0".
+4. **Approval steps go stale after approval.** The rail's step list on an approved repair shows "✓ Approval recorded",
+   then "○ Release activated — waiting for activation", "○ Verifying sync — waiting for the next sync", "○ Sync
+   Complete", yet "✓ Connector working". Derive each step from the real records (release active, first sync on the new
+   release and its outcome) so a shipped fix shows all steps done.
+5. **Once a patch is approved, remove "Reject patch" and the Roll back controls** from the repair page (rail and
+   any sticky bar), for rule/learned fixes and business decisions alike (owner decision). Rolling back stays possible
+   from the connector page (Releases → Activate an earlier release); where the repair page says "roll back to rN stays
+   available" after approval, point there instead. Before approval, Approve / Reject / Deny stay as today.
+6. **Developer text in the rail:** "Approve/Reject available only when decision is “propose” (current: approved)."
+   (`ui/components/RepairActions.tsx`) and a raw "release id" text box next to "Roll back to". Remove; the state is
+   already shown ("Approved ✓"). If a rollback control remains anywhere before approval, it picks a release from a list
+   (r1, r2 …), never a typed id.
+7. **Sync runs table (REQ-071 note) wraps over five lines** in the narrow Outcome column on the connector page
+   ("link dropped, re- / handshaked · +5 / postings, 0 lost, / 0 duplicated"). Give the note room (e.g. a full-width
+   line under the row, or a wider column); keep Records/Fingerprint aligned and the REQ-071 testids.
+
+Do not edit the owner's uncommitted work in progress: `ui/components/ConnectorsTable.tsx`,
+`ui/components/ConnectorStateBadge.tsx`, `ui/app/connectors/page.tsx` (+ its test); if `ui/app/globals.css` needs
+changes, add them in a new block at the end of the file. Tests: UI tests per item (0-call repair shows no other run;
+approved repair shows no Reject/Roll back; steps all done after a Complete verifying sync), existing e2e testids keep
+working, full gates green. Update `docs/demo.md` where it promises rollback on the repair page. Owner step after: keyed
+walkthrough.
+Resolution: all 7 items code-done with UI tests per item; `docs/demo.md` rollback promises now point at the connector page; existing e2e testids kept (test_06, s6, test_10 layout, test_08 green mocked); full gates green (autobridge/verifier/simulators coverage gates + UI 340 + lint/typecheck/openapi).
 
 ### REQ-064 — Engine: catch silent corruption, and try L3 before escalating when no rule fits (2026-10-31)
 Status: DONE (sbx1 2026-10-31 -- all 3 items code-done: B1a/B1b silent-corruption signals + existing drift classes, B2 L3-before-L4 with l3_patch context on live/bench/job paths + ladder docs; 26 new + 1 updated tests, full gates green; owner step: keyed make bench-beacon REHEARSE=6599930 FAULTS=12 TRIALS=1 in the sandbox (rehearsal 4), then close)

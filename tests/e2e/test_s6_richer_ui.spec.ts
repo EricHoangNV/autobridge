@@ -96,7 +96,10 @@ const mockModelUsage = {
       total_output_tokens: 200,
       total_cost: "0.008",
       by_run: [
-        { run_id: "run-s6-a", purpose: "rank", tokens: 600 },
+        // REQ-073 item 1: the repair page shows only this repair's model
+        // calls — one row carries the repair's own run id, the other a
+        // different repair's, so the filter can be asserted.
+        { run_id: MOCK_REPAIR_ID, purpose: "rank", tokens: 600 },
         { run_id: "run-s6-b", purpose: "rank", tokens: 300 },
       ],
     },
@@ -108,7 +111,7 @@ const mockModelUsage = {
       total_input_tokens: 500,
       total_output_tokens: 400,
       total_cost: "0.012",
-      by_run: [{ run_id: "run-s6-a", purpose: "patch", tokens: 900 }],
+      by_run: [{ run_id: MOCK_REPAIR_ID, purpose: "patch", tokens: 900 }],
     },
   ],
 };
@@ -249,12 +252,14 @@ test.describe("P2.S6.1 richer UI — per-run chart + evidence graph + screenshot
     await expect(chart).toBeVisible({ timeout: 15000 });
 
     const rows = page.getByTestId("model-usage-chart-row");
-    await expect(rows).toHaveCount(2, { timeout: 15000 });
-    // run-s6-a carries both tiers (stacked), run-s6-b small only
-    await expect(rows.first()).toHaveAttribute("data-run-id", "run-s6-a");
+    // REQ-073 item 1: only this repair's run renders (the other repair's
+    // run-s6-b is filtered out on the repair page).
+    await expect(rows).toHaveCount(1, { timeout: 15000 });
+    // the repair's row carries both tiers (stacked frontier + small)
+    await expect(rows.first()).toHaveAttribute("data-run-id", MOCK_REPAIR_ID);
     const frontierSegs = page.getByTestId("model-usage-chart-row-frontier");
     await expect(frontierSegs).toHaveCount(1);
-    await expect(page.getByTestId("model-usage-chart-row-small")).toHaveCount(2);
+    await expect(page.getByTestId("model-usage-chart-row-small")).toHaveCount(1);
   });
 
   test("evidence graph renders drift, evidence and parent-link edges", async ({ page, request }) => {

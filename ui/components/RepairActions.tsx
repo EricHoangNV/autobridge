@@ -11,6 +11,11 @@ type Proposal = {
   patch?: Array<{ op: string; path: string; value?: unknown; from?: string }>;
 } | null;
 
+type ReleaseOption = {
+  id: string;
+  version: number;
+};
+
 type Props = {
   repairId: string;
   decision: string;
@@ -36,9 +41,15 @@ type Props = {
    * Null for a plain escalation (no Approve button, per REQ-048).
    */
   proposal?: Proposal;
+  /**
+   * REQ-073 item 6: when a rollback control is offered, the operator picks
+   * a release from this list (r1, r2, …) — never a typed id. When no list
+   * is given, no rollback control renders at all.
+   */
+  releases?: ReleaseOption[] | null;
 };
 
-export function RepairActions({ repairId, decision, candidatePatch: _candidatePatch, onActionComplete, patchReady = true, connectorId = null, proposal = null }: Props) {
+export function RepairActions({ repairId, decision, candidatePatch: _candidatePatch, onActionComplete, patchReady = true, connectorId = null, proposal = null, releases = null }: Props) {
   // Server-set operator (GET /operator); approvals are recorded under this name.
   const [operatorName, setOperatorName] = useState<string | null>(null);
   const [busy, setBusy] = useState<"approve" | "reject" | "rollback" | null>(null);
@@ -86,11 +97,12 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
   // REQ-048 item 1: escalations lead with the question, never an Approve
   // button — not even a disabled one.
   const isEscalated = decision === "escalate";
-  // Rollback is available when there was a prior release (we allow it always; backend validates).
-  // REQ-053 item 4: after a decision the rail shows the outcome with
-  // actions disabled (REQ-054 keeps this) — except rollback, which stays
-  // available on an approved repair (the fix can still be reverted).
-  const canRollback = !isDecided || decision === "approved";
+  // Rollback is available while the repair is undecided (the backend
+  // validates); REQ-073 item 5 removes it once the patch is approved —
+  // rolling back then happens from the connector page (Releases →
+  // Activate an earlier release).
+  const isApproved = decision === "approved" || done === "approve";
+  const canRollback = !isDecided && releases !== null && releases !== undefined && releases.length > 0;
   const terminalLabel =
     decision === "approved" || done === "approve"
       ? "Approved ✓"
@@ -201,8 +213,8 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
   }
 
   async function doRollback() {
-    if (!rollbackTarget.trim()) {
-      setMsg({ type: "error", text: "Rollback target release id is required." });
+    if (!rollbackTarget) {
+      setMsg({ type: "error", text: "Pick a release to roll back to." });
       return;
     }
     setBusy("rollback");
@@ -233,6 +245,38 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
       setBusy(null);
     }
   }
+
+  // REQ-073 item 5: once a patch is approved, the rail shows the outcome
+  // only — no Reject patch, no Roll back controls (for rule/learned fixes
+  // and business decisions alike). Rolling back stays possible from the
+  // connector page (Releases → Activate an earlier release).
+  if (isApproved) {
+    return (
+      <div data-testid="repair-actions" className="repair-acts repair-past">
+        <button data-testid="repair-approve-btn" disabled className="btn">
+          {terminalLabel}
+        </button>
+        <p data-testid="approving-as" className="text-xs text-ink-2">
+          Approving as {operatorName ?? "…"}
+        </p>
+        {msg ? (
+          <div
+            data-testid={msg.type === "error" ? "repair-action-error" : "repair-action-success"}
+            className="border px-3 py-2 text-sm"
+            style={
+              msg.type === "error"
+                ? { borderColor: "var(--stop)", color: "var(--stop)" }
+                : { borderColor: "var(--rule)", color: "var(--ink)" }
+            }
+          >
+            {msg.text}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const sortedReleases = [...(releases ?? [])].sort((a, b) => b.version - a.version);
 
   return (
     <div data-testid="repair-actions" className="repair-acts repair-past">
@@ -293,40 +337,42 @@ export function RepairActions({ repairId, decision, candidatePatch: _candidatePa
             {busy === "reject" ? "Rejecting…" : "Reject patch"}
           </button>
         )}
-        <span className="link" aria-hidden="true" style={{ textDecoration: "none" }}>
-          ·
-        </span>
-        <label className="link" style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-          Roll back to
-          <input
-            data-testid="rollback-target-input"
-            value={rollbackTarget}
-            onChange={(e) => setRollbackTarget(e.target.value)}
-            placeholder="release id"
-            className="border border-rule bg-ground px-2 py-1 font-mono text-xs text-ink"
-            style={{ width: 130 }}
-          />
-        </label>
-        <button
-          data-testid="rollback-btn"
-          onClick={doRollback}
-          disabled={!canRollback || busy !== null}
-          className="link"
-        >
-          {busy === "rollback" ? "Rolling back…" : "Roll back"}
-        </button>
+        {sortedReleases.length ? (
+          <>
+            <span className="link" aria-hidden="true" style={{ textDecoration: "none" }}>
+              ·
+            </span>
+            <label className="link" style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+              Roll back to
+              <select
+                data-testid="rollback-target-select"
+                value={rollbackTarget}
+                onChange={(e) => setRollbackTarget(e.target.value)}
+                className="border border-rule bg-ground px-2 py-1 text-xs text-ink"
+                aria-label="Release to roll back to"
+              >
+                <option value="">pick a release…</option>
+                {sortedReleases.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    r{r.version}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              data-testid="rollback-btn"
+              onClick={doRollback}
+              disabled={!canRollback || !rollbackTarget || busy !== null}
+              className="link"
+            >
+              {busy === "rollback" ? "Rolling back…" : "Roll back"}
+            </button>
+          </>
+        ) : null}
       </div>
       <p data-testid="approving-as" className="text-xs text-ink-2">
         Approving as {operatorName ?? "…"}
       </p>
-
-      {!canApprove && !canReject ? (
-        <p className="text-xs text-ink-2">
-          {awaitingPatch
-            ? "The verifier has not passed a patch yet — Approve/Reject unlock when it does."
-            : `Approve/Reject available only when decision is “propose” (current: ${decision}).`}
-        </p>
-      ) : null}
 
       {msg ? (
         <div
