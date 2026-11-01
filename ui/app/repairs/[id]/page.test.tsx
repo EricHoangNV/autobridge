@@ -205,7 +205,8 @@ describe("RepairDetailPage", () => {
     // Decision rail carries the approve block (data-testid moved with it).
     expect(screen.getByTestId("repair-section-approve")).toBeInTheDocument();
     expect(screen.getByTestId("repair-actions")).toBeInTheDocument();
-    expect(screen.getByTestId("inject-fault-drawer")).toBeInTheDocument();
+    // Demo inject drawer is hidden unless NEXT_PUBLIC_DEMO_INJECT_UI=1.
+    expect(screen.queryByTestId("inject-fault-drawer")).not.toBeInTheDocument();
     // Mobile sticky bar renders the same summary.
     expect(screen.getByTestId("repair-sticky-summary")).toHaveTextContent("Fix verified");
   });

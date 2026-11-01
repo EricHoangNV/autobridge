@@ -9,7 +9,7 @@ import type {
   RepairRunOut,
 } from "@/lib/api/client";
 import { HealthBadge } from "./HealthBadge";
-import { ConnectorStateBadge } from "./ConnectorStateBadge";
+import { ConnectorActivity, ConnectorStateBadge, SyncAge } from "./ConnectorStateBadge";
 import { SyncOutcomeBadge } from "./SyncOutcomeBadge";
 import { Sparkline } from "./Sparkline";
 
@@ -193,14 +193,12 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage: _modelUsa
                 {c.id.slice(0, 8)} · {c.base_url}
               </code>
               <HealthBadge status={c.health_status ?? "unknown"} />
-              <ConnectorStateBadge
-                state={c.state ?? "degrading"}
-                activity={c.activity ?? null}
-                lastSyncAt={c.last_sync_at ?? null}
-              />
+              <ConnectorStateBadge state={c.state ?? "degrading"} wordOnly />
             </div>
             <div className="out">
-              <span className="clbl">Last sync</span>
+              <span className="clbl">
+                Last sync <SyncAge at={c.last_sync_at ?? null} />
+              </span>
               <SyncOutcomeBadge outcome={outcome} />
               {syncTime ? <span className="num text-sm text-ink-2"> {syncTime}</span> : null}
               {outcome ? (
@@ -216,6 +214,17 @@ export function ConnectorsTable({ connectors, detailsById, modelUsage: _modelUsa
               ) : (
                 <p>no sync yet</p>
               )}
+              {/* Activities that need attention ("drift detected … · repairing",
+                  "syncs paused until you decide") sit under the sync; the
+                  routine "in sync" line and the age (in the label) do not. */}
+              <p data-testid={`connector-activity-${c.id}`} className="cact">
+                <ConnectorActivity
+                  state={c.state ?? "degrading"}
+                  activity={c.activity ?? null}
+                  lastSyncAt={c.last_sync_at ?? null}
+                  compact
+                />
+              </p>
             </div>
             <div className="rel">
               <span className="clbl">Release</span>

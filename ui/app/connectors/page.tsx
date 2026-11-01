@@ -107,13 +107,12 @@ export default function ConnectorsPage() {
     return (
       <>
         {nouns}.{" "}
+        {/* Only shown when something needs the operator; no "nothing waiting" line. */}
         {errored.length ? (
           <Link data-testid="connectors-waiting-link" href={`/connectors/${encodeURIComponent(errored[0].id)}`}>
             <b>{errored.length} waiting for you.</b>
           </Link>
-        ) : (
-          <b>nothing waiting for you.</b>
-        )}
+        ) : null}
         {tokens}
       </>
     );

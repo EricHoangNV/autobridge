@@ -30,6 +30,13 @@ describe("ConnectorStateBadge", () => {
     expect(badge.textContent).toContain("Error");
   });
 
+  it("does not repeat the age when the activity already says in sync", () => {
+    const recent = new Date(Date.now() - 4000).toISOString();
+    render(<ConnectorStateBadge state="working" activity="in sync · Complete 2 s ago" lastSyncAt={recent} />);
+    expect(screen.getByTestId("connector-state").textContent).toContain("in sync · Complete 2 s ago");
+    expect(screen.queryByTestId("connector-state-sync-age")).not.toBeInTheDocument();
+  });
+
   it("ticks the last-sync age", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-29T12:00:00Z"));

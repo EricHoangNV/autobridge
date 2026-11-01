@@ -55,7 +55,7 @@ describe("ConnectorsPage", () => {
     await waitFor(() => expect(screen.getByTestId("connectors-empty")).toBeInTheDocument());
     expect(screen.getByTestId("connectors-empty").querySelector("h2")).toHaveTextContent("Build a connector");
     expect(screen.getByTestId("connectors-headline")).toHaveTextContent("0 connectors");
-    expect(screen.getByTestId("connectors-headline")).toHaveTextContent("nothing waiting for you.");
+    expect(screen.getByTestId("connectors-headline")).not.toHaveTextContent("waiting");
   });
 
   it("counts error connectors in the header and links to the wait (REQ-048)", async () => {
@@ -76,7 +76,7 @@ describe("ConnectorsPage", () => {
     expect(screen.getByTestId("connectors-waiting-link").getAttribute("href")).toBe("/connectors/c-h");
   });
 
-  it("says nothing is waiting when no connector is in error (REQ-048)", async () => {
+  it("shows no waiting line when no connector is in error", async () => {
     const connectors = [
       { id: "c-a", name: "AtlasPMS", state: "working", health_status: "healthy", base_url: "http://y", active_release_id: "r2", credential_ref: "K", target_entities: [], runtime_target: {}, vendor_docs_ref: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
     ];
@@ -86,7 +86,8 @@ describe("ConnectorsPage", () => {
       .mockReturnValueOnce({ data: {}, error: undefined, isLoading: false } as unknown as ReturnType<typeof useSWR>);
     render(<ConnectorsPage />);
     await waitFor(() => expect(screen.getByTestId("connectors-headline")).toBeInTheDocument());
-    expect(screen.getByTestId("connectors-headline")).toHaveTextContent("nothing waiting for you.");
+    expect(screen.getByTestId("connectors-headline")).toHaveTextContent("1 connector.");
+    expect(screen.getByTestId("connectors-headline")).not.toHaveTextContent("waiting");
     expect(screen.queryByTestId("connectors-waiting-link")).not.toBeInTheDocument();
   });
 });

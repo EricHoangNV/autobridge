@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 
+import { demoInjectUiEnabled } from "@/lib/demo-ui";
+
 /**
  * Broadcast shell top bar (REQ-002 slice 1): wordmark, section nav,
  * LIVE indicator (UI /healthz reachability), labelled demo inject button,
@@ -117,14 +119,16 @@ export function TopBar() {
               LOCAL
             </span>
           )}
-          <button
-            type="button"
-            data-testid="topbar-demo-inject"
-            onClick={handleDemoInject}
-            className="demo-btn px-2.5 py-1.5 text-[13px] font-medium"
-          >
-            Demo: inject fault
-          </button>
+          {demoInjectUiEnabled() ? (
+            <button
+              type="button"
+              data-testid="topbar-demo-inject"
+              onClick={handleDemoInject}
+              className="demo-btn px-2.5 py-1.5 text-[13px] font-medium"
+            >
+              Demo: inject fault
+            </button>
+          ) : null}
           <a
             data-testid="topbar-healthz"
             href="/simulators"

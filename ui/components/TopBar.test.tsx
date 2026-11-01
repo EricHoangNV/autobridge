@@ -23,7 +23,8 @@ describe("TopBar", () => {
     expect(screen.getByTestId("topbar")).toBeInTheDocument();
     expect(screen.getByText("AUTOBRIDGE")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Connectors" })).toHaveAttribute("href", "/connectors");
-    expect(screen.getByTestId("topbar-demo-inject")).toHaveTextContent("Demo: inject fault");
+    // Hidden by default (NEXT_PUBLIC_DEMO_INJECT_UI unset).
+    expect(screen.queryByTestId("topbar-demo-inject")).not.toBeInTheDocument();
     // Found by data-testid, never by its text (REQ-018): the /healthz route
     // stays for the LIVE indicator, but the user-facing "System status" label
     // opens the simulators index (REQ-022 E).
@@ -79,6 +80,7 @@ describe("TopBar", () => {
   });
 
   it("demo button opens the drawer toggle when the drawer is on the page", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DEMO_INJECT_UI", "1");
     const onToggle = vi.fn();
     const drawer = document.createElement("div");
     drawer.setAttribute("data-testid", "inject-fault-drawer");
@@ -89,7 +91,9 @@ describe("TopBar", () => {
     document.body.appendChild(drawer);
 
     render(<TopBar />);
+    expect(screen.getByTestId("topbar-demo-inject")).toHaveTextContent("Demo: inject fault");
     fireEvent.click(screen.getByTestId("topbar-demo-inject"));
     expect(onToggle).toHaveBeenCalledTimes(1);
+    vi.unstubAllEnvs();
   });
 });

@@ -739,6 +739,14 @@ h2.sec {
      mid-word ("HarborPM / S"). */
   container-type: inline-size;
 }
+/* Health and state each on their own line under the name (the state's
+   activity lines moved to the Last sync column). */
+.crow .name > .st,
+.crow .name > .cs {
+  display: flex;
+  width: fit-content;
+  margin-top: 4px;
+}
 .crow .name a {
   /* REQ-067 item 4: names wrap at word boundaries only; a single word
      wider than the column shrinks (8cqw fits ~12 chars) instead of
@@ -779,6 +787,13 @@ h2.sec {
 .crow .out p {
   margin: 6px 0 0;
   color: var(--ink-2);
+}
+/* The state's activity and sync age sit under the Last sync block, one per line. */
+.crow .out .cact {
+  font-size: 14px;
+}
+.crow .out .cact > span {
+  display: block;
 }
 .crow .rel .r {
   font-size: 30px;
@@ -1416,7 +1431,9 @@ table.ctab td code {
   font-weight: 760;
   font-variation-settings: "wdth" 112;
   text-wrap: balance;
-  max-width: 34ch;
+  /* 34ch broke short headlines ("AtlasPMS Pagination / change: approved by
+     Eric."); 60ch keeps them on one line, long ones still wrap balanced. */
+  max-width: 60ch;
 }
 /* Storyline: 1 happened → 2 did → 3 recommends, each a jump link. */
 .rd-storyline {

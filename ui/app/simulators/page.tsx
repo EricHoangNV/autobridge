@@ -22,7 +22,16 @@ type ConnectorStateRow = {
   last_sync_at?: string | null;
 };
 
-function SimulatorRow({ sim, statesById }: { sim: SimulatorInfo; statesById: Record<string, ConnectorStateRow> }) {
+function SimulatorRow({
+  sim,
+  statesById,
+  unresolvedDrift,
+}: {
+  sim: SimulatorInfo;
+  statesById: Record<string, ConnectorStateRow>;
+  /** Connector ids with drift still open, investigating or escalated. */
+  unresolvedDrift: Set<string>;
+}) {
   const usedBy = sim.connectors ?? [];
   return (
     <li
@@ -62,7 +71,7 @@ function SimulatorRow({ sim, statesById }: { sim: SimulatorInfo; statesById: Rec
           <dd data-testid={`simulators-port-${sim.id}`}>{sim.public_port}</dd>
         </div>
         <div className="flex gap-2">
-          <dt className="shrink-0 font-bold">active fault</dt>
+          <dt className="shrink-0 font-bold">vendor change:</dt>
           <dd data-testid={`simulators-fault-${sim.id}`}>{sim.active_scenario ?? "none"}</dd>
         </div>
         <div className="flex gap-2">
@@ -95,10 +104,21 @@ function SimulatorRow({ sim, statesById }: { sim: SimulatorInfo; statesById: Rec
         </div>
       </dl>
       {sim.active_scenario ? (
-        <p className="mt-1 font-mono text-xs text-stop">
-          fault <span className="font-bold">{sim.active_scenario}</span> is active on {sim.display_name} —
-          see <a href="/repairs" className="underline">Repairs</a> for the climb.
-        </p>
+        // The fault stays on in the simulator (the vendor really changed).
+        // Red only while the drift it caused is unresolved on a connector
+        // that uses it — never from connector state, which also reflects
+        // problems unrelated to the fault (e.g. a stuck sync).
+        !usedBy.some((c) => unresolvedDrift.has(c.id)) ? (
+          <p data-testid={`simulators-fault-note-${sim.id}`} data-adapted="true" className="mt-1 font-mono text-xs text-ink-2">
+            <span className="font-bold">{sim.active_scenario}</span> is live on {sim.display_name} —{" "}
+            {usedBy.length > 0 ? "no open drift." : "no connector uses it yet."}
+          </p>
+        ) : (
+          <p data-testid={`simulators-fault-note-${sim.id}`} data-adapted="false" className="mt-1 font-mono text-xs text-stop">
+            <span className="font-bold">{sim.active_scenario}</span> is live on {sim.display_name} — drift still
+            open, see <a href="/repairs" className="underline">Repairs</a>.
+          </p>
+        )
       ) : null}
     </li>
   );
@@ -107,6 +127,12 @@ function SimulatorRow({ sim, statesById }: { sim: SimulatorInfo; statesById: Rec
 export default function SimulatorsPage() {
   const { data, error } = useSWR<SimulatorsOut>("/demo/simulators", fetcher, { refreshInterval: 2000 });
   const { data: connectors } = useSWR<ConnectorStateRow[]>("/connectors", fetcher, { refreshInterval: 2000 });
+  const { data: drift } = useSWR<{ connector_id: string; status: string }[]>("/drift", fetcher, { refreshInterval: 2000 });
+  const unresolvedDrift = new Set(
+    (Array.isArray(drift) ? drift : [])
+      .filter((d) => d.status === "open" || d.status === "investigating" || d.status === "escalated")
+      .map((d) => d.connector_id),
+  );
   const statesById: Record<string, ConnectorStateRow> = Object.fromEntries(
     (Array.isArray(connectors) ? connectors : []).map((c) => [c.id, c]),
   );
@@ -139,7 +165,7 @@ export default function SimulatorsPage() {
         ) : (
             <ul data-testid="simulators-list" className="list-none border-t border-rule p-0">
               {data.simulators.map((sim) => (
-                <SimulatorRow key={sim.id} sim={sim} statesById={statesById} />
+                <SimulatorRow key={sim.id} sim={sim} statesById={statesById} unresolvedDrift={unresolvedDrift} />
               ))}
             </ul>
         )}

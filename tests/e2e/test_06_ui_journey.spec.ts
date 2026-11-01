@@ -860,7 +860,13 @@ test.describe("P1.W7.8 UI journey + network isolation", () => {
       }
     }
 
-    // Inject Fault drawer — labelled demo action
+    // Inject Fault drawer — labelled demo action, hidden unless the UI was
+    // built with NEXT_PUBLIC_DEMO_INJECT_UI=1 (the presenter uses make demo-break).
+    if (process.env.NEXT_PUBLIC_DEMO_INJECT_UI !== "1") {
+      await expect(page.getByTestId("inject-fault-drawer")).toHaveCount(0);
+      await expect(page.getByTestId("topbar-demo-inject")).toHaveCount(0);
+      return;
+    }
     await expect(page.getByTestId("inject-fault-drawer")).toBeVisible({ timeout: 5000 });
     await expect(page.getByTestId("inject-fault-toggle")).toBeVisible();
     // Toggle should contain Demo and labelled badges

@@ -10,6 +10,7 @@ import { HypothesesPanel } from "@/components/HypothesesPanel";
 import { VerifierVerdict } from "@/components/VerifierVerdict";
 import { RepairActions } from "@/components/RepairActions";
 import { InjectFaultDrawer } from "@/components/InjectFaultDrawer";
+import { demoInjectUiEnabled } from "@/lib/demo-ui";
 import { WireChangeSummary } from "@/components/WireChangeSummary";
 import { HypothesisFunnel, type FunnelStage } from "@/components/HypothesisFunnel";
 import { ApprovePreviewSection } from "@/components/ApprovePreview";
@@ -1455,9 +1456,11 @@ export default function RepairDetailPage({ params }: PageProps) {
             )}
           </section>
 
-          <div className="rd-demo-foot">
-            <InjectFaultDrawer onInjected={() => mutateRepair()} />
-          </div>
+          {demoInjectUiEnabled() ? (
+            <div className="rd-demo-foot">
+              <InjectFaultDrawer onInjected={() => mutateRepair()} />
+            </div>
+          ) : null}
         </div>
 
         {/* Decision rail: sticky on desktop, after chapter 3 below 1100px. */}
