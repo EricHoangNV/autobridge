@@ -4143,3 +4143,10 @@ Edge syncs record the link at sync time (`link_up` + `accepted=N` reconnect coun
 
 **Notes for next iteration:**
 - None — task is self-contained. Owner step after: keyed walkthrough to close.
+
+## [Daily Directives Audit — 8f1b2dca..bc7c745b]
+**Date:** 2026-11-01
+**Ref:** mds/AUDIT.md; DIRECTIVES §§1–8; REQ-060…REQ-074
+**Agent:** opencode meta/muse-wonder-1.0 (escalation)
+
+Sections validated §§1–8 + plan §1 (repairs are JSON Patches, trust boundaries, deterministic-first ladder, Complete|Degraded|Blocked, Decimal money, secrets, bench fairness): all PASS in code with tests green. Gaps: REQ-075 (live `money_scale_shift` never gets a baseline — bench-only B1) and REQ-076 (one UI flake under full `make test`) filed as open requests; stale §5/§8 directive wording fixed by the audit itself. Overall readiness: Phase 1 exit gates remain met (unit ≥90% per package, lint/typecheck/contracts/openapi green); live smoke/e2e and keyed owner steps (walkthroughs, beacon rehearsals, REQ-074) outstanding as tracked. No promise of completeness while REQ-075/076 and owner VERIFY items remain open.

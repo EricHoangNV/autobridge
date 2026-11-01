@@ -3040,3 +3040,6 @@ rollback promises point at the connector page. Gates: `make test` green
 (autobridge 3006 @90.03%, verifier @91.04%, simulators green; UI 340),
 lint/typecheck/ui-typecheck/openapi green; Playwright mocked
 test_10 22/22, s6 + test_06 green. Owner step after: keyed walkthrough.
+
+### Daily Audit 2026-11-01 (8f1b2dca..bc7c745b) — opencode meta/muse-wonder-1.0 (escalation)
+Audited 54 commits (REQ-060..REQ-074) against DIRECTIVES §§1-8 + plan §1. Fixed in the audit commit: stale §5 e2e-file list and §8 token-ceiling/beacon wording in mds/DIRECTIVES.MD. Filed REQ-075 (live money_scale_shift has no baseline) and REQ-076 (UI full-suite flake). Gates: lint/typecheck/ui-typecheck/openapi-check green; make test autobridge 3006 @90.06%, verifier 138 @91.04%, simulators 415 @90.50%, UI 340 standalone. No live stack in sbx1 (smoke/e2e reported not runnable, not faked). See mds/AUDIT.md.

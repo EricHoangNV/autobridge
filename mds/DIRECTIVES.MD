@@ -78,7 +78,7 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 
 - `make test` runs `pytest --cov --cov-fail-under=90` per package (`autobridge`, `verifier`, `simulators`) and the UI component tests; agents run targeted tests while working and the full `make test` once before committing.
 - `make smoke` checks every service's `/healthz` and `/readyz` plus the negative network checks; `make e2e` runs `tests/e2e/` against the Compose stack with simulator state reset per test, in random order.
-- Each workstream's acceptance test is a file in `tests/e2e/` named in the plan (`test_00_stack_up.py` … `test_07_benchmark_matched_budget.py`, `test_s*.py` in Phase 2). Agents run only the e2e files for the workstream they touched; the owner runs the full suite.
+- Each workstream's acceptance test is a file in `tests/e2e/` named in the plan (`test_00_stack_up.py` … `test_10_layout_no_overlap.spec.ts`, plus named scenario files like `test_model_usage_matrix.py` and `test_s*.py` in Phase 2). Agents run only the e2e files for the workstream they touched; the owner runs the full suite.
 - Test fakes for the Docker sandbox and the coding-agent CLI (W1) are how the FastAPI/SSE layer and bench drivers reach 90%; do not defer them.
 
 ---
@@ -100,5 +100,5 @@ Run `./directives-for.sh <paths>` before you start (the files you expect to touc
 
 ## 8. Benchmark (plan §2.10, §4 W8)
 
-- Both arms get identical docs volume, sandbox URL, credentials, visible tests, token ceiling and wall-clock (harness self-test asserts it). Scoring is the verifier's hidden mode. Wins and losses are both reported in `experiments/scorecard.md`.
-- `make bench` is idempotent and reproducible from seeds; results go to `experiments/benchmark_runs/*.jsonl`.
+- Both arms get identical docs volume, sandbox URL, credentials, visible tests, token ceiling and wall-clock (harness self-test asserts it); a token ceiling of 0 means no limit for every arm alike (REQ-060). Scoring is the verifier's hidden mode. Wins and losses are both reported in `experiments/scorecard.md`.
+- `make bench` is idempotent and reproducible from seeds; results go to `experiments/benchmark_runs/*.jsonl`. Beacon runs write `experiments/beacon/<round>/` under a frozen protocol that pins the frontier model (REQ-066).

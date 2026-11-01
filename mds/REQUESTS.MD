@@ -30,6 +30,14 @@ Tests: page tests for each item using the shapes above (approved L1 repair whose
 decision; approved repair hides the preview section; 0-hypothesis rule fix; verifier without counts). Existing e2e
 testids keep working, full gates green. Owner step after: browser check of the same repairs.
 
+### REQ-075 — Directive: §4 silent-corruption detection — live sync path never supplies a baseline, so `money_scale_shift` cannot fire live (2026-11-01)
+Status: OPEN
+Found by the 2026-11-01 directives audit (diff `8f1b2dca..origin/main`). REQ-064 B1 (kept by REQ-065) added `money_scale_shift` → `SEMANTIC_VALUE_DRIFT` in `src/autobridge/drift/signals.py:1039`, but it requires `baseline_canonical`, which only the bench/beacon paths supply (`bench/ablation.py:586`, `bench/faults.py:413` via `baseline_summary=`). The live path (`src/autobridge/engine/detect_repair.py` `detect_after_sync`, `src/autobridge/repair/controller.py:744`) calls `signals_from_sync` with no baseline, so a live vendor switching minor↔major units (×100) syncs `Complete` with no drift — the REQ-064 build note already calls this "history-blind (no persisted value sketches)". Fix: persist a bounded per-connector baseline (previous sync's canonical money values or value sketches, never credentials) and pass it as `baseline_summary` on the live detection path, or state the limitation in `docs/architecture.md` and scope B1 to bench/beacon only. Tests: live-path ×100 shift → `SEMANTIC_VALUE_DRIFT` escalation with 0 auto-patch; first sync (no baseline) stays silent.
+
+### REQ-076 — Directive: §5 test hermeticity — UI suite flaked once under full `make test` (2026-11-01)
+Status: OPEN
+Found by the 2026-11-01 directives audit: one full `make test` run failed `ui/components/NewConnectorForm.test.tsx > sends no runtime choice; the engine's decision reads cloud for HTTP docs (REQ-050)` (339/340 UI tests passed); the same file passes standalone (26/26) and the full UI suite passes standalone (340/340). REQ-064's build note reports the same pattern ("two full-suite flakes ... both pass standalone"). Find the shared-state/timing cause (no retries or quarantines as the fix), add a regression test or isolation fix, and note the root cause in the build note.
+
 ### REQ-072 — A stack restart mid-sync must not wedge a connector in "sync running" (2026-11-01)
 Status: DONE (sbx1 2026-11-01 -- orphan sync/build fail at startup + stale-job bound unblocks scheduler + build claims exactly its job; full gates green; owner step: none -- restart/scheduler behaviour is unit-covered, no live stack needed)
 Owner local stack, 2026-11-01 10:50: `make local-down && make local-up` while MeridianPMS had a sync in flight.
