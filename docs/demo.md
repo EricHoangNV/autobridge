@@ -1,17 +1,18 @@
 # AutoBridge — demo (plan §6, 3–4 minutes, real traces)
 
-> `make demo` drives all eight steps through the control API (P1.W10.2). This page is
+> `make demo` runs all eight steps, driving the live ones through the control API (P1.W10.2). This page is
 > the script: what each step does, the calls it makes, and the evidence it renders —
 > the same evidence the UI screens show. Every step is reproducible from seeds and
 > release ids.
 
-Prerequisites: `make up` (stack green) for the live path — `make demo` then
+Prerequisites: `make up` or `make local-up` (stack green) for the live path — `make demo` then
 drives every call through the control API (`CONTROL_URL`, default
 `http://localhost:8101`) and prints each call's redacted status beside the
 evidence. With the stack down it computes the same evidence locally through
 the engine (reference specs + deterministic rules + escalation bundle) and
 says so in its header/footer, so the script is reproducible anywhere
-(`DEMO_SEED=… make demo`, `--json` for the machine-readable report).
+(`DEMO_SEED=… make demo`; `uv run python -m bench.demo --json` for the
+machine-readable report).
 Any live control-API call that is part of a step must return 2xx —
 otherwise the step is marked FAILED (with method, path, status and detail)
 and `make demo` exits non-zero. Each step is labelled `(live)` or
@@ -19,7 +20,7 @@ and `make demo` exits non-zero. Each step is labelled `(live)` or
 Reference specs under
 `generated/connectors/{atlaspms,harborpms}/reference/`. Fault injection goes through
 the single labelled bridge `POST /demo/inject-fault` (proxied to the simulator admin
-API on `admin-net`; every request carries `demo: true, labelled: true`).
+API on `admin-net`; every response carries `demo: true, labelled: true`).
 
 Related: [Architecture](architecture.md) §9 (control API + UI),
 [Safety model](safety-model.md) §4 (scenario catalog), `docs/benchmark.md`.
@@ -29,7 +30,7 @@ Related: [Architecture](architecture.md) §9 (control API + UI),
 This is the UI-first version of the script above: the presenter runs one
 command per scenario in a terminal while the browser (`http://localhost:8107`)
 reacts by itself. Start with `make local-up` (or `make up`), then
-`make demo-reset && make demo-seed`: the opening frame reads
+`make demo-reset && make demo-seed`: the seed ends on
 "0 connectors · ready to build" — every simulator up on its baseline
 scenario, no connectors, no repairs, nothing learned, no injected
 faults. Every connector in decks 2–7 is built live from its docs; the
@@ -44,51 +45,56 @@ column reads "Nothing learned yet", and Decisions reads "No operator
 decisions yet". On `/connectors` the header reads "0 connectors" and
 the empty state leads with **"Build a connector"**.
 - **Deck 2 — Build Atlas from its OpenAPI.** On `/connectors/new`, pick the
-Atlas docs, keep vocabulary v1 and **Build** — docs read → draft →
-probes → result → release r1, first sync Complete, AtlasPMS ● Working
-with 0 model calls. `/knowledge` now lists atlaspms under v1; the
+Atlas docs, keep vocabulary v1 and **Start build** — docs read → docs check →
+draft → probes → result → release r1, first sync Complete, AtlasPMS ● Working
+with 0 model calls. `/knowledge` now lists AtlasPMS under v1; the
 Connectors header reads "1 connector".
 - **Deck 3 — Zero-token fix.** Left: `make demo-break SCENARIO=page_to_cursor`.
-  Right, on `/connectors`: AtlasPMS turns ▲ Degrading ("drift detected
-  … · repairing at L1"). On `/repairs`: the new row reads connector
+  Right, on `/connectors`: AtlasPMS turns ▲ Degrading ("fix ready ·
+  verified · 0 model calls" once the rule has answered). On `/repairs`: the new row reads connector
   AtlasPMS, class `PAGINATION_CHANGE`, rung L1, rule `page_to_cursor`,
   "0 model calls", status "fix ready". Open it: the headline tells the whole
-  story in one sentence, then the storyline 1 happened → 2 did →
-  3 recommends jumps to each chapter. **1 What happened** (connector +
+  story in one sentence, then the storyline 1 · What happened → 2 · What the
+  engine did → 3 · Recommendation jumps to each chapter. Each chapter opens
+  with a plain headline and key facts; the detail sits behind its
+  **Technical details ▸** toggle. **1 What happened** (connector +
   detecting sync with its outcome and unmet criterion, the wire
-  before/after "page → cursor", ▸ affected records and evidence with
-  redacted samples); **2 What the engine did** (rung timeline "L0: no
-  known fix …" → "L1: rule page_to_cursor matched", proof tiles — model
-  calls, verifier, hypotheses/probes — the hypothesis funnel
-  "24 explanations → … → 1 distinct" with expandable stages, probes,
-  ▸ model calls in this repair, ▸ evidence graph); **3 What the engine
-  decided** (per-operation Now → Proposed table grouped by operation,
-  raw JSON Patch one click away with copy). The decision rail sits beside
-  the story: Approve release r2 with what Approve does, Reject with what
-  it does, "Approving as …" (rolling back happens from the connector page:
-  Releases → Activate an earlier release). Click **Approve** in the rail:
+  before/after "page → cursor", ▸ Affected records and evidence with
+  redacted samples); **2 What the engine did** (five ladder chips — Known
+  fix · Rule · Small model · AI model · You, with Rule lit — then the rung
+  timeline L0 miss → L1 rule `page_to_cursor` matched, proof tiles — Model
+  calls, Verifier, and "Hypotheses · probes", which reads "no hypotheses
+  needed: a rule matched" because a rule fix enumerates nothing — ▸ Model
+  calls in this repair, ▸ Evidence graph); **3 What the engine
+  decided** (What changes / Tested / Reversible, then the per-operation
+  Field / Now / Proposed table grouped by operation and the raw JSON Patch
+  with **Copy patch**). The decision rail sits beside
+  the story: "Approve release r2", the **Approve release** and **Reject patch**
+  buttons, "Roll back to \<release\>", "Approving as …", and ▸ "If you click
+  Approve / Deny…" for what each does. Click **Approve release** in the rail:
   the page follows approval → release → verifying sync →
   Complete, and the connector returns to ● Working. Break it again —
   this time the fix is already known, so the second occurrence resolves
   at L0 with 0 model calls, and the Knowledge entry reads "reused 1×".
   Exact presenter steps (REQ-067 item 2): on the Atlas connector page,
-  open **Releases** and click **Activate** on r1 (the pre-patch
+  under **Releases**, click **Activate** on r1 (the pre-patch
   release), then in the terminal run
   `make demo-break SCENARIO=page_to_cursor` again. The next scheduled
   sync (≤ 10 s) Degrades on the same drift, the engine answers from
-  learned knowledge (rung L0, `page_to_cursor`, 0 model calls) with
-  "fix ready", and approving it makes the Knowledge entry read
-  "learned from approval … reused 1×". Activate r1 — do not roll back
-  to it: a rollback evicts the learned entry (the reverted release
+  learned knowledge (rung L0, rule column "learned · page_to_cursor",
+  0 model calls) with "fix ready", and approving it makes the Knowledge entry read
+  "learned from approval … reused 1×". Activate r1 — do not use **Roll
+  back** to reach it: a rollback evicts the learned entry (the reverted release
   regressed), so the re-injected drift would climb the ladder again
   instead of hitting L0.
 - **Deck 4 — Build Harbor from its wiki.** On
   `/connectors/new` pick the Harbor docs (the picker lists the simulator
   docs from `config/demo_targets.yaml`; the server fetches the text, the
   browser only sends `docs_text` back, so the AR-2-2 SSRF guard stays
-  shut). Watch the five-stage progress — docs read → draft → probes →
-  result → release — including the line "check added from the docs:
-  totals must match `meta.gross_sum`" — the same stages as step 2 below,
+  shut), then **Start build**. Watch the build progress — docs read →
+  docs check → draft → probes → result → release — including the line
+  "check added from the docs: totals must match `meta.gross_sum`" under
+  Docs check — the same stages as deck 2,
   then the new connector's page with its spec, releases and sync runs,
   ● Working.
 - **Deck 5 — Break Harbor right after.** Left: `make demo-break
@@ -96,27 +102,36 @@ Connectors header reads "1 connector".
   Degrades on `money_invariant` — HarborPMS turns ▲ Degrading ("drift
   detected …"), then ■ Error ("needs your decision") as the engine
   escalates. On `/repairs`: the new row reads connector HarborPMS,
-  class `SEMANTIC_VALUE_DRIFT`, rung L4, decision "escalate".
-  Open it: the rail leads with the decision line, the model's question and
+  class `SEMANTIC_VALUE_DRIFT`, rung L4, status "needs your decision".
+  Open it: the rail leads with the decision line ("Needs your decision: the
+  engine is not confident"), the model's question and
   its rationale (or the engine's question when the model offered none)
-  plus the one proposed change when the model offered it — with its
-  effect and the diff. The chapters read from the break's own rows —
-  chapter 2 holds the climb (L0 miss → L1 no rule → L2 skipped with its
+  plus the one proposed change when the model offered it — its effect
+  and dry-run result; the full diff is in chapter 3. The chapters read from the break's own rows —
+  chapter 2 holds the climb (L0 skipped: the wire shape is intact, so
+  there is nothing to key knowledge on → L1 no rule → L2 skipped with its
   one explanation → one L3 stage → L4 escalate), the hypothesis
   funnel (generated → amount → wire-consistent → distinct, ending on the
   single "net" reading), the proof tiles and the frontier call(s) — live
-  ("muse-spark-1.3, N tokens") with `FRONTIER_API_KEY` set, otherwise
-  the labelled replay ("replayed from a live Muse capture on …"), or the
-  explicit L3 skip naming the capture to run when neither exists — and
+  (model id and tokens) with `FRONTIER_API_KEY` set, otherwise
+  the labelled replay ("replayed <capture date>") when a capture exists, or the
+  explicit L3 skip naming the capture to run when neither exists (no
+  capture is committed, so a fresh clone without a key gets the skip) — and
   the verifier line ("no patch to verify (the model escalated)" when the
-  model asked, the verdict on the proposal otherwise). Click
-  **Approve: \<the model's label\>** ("accept net"): release r2 from the
+  model asked, "tested proposal — …" when it proposed). The Approve
+  button exists only when the model offered a proposal, so only with a
+  live key or a capture. Click
+  **Approve: \<the model's label\>** (e.g. "Approve: Accept net totals"):
+  release r2 from the
   proposal, verifying sync, Harbor back to ● Working — recorded as a
-  business decision, never learned; rolling back happens from the
+  business decision, never learned; rolling back afterwards happens from the
   connector page (Releases → Activate an earlier release). Or
-  click **Deny** ("keep everything as-is, contact the vendor"): the
-  connector stays ■ Error and the drift stays open
-  (a semantic drift is never patched without the operator). The L3 question is well-posed: the
+  click **Deny: keep everything as-is, contact the vendor**: no release,
+  the drift stays open and nothing is patched (a semantic drift is never
+  patched without the operator). The fault is still live, though, so the
+  next scheduled sync detects it as a new incident and climbs again: a new
+  repair at the top of `/repairs` (another model call with a key) and
+  Harbor back to ■ Error. The L3 question is well-posed: the
   prompt names the patch target (the connector spec), lists the exact
   JSON Pointer of every patchable member, shows redacted raw vendor
   records, and lets the model answer `{"escalate": ...}` — a
@@ -126,8 +141,9 @@ Connectors header reads "1 connector".
   sends, that leaves the failing checks failing, or whose patched check
   cannot evaluate on those records (e.g. a money check repointed at a
   record count — the comparison would silently switch off), gets one
-  retry with the exact error, then is dropped to question-only — never
-  offered for Approve. A proposal that passes shows "tested on the current records:
+  retry with the exact error; a retry that passes becomes the proposal
+  (the model's question kept), one that fails is dropped to
+  question-only — never offered for Approve. A proposal that passes shows "tested on the current records:
   the checks pass", with each changed target field annotated from the
   observed response (e.g. what `$.total` actually carries on the wire). If a verifying sync after an approval still fails,
   the engine rolls back automatically and the original escalation stays
@@ -140,12 +156,12 @@ Connectors header reads "1 connector".
   the break attempted L3, no second row is written.
 - **Deck 6 — New kind of API.** Build Meridian live, twice, from the same
   docs: on `/connectors/new` pick the Meridian docs, keep vocabulary v1
-  and Build — the vocabulary check refuses on screen with the engine's
+  and **Start build** — the vocabulary check refuses on screen with the engine's
   named reason (no POST with a body in ConnectorSpec v1) and creates no
-  connector; 0 model calls, the attempt recorded by name. "Download
-  capability request" drafts the gap (needed vs v1, the docs' operations,
+  connector; 0 model calls, the attempt recorded by name. **Download
+  capability request** drafts the gap (needed vs v1, the docs' operations,
   acceptance tests) as a Markdown file shaped for the build loop — no
-  model used. Switch to v2
+  model used. Click **Build with v2**
   (one click): the one Meridian connector is created, release r1, first
   sync Complete, MeridianPMS ● Working. The connector page shows both
   attempts (v1 refused with its reason, v2 in use), `/knowledge`
@@ -156,12 +172,12 @@ from the same docs like deck 6: on `/connectors/new` pick the FIAS PABX
 docs — there is no base URL to type and no runtime to choose: the relay
 address is fixed and vocabulary v3 is suggested, because the engine runs
 framed docs on the on-premise edge agent (the result says "runs:
-on-premise edge agent, via the relay"). Keep/switch the vocabulary to
-**v2** and Build — the vocabulary check refuses on screen with the
+on-premise edge agent, via the relay"). Switch the vocabulary to
+**v2** and **Start build** — the vocabulary check refuses on screen with the
 engine's named reason (event-driven feeds are not expressible in
 ConnectorSpec v2) and creates no connector; 0 model calls, the attempt
-recorded by name. "Download capability request" drafts the gap the same
-way as deck 6. Switch to **v3** and Build: release r1, the
+recorded by name. **Download capability request** drafts the gap the same
+way as deck 6. Click **Build with v3**: release r1, the
 edge agent connects, postings flow, PABX edge ● Working; `/knowledge`
 lists it under v3 with v2 refused. Then
 `make demo-break SCENARIO=fias_link_resync` on the live-built
@@ -172,54 +188,76 @@ duplicated) — and the connector
 stays ● Working (or is back within one tick). No repair, no Approve.
 - **Deck 8 — Proof.** The terminal `make demo` runs all eight steps
   through the API against the same seeds and prints the release ids it
-  used; `experiments/scorecard.md` and the benchmark rehearsals carry
-  the head-to-head numbers (steps 5–6).
+  used; `experiments/scorecard.md` (written by `make bench`, not
+  committed) carries the dev-split head-to-head numbers (step 5). The
+  final benchmark is the beacon run (`docs/benchmark.md`, "Beacon
+  evaluation"), which has not been run yet; the held-out split is retired.
 
 Retakes are `make demo-heal` (clears faults, keeps connectors) and
 `make demo-reset && make demo-seed` (the blank opening frame: 0
 connectors, every simulator on baseline — Atlas is rebuilt live in deck
 2, Harbor in deck 4, Meridian in deck 6, the PABX in deck 7).
 The terminal
-`make demo` approves the same repairs through the API; everything it
+`make demo` builds its own connectors by name (`atlaspms`, `Harbor demo`,
+`harborpms`, `meridianpms`, `PABX edge` — the build page names the Atlas,
+Harbor and Meridian picks AtlasPMS, HarborPMS, MeridianPMS, so those sit
+beside the UI-built ones, while `PABX edge` is the same name the build
+page uses, so step 8 reuses a UI-built PABX connector and builds a new
+release on it)
+and approves their repairs through the API; everything it
 does lands in the database exactly like the clicks do (REQ-030), so the
-repair page, the Knowledge page and this recording agree.
-`AUTOBRIDGE_SYNC_INTERVAL_S` sets the scheduler tick (default 10 s);
-`FRONTIER_API_KEY` selects live vs replay for the semantic climb.
+repair page and the Knowledge page show it the same way.
+`AUTOBRIDGE_SYNC_INTERVAL_S` sets the scheduler tick (10 s in
+`.env.example`, `compose.yaml` and `make local-up`; unset means no scheduler);
+`FRONTIER_API_KEY` selects a live L3 call; without it the semantic climb
+replays a capture from `demo/recordings/` when one exists, otherwise it
+records the explicit L3 skip.
 
 ## 1. Reusable artifact — Atlas release, zero inference
 
 Build Atlas from its OpenAPI docs on v1 (in-process evidence opens the
 reference release spec instead), run a sync, show `ModelUsageLedger = 0`.
+Every live step ensures its connector by name (`GET /connectors`, reuse a
+match, else `POST /connectors`) and polls each build/sync job with
+`GET /jobs/{job_id}`.
 
 ```
-POST /connectors                       { id: atlaspms, vendor_docs_ref, base_url: ${ATLAS_BASE_URL},
-                                         credential_ref: ATLAS_API_KEY, target_entities: [Reservation, FolioCharge] }
+POST /connectors                       { name: atlaspms, vendor_docs_ref: simulators/docs/atlas-openapi.yaml,
+                                         base_url: http://sim-atlas:8000, credential_ref: ATLAS_API_KEY,
+                                         target_entities: [Reservation, FolioCharge] }
 POST /connectors/{id}/build            { docs_text (Atlas OpenAPI), spec_vocabulary: v1 } → release r1 (page pagination, 0 model calls)
-POST /connectors/{id}/sync             → SyncRun outcome Complete, data_readiness {current, complete}
-GET  /metrics/model-usage?run_id=…     → frontier_tokens 0, small_tokens 0, calls 0
+                                       (skipped when the connector already has an active release)
+POST /connectors/{id}/sync             → SyncRun outcome Complete
+GET  /metrics/model-usage              → ledger totals (per-run calls under entries[].by_run); this step adds none
 ```
 
 Renders in `/connectors/[id]`: spec viewer (YAML), release history, sync run
-`Complete`, fingerprint id, model-usage view at zero.
+`Complete`, fingerprint. The zero is in the step's printed ledger and in
+`GET /metrics/model-usage`; the connector page has no model-usage view.
 
 ## 2. Unfamiliar API — Harbor from Markdown docs
 
-Start a Harbor build from the messy Markdown docs; show hypotheses, probes, evidence,
-the resulting spec, and any L3 call with its token count.
+Start a build from a messy Harbor docs excerpt (inline in `bench/demo.py`);
+show hypotheses, the resulting draft spec, and that no model was called.
 
 ```
-POST /connectors                       { id: harborpms, vendor_docs_ref: simulators/docs/harbor.md, … }
-POST /connectors/{id}/build            → BuildRun: DocsReader → classifiers → hypothesis enumerators
+POST /connectors                       { name: "Harbor demo", vendor_docs_ref: demo:harbor-excerpt,
+                                         base_url: https://api.harborpms.example.com, … }
+POST /connectors/{id}/build            { docs_text (excerpt), spec_vocabulary: v1 }
+                                       → BuildRun: DocsReader → classifiers → hypothesis enumerators
                                          → probe plan (Budget-capped) → evidence → spec → verify
-GET  /runs/{build_run_id}              → ladder trace, probe observations, hypothesis decisions
-GET  /runs/{build_run_id}/events       → SSE stream (redacted) of the same trace
-GET  /metrics/model-usage?run_id=…     → per-call ledger; L3 calls show model id + input/output tokens (reasoning shown separately)
+GET  /jobs/{job_id}                    → build result (success, release_id, degradation_reason)
 ```
 
-Renders in `/connectors/new` (docs upload → build two-step) and `/repairs/[id]`
-(hypotheses + probes + patch diff + verifier verdict + model usage).
-The Harbor quirks this exercises: wrong pagination example in the docs, opaque
-`H1…H5` status codes, nested folios, ambiguous `date`.
+The hypotheses, draft spec and model usage the step prints are computed
+in-process from the same excerpt (no model call). The build's trace stays
+readable afterwards at `GET /runs/{build_run_id}` (SSE:
+`GET /runs/{build_run_id}/events`); `make demo` does not call those.
+
+Renders on the `Harbor demo` connector page (Builds, spec); a build started
+from `/connectors/new` shows the same stages as build progress. The Harbor
+quirks this exercises: opaque `H1…H5` status codes, nested folios,
+ambiguous `date`.
 
 ## 3. Zero-token recovery — `page_to_cursor`
 
@@ -239,16 +277,16 @@ POST /connectors/{atlas_id}/sync       → SyncRun Complete (baseline)
 POST /demo/inject-fault                { target: sim-atlas, scenario_id: page_to_cursor, seed }
 POST /connectors/{atlas_id}/sync       → DriftEvent PAGINATION_CHANGE (detector, wire signals only)
 GET  /repairs?connector_id=…           → L0 miss → L1 rule page_to_cursor, frontier_tokens 0, small_tokens 0
-POST /repairs/{id}/approve             → candidate release activated; resync Complete
+POST /repairs/{id}/approve             { to_release_id, connector_id } → candidate release activated; resync Complete
 POST /connectors/{id}/releases/{base}/activate + inject + sync
                                        → L0 knowledge hit (same rule, 0 tokens); approve; resync Complete
-GET  /knowledge                        → page_to_cursor entry times_reused 1; atlaspms under vocabulary v1
-GET  /metrics/model-usage?run_id=…     → frontier_tokens 0 (L0/L1 only)
+GET  /knowledge                        → page_to_cursor entry times_reused up; atlaspms under vocabulary v1
 ```
 
-Renders in `/repairs/[id]`: drift evidence, ladder badges L0→L1, old/new patch diff
-side by side, visible tests, verifier verdict, Approve action. The ledger line —
-`frontier_tokens == 0` — is the point of the step.
+Renders in `/repairs/[id]`: drift evidence, ladder rungs L0→L1, the
+Now → Proposed table (raw JSON Patch one click away), verifier verdict,
+Approve action. The ledger line — `frontier_tokens == 0` — is the point
+of the step.
 
 ## 4. Hard semantic failure — `gross_to_net` (decide, then approve)
 
@@ -256,12 +294,12 @@ Deck 4 builds Harbor from its wiki docs; deck 5 breaks it right after.
 The docs describe the page-level `meta.gross_sum` total, so the built
 spec carries the `money_invariant` check and the baseline sync lands
 `Complete`. Under `gross_to_net` the vendor switches its amounts to net
-but keeps reporting `meta.gross_sum` — and, the way a real vendor that
+(×0.9) but keeps reporting `meta.gross_sum` — and, the way a real vendor that
 switched would, also reports the page's net total next to it as
 `meta.net_sum` (simulator only, never in the baseline response or the
 docs). The money drift then degrades the sync on the named
 invariant, the engine's own climb runs (funnel → L2 skipped → exactly
-one L3 attempt), and the run escalates with one operator question — plus
+one L3 rung, with at most one retry), and the run escalates with one operator question — plus
 the one proposed change when the model offered it (repointing both money
 checks at `$.net_sum` — Reservation and FolioCharge, since the gate
 refuses a partial fix that leaves either failing check failing — which
@@ -270,11 +308,21 @@ The demo approves the
 proposal as a business decision (release r2, verifying sync, Harbor back
 to `working`); a plain escalation stays red with the question.
 
+Known issue: when a proposal is present (in practice, with
+`FRONTIER_API_KEY` set), the approval leg of step 4 currently reports
+FAILED even though the approval goes through. Its check "repair records
+the business decision" still expects the repair's decision to read
+`escalate` after approval, but since REQ-053 an approval moves it to
+`approved` (`bench/demo.py`, `_step4_live`). Without a key there is no
+proposal (L3 is an explicit, labelled skip because no capture is
+committed), so the approval leg does not run and step 4 ends on the open
+escalation.
+
 The L3 answer is the model's own words: `{"escalate": ...}` asks for a
 business decision (its question becomes the escalation question,
 labelled "The model's question for you:", with its rationale beneath;
-the reason line reads "L3 called live (…): the model asked for a human
-decision" and the verifier line reads "no patch to verify (the model
+the rung timeline reads "the model asked for a human decision" and the
+verifier line reads "no patch to verify (the model
 escalated)" — no fail verdict, because no patch was proposed), while
 `{"escalate": ..., "proposal": {"label", "effect", "patch"}}` additionally
 carries the change the operator could approve. A malformed proposal is
@@ -286,6 +334,7 @@ row: the verifier's trap list rejects it when the engine tries to apply
 it on its own.
 
 ```
+POST /demo/reset                       { sims_only: true, targets: [sim-harbor] }   (clears a leftover fault)
 POST /connectors/{harbor_id}/build     { docs_text: simulators/docs/harborpms.md, spec_vocabulary: v1 }
                                        → release r1 with money_invariant vs $.gross_sum
                                          ("check added from the docs: totals must match meta.gross_sum")
@@ -293,21 +342,26 @@ POST /connectors/{harbor_id}/sync      → SyncRun Complete (deck 4 green)
 POST /demo/inject-fault                { target: sim-harbor, scenario_id: gross_to_net, seed }
 POST /connectors/{harbor_id}/sync      → SyncRun Degraded, unmet: [money_invariant],
                                          class SEMANTIC_VALUE_DRIFT, signal invariant_failure
-                                       → sync returns at once (repair_pending,
-                                         repair_job_id): the live climb runs
+                                       → with a live key the sync returns at once (repair_pending,
+                                         repair_job_id): the climb runs
                                          in the background repair job, never
                                          in the request
-                                       → engine climb L0 miss → L1 no rule → L2 skipped
-                                         (one explanation) → L3 frontier attempt
+                                       → engine climb L0 skipped (wire shape intact) → L1 no rule
+                                         → L2 skipped (one explanation) → L3 frontier attempt
                                          (live, replay, or explicit skip) → proposal
                                          apply-checked (one retry), never released
-→ L4 escalate with EscalationBundle (one question + optional model proposal)
-POST /repairs/{id}/approve-proposal    → release r2 from the proposal, verifier baseline
+                                       → L4 escalate with EscalationBundle (one question + optional model proposal)
+GET  /repairs?connector_id=…, /runs/{repair_id}/evidence, /repairs/{repair_id}/ledger
+                                       → the climb, the funnel stages and the L3 call(s)
+POST /repairs/{id}/approve-proposal    { connector_id } → release r2 from the proposal, verifier baseline
                                          gate, activate, approval recorded as a business
                                          decision (never learned); or
                                          422 when the gate refuses (fail-closed)
-POST /connectors/{harbor_id}/sync      → verifying sync Complete → drift repaired →
-                                         Harbor working (or stays in error on Deny)
+POST /connectors/{harbor_id}/sync      → verifying sync Complete → no open drift →
+                                         Harbor working; /knowledge lists the business
+                                         decision and gains no learned entry
+POST /demo/record-climb                → only when the break's L3 was skipped: the instrumented
+                                         climb (same inputs) as the documented fallback row
 ```
 
 The semantic repair arrives a few seconds after the break when the
@@ -324,22 +378,25 @@ output cap is `FRONTIER_MAX_TOKENS` (default 131072). With no key the
 replay (or the explicit skip) runs inline, so the row is final at once.
 
 Renders in `/repairs/[id]`: `Degraded` with the failing money invariant named,
-the derivation funnel, the L3 model-call box (or the explicit skip with the
-capture hint), the model's question with its rationale and the "no patch to
-verify (the model escalated)" verifier line — or, when the model offered a
-change, the question with the proposal (label, effect, diff) and the
-Approve/Deny actions beside the escalation bundle. Rolling back happens
-from the connector page (Releases → Activate an earlier release). After
-Approve the decision line reads "Business decision by \<operator\>" — never
-a verified fix — and the business decision is not learned (the next
-identical drift asks again). Money
+the derivation funnel, the L3 model-call box (or, with no call, the explicit
+L3 skip with the capture hint in the rung timeline), the model's question
+with its rationale and the "no patch to verify (the model escalated)"
+verifier line — or, when the model offered a change, the question with the
+proposal (label, effect and dry-run result in the rail, the diff in
+chapter 3) and the Approve/Deny actions. After Approve, rolling back
+happens from the connector page (Releases → Activate an earlier release),
+and the decision line reads "Business decision: approved — shipped" —
+never a verified fix — `/knowledge` lists it under Decisions as a business
+decision, and it is not learned (the next identical drift asks again). Money
 stays `Decimal` throughout; the UI never shows a guessed mapping. Capture
 the live prompt for replay with
-`make record-frontier SCENARIO=gross_to_net` (keyed stack, after the break).
+`make record-frontier SCENARIO=gross_to_net` (keyed stack, after the break);
+it writes `demo/recordings/gross_to_net.json`, which replay reads (no
+capture is committed in this repository).
 The L3 prompt hash changes with the prompt: after any change to what the
 engine asks (REQ-044 well-posed prompt, REQ-045 prompts-in-files), the previous capture no longer
 matches — the repair records an explicit skip naming the new hash — until
-the owner re-runs the capture and commits `demo/recordings/gross_to_net.json`.
+the capture is re-run.
 To improve a prompt, edit `config/prompts/<id>.md` and restart the engine
 (prompts load once at boot; the repair page shows each call's prompt
 id/version next to it).
@@ -352,8 +409,13 @@ GET /bench/scorecards                  → wins and losses as they are: verified
                                          elapsed, tool/model calls, frontier tokens, cost
 ```
 
-Renders in the UI wherever scorecards surface, and in `experiments/scorecard.md`
-(written by `make bench`). Read the numbers as they are — wins and losses.
+No UI screen renders it: read it from the endpoint and from
+`experiments/scorecard.md` (written by `make bench`, a paid run; not
+committed, so `make demo` prints "no scorecard yet — run make bench" on a
+fresh clone). Read the numbers as they are — wins and losses. These are
+dev-split numbers; the final benchmark is the beacon run (`docs/benchmark.md`,
+"Beacon evaluation"), which has not been run yet, and the held-out split is
+retired.
 
 ## 6. Reproducibility — seed, release ids, `make demo`
 
@@ -361,14 +423,53 @@ Every step above is reproducible:
 
 * Scenarios come from `simulators/scenarios/*.yaml` with fixed `seed`s; the same seed
   yields the byte-identical dataset (seeded generator + fault switchboard).
-* Releases are immutable and content-addressed (`spec_signature` sha256 of the
-  canonical JSON); `generated/connectors/<id>/<release>/` holds `spec.yaml` +
+* Releases are immutable and signed over the canonical JSON (`spec_signature`:
+  sha256, HMAC when `EDGE_RELEASE_SECRET` is set); `GET /releases/{id}` returns
+  any live release. The committed reference releases live under
+  `generated/connectors/<id>/reference/` as `spec.yaml` +
   `build-report.json` (connector id, release id, signature, `built_by`).
- * `make demo` replays steps 1–8 against the same seeds and prints the release ids it
-   created, so a reviewer can re-fetch any spec, sync, or verifier verdict.
+* `make demo` replays steps 1–8 against the same seeds and prints the release ids it
+  used, so a reviewer can re-fetch any spec, sync, or verifier verdict.
 
 ```
 make demo    # eight steps via the control API; output is the same evidence the UI renders
+```
+
+## 7. New API style — Meridian refuses safely, then connects (REQ-020)
+
+The same Meridian docs (`simulators/docs/meridian-openapi.yaml`:
+every operation is `POST` with a JSON body, auth is `ClientToken` /
+`AccessToken` in the body, pages travel in a `Limitation: {Count, Cursor}`
+envelope) run through two vocabulary pins back to back:
+
+```
+# BEFORE — vocabulary v1 (the engine as it was)
+POST /connectors/vocabulary-check      { name: meridianpms, docs_text, spec_vocabulary: v1 }
+  → refused: "operations need POST with a JSON body and body-field auth;
+     not expressible in ConnectorSpec v1", suggested_vocabulary v2
+  (vocabulary_guard; no connector, no draft spec, no release, 0 model calls)
+
+# AFTER — vocabulary v2 (the extended vocabulary, same docs, no other input)
+POST /connectors                       { name: meridianpms, base_url: http://sim-meridian:8000, … }
+POST /connectors/{meridian_id}/build   { docs_text, spec_vocabulary: v2 } → spec_version 2
+  (POST operations, body_fields auth, body_cursor pagination, joins)
+GET  /knowledge                        → meridianpms under v2 with v1 refused
+in-process sync on Meridian-shaped pages → SyncRun outcome Complete:
+  guest names resolve through the customer join, reservation totals equal
+  the summed order-item gross, money Decimal throughout; 0 model calls (both halves)
+```
+
+Renders on the Meridian connector page under Builds (`v1` refused — the
+reason; `v2` connected · release … (in use)) and on `/knowledge`. The refusal is deterministic — detecting "needs
+POST with body auth" costs nothing — so the demo never pretends the v2
+vocabulary does not exist: the before half stays repeatable forever after v2
+ships (REQ-021 item 2). Live, step 7 drives both halves through the control
+API: the v1 vocabulary check refuses before any connector exists (recorded
+by name), then the v2 build creates the one `meridianpms` connector and
+becomes the release in use, so `/knowledge` lists it under v2 with v1
+refused. The build page runs the same check first, so a refused build
+never leaves an empty connector behind (REQ-053 item 7).
+
 ## 8. On-premise PABX — built live, the link drops and resyncs with nothing lost (REQ-022, REQ-050)
 
 The FIAS PABX docs (`simulators/docs/fias-pabx.md`, framed interface over
@@ -382,7 +483,7 @@ redelivered durable outbox carries identical idempotency keys, so each
 charge lands once — 0 lost, 0 duplicated.
 
 ```
-Build a connector → FIAS PABX docs → vocabulary v3 → Build
+Build a connector → FIAS PABX docs → vocabulary v3 → Start build
   → release r1 · runs: on-premise edge agent, via the relay
   → edge agent connects → postings flow → ● Working
 make demo-break SCENARIO=fias_link_resync   (on the live-built connector)
@@ -398,58 +499,23 @@ sync after a resync notes "link dropped, re-handshaked · +N postings,
 0 lost, 0 duplicated" (from the reconnect counter and the relay's
 idempotency keys), and a sync taken while the link is down reads
 "link down".
-Live, step 8 ensures the connector, builds the committed FIAS docs with
+Live, step 8 ensures the `PABX edge` connector, builds the committed FIAS docs with
 `spec_vocabulary: v3`, asserts the engine's edge runtime on the record,
 baseline-syncs `Complete`, then drops and resyncs the link and asserts
 the counts. The firmware layout change (`fias_record_layout_change`)
 and the agent restart (`agent_restart_inflight`) stay in the catalogue
 but are not part of the demo script (layout-change live repair is
 REQ-051, deferred).
-```
-
-## 7. New API style — Meridian refuses safely, then connects (REQ-020)
-
-The same Meridian docs (`simulators/docs/meridian-openapi.yaml`, Mews-style:
-every operation is `POST` with a JSON body, auth is `ClientToken` /
-`AccessToken` in the body, pages travel in a `Limitation: {Count, Cursor}`
-envelope) run through two vocabulary pins back to back:
-
-```
-# BEFORE — vocabulary v1 (the engine as it was)
-build Meridian docs, spec_vocabulary: v1 → BuildRun Blocked:
-  "operations need POST with a JSON body and body-field auth;
-   not expressible in ConnectorSpec v1"
-  (vocabulary_guard trace stage; no draft spec, no release, 0 model calls)
-
-# AFTER — vocabulary v2 (the extended vocabulary, same docs, no other input)
-build Meridian docs, spec_vocabulary: v2 → spec_version 2
-  (POST operations, body_fields auth, body_cursor pagination, joins)
-POST /connectors/{meridian_id}/sync → SyncRun outcome Complete:
-  guest names resolve through the customer join, reservation totals equal
-  the summed order-item gross, money Decimal throughout
-GET  /metrics/model-usage?run_id=…     → frontier_tokens 0, small_tokens 0, calls 0 (both halves)
-```
-
-Renders wherever builds surface, with the vocabulary each half used (`v1` /
-`v2`) beside the evidence. The refusal is deterministic — detecting "needs
-POST with body auth" costs nothing — so the demo never pretends the v2
-vocabulary does not exist: the before half stays repeatable forever after v2
-ships (REQ-021 item 2). Live, step 7 drives both halves through the control
-API: the v1 vocabulary check refuses before any connector exists (recorded
-by name), then the v2 build creates the one `meridianpms` connector and
-becomes the release in use, so `/knowledge` lists it under v2 with v1
-refused. The build page runs the same check first, so a refused build
-never leaves an empty connector behind (REQ-053 item 7).
 
 ## Fault-scenario catalogue (REQ-023)
 
-Backup and Q&A: every entry runs on its own after `make demo-reset` with
+Backup and Q&A: every scenario entry runs on its own after `make demo-reset` with
 `make demo SCENARIO=<name>`, and every main-script step runs on its own
 with `make demo STEP=<n|name>` (e.g. `make demo STEP=4`,
 `make demo STEP=hard_semantic_failure`). `make demo` runs the full main
 script for rehearsal. Each run prints REQ-021's per-run table
 (scenario | rung that resolved it | model calls | small / frontier tokens |
-why it escalated). Never show heldout seeds; demo the dev variants only.
+why it escalated). Demo the dev variants only.
 A step enters this page and `make demo` only when the feature behind it
 has merged and its e2e test is green.
 
@@ -490,7 +556,9 @@ has merged and its e2e test is green.
 | *(safety)* engine isolated from verifier/sim-admin | — | No route (smoke) | — | 0 | DIRECTIVES §2 |
 
 Source of truth for this table is `CATALOGUE` in `bench/demo.py`
-(scenario | vendor | expected outcome | rung | model calls | REQ);
-`tests/unit/test_autobridge_demo_catalogue.py` keeps them in sync and
-checks every entry against its scenario file, its e2e test and
-(REQ-021's matrix for ladder entries) its model-usage matrix row.
+(scenario | vendor | expected outcome | rung | model calls | REQ); the
+expected-outcome cells here add the deck/step context.
+`tests/unit/test_autobridge_demo_catalogue.py` checks that every
+catalogued scenario appears in this table, and checks every entry against
+its scenario file, its e2e test and (REQ-021's matrix for ladder entries)
+its model-usage matrix row.

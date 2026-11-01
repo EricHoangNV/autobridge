@@ -4,14 +4,16 @@
 
 For each scenario × trial the harness runs two arms with **identical** inputs:
 
-* **AutoBridge** via the control API (`POST /connectors` → `/build` → `/sync` → `/verify`).
-* **Baseline** inside the same `runtime-sandbox` image with the same docs volume, sandbox URL, credentials (refs only), visible tests, token ceiling and wall-clock.
+* **AutoBridge** (`run_autobridge_arm`): with an injected HTTP client it posts `POST /connectors` to the control API; with none it returns a synthetic result (`model: autobridge-synthetic`, 0 tool calls).
+* **Baseline** (`run_baseline_arm`): with an injected driver it runs the coding-agent CLI under the same docs volume, sandbox URL, credentials (refs only), visible tests, token ceiling and wall-clock; with none it returns a synthetic result (`model: baseline-synthetic`).
 
-The harness self-test `assert_inputs_equal` (and `assert_budget_fields_equal` for the six task-named fields: `docs_volume`, `sandbox_url`, `sandbox_image`, `credential_refs`, `visible_tests`, `token_ceiling`, `wall_clock_s`) proves both arms received byte-identical `HarnessInputs` before either arm runs; `verify_matched_trial` is the post-hoc audit used by scoring.
+`run_trial` / `run_harness` call both arms with no client or driver unless a test injects runners, so the CLI matched mode (`python -m bench.harness`, the default `--arms matched`) runs **synthetic arms only**; its `_guard_zero_tool_calls` check then refuses to score (exit 1, "refusing empty scorecard") whenever the service probe ran. The arm comparison that actually runs models and the engine is the ablation (`--arms ablation`, below).
+
+The harness self-test `assert_inputs_equal` (and `assert_budget_fields_equal` over `HarnessInputs.budget_fields()`: `docs_volume`, `docs_ref`, `sandbox_url`, `sandbox_image`, `credential_refs`, `visible_tests`, `token_ceiling`, `wall_clock_s`) proves both arms received byte-identical `HarnessInputs` before either arm runs; `verify_matched_trial` is the post-hoc audit used by scoring.
 
 Secrets are never in `HarnessInputs` — only `credential_ref` (env key names) are carried; values are read at runtime from the environment inside each arm (DIRECTIVES §6).
 
-The harness is deterministic from `seed`: same seed → identical inputs and scenario seed. `make bench` is idempotent and reproducible — results go to `experiments/benchmark_runs/<scenario>--trial-<n>.jsonl` with `seed` in the payload, and `check_heldout_sha` guards the heldout split.
+The harness is deterministic from `seed`: same seed → identical inputs and scenario seed. `make bench` is idempotent and reproducible — results go to `experiments/benchmark_runs/<scenario>--trial-<n>.jsonl` (plus `_summary.json`) with `seed` in the payload. The run outputs under `experiments/benchmark_runs/` (`*.jsonl`, `_summary.json`, `_ablation_summary.json`, `_scorecard.json`) and `experiments/scorecard.md` are gitignored: they are local, not committed results. The one exception is `experiments/learning_curve.md`, which is committed and rewritten by every `make bench-ablation` run (see the learning curve below).
 
 ## Baseline drivers (P1.W8.2, REQ-024 B1)
 
@@ -73,7 +75,7 @@ codex exec --json "<prompt>" [--model <id>] ...
 {"output":"generated spec yaml …","usage":{"input_tokens":1200,"output_tokens":3400},"model":"codex-mini-latest","cost_usd":0.012}
 ```
 
-The adapter mirrors `ClaudeCodeDriver` (same `__init__` / `_build_command` / `run` / `calls` API, same usage/token capture via `parse_codex_output` handling `output` / `usage` / `tokens` shapes). Unit tests use `FakeCodexDriver` and `scripts/fake_codex.py`. The stub is pluggable: the harness passes the same `HarnessInputs` to either driver, so the six budget fields remain identical.
+The adapter mirrors `ClaudeCodeDriver` (same `__init__` / `_build_command` / `run` / `calls` API, same usage/token capture via `parse_codex_output` handling `output` / `usage` / `tokens` shapes). Unit tests use `FakeCodexDriver` and `scripts/fake_codex.py`. The stub is pluggable: the harness passes the same `HarnessInputs` to either driver, so the budget fields remain identical.
 
 * Env: `CODEX_CLI_PATH` overrides the binary path.
 
@@ -84,7 +86,7 @@ The adapter mirrors `ClaudeCodeDriver` (same `__init__` / `_build_command` / `ru
 When neither CLI is available (no binary, no API key, offline CI) the baseline is routed through `LLMProvider` directly:
 
 * `bench/baseline_coding_agent.py:BaselineLLMDriver` — wraps any `LLMProvider` (e.g. `AnthropicProvider` live, `FakeProvider` in tests) and implements the same `run(prompt, cwd=None) -> ClaudeCliResult` shape. Token usage comes from the provider's `Usage` and `estimate_cost`, so `frontier_tokens` / `cost_usd` remain comparable. When a `Budget` is supplied (from `HarnessInputs.token_ceiling` / `wall_clock_s`) the call is wrapped in `BudgetedProvider`, so the same ceiling is enforced for both arms.
-* `bench/harness.py:run_baseline_via_llm_provider` — functional entry point with the same semantics, used by the harness when `driver=None` and by `make bench` when `BASELINE_DRIVER=llm`.
+* `bench/harness.py:run_baseline_via_llm_provider` — functional entry point with the same semantics; no bench path calls it today (unit tests only — with `driver=None` the harness returns the synthetic baseline above).
 
 Factory:
 
@@ -99,11 +101,11 @@ driver = get_baseline_driver("llm")        # BaselineLLMDriver (fallback, plan �
 driver = get_baseline_driver("one_shot")   # OneShotGenerator (secondary control, P1.W8.3)
 ```
 
-`make bench` selects via `BASELINE_DRIVER` env (`opencode` | `claude` | `codex` | `llm` | `one_shot`); default is `opencode`, and offline runs (no `FRONTIER_API_KEY`) fall back to the in-memory fake driver — labelled `fake-*` in every result so rehearsal numbers are never mistaken for live ones.
+The ablation's `frontier_agent` arm (`make bench-ablation`, step 2 of `make bench`, and the learning curve when a key is set) selects via `BASELINE_DRIVER` env (`bench/ablation.py:frontier_agent_driver`: `opencode` | `claude` | `codex` | `llm` | `one_shot`); default is `opencode`, and without `FRONTIER_API_KEY` the `opencode`/`claude`/`codex` kinds fall back to the in-memory `FakeOpenCodeDriver` — labelled `fake-*` in every result so rehearsal numbers are never mistaken for live ones. `llm` and `one_shot` are built there without a provider, so they run on `FakeProvider` (test use only).
 
 ## Secondary diagnostic control — `one_shot_generator` (P1.W8.3)
 
-`bench/one_shot.py:OneShotGenerator` is the secondary control: a single `LLMProvider.complete` that must answer the engine's repair task (REQ-060: a JSON Patch on the pre-drift spec, or an escalation with one question — never a whole spec) in one pass, with the *same* `HarnessInputs` the other two arms receive (docs volume, sandbox URL, credentials as refs, visible tests, token ceiling, wall-clock — asserted by `assert_inputs_equal` / `assert_budget_fields_equal` three-way). It goes through `Budget` + `BudgetedProvider` so the wall clock is identical and every call lands in `ModelCall`; cost is `Decimal` via `estimate_cost`. REQ-060: `token_ceiling` 0 = no limit (the default for every arm), so nothing is ever `budget_exhausted` on tokens; the per-call output cap stays `FRONTIER_MAX_TOKENS` because the API needs a value.
+`bench/one_shot.py:OneShotGenerator` is the secondary control: a single `LLMProvider.complete` that must answer the engine's repair task (REQ-060: a JSON Patch on the pre-drift spec, or an escalation with one question — never a whole spec) in one pass, with the *same* `HarnessInputs` the other two arms receive (docs volume, sandbox URL, credentials as refs, visible tests, token ceiling, wall-clock — asserted by `assert_inputs_equal` / `assert_budget_fields_equal` three-way). It goes through `Budget` + `BudgetedProvider` so the wall clock is identical and every call lands in `ModelCall`; cost is `Decimal` via `estimate_cost`. The token ceiling defaults to 200,000 per attempt (`DEFAULT_TOKEN_CEILING`, see "Token limit" below); `token_ceiling` 0 = no limit (REQ-060), in which case nothing is ever `budget_exhausted` on tokens. The per-call output cap stays `FRONTIER_MAX_TOKENS` because the API needs a value.
 
 Helpers:
 
@@ -125,7 +127,14 @@ If the agentic baseline beats the one-shot, the gain is from tool use/iteration,
 (`assert_all_inputs_equal`, pairwise over all five — the B2 extension of the
 harness self-test). Every arm that calls a frontier model uses the same
 `FRONTIER_MODEL` through the same provider (`ablation_provider()`), so the
-only difference between arms is the engine.
+only difference between arms is the engine. The provider is Meta Muse
+(`MuseProvider`, `FRONTIER_BASE_URL` default `https://api.meta.ai/v1`)
+when `FRONTIER_API_KEY` is set, else replay over
+`tests/fixtures/replay/`. `FRONTIER_MODEL` defaults to `muse-spark-1.3`
+(`src/autobridge/config.py`); set it (e.g. `muse-spark-1.3-contributor`,
+`muse-wonder-1.0`) to change every arm at once — the agent arm derives
+`meta/<FRONTIER_MODEL>` unless `OPENCODE_MODEL` is set, and a live agent
+row whose model differs fails as `model_mismatch`.
 
 | arm | what it is |
 | --- | --- |
@@ -151,16 +160,28 @@ contract: `assert_arm_task_setup_equal` (every arm resolved the same
 pre-drift spec) and the `handle`-kwargs spy test (drift class, delta and
 hypotheses equal freshly engine-derived values). Deterministic first,
 models last: structural/auth/transport classes run zero model calls by
-construction.
+construction. Detection compares the faulted sync against a baseline
+sync of the same spec (`derive_from_summaries`, shared with the beacon
+run). Since REQ-075 the money baseline reaches the detector only through
+the bounded money sketch the live path persists
+(`autobridge.drift.value_baseline.build_money_sketch` →
+`baseline_summary_from_sketch`: join keys + money fields, at most 32
+entities × 200 rows), never the raw baseline records, so the bench
+credits no detection the product cannot make; the baseline wire
+observations still feed the wire-key scoping below.
 
-Honest scope (rehearsal 2026-10-29, `BENCH_TRIALS=1 make bench-ablation`
-on the keyed local stack, published as losses then fixed in REQ-028):
-AutoBridge cold repairs 6/6 repair scenarios verified (`page_to_cursor`,
-`offset_to_cursor`, `cursor_repeat_token`, `meridian_cursor_renamed`,
-`rename_guest_id`, `meridian_state_renamed` — all 0 frontier tokens, 0
-wrong patches) and warm is never worse than cold (verified and
-correct-escalation equal on every scenario); overall cold/warm
-V=0.500 E=1.000. Three REQ-028 fixes got here from the published gaps:
+Honest scope — last recorded engine-arm numbers, **not a current
+result**: a sandbox rerun after the REQ-028 fixes (2026-10-29,
+`BENCH_TRIALS=1 make bench-ablation`, local stack, no frontier key)
+recorded AutoBridge cold repairing 6/6 repair scenarios verified
+(`page_to_cursor`, `offset_to_cursor`, `cursor_repeat_token`,
+`meridian_cursor_renamed`, `rename_guest_id`, `meridian_state_renamed`
+— all 0 frontier tokens, 0 wrong patches), warm equal to cold on every
+scenario, overall cold/warm V=0.500 E=1.000. Source: `mds/BUILD-NOTES.md`
+(REQ-028 section) and `mds/progress-log.md` only — the raw rows are not
+committed (gitignored), n=1, and the engine and bench have changed since
+(REQ-060 to REQ-075). The owner's keyed dev rerun is still pending
+(REQ-028 is BLOCKED on it). Three REQ-028 fixes got here from the published gaps:
 (1) one drift taxonomy end to end — the catalog said `FIELD_RENAME`
 while the detector, ladder and `rename_field` rule speak `SCHEMA_RENAME`
 (plan §2.5); the bench derive path now scopes detection to the
@@ -175,15 +196,17 @@ read for the scenario (not the whole docs volume, which blew the old
 shared 20k token budget before the model was called) — proven by a unit test that
 meters prompt size against the ceiling; it still needs a frontier key
 or a prompt-hash recording to run for real (see arm availability below).
-Still open: no frontier baseline ran for real in the sandbox (no
-`FRONTIER_API_KEY` there — `frontier_oneshot` fails loudly with
-`ReplayMissing`, `frontier_agent` runs on the fake driver); the owner
-reruns with the key after REQ-060 lands (the re-run measures the
+Still open: no keyed frontier-arm ablation result is in the repo (the
+sandbox has no `FRONTIER_API_KEY` — `frontier_oneshot` fails loudly with
+`ReplayMissing`, `frontier_agent` runs on the fake driver); REQ-060 has
+landed and the owner's keyed rerun is pending (the re-run measures the
 models, not the harness).
 
 Metrics (`summarize_ablation`, per arm / per arm+scenario / overall, mean +
 95 % normal-approx interval, ≥5 trials): verified completion rate (verifier
-only), wrong patches released (must be 0), correct escalation rate,
+only: the arm ran, the target passed and the regression gate passed),
+wrong patches released (target passed but the regression gate failed;
+must be 0), correct escalation rate,
 frontier/small tokens, cost, wall time. `grade_ablation_trial` verifies
 released patches over HTTP and degrades to unverified — never guessed —
 when the verifier is unreachable. `render_ablation_table` prints the
@@ -211,15 +234,27 @@ prefixes ignored). All arms share one wall-clock (default 600 s;
 `--wall-clock` / `BENCH_WALL_CLOCK`); agent timeouts are labelled
 `timed_out`.
 Token limit (owner 2026-10-31): `token_ceiling` (and
-`BENCH_TOKEN_CEILING`) defaults to 200,000 tokens per attempt for every
-arm, about 1.3x the largest keyed run with no limit (`frontier_agent`
-156,389 on `duplicate_late_records`, `cf2666e6`). 0 = no limit (REQ-060):
-`Budget` skips the token check when its limit is 0. Every row records input, output
+`BENCH_TOKEN_CEILING`, or `--token-ceiling`) defaults to 200,000 tokens
+per attempt for every arm (`bench/harness.py:DEFAULT_TOKEN_CEILING`),
+sized by the owner at about 1.3x the largest keyed run seen with no
+limit (`frontier_agent` 156,389 on `duplicate_late_records`, run on
+`cf2666e6` — a sizing note from commit `afd0283a`'s message; that run's
+rows are not committed, so it is not a published result). 0 = no
+limit (REQ-060): `Budget` skips the token check when its limit is 0.
+`Budget` enforces the ceiling for the one-shot and engine arms; the
+agent arm is told the ceiling in its brief, but `opencode run` is not
+metered mid-run — only the wall clock stops it, and its tokens are
+recorded after the run. Every row records input, output
 and reasoning tokens (when the provider reports them); the summary
 adds per-arm min / median / max total tokens (`summary
 ["total_tokens_stats"]`) so the owner can pick a limit from the
-results. The one-shot prices by the resolved model id from
-`MODEL_PRICES_PER_MILLION` (Spark $1.25/$4.25 per M). With
+results. The one-shot and the engine's model calls price by the resolved
+model id from `MODEL_PRICES_PER_MILLION` (`src/autobridge/config.py`,
+input/output per M: Spark `muse-spark-1.3` $1.25/$4.25, Spark
+Contributor `muse-spark-1.3-contributor` $0.10/$0.20, Wonder
+`muse-wonder-1.0` $4/$20; any other id falls back to a flat legacy
+per-tier rate, frontier $15 per M); the agent arm's cost is what
+`opencode` reports for its session. With
 `FRONTIER_API_KEY` set the learning curve uses the live agent driver
 (the fake driver raises there) and reports per-repeat agent
 verification — or fails loudly; it no longer crashes on
@@ -233,8 +268,13 @@ wrong-shipped counts plus label counts
 
 ```bash
 make bench-ablation   # all arms on the dev split + learning curve (REQ-024 B)
-make bench            # scorecard first, then all ablation arms, then the learning curve
+make bench            # matched-mode scorecard first, then all ablation arms, then the learning curve
 ```
+
+Today `make bench` stops at its first step: the matched mode runs
+synthetic arms and refuses to score them (see "Harness" above), and the
+`&&` chain never reaches the ablation. `make bench-ablation` is the
+command that runs the comparison.
 
 The benchmark runs in the sandbox (owner decision 2026-10-29: OpenCode
 is there; the host has none). One documented command runs it against the
@@ -249,20 +289,22 @@ make local-up && BENCH_TRIALS=1 make bench-ablation   # or `make up` for the Com
 (no Docker needed); the engine arms run in-process through the same
 code path either way, grading goes to the local verifier over HTTP, and
 the run prints one arm-availability line per arm up front (see below)
-plus the per-arm table at the end. The owner reruns this exact command
-(and later `make bench`) only after all REQ-027/REQ-028 fixes land —
-this is development rehearsal, not the pre-registered run.
+plus the per-arm table at the end. The owner's keyed rerun of this
+exact command is development rehearsal, not the pre-registered run
+(that is the beacon run, below).
 
 Arm availability (`describe_arm_availability`, printed at the start of
 every ablation run and stored on the summary): `frontier_oneshot` runs
 live when `FRONTIER_API_KEY` is set, else replays the committed
 recordings (a missing prompt-hash recording fails that scenario
 loudly, never invented), else the fake provider (offline rehearsal, 0
-tokens). `frontier_agent` needs the `opencode` CLI on PATH — the
-supported path is running the bench inside the sandbox; without it the
-harness uses `FakeOpenCodeDriver` and labels rows `fake-*` so rehearsal
-numbers are never mistaken for live ones. The three engine arms always
-run in-process.
+tokens). `frontier_agent` runs live only with both the `opencode` CLI
+on PATH and `FRONTIER_API_KEY` set — the supported path is running the
+bench inside the sandbox. Without the key the harness uses
+`FakeOpenCodeDriver` and labels rows `fake-*` so rehearsal numbers are
+never mistaken for live ones; with the key but no CLI the agent
+preflight fails and the run stops. The three engine arms always run
+in-process.
 
 Row labels: the per-trial rows carry `ran` (the arm ran to a decision —
 propose/escalate, or a driver result), NOT a verifier pass. Whether a
@@ -304,15 +346,14 @@ by content hash on the spec + evidence. The shared bundle
 
 What no arm gets: no drift class, no fingerprint delta, no hypotheses,
 no `expected` outcome, nothing under `verifier/` — the context test
-scans every dev scenario's bundle for leaks, and the leak audit still
-passes.
+scans every dev scenario's bundle for leaks.
 
 The agent arm's sandbox holds the same files
 (`schema.json`, `capabilities.json`, `example_spec.yaml`,
 `vendor_docs.md`, `visible_tests.json`, `pre_drift_spec.yaml`,
 `evidence.md`, `task.md`, written by `write_agent_sandbox`), and its
 file-based brief names them. The `run_baseline_via_llm_provider`
-fallback (plan §9, not used by the ablation — it drives
+fallback (plan §9; the ablation never calls it, it drives
 `run_baseline_arm`) renders the same full context for real scenarios;
 only unknown/synthetic scenario ids with no ablation case keep the
 legacy one-liner (unit tests). Grading is symmetric: a frontier patch
@@ -321,28 +362,38 @@ engine patch (fixable fixed / wrong shipped); an escalation on an
 unfixable scenario counts as held back, on a fixable one as not fixed
 (`tests/unit/test_autobridge_bench_req060.py` pins all four).
 
-The learning curve (`run_learning_curve`, `experiments/learning_curve.md`)
-injects the same drift five times: the agent pays every repair; the
-engine arms show what the ladder genuinely does (currently every repeat
-escalates for drifts the L1 rules cannot yet match — learning appears as
-rung 0 only once the detector gap closes) — with the driver/provider
-provenance printed on the file so rehearsal rows (fake-labelled) cannot
-be mistaken for publication numbers.
+The learning curve (`run_learning_curve` via `python -m bench.ablation_curve`,
+the last step of `make bench-ablation`; flags `--scenario`
+(default `page_to_cursor`), `--repeats` (5), `--seed` (42), `--provider
+auto|fake|live`, `--out` (`experiments/learning_curve.md`)) injects the
+same drift five times: the agent pays every repair; the engine arms show
+what the ladder genuinely does (proposing caches nothing, so cold repeats
+re-derive at L1 with 0 model tokens; L0 hits only after an approval) —
+with the driver/provider provenance printed on the file so rehearsal
+rows (fake-labelled) cannot be mistaken for publication numbers. The CLI
+passes no verifier URL, so `agent_verified` reads `unverified` and the
+warm arm learns nothing (it only learns verified fixes) and repeats cold.
+The committed `experiments/learning_curve.md` is an unkeyed rehearsal
+(`FakeOpenCodeDriver`, 2,000 fake tokens per repeat; cold/warm rung 1,
+`propose`, 0 tokens) written before the `agent_verified` column existed —
+not a publication number.
 
-Pre-registration (frozen before the Nov 3 run): `experiments/preregistration.md`
-— arms, metrics, trials, budgets, the primary hypothesis
-(`autobridge_cold` ≥ `frontier_agent` verified completion at ≥10× fewer
-frontier tokens), and the promise that results are published whatever they
-are.
+Pre-registration: `experiments/preregistration.md` — arms, metrics,
+trials, budgets, the primary hypothesis (`autobridge_cold` ≥
+`frontier_agent` verified completion at ≥10× fewer frontier tokens,
+measured on the beacon run), and the promise that results are published
+whatever they are. The final evaluation is the beacon run (see "Beacon
+evaluation" below); the dev-split ablation is the rehearsal.
 
 ## Scoring and reports
 
-Scoring (P1.W8.4, `bench/scoring.py`) queries the verifier in hidden mode and reports: verified completion, repair success, false-fix/unsafe rate, escalation quality, elapsed, tool calls, model calls, frontier tokens, estimated cost, zero-frontier solves. `bench/report.py` writes `experiments/scorecard.md` listing wins and losses — both are reported.
+Scoring (P1.W8.4, `bench/scoring.py`, the matched two-arm path; the ablation grades with `grade_ablation_trial` above) queries the verifier in hidden mode and reports: verified completion, repair success, false-fix/unsafe rate, escalation quality, elapsed, tool calls, model calls, frontier tokens, estimated cost, zero-frontier solves. `bench/report.py` writes `experiments/scorecard.md` listing wins and losses — both are reported.
 
 ## `make bench` pipeline (P1.W8.5, REQ-024 B6)
 
-One command runs the whole benchmark (plan §8 verification ladder:
-heldout sha check → matched-budget run → `experiments/scorecard.md`):
+One command is meant to run the dev-split benchmark (matched-budget
+run → `experiments/scorecard.md` → all ablation arms → learning curve);
+today it stops after the matched step (see "Ablation arms" above):
 
 ```bash
 make bench                                    # dev split: scorecard, then all ablation arms, then learning curve
@@ -350,30 +401,40 @@ BENCH_SCENARIOS=baseline BENCH_TRIALS=2 make bench
 BENCH_SEED=99 make bench                      # reproducible from seeds
 BENCH_NO_SCORE=1 make bench                   # harness JSONL only, skip scoring
 make bench-ablation                           # all arms on the dev split + learning curve (needs the stack for grading: make local-up first)
-make bench-heldout                            # Nov 3 run: BENCH_VISIBILITY=heldout
 ```
 
-Steps inside `python -m bench.harness`:
+Other knobs: `BENCH_TOKEN_CEILING` (default 200000, 0 = no limit),
+`BENCH_WALL_CLOCK` (default 600 s), `BENCH_ARMS` (`matched` | `ablation`;
+the make targets pass `--arms` themselves), `BASELINE_DRIVER`,
+`FRONTIER_MODEL` / `OPENCODE_MODEL`. `BENCH_TRIALS` defaults to 1 for
+the matched step and to 5 for the ablation step (the make target sets
+it). The make targets pass `--control-api-url http://localhost:8101
+--verifier-url http://localhost:8104`, which win over `CONTROL_API_URL`
+/ `VERIFIER_URL`. Matched mode first probes both `/healthz` and exits 1
+when either is down (skip with `AUTOBRIDGE_BENCH_SKIP_PROBE=1` or
+`BENCH_NO_SCORE=1`). Either flag also skips the zero-tool-call guard:
+`AUTOBRIDGE_BENCH_SKIP_PROBE=1` alone then scores the synthetic arms,
+while `BENCH_NO_SCORE=1 make bench` writes the JSONL only and is the
+way through to the ablation step today.
 
-1. **Heldout gate** (REQ-007) — dev runs skip it. `heldout`/`all` runs
-   verify every file in `$HELDOUT_DIR` against the committed
-   `verifier/hidden_cases/heldout/SHA256SUMS` (exit 2 on missing env,
-   missing file or sha mismatch), load the private per-scenario seeds,
-   push them to the simulator admin plane (`$SIMULATOR_ADMIN_URL`, when
-   set), and verify each heldout trial with the private seed override.
-   Seeds never appear in logs, JSONL, the scorecard or SSE events — only
-   the scenario id and the manifest sha are recorded.
+Steps inside `python -m bench.harness` (matched mode):
+
+1. **Heldout gate** (REQ-007, retired — see "Held-out split (retired)")
+   — dev runs skip it.
 2. **Matched-budget run** — every scenario × trial through both arms with
-   byte-identical `HarnessInputs` (asserted pre-run and audited post-run).
+   byte-identical `HarnessInputs` (asserted pre-run and audited post-run);
+   from the CLI both arms are synthetic (see "Harness").
 3. **JSONL output** — `experiments/benchmark_runs/<scenario>--trial-<n>.jsonl`
    plus `_summary.json` (overwritten, never appended — re-runs are idempotent).
+   Unless the probe was skipped, `_guard_zero_tool_calls` then exits 1
+   when an arm has 0 tool calls across all trials — which the synthetic
+   arms always do.
 4. **Scoring + report** (`score_and_report`) — every trial × arm scored via
    verifier hidden mode over HTTP (unreachable verifier records losses,
    never raises), then `experiments/benchmark_runs/_scorecard.json` and
    `experiments/scorecard.md` (wins AND losses) via `bench/report.py`.
-   Heldout scorecards carry the header `Heldout seeds: private (manifest
-   <sha of SHA256SUMS>)`; dev scorecards say `Heldout seeds: n/a — dev run
-   on public YAML seeds`.
+   Dev scorecards carry the header `Heldout seeds: n/a — dev run on
+   public YAML seeds`.
 
 ## Reproducibility
 
@@ -393,185 +454,104 @@ Steps inside `python -m bench.harness`:
   seed produce byte-identical JSONL and that a different seed (or different
   arm outcomes) fails the check.
 
-## Heldout freeze runbook (owner step, P1.W2.8 + REQ-007)
+## Held-out split (retired)
 
-The owner holds the private seeds outside git and outside every sandbox
-(`$HELDOUT_DIR`, e.g. `~/autobridge-heldout`): one file per heldout
-scenario, `<scenario_id>.yaml` with `id`, `seed` (int) and `nonce`
-(random hex, so published hashes cannot be brute-forced back to the seed).
-The repo commits only the `sha256sum` manifest
-(`verifier/hidden_cases/heldout/SHA256SUMS`, frozen in ff372083).
+The private held-out seeds (REQ-007 / REQ-024 A, manifest
+`verifier/hidden_cases/heldout/SHA256SUMS`, frozen at `ff372083`) are no
+longer part of the evaluation. Private seeds cannot be published without
+ending their secrecy, so nobody else can download them and check a run.
+The beacon run below proves the same thing — we could not have tuned on
+the test — with inputs anyone can fetch and verify. The manifest and the
+`make bench-heldout` / `make verify-heldout-reveal` targets stay in the
+repo untouched, but no held-out run is planned and there is no held-out
+scorecard.
 
-```bash
-make bench-heldout HELDOUT_DIR=~/autobridge-heldout   # Nov 3 run
-```
-
-The target refuses to run without `HELDOUT_DIR` (exit 2). The harness
-checks the private files against the committed manifest, uses each
-scenario's private seed end to end (simulator admin scenario call +
-verifier hidden-mode oracle override) for that run, and records only the
-scenario id and the manifest sha — dev runs and every other path keep the
-public YAML seed. Never create the heldout files inside the repo, and
-never weaken the gate to make a run pass.
-
-Agents prepare the gate; the owner freezes. When the dev/heldout split is
-final, from the repo root:
-
-```bash
-cd verifier/hidden_cases/heldout && sha256sum ./*.yaml > SHA256SUMS && git add SHA256SUMS
-```
-
-From then on every heldout run (`make bench-heldout`) verifies the
-manifest first and refuses to run on tampered heldout fixtures (exit 2);
-dev runs (`make bench`, `test_07`) skip the gate.
-`tests/e2e/test_07_benchmark_matched_budget.py` runs one dev scenario
-through both arms and validates the scorecard schema.
-
-## Held-out protocol (REQ-024 A)
-
-"Ralph never saw the held-out data" is checkable, not claimed. Every
-step below prints counts and hashes only — never seed or nonce values,
-which live only in the owner's `$HELDOUT_DIR` and in memory while a
-script runs.
-
-### Isolation evidence
-
-* Sandboxes mount only the project folder. On the owner's host `sbx ls`
-  shows the workspace column per sandbox; in any checkout
-  `python3 scripts/heldout_isolation_check.py` prints the same facts from
-  inside: the git top-level, whether `$HELDOUT_DIR` is set and outside the
-  repo (exit 2 when it points inside), the harness use sites proving the
-  bench reads `$HELDOUT_DIR` only for heldout runs
-  (`check_heldout_sha` / `load_heldout_seeds`, skipped entirely on dev
-  runs), the freeze commit `ff372083` with its local date, and the sha256
-  of the frozen `SHA256SUMS`.
-* The bench refuses heldout runs without `$HELDOUT_DIR` (exit 2), and the
-  leak audit refuses to run with it inside the repo (exit 2).
-
-### Leak audit
-
-Before the Nov 3 run the owner runs:
-
-```bash
-HELDOUT_DIR=~/autobridge-heldout python3 scripts/heldout_leak_audit.py \
-  --write experiments/benchmark_runs/_leak_audit.json
-```
-
-It reads each private file's raw bytes and its nonce in memory — never the
-sha256 hashes, which are public by design (they are the committed
-manifest) and therefore never searched — then scans every
-`ralph-logs/*.jsonl` transcript, every blob in the full git history
-(`git rev-list --all` + `git cat-file`), every file under `.worktrees/`,
-and the project folder for any occurrence of raw seed-file bytes or a
-nonce. Output is one line per source with counts plus the per-kind
-breakdown (`0 hits in 109 files (raw: 0, nonce: 0)` …) and exit 1 on any
-hit, so a FAIL says what leaked. Bare seed integers are not searched
-(small ints occur everywhere); the exact raw file bytes cover that case
-with no false positives. A transcript or file that merely quotes the
-public manifest is not a leak. Every copy of the committed manifest
-itself, wherever it is found, is excluded by content and reported as
-excluded. The audit result
-(counts only) is written into the scorecard: `make bench` /
-`make bench-heldout` pick up `<output-dir>/_leak_audit.json`
-automatically (or pass `--leak-audit <path>`), and the scorecard header
-renders `Leak audit: clean — …` or `not run`.
-
-### Public timestamp (owner step)
-
-After the freeze commit lands, from the owner's host:
-
-```bash
-git tag -s heldout-freeze ff372083 -m "heldout seeds sealed (REQ-024)"
-git push origin heldout-freeze
-gh release create heldout-freeze --title "heldout freeze" \
-  --notes "Seals verifier/hidden_cases/heldout/SHA256SUMS at ff372083"
-```
-
-GitHub records the tag and release time. Optionally commit an
-OpenTimestamps proof of `SHA256SUMS` beside it (`ots stamp
-verifier/hidden_cases/heldout/SHA256SUMS`).
-
-### Reveal after the run
-
-After the single Nov 3 run, the owner publishes the seed files:
-
-```bash
-mkdir -p verifier/hidden_cases/heldout/revealed
-cp ~/autobridge-heldout/*.yaml verifier/hidden_cases/heldout/revealed/
-git add verifier/hidden_cases/heldout/revealed && git commit -m "heldout reveal (REQ-024)"
-```
-
-Then anyone reproduces the scorecard:
-
-```bash
-make verify-heldout-reveal   # checks the reveal against frozen SHA256SUMS, reruns make bench-heldout from it
-```
-
-Until the owner does this, the `revealed/` folder must not exist (guard
-test `test_revealed_folder_absent_or_valid`).
-
-### Honest scope
-
-What is sealed is the instance data (seeds): the four scenario
-definitions are public and the builder saw them. Unseen-vendor
-generalization is measured separately on LegacyStay (REQ-019 item 5):
-the `test_s1_legacystay.py` generalization guard keeps that vendor out of
-engine code, so the deck never relies on having seen it.
+Unseen-vendor generalization is measured separately on LegacyStay
+(REQ-019 item 5): the `tests/e2e/test_s1_legacystay.py` generalization guard keeps
+that vendor out of engine code.
 
 ## Beacon evaluation (REQ-025)
 
-Why: the held-out split seals *instance data for four public fault
-types*, and the builder has tests for those types. The beacon run is the
-headline evaluation: the test's data *and* fault details derive from a
+Why: this is the final evaluation. A private held-out split can only
+seal *instance data for public fault types* and cannot be checked by
+anyone else; here the test's data *and* fault details derive from a
 public random value (a League of Entropy drand round) that did not exist
 when the code froze. Commit-then-reveal with public randomness — we could
 not have prepared for the test even if we wanted to.
 
-What a judge can check (everything is public except nothing needs to be):
+Status: only rehearsals on past rounds have run. The real freeze has not
+happened — there is no `eval-freeze` tag, no `experiments/beacon/protocol.md`
+and no `experiments/beacon/<round>/` result yet — so there are no beacon
+results to report. The list below is what a judge can check once it has.
 
-1. `experiments/beacon/protocol.md` — the freeze: round rule (first
-   round at/after a UTC time), N instances, arms, metrics, trials,
-   budgets, the engine + generator commits, "one run, no retries,
+What a judge can check (all of it public):
+
+1. `experiments/beacon/protocol.md` — the freeze (`bench/beacon_run.py:freeze`):
+   round rule (first round at/after a UTC time) and target round, N
+   instances (`beacon-faults`), trials (`beacon-trials`, default 5),
+   arms (the five above), the commit it was frozen at (recorded as both
+   the engine and the generator commit), the freeze time, the rehearsal
+   flag, the drand chain, the metrics in prose, "one run, no retries,
    results published whatever they are", and the pinned frontier model
-   (`beacon-frontier-model`, from `FRONTIER_MODEL`, plus the agent arm's
-   resolved `meta/<id>` form when it differs). The pin proves the model
-   was fixed before the random value existed: `bench-beacon` (real runs
-   and rehearsals) refuses to start when the resolved model differs, a
-   real run requires the line, and a protocol without it (older
-   rehearsals) still parses.
+   (`beacon-frontier-model`, from `FRONTIER_MODEL`, plus
+   `beacon-agent-model`, the agent arm's resolved `meta/<id>` form, when
+   it differs). The pin proves the model was fixed before the random
+   value existed: `bench-beacon` (real runs and rehearsals) refuses to
+   start when the resolved model differs, a real run requires the line,
+   and a protocol without it (older rehearsals) still parses. Budgets
+   are not a protocol field: the run uses the frozen commit's defaults
+   (below) and prints the values it used (`beacon run: token_ceiling=…
+   wall_clock=…`); `BENCH_TOKEN_CEILING` / `BENCH_WALL_CLOCK` can still
+   override them, so that log line is the record. The run does not
+   itself check out or compare the frozen commit.
 2. The `eval-freeze` git tag and its push time — before the round's
-   publication time (the round's own timestamp is inside the signed
-   beacon; compare the two).
+   publication time (the beacon carries no timestamp; round `r` is
+   published at the chain's `genesis_time + (r − 1) × period`, from the
+   chain info; compare the two).
 3. Re-fetch the round (`make verify-beacon ROUND=<n>`): the client
    verifies the threshold BLS signature against the LoE mainnet key with
    pinned `py_ecc` (fail closed), re-derives
-   `seed = sha256(randomness || "autobridge-eval-v1")`, regenerates the
-   instance descriptors through the simulator admin plane, and checks
-   they match the published `experiments/beacon/<round>/instances.json`.
-4. The per-arm grades (`grades.jsonl`) + summary (mean + 95% interval
-   over trials): verified completion rate (judged only by the verifier),
+   `eval_seed = sha256(randomness || "|" || "autobridge-eval-v1")` (per
+   instance `sha256(eval_seed || index_be8)`), regenerates the
+   instance descriptors through the simulator admin plane (so it needs
+   the local stack up), and checks they match the published
+   `experiments/beacon/<round>/instances.json`.
+4. The per-row grades (`grades.jsonl`, one row per instance × trial ×
+   arm) + `summary.json` (per arm and overall, mean + 95 % normal-approx
+   interval over all of an arm's rows): verified completion rate (judged
+   only by the verifier),
    wrong patches that reached a release (must be 0 for AutoBridge),
    correct escalations, frontier tokens, estimated cost, wall time.
 
-Protocol commands: `make eval-freeze ROUND_AFTER=<UTC> FAULTS=<N>`
-(item 4), `make bench-beacon` (item 5: refuses an unpublished round or
-an existing result dir — no re-rolls), `make verify-beacon ROUND=<n>`
-(item 7), `make beacon-eval FAULTS=<N>` (item 6b: one unattended command
-— checks the tree is clean and no ralph loop runs, freezes with
-ROUND_AFTER = now + DELAY_MIN, commits, tags `eval-freeze`, pushes after
-one "yes", waits, runs, writes `EVIDENCE.md` + `evidence.png`,
-commits + pushes; resumable). Rehearsals on past rounds:
-`make bench-beacon REHEARSE=<round>` (item 6: labelled rehearsal under
-`experiments/beacon/rehearsals/`, at least five before the freeze).
+Protocol commands: `make eval-freeze ROUND_AFTER=<UTC> FAULTS=<N>
+[TRIALS=5]` (item 4), `make bench-beacon` (item 5: refuses an
+unpublished round or an existing result dir — no re-rolls), `make
+verify-beacon ROUND=<n> [OUTDIR=<dir>]` (item 7), `make beacon-eval
+[FAULTS=25] [DELAY_MIN=20] [CONFIRM=yes]` (item 6b: one unattended
+command — checks the tree is clean and that no process matching `ralph`
+runs, freezes with ROUND_AFTER = now + DELAY_MIN, commits, tags
+`eval-freeze`, pushes to `origin main` after one "yes" (skipped with
+`CONFIRM=yes`), waits, runs, writes `EVIDENCE.md` + `evidence.png`,
+commits + pushes; resumable). It is the owner's single-shot command as
+written: one `experiments/beacon/protocol.md`, one fixed `eval-freeze`
+tag, pushes to this repo's `main` — not something a reader can rerun
+today; a reader checks a published run with `make verify-beacon`.
+Rehearsals on past rounds: `make bench-beacon REHEARSE=<round> [FAULTS=10]
+[TRIALS=1]` (item 6: labelled rehearsal under
+`experiments/beacon/rehearsals/<round>/`, at least five before the
+freeze; that directory is gitignored — practice runs, never results).
+Results land in `instances.json`, `grades.jsonl` and
+`summary.json` in the round's directory.
 
 Grading: every arm attempts the same instances under matched budget —
 the same repair task (the pre-drift spec under repair plus the faulted
 sync's evidence: outcome, unmet criteria / failed checks, served
 response sample), the same file-based bench prompts
 (`config/prompts/bench/`), and the same 200k token ceiling (the dev
-ablation default; `token_ceiling` 0 = no limit via `BENCH_TOKEN_CEILING`,
-per-call output cap `FRONTIER_MAX_TOKENS`, wall clock 600 s via
-`BENCH_WALL_CLOCK`). Arms that produce a candidate spec sync it with the
+ablation default, enforced the same way — `Budget` for the one-shot and
+engine arms, wall clock only for the agent; `token_ceiling` 0 = no limit
+via `BENCH_TOKEN_CEILING`, per-call output cap `FRONTIER_MAX_TOKENS`
+(default 131072), wall clock 600 s via `BENCH_WALL_CLOCK`). Arms that produce a candidate spec sync it with the
 real runtime against the live beacon shape; produced records are judged by
 the verifier (`/beacon/records`: canonical set, no loss/duplicates, exact
 money, property-local business dates, canonical status vocabulary, plus
@@ -611,6 +591,11 @@ the instance.
 Engine arms that cannot attempt a vendor in-process (no spec source in
 the vendor table) are recorded `executed: false` with the reason named —
 a fail-closed loss, the same for every arm.
+`autobridge_warm` gets no warm-up on the beacon run: `make bench-beacon`
+passes it no learned knowledge (the dev ablation's `warm_knowledge`
+step is not wired into `bench/beacon_run.py`), so it starts from an
+empty cache exactly like `autobridge_cold`, and the beacon run does not
+measure learning.
 Known asymmetry (REQ-024 owner check on `f32b4b4b`, FIXED
 2026-10-29): engine arms used to run in-process from descriptor-built
 repair inputs (drift class, fingerprint delta, hypotheses), i.e. from
@@ -627,5 +612,3 @@ Honest scope: fault *families* are known by design (that is the engine's
 everyday knowledge: renames, nesting, pagination switches, code lists,
 semantic scaling, date shifts, transport/auth, FIAS layout/link); what
 could not be known are the *instances* (family + parameters per seed).
-The REQ-007 held-out split is kept as the frozen secondary benchmark:
-new data for known fault types.

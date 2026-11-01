@@ -1,6 +1,8 @@
 # Pre-registration: engine vs. untrained frontier model (REQ-024 B5)
 
-Committed before the November 3 held-out run. Whatever the numbers say,
+Committed before the planned November 3 held-out run, which never took
+place (amended 2026-11-01: the beacon run replaces it — see the last
+amendment). Whatever the numbers say,
 they are published as-is: wins and losses both land in the scorecard, and a
 result that contradicts the hypothesis below is reported, not re-run.
 
@@ -130,3 +132,54 @@ hypothesis and the no-reroll rule unchanged):
    published table (`MODEL_PRICES_PER_MILLION`: Spark $1.25/$4.25 per M);
    the $15/M flat placeholder is gone. (Agent-arm cost still comes from
    the CLI report; out of scope here.)
+
+## Amendment (2026-11-01): the beacon run replaces the held-out run
+
+What changed and why (published, not hidden): the evaluation needs one
+test set that we provably could not tune on *and* that anyone can check.
+The private held-out seeds meet the first condition only — they cannot
+be published without ending their secrecy, so no one else can download
+them and verify a run. The beacon run (REQ-025, `docs/benchmark.md`
+"Beacon evaluation") meets both: the instances derive from a public
+drand round that did not exist when the protocol froze, and anyone can
+re-fetch the round and regenerate the same instances
+(`make verify-beacon ROUND=<n>`). No held-out run has taken place, so
+nothing was seen before this change.
+
+Read every "held-out" and "Nov 3" above as "the beacon run": the
+primary hypothesis (`autobridge_cold` ≥ `frontier_agent` verified
+completion at ≥10× fewer frontier tokens) is measured on the beacon
+instances. What the freeze
+(`bench/beacon_run.py:freeze`, written to `experiments/beacon/protocol.md`)
+pins and what it does not:
+
+- Arms: the five above (`beacon-arms`).
+- Trials: `beacon-trials` (`make eval-freeze` default 5). A trial
+  repeats the same instance — the round fixes the instances — so the
+  "different seeds" clause above does not apply.
+- Model: `beacon-frontier-model` (`FRONTIER_MODEL` at freeze time,
+  default `muse-spark-1.3`), plus `beacon-agent-model` when the agent
+  arm's resolved form differs; the run refuses on any mismatch.
+- Metrics: the list above, in the protocol's prose. `summary.json`
+  reports them per arm and overall (mean + 95 % normal-approx interval
+  over all of an arm's rows); per-instance results are the rows of
+  `grades.jsonl`.
+- Grading: the verifier's `/beacon/records` and `/beacon/grade`
+  endpoints over HTTP, in place of hidden-mode `/verify`.
+- Budgets are not a protocol field. The run uses the frozen commit's
+  defaults (200,000 tokens per attempt, 600 s wall clock, per-call cap
+  `FRONTIER_MAX_TOKENS` 131072) and prints the values it used;
+  `BENCH_TOKEN_CEILING` / `BENCH_WALL_CLOCK` can still override them,
+  so that printed line is the record.
+- `autobridge_warm`: never learns on beacon instances — and as wired
+  today the beacon run gives it no dev-split warm-up either, so it
+  starts from an empty cache like `autobridge_cold`. The `d` vs `e`
+  learning comparison is therefore not measured on the beacon run; the
+  dev-split learning curve is the only learning evidence.
+
+The "Held-out integrity" section no longer applies; its scripts and the
+frozen `SHA256SUMS` stay in the repo untouched. In "Rehearsal", `make
+bench` currently stops at its matched-mode step (synthetic arms,
+"refusing empty scorecard", exit 1), so `make bench-ablation` is the
+dev rehearsal. Arm definitions, metric definitions, matched budgets
+and the no-reroll rule are unchanged.

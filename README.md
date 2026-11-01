@@ -11,16 +11,16 @@ ends `Complete | Degraded | Blocked` with the unmet criterion named.
 ## Quickstart (clean machine: Docker + `uv` + Node 22/`npm` for the UI)
 
 ```bash
-cp .env.example .env        # fill in provider keys; secrets stay in .env (git-ignored)
+cp .env.example .env        # demo defaults run as-is; add FRONTIER_API_KEY for live L2/L3 (.env is git-ignored)
 make ui-deps                # one-time UI install (`cd ui && npm ci`; also auto-run by `make test`/`make e2e-ui`)
 make edge-sign               # pin the edge command bundle (required once you set EDGE_RELEASE_SECRET; harmless otherwise)
 make up                     # build images, start the stack, wait for every /readyz
 make smoke                  # healthz/readyz + trust-boundary network probes
 make test                   # unit, ≥90% coverage per Python package
-make e2e                    # tests/e2e/test_00 … test_07, random order
+make e2e                    # every pytest file in tests/e2e, random order
 make e2e-ui                 # Playwright UI journey (needs `make up` first)
-make bench                  # heldout sha check → matched-budget run → experiments/scorecard.md
-make demo                   # six demo steps through the control API (plan §6)
+make bench                  # calls models; matched step currently exits 1 ("refusing empty scorecard"), see below
+make demo                   # eight demo steps through the control API (plan §6)
 make down                   # docker compose down -v
 ```
 
@@ -32,11 +32,17 @@ AutoBridge reads in `simulators/docs/`:
 | AtlasPMS (method-style REST: getReservations/getReservation/getGuest/getHotels/getTransactions, x-api-key auth, pageNumber/pageSize, JSON-number money) | http://localhost:8105/developers | `atlas-openapi.yaml` |
 | HarborPMS (messy wiki) | http://localhost:8106/developers | `harbor.md` |
 | LegacyStay (2000s website) | http://localhost:8111/developers | `legacystay.md` |
-| MeridianPMS (Mews-style POST/JSON: body-field auth, Limitation cursor, UTC instants; names via customers, money via order items) | http://localhost:8116/developers | `meridian-openapi.yaml` |
+| MeridianPMS (POST/JSON: body-field auth, Limitation cursor, UTC instants; names via customers, money via order items) | http://localhost:8116/developers | `meridian-openapi.yaml` |
 | FIAS PABX (on-premise exchange over TCP: STX/ETX framing, link handshake, PS postings answered with PA; viewed as an uploaded document) | http://localhost:8118/developers | `fias-pabx.md` |
 
 CI (`.github/workflows/ci.yml`) runs the same order from a clean clone:
 `make test → make up → make smoke → make e2e → make e2e-ui → make demo`.
+
+`make bench` is not in CI and does not complete yet: its first (matched-budget)
+step refuses to score because the matched arms record no tool calls, so it
+exits 1 with "refusing empty scorecard". `BENCH_NO_SCORE=1 make bench` skips
+that scorecard and runs on to the ablation arms and learning curve. Both call
+models (they need provider keys and cost money). See `docs/benchmark.md`.
 
 ## No Docker (plain laptop: Python 3.12 + `uv`, Node 22/`npm`)
 
@@ -45,11 +51,11 @@ stack runs as local processes on the same host ports (control 8101 …
 UI 8107):
 
 ```bash
-cp .env.example .env        # fill in provider keys; secrets stay in .env (git-ignored)
+cp .env.example .env        # demo defaults run as-is; add FRONTIER_API_KEY for live L2/L3 (.env is git-ignored)
 make edge-sign               # pin the edge command bundle (required once you set EDGE_RELEASE_SECRET; harmless otherwise)
 make local-up               # start every service locally, wait for every /readyz
 open http://localhost:8107  # the UI (same-origin /api rewrite → control :8101)
-make demo                   # six demo steps through the control API (plan §6)
+make demo                   # eight demo steps through the control API (plan §6)
 make smoke                  # healthz/readyz green; Docker network probes report "skipped: local mode"
 make e2e                    # live tests run against the local stack too
 make local-down             # stop everything (data kept in ./.local/autobridge.db)
@@ -84,8 +90,8 @@ make local-up                  # or: make up (Docker). Wait for "all services re
 make demo-reset && make demo-seed
 ```
 
-Open `http://localhost:8107`: the opening frame reads
-"0 connectors · ready to build" — every simulator up on its baseline
+`make demo-seed` ends on "0 connectors · ready to build" and
+`http://localhost:8107` opens on the empty Connectors page — every simulator up on its baseline
 scenario, nothing built, nothing learned (`make demo-seed` fails loud
 otherwise). Every connector below is built live from its docs.
 Each block is one command, then watch (deck order, `docs/demo.md`):
@@ -96,21 +102,22 @@ Each block is one command, then watch (deck order, `docs/demo.md`):
   decisions yet". On `/connectors` the header reads "0 connectors" and
   the empty state leads with **"Build a connector"**.
 - **Deck 2 — Build Atlas from its OpenAPI.** Open `/connectors/new`,
-  pick the Atlas docs, keep vocabulary v1 and **Build**: release r1,
+  pick the Atlas docs, keep vocabulary v1 and **Start build**: release r1,
   first sync Complete, AtlasPMS ● Working with 0 model calls.
-  `/knowledge` lists atlaspms under v1.
+  `/knowledge` lists AtlasPMS under v1.
 - **Deck 3 — Zero-token fix.** `make demo-break SCENARIO=page_to_cursor` →
-  AtlasPMS turns ▲ Degrading ("drift detected … · repairing at L1");
+  AtlasPMS turns ▲ Degrading ("fix ready · verified · 0 model calls");
   a repair appears at the top of `/repairs` **without reloading** as
-  "fix ready · 0 model calls". Open it: the page answers what happened,
+  "fix ready" with "0 model calls". Open it: the page answers what happened,
   what the engine did, what it decided, and what Approve does — then
-  click **Approve** and watch the connector return to ● Working
-  (approval → release → verifying sync → Complete). Run the break again:
+  click **Approve release** and watch the connector return to ● Working
+  (approval → release → verifying sync → Complete). On the connector
+  page, Releases → **Activate** r1, then run the break again:
   the same drift now resolves at L0 and the Knowledge entry reads
   "reused 1×".
 - **Deck 4 — Build Harbor from its wiki.** Open
-  `/connectors/new`, pick the Harbor docs, watch docs read → draft →
-  probes → result → release — including the line "check added from the
+  `/connectors/new`, pick the Harbor docs, **Start build**, watch docs read → docs check →
+  draft → probes → result → release — including the line "check added from the
   docs: totals must match `meta.gross_sum`". The new connector's page
   shows its spec (with the totals check), releases and sync runs,
   ● Working. Deck 6 below builds Meridian the same way (v1 first).
@@ -124,17 +131,17 @@ Each block is one command, then watch (deck order, `docs/demo.md`):
   **Approve: \<the model's label\>** ("accept net") and watch Harbor
   return to ● Working (release r2 from the proposal, verifying sync,
   recorded as a business decision — not a verified fix, and never
-  learned); or **Deny** ("keep everything as-is, contact the vendor")
+  learned); or **Deny: keep everything as-is, contact the vendor**
   and watch it stay ■ Error. The instrumented step-4 climb in
   `make demo` runs the same inputs for the printed derivation; it is
   recorded as a second row only when the break's L3 was skipped.
 - **Deck 6 — New kind of API.** Open `/connectors/new`, pick the Meridian
-  docs, keep vocabulary v1 and **Build**: the build is refused on screen
+  docs, keep vocabulary v1 and **Start build**: the build is refused on screen
   with the engine's named reason (POST with a JSON body and body-field
   auth are not expressible in ConnectorSpec v1) — no release, 0 model
   calls, and the attempt stays recorded. **Download capability request**
   drafts the gap as a Markdown file shaped for the build loop (no model
-  used). Build the same docs with v2:
+  used). Click **Build with v2**:
   release r1, first sync Complete, MeridianPMS ● Working. The connector
   page shows both attempts (v1 refused with its reason, v2 in use) and
   the result carries the engine's runtime decision ("runs: cloud").
@@ -142,10 +149,10 @@ Each block is one command, then watch (deck order, `docs/demo.md`):
   docs: there is no base URL to type and no runtime to choose — the
   relay address is fixed and vocabulary v3 is suggested, because the
   engine runs framed docs on the on-premise edge agent (the result says
-  "runs: on-premise edge agent, via the relay"). Build with v2 first:
+  "runs: on-premise edge agent, via the relay"). Pick v2 and **Start build** first:
   refused on screen (event-driven feeds are not expressible in
-  ConnectorSpec v2), 0 model calls, attempt recorded — then **Build**
-  with v3: release r1,
+  ConnectorSpec v2), 0 model calls, attempt recorded — then
+  **Build with v3**: release r1,
   the edge agent connects, postings flow, PABX edge ● Working.
   `/knowledge` lists it under v3 with v2 refused. Then
   `make demo-break SCENARIO=fias_link_resync` → the PABX panel shows the
@@ -153,33 +160,37 @@ Each block is one command, then watch (deck order, `docs/demo.md`):
   back — the relay log still holds every pre-break posting exactly once
   (nothing lost, nothing duplicated) — and the connector stays ● Working.
   No repair, no Approve.
-- **Deck 8 — Proof.** `make demo` (terminal-only, 8 steps) approves through
-  the API and lands everything in the database exactly like the clicks
-  do; `experiments/scorecard.md` and the benchmark rehearsals carry the
-  numbers.
+- **Deck 8 — Proof.** `make demo` (terminal-only, 8 steps) drives the same
+  story through the control API and checks each step's evidence. Without
+  `FRONTIER_API_KEY` its L3 legs are labelled skips. Known issue: with a
+  live key, step 4's post-approve check fails (it expects the repair's
+  decision to still read `escalate`; approving records `approved`).
+  No benchmark results are committed: the final benchmark is the beacon
+  run (`docs/benchmark.md`, "Beacon evaluation"), which has only been
+  rehearsed so far.
 
 Retakes: `make demo-heal` clears injected faults without a reset;
 `make demo-reset && make demo-seed` restores the blank opening frame
 (0 connectors, every simulator on baseline).
-`make demo` (terminal-only, 8 steps) approves through the API and lands
-everything in the database exactly like the clicks do.
 Settings: `AUTOBRIDGE_SYNC_INTERVAL_S` (default 10; the scheduler syncs
 every connector each tick and never approves); `FRONTIER_API_KEY` —
-with a key the semantic climb calls Muse live, without it the step
-replays a captured run and labels it replayed.
+with a key the semantic climb calls Muse live; without it the step
+replays a capture from `demo/recordings/` when one exists (none is
+committed) and otherwise records an explicit, labelled L3 skip.
 
 ## How it works
 
 1. **Connect** — a vendor's docs become a declarative `ConnectorSpec` (YAML/JSON) via
    bootstrap (docs → hypotheses → probes → evidence → spec), or start from a reference
    spec under `generated/connectors/<id>/reference/`.
-2. **Execute** — the runtime interprets the spec (`GET` operations, auth by
+2. **Execute** — the runtime interprets the spec (`GET` operations in v1, POST/JSON
+   bodies in v2, framed TCP event feeds in v3 via the edge agent; auth by
    `credential_ref`, pagination with guards, closed transform set, per-entity checks)
    and records a `SyncRun` with outcome, `data_readiness`, `fingerprint_id` and
    checkpoint. Baseline syncs use zero model calls.
 3. **Detect** — fingerprint + classifier assign one of 12 drift classes
-   (`FIELD_RENAME`, `PAGINATION_CHANGE`, `SEMANTIC_VALUE_DRIFT`, …).
-4. **Repair** — the ladder tries L0 knowledge, then 7 deterministic L1 rules
+   (`SCHEMA_RENAME`, `PAGINATION_CHANGE`, `SEMANTIC_VALUE_DRIFT`, …).
+4. **Repair** — the ladder tries L0 knowledge, then 9 deterministic L1 rules
    (JSON Patch on the spec), then budgeted L2/L3 model calls, else escalates with a
    bundle (exactly one question + redacted evidence). Known patterns repair with
    `frontier_tokens == 0`.
@@ -201,18 +212,20 @@ package; every service has `/healthz` + `/readyz`; secrets only as `credential_r
 
 ```
 autobridge/
-├── README.md  compose.yaml  .env.example  Makefile  pyproject.toml (uv workspace)
+├── README.md  compose.yaml  .env.example  Makefile  pyproject.toml (uv workspace)  ralph-afk.sh
 ├── docs/            architecture.md  connector-spec.md  safety-model.md  benchmark.md  demo.md
-├── schemas/         reservation / folio-charge / connector-spec.v1 / runtime-target / discovery-result.v0
-├── src/autobridge/  spec/ runtime/ discovery/ drift/ repair/ llm/ evidence/ control/ engine/ bench/
+├── schemas/         reservation / folio-charge / connector-spec.v1-v3 / runtime-target / discovery-result.v0
+├── src/autobridge/  spec/ runtime/ discovery/ drift/ repair/ llm/ evidence/ control/ engine/ edge/ bench/
+├── bench/           harness, ablation arms, demo / demo-seed / demo-break / demo-heal drivers, beacon run
+├── config/          demo targets, ablation cases, beacon vendors, prompts
 ├── verifier/        own pyproject; oracle, canonical checks, hidden_cases/{dev,heldout}
-├── simulators/      own pyproject; common/ atlaspms/ harborpms/ meridianpms/ fias_pabx/ docs/ scenarios/ (17 YAMLs)
-├── generated/       connectors/<id>/<release>/spec.yaml + build-report.json
+├── simulators/      own pyproject; common/ atlaspms/ harborpms/ legacystay/ meridianpms/ fias_pabx/ edgepos/ devportal/ docs/ scenarios/ (27 YAMLs)
+├── generated/       connectors/<id>/reference/spec.yaml + build-report.json (committed reference specs)
 ├── ui/              Next.js 15 + TypeScript + Tailwind; lib/api (openapi-typescript client)
-├── experiments/     benchmark_runs/*.jsonl  scorecard.md
+├── experiments/     preregistration.md  learning_curve.md  benchmark_runs/ (run output, not committed)
 ├── mcp_stretch/     Phase 2
-├── tests/           unit/  e2e/ (test_00 … test_07 + test_06 Playwright spec)
-├── scripts/         wait_readyz.sh  smoke.sh  fake_claude.py  fake_codex.py
+├── tests/           unit/  e2e/ (pytest suite + Playwright *.spec.ts journeys)
+├── scripts/         local-up.sh  local-down.sh  wait_readyz.sh  smoke.sh  edge-sign.sh  beacon-eval.sh  …
 ├── mds/             planning + agent bookkeeping (plan, PRD index, tracking, notes, directives)
 └── alembic/         migrations for the core data model
 ```
@@ -222,10 +235,10 @@ autobridge/
 | Page | Covers |
 |---|---|
 | `docs/architecture.md` | Services, networks, health contracts, data model, ladder, e2e harness, control API + UI |
-| `docs/connector-spec.md` | ConnectorSpec v1 reference: source/auth, operations, pagination, entities, closed transforms, checks, JSON Patch |
+| `docs/connector-spec.md` | ConnectorSpec v1/v2/v3 reference: source/auth, operations, pagination, entities, closed transforms, checks, JSON Patch |
 | `docs/safety-model.md` | Verifier trust boundary, oracle, scenario catalog, semantic invariants, regression gate, escalation, guarantees |
-| `docs/benchmark.md` | Matched-budget harness, baseline drivers, scoring, `make bench` pipeline, heldout freeze runbook |
-| `docs/demo.md` | Six demo steps (plan §6) through the control API, with the evidence each step renders |
+| `docs/benchmark.md` | Matched-budget harness, baseline drivers, ablation arms, scoring, `make bench` pipeline, beacon evaluation (the final benchmark) |
+| `docs/demo.md` | Eight demo steps (plan §6) through the control API, with the evidence each step renders |
 
 ## Technical Architecture
 ![AutoBridge technical architecture](docs/architecture.png "Technical Architecture")

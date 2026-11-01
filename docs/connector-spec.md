@@ -1,15 +1,19 @@
 # AutoBridge — ConnectorSpec v1/v2/v3
 
 > Reference for the declarative connector document the runtime interprets.
-> Every spec validates against `schemas/connector-spec.v2.json` before it is
-> stored, executed or patched. Invalid specs are rejected with path-level errors
-> (e.g. `entities.Reservation.fields.status.transform[0].args.map: missing`).
+> Every spec validates against the `ConnectorSpec` model (mirrored by
+> `schemas/connector-spec.v3.json`, which describes the normalized form the
+> model dumps — shorthand such as `transform: [money, { scale: 2 }]` is
+> normalized first) before it is stored, executed or patched.
+> Invalid specs are rejected with path-level errors (e.g.
+> `entities.Reservation.fields.status.transform.0: Value error, enum_map requires a non-empty 'map' argument`).
 > Version 1 documents still validate and behave exactly as before; v2 adds
-> POST operations, `body_fields` auth and `body_cursor` pagination (§10).
+> POST operations, `body_fields` auth, `body_cursor` pagination (§10) and
+> joins (§12); v3 adds the event-driven transport (§13).
 
 Related: [Architecture](architecture.md) §5, `src/autobridge/spec/models.py`,
-`schemas/connector-spec.v2.json` (`schemas/connector-spec.v1.json` kept for
-reference), plan §2.4.
+`schemas/connector-spec.v3.json` (`schemas/connector-spec.v1.json` and
+`.v2.json` kept frozen for reference), plan §2.4.
 
 ## 1. File layout — `generated/connectors/`
 
@@ -34,10 +38,11 @@ Both reference specs sync `Complete` with `ModelCall` count `0` — the runtime
 never calls an LLM for a baseline sync.
 
 Build report (`build-report.json`) records `connector_id`, `release_id`,
-sha256 `signature` of the canonical JSON form, `built_by`, and any caller
-metadata. Signature mismatches raise `ReleaseCorruptError`. The canonical
-form omits spec-v2-only fields when they sit at their defaults, so a v1
-spec hashes byte-identically to before v2 existed — committed v1 releases
+sha256 `signature` of the canonical JSON form, plus any caller metadata
+(e.g. `built_by`, `note`). Signature mismatches raise `ReleaseCorruptError`. The canonical
+form omits spec-v2/v3-only fields (and an empty `observed_wire_keys`) when
+they sit at their defaults, so a v1 spec hashes byte-identically to before v2
+existed — committed v1 releases
 keep verifying unchanged, while any v2 field actually set moves the
 signature.
 
@@ -141,7 +146,7 @@ health:
 
 * `rate_limit.retry` — `statuses` (e.g. `[429, 503]`), `backoff` (`exponential |
   linear | constant`), `max_attempts` 1..10. The `HttpClient` retries on those
-  statuses with exponential backoff (`Retry-After` overrides when numeric,
+  statuses with the configured backoff (`Retry-After` overrides when numeric,
   capped at 60 s per sleep; cumulative retry delay per sync job is bounded
   and trips `Blocked` with `sync_deadline_exceeded` instead of stalling).
 
@@ -153,15 +158,18 @@ health:
   timezone_source: { kind: field, path: $.property.tz }        # tz varies per record (looked up from the record)
   ```
 
-  IANA names or `UTC` only. A `field` kind is evaluated per record via JSONPath;
-  missing → `UTC` fallback.
+  IANA names (`Area/City`), `UTC` or `UTC±H[:MM]`; the model checks the shape,
+  and a zone the runtime cannot resolve falls back to `UTC`. A `field` kind is
+  evaluated per record via JSONPath; missing → `UTC` fallback.
 
 ### 2.3 `operations`
 
-Keyed by name (`[a-z][a-z0-9_]*`). Each operation is a `GET` (v1 and v2) or a
-`POST` (v2 only, with a JSON body template — see §10) with:
+Keyed by name (`[a-z][a-z0-9_]*`). Each operation is a `GET` (the default; all
+versions), a `POST` (v2+, with a JSON body template — see §10) or an `EVENT`
+feed (v3 only — see §13) with:
 
-* `path` — relative (must start with `/`, no `$` or spaces).
+* `path` — relative (must start with `/`, no `$` or spaces); required for
+  `GET`/`POST`, forbidden for `EVENT`.
 * `params` — query strings. Values may contain `{{checkpoint.<op>}}` templates
   resolved from the caller's checkpoint dict (e.g. incremental sync).
 * `body` — v2 POST only: static JSON template for the request body (v2
@@ -178,7 +186,9 @@ Keyed by canonical name (`Reservation`, `FolioCharge` in v1; PascalCase).
 * `from` — operation name that supplies the raw records.
 * `key` — JSONPath to the canonical key (`$.reservation_id` / `$.charge_id`);
   used for deduplication and `unique_key` checks.
-* `fields` — map of canonical field name → `{ path, transform }`:
+* `fields` — map of canonical field name (`[a-z][a-z0-9_]*`) →
+  `{ path, transform }` (exactly one of `path` / v3 `paths`, except that a
+  pipeline starting with `const` may omit both — any version):
 
   * `path` — JSONPath subset (root `$` plus child segments `$.a`, `$.a[0]`,
     `$.a[*]`, `$.a['x']`; no filters `?()`, no `..`, no expressions).
@@ -201,7 +211,7 @@ Keyed by canonical name (`Reservation`, `FolioCharge` in v1; PascalCase).
     - { kind: unique_key }                               # no duplicate keys
     - { kind: no_loss, compare_to: $.total }             # produced count ≥ $.total from first raw page
     - { kind: date_order, before: arrival_date, after: departure_date }  # departure ≥ arrival
-    - { kind: money_invariant, field: total_amount }     # money field present + positive Decimal (semantic)
+    - { kind: money_invariant, field: total_amount }     # money field present + positive Decimal (semantic); optional compare_to (page money sum) or expected_sum + tolerance_pct
     - { kind: business_date_invariant, field: business_date, reference_field: posted_at, cutoff: 4 }  # business_date derives from posted_at
     - { kind: count_invariant, compare_to: $.total }     # strict count match (semantic drift alias)
   ```
@@ -215,10 +225,12 @@ Keyed by canonical name (`Reservation`, `FolioCharge` in v1; PascalCase).
 
 * `capabilities.read` — entities this connector emits (must name an `entities`
   key). `action` is empty in the demo.
-* `health.canary` — `operation` + `every` (`60s`/`5m`/`1h`) + `max_pages`.
-  The canary monitor `GET`s the operation with `max_pages=1`.
-* `health.fingerprint` — `keys | types | pagination_shape` toggles for the
-  `fingerprint_id` hash (see `src/autobridge/engine/sync_run.py`).
+* `health.canary` — `operation` + `every` (`60s`/`5m`/`1h`) + `max_pages`
+  (default `1`). The canary monitor runs that one operation capped at
+  `max_pages`.
+* `health.fingerprint` — `keys | types | pagination_shape` toggles (all `true`
+  by default) for the `fingerprint_id` hash (see
+  `src/autobridge/drift/fingerprint.py`).
 * `observed_wire_keys` (optional, per entity) — top-level wire keys the build
   probe saw the vendor serve (names only, never values). A docs build maps
   every known canonical field, including ones the wire never serves; without
@@ -233,7 +245,7 @@ Keyed by canonical name (`Reservation`, `FolioCharge` in v1; PascalCase).
 
 ## 3. Pagination
 
-The interpreter supports three strategies; each page is fetched via
+The interpreter supports three strategies (plus v2 `body_cursor`, §10); each page is fetched via
 `HttpClient` with retry, then `evaluate_stop` decides whether to continue:
 
 | Strategy | Params sent | `next_token` extraction | State advance |
@@ -254,8 +266,8 @@ missing/unparseable total stops after the first page via the implicit
 `stop_when` is a closed name set:
 
 * `null_cursor` — `next_token` is `null` or `""`.
-* `repeated_cursor` — cursor strategy only; `next_token` equals current or
-  previous cursor (Harbor's known bug every 2nd page when the fault is active).
+* `repeated_cursor` — `cursor` and `body_cursor` only; `next_token` equals
+  current or previous cursor (Harbor's known bug every 2nd page when the fault is active).
 * `empty_page` — page returned no items.
 * `no_next` — `next_token is None`.
 * `page_limit` — `max_pages` cap (safety).
@@ -293,15 +305,15 @@ fault is detected as `Degraded` rather than looping.
 
 | Name | Purpose | Key args |
 |---|---|---|
-| `date_local` | UTC instant → property-local calendar date (midnight crossing handled) | `tz: <iana> | source`, default `UTC` |
-| `datetime_utc` | Local instant → UTC ISO (`+00:00`) | `tz: <iana> | source` |
+| `date_local` | UTC instant → property-local calendar date (midnight crossing handled) | `tz: <iana> | source`, default `source` (→ `UTC` when unresolved) |
+| `datetime_utc` | Local instant → UTC ISO (`+00:00`) | `tz: <iana> | source`, default `source` |
 | `money` | String/int/`Decimal` → `Decimal` quantized (float input is rejected) | `scale: 0..6` (default 2, uses `ROUND_HALF_UP`, strips `$`, `,`) |
 | `enum_map` | Vendor code → canonical vocab; unknown `block` | `map: { from: to, … }, on_unknown: block` |
 | `flatten` | `[[a],[b]]` → `[a,b]` | — |
-| `coalesce` | First non-empty | `default` / `value` / `fallback` / `values: […]` |
+| `coalesce` | First non-empty | `default` / `value` / `fallback` / `else` / `values: […]` |
 | `const` | Replace with constant | `value: any` (required) |
 | `concat` | Join / prefix-suffix | `separator`, `prefix`, `suffix`, `values: […]` |
-| `business_date` | `posted_at` UTC → business date via cutoff | `tz: <iana> | source`, `cutoff: 0..23` (default `4`) |
+| `business_date` | `posted_at` UTC → business date via cutoff | `tz: <iana> | source` (default `source`), `cutoff: 0..23` (default `4`) |
 
 `enum_map` with `on_unknown: block` is load-bearing: an unknown vendor value
 raises `TransformBlocked` and the sync handler maps it to `Blocked` with
@@ -319,27 +331,37 @@ A pure `YYYY-MM-DD` input is returned as-is (already a business date).
 maps raw records to canonical via the pipeline, runs checks, then:
 
 * `Blocked` — any `TransformBlocked` (unknown enum) → `unmet_criteria`
-  includes `unknown_enum` + `unknown_enum:<field>`.
+  includes `unknown_enum` + `unknown_enum:<field>`. A transport failure
+  also ends `Blocked` before mapping, with the reason named
+  (`endpoint_not_found`, `auth_expired`, `auth_revoked`, `rate_limited`,
+  `transient_error`, `http_error`, `sync_deadline_exceeded`,
+  `feed_unavailable`), as does a spec whose `spec_version` exceeds the
+  pinned vocabulary (`vocabulary_<pin>_cannot_execute_spec_v<N>`) or is
+  unknown (`unknown_spec_version`).
 * `Degraded` — `repeated_cursor` (→ `no_loss`) or any check failure
-  (`unique_key`, `no_loss`, `date_order`, `transform_error`).
+  (`unique_key`, `no_loss`, `date_order`, `money_invariant`,
+  `business_date_invariant`, `count_invariant`, `transform_error`).
 * `Complete` — otherwise.
 
 `data_readiness` follows the outcome: `Complete → {freshness: current,
 completeness: complete}`, `Degraded → {current, partial}` (stale when zero
-records), `Blocked → {stale, incomplete}`. `fingerprint_id` is a sha256 over
-the spec signature + pagination shape + keys sample + types histogram, so any
-drift in keys, types or pagination changes the id.
+records), `Blocked → {stale, incomplete}`. `fingerprint_id` is the first 16
+hex chars of a sha256 over the spec signature + pagination shape + keys
+sample + per-field types, so any drift in keys, types or pagination changes
+the id.
 
 Both reference specs sync `Complete` on a clean simulator baseline.
 
 ## 6. JSONPath subset and validation
 
-Every path field (`field.path`, `entity.key`, `checkpoint.field`,
-`pagination.next_path / items_path`, `timezone_source.path`,
-`compare_to`) must match `^\$(\.<ident>|\[\d+\]|\['…'\]|\["…"\]|\[\*\])*$` —
+Every path field (`field.path` / `paths`, `entity.key`, `checkpoint.field`,
+`pagination.next_path / items_path / total_path`, `timezone_source.path`,
+`compare_to`, join `local_key` / `foreign_key` / field `path(s)`) must match `^\$(\.<ident>|\[\d+\]|\['…'\]|\["…"\]|\[\*\])*$` —
 only root-child segments, numeric indexes, quoted keys and `[*]`.
 Filters (`[?()]`), recursive descent (`..`), operators and parentheses are
-rejected with a path-level `ValueError` naming the field.
+rejected with a path-level validation error naming the field. Body paths
+(`body_fields` keys, `cursor_path`, `count_path`) are dotted names instead
+(`Limitation.Cursor`), no `$`.
 
 ## 7. JSON Patch and releases
 
@@ -352,25 +374,33 @@ write-once; rollback creates a new release that restores the prior `spec`.
 
 The only behavioral differences are:
 
-* **Auth** — Atlas enforces `Bearer` (missing/empty → 401); Harbor is
-  permissive in dev but still carries a `credential_ref`. Both specs use
-  `bearer`.
+* **Auth** — Atlas requires `x-api-key` (or an OAuth2 `Bearer`; missing →
+  401) and its spec uses `api_key_header` with `header_name: x-api-key`;
+  Harbor is permissive in dev but its spec still uses `bearer` with a
+  `credential_ref`.
 
-* **Pagination** — Atlas `offset`, Harbor `cursor` with `repeated_cursor`
-  guard.
+* **Pagination** — Atlas tokenless `page` (`pageNumber` / `pageSize` /
+  `$.total`, `stop_when: [empty_page]`), Harbor `cursor` with the
+  `repeated_cursor` guard.
 
-* **Status vocabulary** — Atlas identity map (`confirmed` → `confirmed`);
-  Harbor opaque `H1` → `confirmed` etc.:
+* **Status vocabulary** — Atlas near-identity map (`canceled` →
+  `cancelled`, `not_confirmed` deliberately unmapped); Harbor opaque `H1` →
+  `confirmed` etc.:
 
   ```yaml
   # Atlas
-  map: { confirmed: confirmed, checked_in: checked_in, checked_out: checked_out, cancelled: cancelled, no_show: no_show }
+  map: { confirmed: confirmed, checked_in: checked_in, checked_out: checked_out, canceled: cancelled, no_show: no_show }
   # Harbor
   map: { H1: confirmed, H2: checked_in, H3: checked_out, H4: cancelled, H5: no_show }
   ```
 
-* **Money / dates** — identical pipelines (`money` with `scale: 2`,
-  `date_local`/`business_date` with `tz: source`).
+* **Money / dates** — both use `money` with `scale: 2` and `date_local`
+  (`tz: source`) for arrival/departure. Harbor derives `business_date`
+  from its wire `business_date` via the `business_date` transform
+  (`cutoff: 4`) and passes `updated_at`/`posted_at` through; Atlas reads
+  `businessDate` via `date_local` and converts its zone-less
+  `dateModified`/`transactionDateTime` with `datetime_utc` (`tz: source`).
+  Atlas `currency` is an `enum_map` on `propertyID` (§3).
 
 See `simulators/docs/atlaspms-openapi.json` and `simulators/docs/harbor.md`
 for the vendor contract each spec was built from.
@@ -378,7 +408,7 @@ for the vendor contract each spec was built from.
 ## 9. LegacyStay — bootstrapped third vendor (Phase 2 S1)
 
 LegacyStay (`simulators/legacystay/app.py`, docs `simulators/docs/legacystay.md`,
-host ports `8111` public / `8112` admin) is the heldout-only unseen-generalization
+host ports `8111` public / `8112` admin) is the unseen-generalization
 vendor: wire-compatible canonical shapes, but strict `Bearer` auth (401 without
 it), `offset` pagination, plain-English statuses, an ambiguous `date` duplicator,
 nullable chaos (`guest_name` / `description` often null), and an always-on
@@ -407,18 +437,21 @@ is what the REQ-020 item-4 "before" refusal pins.
 
 * `operations.<name>.method: POST` with an optional `body` template (static
   JSON; checkpoint templates resolve nested). `GET` with `body` is rejected.
+  An unpaginated POST is a single request; a paginated POST must use
+  `body_cursor` (any other strategy fails at run time).
 * `auth.type: body_fields` with `body_fields: {<dotted body path>: <CREDENTIAL_REF>}`.
   Secrets are read from the environment into the request body per call, never
   headers, never logged, never stored.
 * `pagination.strategy: body_cursor` with `cursor_path` (cursor in), optional
-  `count_path` + `count_value` 1..1000 (page size in), `next_path` (cursor
+  `count_path` + `count_value` 1..1000 (page size in, default 50), `next_path` (cursor
   out), `items_path`, `stop_when`. The first request sends no cursor; the
   loop stops on null cursor, repeated cursor, empty page — or a short page
   (fewer items than requested), the body-cursor end-of-data signal.
   `cursor_param`/`offset_param`/`page_param`/`limit_param` query params stay
   untouched.
 
-Example (shape, not a real vendor):
+Example (shape, not a real vendor; `connector`, `timezone_source`,
+`entities`, `capabilities` and `health` omitted — required as in §2):
 
 ```yaml
 spec_version: 2
@@ -446,16 +479,17 @@ operations:
 
 Discovery stays deterministic and vendor-neutral; the same docs that v1
 refuses compile under v2 with zero model calls. The build opts in per call
-with `spec_vocabulary="v2"` (`"v1"` is the default, so the item-4 "before"
-refusal stays demonstrable; REQ-021 makes this a per-build setting).
+with `spec_vocabulary="v2"` (`"v1"` is the default unless the
+`SPEC_VOCABULARY` env sets another, so the item-4 "before" refusal stays
+demonstrable; REQ-021 makes this a per-build setting).
 
 * Reader: parses `requestBody` (allOf-resolved, so shared auth bases plus
   per-operation filters expose every field), records required body fields,
   the body paging envelope (cursor + count leaves, e.g.
   `Limitation.Cursor` / `Limitation.Count` with the documented maximum) and
   the response item-array and cursor fields. No `securitySchemes` plus
-  required credential-like body fields (`token`/`secret`/`password` in the
-  name) means `body_fields` auth. Component schemas are allOf-resolved too.
+  required credential-like body fields (`token`/`secret`/`password`/`apikey`/
+  `api_key` in the name) means `body_fields` auth. Component schemas are allOf-resolved too.
 * Classifiers: `auth.kind == body_fields` with the field names (high
   confidence from docs, medium when inferred without an auth section);
   `pagination_hint == body_cursor` per POST operation with the envelope in
@@ -530,7 +564,7 @@ protocol (FIAS over TCP) joins the HTTP transports, with no vendor branch
 anywhere in the engine (`grep` finds no vendor name in `src/autobridge`
 outside tests and fixtures). `spec_version: 1` and `spec_version: 2`
 documents validate and behave exactly as before; every v3-only construct
-with an older version is rejected with a `requires spec_version 3` error,
+with an older version is rejected with an error naming `spec_version 3`,
 which is what the REQ-022 item-C "before" refusal pins (v1 *and* v2 refuse
 a FIAS source, deterministically, at 0 model calls).
 
@@ -550,17 +584,18 @@ a FIAS source, deterministically, at 0 model calls).
 * `entities.<Name>.fields.<f>.paths: [...]` (v3 only): one value per path,
   fed as a list into the pipeline — e.g. `paths: [$.DA, $.TI]` plus
   `concat` turns a wire date and time into one datetime string. A field
-  with no path at all is allowed only when the pipeline starts with
-  `const` (site facts stated outright, needing no input).
+  with no path at all is allowed (in any version) only when the pipeline
+  starts with `const` (site facts stated outright, needing no input).
 * `commands:` templates (v3 only): host-originated record data keyed by
   command kind — `{record, fields: {<wire id>: {param}}, defaults, now,
   expect}`. Placeholders substitute strictly (a missing param rejects the
   command before anything reaches the link); `expect` is `ack` or the
-  answer record the agent waits for.
+  answer record the agent waits for. When `commands` is set, every
+  `capabilities.action` name must be a command key.
 * Discovery: framed-protocol docs (record tables, framing contract, site
   facts) parse into EVENT feed candidates, a charge/status role proposal,
   and command templates; a FIAS source builds only under `spec_vocabulary:
-  "v3"`. Capabilities (`GET /capabilities`, `autobridge capabilities`,
+  "v3"`. Capabilities (`GET /capabilities`, `ab capabilities`,
   the knowledge page) list v3 as "everything in v2, plus" the event
   transport.
 
@@ -585,7 +620,7 @@ entities:
     key: $['P#']
     fields:
       charge_id:
-        paths: [$.RN, $['P#'], $.DA, $.TI]
+        paths: [$.RN, "$['P#']", $.DA, $.TI]
         transform: [{ name: concat, args: { separator: "-" } }]
       amount:
         path: $['TA']
@@ -596,7 +631,8 @@ entities:
           - { name: concat, args: { separator: " " } }
           - { name: business_date, args: { tz: source, naive_as: source } }
     checks: [{ kind: unique_key }]
-capabilities: { read: [FolioCharge, RoomStatus], action: [gi, wr, kr] }
+capabilities: { read: [FolioCharge], action: [wr] }
+health: { canary: { every: 60s, operation: feed_ps, max_pages: 1 } }
 commands:
   wr:
     record: WR

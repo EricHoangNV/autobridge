@@ -2,7 +2,53 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01 14:40): **REQ-075**, then **REQ-076** (REQ-066..074 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01): **REQ-077** (REQ-066..076 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+
+### REQ-077 — The beacon run is the final benchmark: anyone can rerun it; `make bench` and `make demo` step 4 work as documented (2026-11-01)
+Status: OPEN
+Owner decision (2026-11-01): the private held-out split is retired (its seeds cannot be published, so nobody else can
+verify a run); the beacon run (REQ-025) is the one final benchmark. The docs were corrected on 2026-11-01 to describe
+the code as it is; this REQ makes the code match what a public user needs. Update `docs/benchmark.md` (and the README
+lines that mention these commands) in the same commits so the docs stay true.
+
+1. **Anyone can rerun the beacon end to end with fresh values.** Today `make beacon-eval` is single-shot: once the
+   owner's run is committed, a user's `make beacon-eval` resumes `experiments/beacon/protocol.md`, reuses the
+   `eval-freeze` tag, and `bench-beacon` refuses because results exist; it also pushes to `origin HEAD:main`.
+   - One protocol per run: `experiments/beacon/<round>/protocol.md` (the freeze computes the target round first).
+     `run` / `verify-repro` / `beacon-eval` resolve the protocol by round; a new `make beacon-eval` always freezes a
+     new future round (resume only an unrun protocol of this checkout, never another run's results). Rehearsal
+     paths (`experiments/beacon/rehearsals/<round>/`) stay as they are. `parse_protocol` still reads the old single
+     path if present.
+   - Tag per run: `eval-freeze-<round>`.
+   - Push is opt-in: `PUSH=yes` pushes the freeze (before the round) and the results to the current branch's
+     upstream; without it both are committed locally and the script prints how to push to a fork before the round for
+     a public timestamp. `CONFIRM=yes` keeps its meaning.
+   - The ralph guard matches only loops running in this checkout's path (other projects run `ralph-afk.sh` too).
+   - Bug found 2026-11-01: `scripts/beacon-eval.sh` reads the round with `grep '^beacon-target-round:'`, but
+     `freeze()` writes `- beacon-target-round: N`, so under `set -euo pipefail` the script exits 1 silently right
+     after the freeze (no commit, tag or push; every rerun resumes into the same failure). Parse the protocol the
+     way `parse_protocol` does; add a test that runs the script's parsing on a real `freeze()` output.
+   - EVIDENCE.md points at the round's own protocol and tag.
+   - Docs: a short "Run it yourself" part in the beacon section of `docs/benchmark.md` — prerequisites (stack up via
+     `make local-up` or `make up`, `FRONTIER_API_KEY` for the frontier arms, what happens without it), the one
+     command, roughly how long / how many frontier calls per fault, where results land, and `make verify-beacon`.
+2. **`make bench` must not fail by design.** The matched step's CLI arms are synthetic and `_guard_zero_tool_calls`
+   refuses the empty scorecard (`bench/harness.py` ~1179-1205, ~1675), so `make bench` exits 1 before the ablation.
+   Proposed (owner approves with this REQ): `make bench` runs the dev ablation + learning curve (the real comparison)
+   and writes the scorecard from the ablation results; the synthetic matched mode stays only behind
+   `--arms matched` for `test_07` / harness tests. Keep the guard for any path that would publish an empty
+   scorecard. `make bench-heldout` / `verify-heldout-reveal` stay untouched (retired, not deleted).
+3. **`make demo` step 4 post-approve check.** `bench/demo.py` (~1764-1771) asserts the repair decision is still
+   `"escalate"` after `approve-proposal`, but since REQ-053 approval sets `"approved"` (`engine/releases.py:403`).
+   Assert the REQ-053 shape instead (decision `approved`, approval decision `approve`, escalation bundle with the
+   proposal present). Add a unit test that fails on the old assertion.
+4. Tests for item 1: two consecutive freezes target different rounds and write different protocol dirs; a committed
+   prior run's results never block a new run; no push without `PUSH=yes`; ralph guard ignores a loop in another
+   path. Full gates green.
+
+Constraints: do not run `make bench`, `make bench-heldout`, `make bench-beacon`, `make beacon-eval` or
+`make eval-freeze` for real (unit tests with fakes only); do not freeze, tag or commit under `experiments/beacon/`;
+never touch `verifier/hidden_cases/heldout/` or `~/autobridge-heldout`.
 
 ### REQ-074 — Repair page round 2: what REQ-073 left on approved repairs (2026-11-01)
 Status: DONE (sbx1 2026-11-01 -- all 5 items code-done: tracker replaced-by + live window (version fallback), approved business-decision headline, preview hidden on approved, zero-funnel plain line, verifier one-verdict-no-glyph; 8 new UI tests, full gates green; owner step: browser check of the same repairs to close)

@@ -345,6 +345,10 @@ $(git -C "$WT_DIR" log --oneline origin/main..HEAD 2>/dev/null | head -10)"
   else
     git -C "$WT_DIR" checkout -q -B "$BRANCH" origin/main
   fi
+  # The agent instruction files are git-ignored; give the worktree the owner's local copies.
+  for f in CLAUDE.md AGENTS.md; do
+    [ -f "$SCRIPT_DIR/$f" ] && cp "$SCRIPT_DIR/$f" "$WT_DIR/$f"
+  done
 
   # Git push access: pass the host's current gh token into each sandbox command as GH_TOKEN
   # (bare "-e GH_TOKEN" reads it from this script's environment, so it never shows in process args),

@@ -53,8 +53,7 @@ if git rev-parse -q --verify "refs/tags/eval-freeze" >/dev/null; then
   echo ">> beacon-eval: tag eval-freeze already exists — reusing"
 else
   git add "$PROTOCOL"
-  git commit -m "eval-freeze: beacon protocol for round $TARGET_ROUND" \
-    -m "Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>" 2>/dev/null \
+  git commit -m "eval-freeze: beacon protocol for round $TARGET_ROUND" 2>/dev/null \
     || { echo "beacon-eval: nothing new to commit (protocol already committed?)"; }
   git tag eval-freeze
 fi
@@ -144,7 +143,6 @@ fi
 
 # 7. Commit + push the results.
 git add "$ROUND_DIR" experiments/beacon/protocol.md
-git commit -m "beacon-eval: round $TARGET_ROUND results (one run, no retries)" \
-  -m "Co-Authored-By: Muse Spark 1.3 <muse-spark-1.3@models.noreply>"
+git commit -m "beacon-eval: round $TARGET_ROUND results (one run, no retries)"
 git push origin HEAD:main
 echo ">> beacon-eval: done. Results in $ROUND_DIR (verify any time: make verify-beacon ROUND=$TARGET_ROUND)"

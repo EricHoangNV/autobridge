@@ -57,3 +57,7 @@ tmp/
 
 # REQ-017 Docker-free local stack: SQLite, logs, PIDs, ACTIVE marker
 .local/
+
+# Agent instruction files (kept local; ralph-afk.sh copies them into its worktrees)
+CLAUDE.md
+AGENTS.md

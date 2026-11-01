@@ -10,7 +10,8 @@
 
 AutoBridge executes connectors but never judges them. A distinct **verifier**
 service owns the ground truth. It lives in its own package (`verifier/`),
-image (`verifier/Dockerfile` built only from `verifier/`) and Docker network
+image (`verifier/Dockerfile`: only `verifier/` + the shared `simulators/`
+generator code copied in) and Docker network
 (`verifier-net` + read-only `/fixtures` mount). The engine (`src/autobridge`)
 has no route to it and never imports it — the same invariant the import-linter
 enforces between `autobridge` and `verifier`/`simulators` (`make lint-imports`).
@@ -20,12 +21,13 @@ The engine talks to the verifier only over HTTP:
 
 ```
 POST /verify { release_id | spec, scenario_id, mode: visible|hidden }
-→ { verdict: pass|fail, score, failed_checks: [{name,count}],
+→ { verdict: pass|fail, score, failed_checks: [{name,count,details?}],
     regression: pass|fail, regression_failures?, scenario_id, mode }
 ```
 
 `mode=hidden` is the benchmark path. The response contains only aggregates
-(bounded `failed_checks` names and counts, a 0–1 score). It never returns
+(bounded `failed_checks` names and counts, `details` capped at 500 chars, a
+0–1 score). It never returns
 fixture rows, record arrays, or raw datasets. Section 6 proves this.
 
 ## 2. Oracle (ground truth from seeds)
@@ -100,6 +102,16 @@ sync outcome: Blocked  unmet: [unknown_enum, unknown_enum:status]  class: ENUM_N
 # token_revoked:    HttpError 403 → Blocked auth_revoked        → escalate no patch
 ```
 
+A silent unit switch needs no invariant (REQ-064 B1, REQ-075): after each
+clean `Complete` sync the engine stores a bounded per-connector money sketch
+(`ConnectorValueBaseline`, `src/autobridge/drift/value_baseline.py`: join
+keys + money fields only), and the next detection on the same release feeds
+it as `baseline_summary`. Money moved by an exact power of ten on the same
+keys raises `money_scale_shift` → `SEMANTIC_VALUE_DRIFT`, which opens a
+drift and escalates instead of passing silently; the first sync (and the first on a new
+release) only stores. Bench and beacon use the same sketch
+(`tests/unit/test_autobridge_req075_live_baseline.py`).
+
 Surviving ambiguity after L2/L3 also yields `Degraded` with `open_questions`
 (plan §2.5). `tests/e2e/test_05_safety_and_semantic.py` asserts all five
 scenarios via fake transports and proves the engine never imports
@@ -115,7 +127,7 @@ consequences (e.g. `no_loss` caused by a 429 truncation) are filtered so
 | Scenario | Drift class | Fixable | Visibility | Expected `failed_checks` |
 |---|---|---|---|---|
 | `baseline` | none | fixable | dev | *(none)* — pass |
-| `rename_guest_id` | FIELD_RENAME | fixable | dev | `field_missing` |
+| `rename_guest_id` | SCHEMA_RENAME | fixable | dev | `field_missing` |
 | `offset_to_cursor` | PAGINATION_CHANGE | fixable | dev | `pagination_shape` |
 | `page_to_cursor` | PAGINATION_CHANGE | fixable | dev | `pagination_shape` |
 | `cursor_repeat_token` | PAGINATION_BUG | fixable | dev | `repeated_cursor` |
@@ -129,9 +141,9 @@ consequences (e.g. `no_loss` caused by a 429 truncation) are filtered so
 | `duplicate_late_records` | DUPLICATE_DELIVERY | fixable | dev | `duplicate_records` |
 | `endpoint_removed` | CAPABILITY_REMOVED | escalate | heldout | `endpoint_not_found` |
 | `invalid_patch_trap` | SEMANTIC_VALUE_DRIFT | escalate | heldout | `invalid_patch_trap` |
-| `meridian_state_renamed` | FIELD_RENAME | fixable | dev | `field_missing` |
+| `meridian_state_renamed` | SCHEMA_RENAME | fixable | dev | `field_missing` |
 | `meridian_cursor_renamed` | PAGINATION_CHANGE | fixable | dev | `pagination_shape` |
-| `fias_record_layout_change` | FIELD_RENAME (†) | fixable | dev | `fias_record_layout_change` |
+| `fias_record_layout_change` | SCHEMA_RENAME (†) | fixable | dev | `fias_record_layout_change` |
 | `fias_link_resync` | LINK_RESYNC (†) | fixable | dev | `fias_link_resync` |
 | `fias_ack_timeout` | ACK_TIMEOUT (†) | fixable | dev | `fias_ack_timeout` |
 | `agent_restart_inflight` | AGENT_RESTART (†) | fixable | dev | `agent_restart_inflight` |
@@ -151,8 +163,10 @@ match). The real grading lives in `verifier/fias_checks.py` and
 `tests/e2e/test_fias_faults.py` (one YAML + one verifier check + one e2e
 per scenario).
 
-`dev` scenarios are visible during ladder tuning; `heldout` are escrowed
-until the final benchmark. `fixable` scenarios admit a deterministic or
+`dev` scenarios are visible during ladder tuning; the `heldout` label
+marks the scenarios whose private seeds were escrowed for a held-out run
+that is now retired (the final benchmark is the beacon run,
+`docs/benchmark.md`). `fixable` scenarios admit a deterministic or
 evidence-backed repair; `escalate` scenarios must escalate (no patch —
 `CAPABILITY_REMOVED`/`AUTH_REVOKED` have no recovery, the trap is the
 intentionally wrong `net→total_amount` mapping that the verifier must reject).
@@ -173,6 +187,10 @@ intentionally wrong `net→total_amount` mapping that the verifier must reject).
   admin API `POST /admin/scenario {id, seed}` on `8001`/`admin-net`).
 * `LegacyStay` (Phase 2) adds rate limits, misleading examples and nullable
   chaos for unseen-generalization.
+* `MeridianPMS` (REQ-020) — POST/JSON with body auth and a `Limitation`
+  cursor; `FIAS PABX` (REQ-022) — on-premise framed TCP, reached only from
+  `edge-net` (admin through the `sim-fias-pabx-admin` sidecar). All five are
+  listed in `config/demo_targets.yaml`.
 
 Admin writes are authorized by `SIM_ADMIN_TOKEN` (`X-Admin-Token`,
 constant-time compare); `X-Admin-Network: admin-net` is only a routing hint
@@ -193,8 +211,9 @@ The verifier's response schema is bounded:
 {
   "verdict": "pass|fail",
   "score": 0.0–1.0,
-  "failed_checks": [{"name": "<bounded>", "count": int}],
+  "failed_checks": [{"name": "<bounded>", "count": int, "details"?: "<≤500 chars>"}],
   "regression": "pass|fail",
+  "regression_failures"?: [{"scenario_id": "…", "failed_checks": […]}],
   "scenario_id": "…",
   "mode": "visible|hidden"
 }
@@ -241,7 +260,7 @@ Engine enforcement (`src/autobridge/engine/releases.py`):
 
 ```
 candidate_spec = apply_patch(base.spec, patch)
-maybe_verify(candidate_spec, verifier_url, scenario_id, verified_scenarios)
+_maybe_verify(candidate_spec, verifier_url, scenario_id, verified_scenarios)
 # raises GateBlockedError when verdict or regression fail
 create_release(..., spec=candidate_spec)  # only on pass
 ```
@@ -256,11 +275,11 @@ residual). With neither configured the gate raises `GateBlockedError`
 when `AUTOBRIDGE_REQUIRE_VERIFIER_GATE=1` (set on control + worker in
 `compose.yaml` and `scripts/local-up.sh`); only without that flag is the
 gate skipped for backward compat (unit tests without Docker).
-`GateBlockedError` carries `block_reason` and the raw verifier `result`
+`GateBlockedError` carries `reason` and the raw verifier `result`
 for the ladder trace. A passed gate mints a verification report id that
 the release carries as `verification_report_id`.
 
-Proven in `tests/unit/test_autobridge_verification_gate.py` (28 tests):
+Proven in `tests/unit/test_autobridge_verification_gate.py` (42 tests):
 verdict/regression parsing, `invalid_patch_trap` wording, HTTP 500 and
 unreachable handling, `regression_suite` forwarding, `create_release` and
 `create_release_from_patch` blocking vs allowing, and a live
@@ -318,21 +337,21 @@ and handled by the correct ladder path:
 
 | Scenario | Simulator fault | Engine sync outcome | Classifier | Ladder result | E2E proof |
 |---|---|---|---|---|---|
-| `gross_to_net` | Folio amounts switched gross→net; `gross_sum` = baseline sum as independent evidence | `Degraded` `money_invariant` | `SEMANTIC_VALUE_DRIFT` | `escalate` with evidence bundle (no deterministic rule for net drift; plausible-but-wrong `net→total_amount` is the `invalid_patch_trap` the verifier must reject) | `test_gross_to_net_fake_degraded` + `test_invalid_patch_trap_rejected_via_oracle` |
-| `tz_boundary_shift` | 30% folio `business_date` shifted +1 day via `charge_id` hash; `posted_at` unchanged | `Degraded` `business_date_invariant` | `SEMANTIC_VALUE_DRIFT` | `escalate` with bundle | `test_tz_boundary_shift_fake_degraded` |
-| `status_vocab_change` | Reservation `status` vocabulary changed | `Blocked` `unknown_enum` | `ENUM_NEW_VALUE` (ENUM before CAPABILITY) | `escalate` or `propose` only with evidence; never silently guessed `Degraded` | `test_status_vocab_change_fake_blocked` |
-| `endpoint_removed` | `GET /reservations` → 404 | `Blocked` `endpoint_not_found` | `CAPABILITY_REMOVED` | `escalate` no patch | `test_endpoint_removed_fake_blocked` |
-| `token_revoked` | `Authorization` → 403 | `Blocked` `auth_revoked` | `AUTH_REVOKED` | `escalate` no patch | `test_token_revoked_fake_blocked` |
+| `gross_to_net` | Folio amounts switched gross→net; `gross_sum` = baseline sum as independent evidence | `Degraded` `money_invariant` | `SEMANTIC_VALUE_DRIFT` | semantic climb (L2/L3, budgeted) then `escalate` with evidence bundle; a model proposal that passes the dry-run on every failing check rides the bundle for operator approval, never auto-applied (no deterministic rule for net drift; plausible-but-wrong `net→total_amount` is the `invalid_patch_trap` the verifier must reject) | `test_gross_to_net_fake_degraded_money_invariant_and_escalate` + `test_invalid_patch_trap_rejected_via_oracle` |
+| `tz_boundary_shift` | 30% folio `business_date` shifted +1 day via `charge_id` hash; `posted_at` unchanged | `Degraded` `business_date_invariant` | `SEMANTIC_VALUE_DRIFT` | semantic climb then `escalate` with bundle | `test_tz_boundary_shift_fake_degraded_business_date_and_escalate` |
+| `status_vocab_change` | Reservation `status` vocabulary changed | `Blocked` `unknown_enum` | `ENUM_NEW_VALUE` (ENUM before CAPABILITY) | `escalate` or `propose` only with evidence; never silently guessed `Degraded` | `test_status_vocab_change_fake_blocked_unknown_enum` |
+| `endpoint_removed` | `GET /reservations` → 404 | `Blocked` `endpoint_not_found` | `CAPABILITY_REMOVED` | `escalate` no patch | `test_endpoint_removed_fake_blocked_escalate_no_patch` |
+| `token_revoked` | `Authorization` → 403 | `Blocked` `auth_revoked` | `AUTH_REVOKED` | `escalate` no patch | `test_token_revoked_fake_blocked_escalate_no_patch` |
 
 HttpError variants (401 `auth_expired`, 429 `rate_limited`, 503 `transient_error`) also map to `Blocked` with named criteria. `tests/e2e/test_05_safety_and_semantic.py` replays each via a fake `HttpError` client and live via the simulator admin API when the stack is up. Money is `Decimal` 2dp; a timestamp crossing the 04:00 business-date boundary lands on the right local date (§3.1).
 
 ## 9. Network topology (excerpt)
 
 ```
-engine-net   control, worker, runtime-sandbox, ui, bench
-vendor-net   runtime-sandbox ↔ sim-atlas/sim-harbor :8000
+engine-net   control, worker, runtime-sandbox, ui, bench, mcp-hotel, edge-relay
+vendor-net   runtime-sandbox ↔ sim-atlas/sim-harbor/sim-legacystay/sim-meridian :8000
 verifier-net control ↔ verifier, bench ↔ verifier
-admin-net    control ↔ sim admin :8001 (+ host 8109/8110 for e2e)
+admin-net    control ↔ sim admin :8001 (+ host 8109/8110/8112/8117/8119 for e2e)
 edge-net     edge-worker (on-premise agent) ↔ edge-relay :8000 +
              edge-worker ↔ sim-fias-pabx (FIAS TCP dial-out to the host :5010;
              REQ-034: control reaches the FIAS admin :8001 through the
@@ -371,8 +390,9 @@ proxy `POST /edge/commands` and the drains.
 
 ## 10. Escalation bundle (L4)
 
-When no L0/L1 rule matches, the budget is exhausted, or the drift class is
-`CAPABILITY_REMOVED` / `AUTH_REVOKED`, the ladder emits an **escalation
+When no L0/L1 rule matches, a semantic climb ends without a shippable fix,
+the budget is exhausted, or the drift class is `CAPABILITY_REMOVED` /
+`AUTH_REVOKED`, the ladder emits an **escalation
 bundle** — never a silent guess (plan §2.5, W6.3).
 
 ```
@@ -382,10 +402,12 @@ EscalationBundle {
   evidence_ids: str[]       // EvidenceRecord ids supporting the question
   evidence_payloads: dict[] // optional redacted payloads (already redacted)
   suggested_action: str     // hint, e.g. "manual review" or "increase budget"
+  proposal?: { label, effect, patch }  // the model's own proposal (REQ-049), never synthesised
 }
 ```
 
-Validation (`from_dict`): non-empty `reason`, non-empty `question`, exactly one `?`, ends with `?`.
+Validation (`from_dict`): non-empty `reason`, non-empty `question`, exactly one `?`, ends with `?`;
+a `proposal` needs a non-empty label, effect and patch ops.
 
 Storage: `RepairRun.escalation_bundle` (JSON, nullable, alembic `0003_escalation_bundle`).
 Every row with `decision == "escalate"` has a non-null bundle whose `question`
@@ -405,7 +427,9 @@ Producers:
 
 Consumers: control API surfaces the bundle on `GET /repairs/{id}` and the
 `/repairs/[id]` screen renders the evidence bundle side-by-side with the
-question and Approve/Reject actions. The bundle never contains a credential
+question and Approve/Reject actions; a bundle `proposal` is approved through
+`POST /repairs/{id}/approve-proposal` (verifier-gated, fail-closed 422,
+never learned into L0). The bundle never contains a credential
 value (redacted at the `EvidenceRecord` boundary, `evidence/redact.py`);
 `tests/e2e/test_05` asserts no `sk-`/secret leaks in bundles.
 
@@ -433,16 +457,16 @@ value (redacted at the `EvidenceRecord` boundary, `evidence/redact.py`);
   package (`test_05` engine-import negative test + `_ensure_no_fixture_leak`).
 * **Secrets never in code/specs/evidence** — specs carry `credential_ref` (env
   key name) never a value; `evidence/redact.py` strips values at the append
-  boundary; `generated/connectors/*/reference/spec.yaml` base_url is
-  `${ATLAS_BASE_URL}` placeholder; bundles and API responses carry only bounded
+  boundary; `generated/connectors/*/reference/spec.yaml` base_url is a
+  `${ATLAS_BASE_URL}` / `${HARBOR_BASE_URL}` placeholder; bundles and API responses carry only bounded
   names; `test_05` searches specs/bundles/evidence for leaked `sk-`/secret.
 * **Regression gate on every release** — §7; candidate that breaks any
   previously verified scenario or the `invalid_patch_trap` is blocked by
   `GateBlockedError`; `test_05` proves this with a fake verifier and a live
   oracle check (the `net→total_amount` trap).
 
-`tests/e2e/test_05_safety_and_semantic.py` is the W6 acceptance test: 14 fake-path
-tests + live admin-oracle checks when the Compose stack is up. The suite is
+`tests/e2e/test_05_safety_and_semantic.py` is the W6 acceptance test: 20 in-process
+tests + 4 live admin-oracle checks when the Compose stack is up. The suite is
 independent, random-order safe and requires no prior state beyond the reference
 specs under `generated/connectors/`.
 
