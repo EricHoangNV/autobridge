@@ -2,7 +2,53 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01 01:30): **REQ-066, then REQ-067** (the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01 02:40): **REQ-068** (REQ-066/067 done; the real beacon freeze waits for REQ-068). Do not start REQ-051 until the owner says so.
+
+### REQ-068 — Demo walkthrough round 2: honest deck 5 Approve path, remaining UI and wording fixes (2026-11-01)
+Status: OPEN
+Owner keyed browser walkthrough on `338a2ee1` (Contributor, blank-slate seed, decks 1-7 + closing, 2026-11-01
+02:12-02:30). Findings and screenshots: `tmp/walkthrough-338a2ee1/FINDINGS.md` (gitignored; read in place from the main
+checkout, do not edit `tmp/`). Script to match: `tmp/demo-flow/demo-flow.md` §5.2 (read in place). REQ-067 items 1, 2,
+4, 5, 6, 7, 9 are confirmed fixed live; keep them working. Fix:
+
+1. **Deck 5 has no honest Approve path (owner decision: the vendor reports a net total).** `gross_to_net` multiplies
+   `total_amount` / `amount` by 0.9 but keeps `meta.gross_sum` and sends no net total, so no single spec change makes
+   the money check pass; question-only was the correct answer. Live, the model proposed
+   `replace /entities/Reservation/checks/3/compare_to → $.net_sum`, dropped by the dry-run because the field does not
+   exist. Change the **simulator only**: under `gross_to_net` Harbor (and the other vendor it applies to) also reports
+   the page's net total next to `gross_sum` (`meta.net_sum`, the sum of the net values on that page), the way a real
+   vendor that switched to net would. Do not add `net_sum` to the baseline response or to `simulators/docs/harbor.md`
+   (the docs describe the pre-change API). No engine tuning, no prompt edit for this, never synthesise a proposal in
+   code. Check that a proposal repointing the money check at `$.net_sum` passes the existing dry-run gate and the
+   verifier, so Approve → release r2 → verifying sync → ● Working works; record it as a business decision, never
+   learned (existing behaviour). Keep `invalid_patch_trap` and the benchmark scenario semantics intact: say in the
+   build note whether the dev benchmark / beacon fault catalogue sees the new field and whether any scorecard or
+   hidden case needs a re-run (do not regenerate held-out files or `SHA256SUMS`). Update the replay fixture and
+   `docs/demo.md` deck 5 as needed.
+2. **The L3 prompt shows the wrong entity's raw records.** For the Reservation `total_amount` question the
+   "Redacted raw vendor records for the entity" block lists FolioCharge rows (`charge_id`, `amount`). Show records of
+   the entity the drift is on. Engine fix with a unit test.
+3. **Deck 3 second occurrence, before Approve, reads "Approve to ship it as release r2"**, then ships r3 (r2 already
+   exists). Show the release number it will actually get.
+4. **Deck 3 second occurrence chapter 2 reads "Fixed by a known rule — no AI needed"** although the learned fix
+   answered at L0 ("Known fix: held here", "Rule: Not needed"). Say it was the learned fix (the script's words for
+   L0). The Recent repairs row for the L0 repair also reads "Rule page_to_cursor"; make it say learned / known fix.
+5. **Builds row shows "vv1" / "vv2" / "vv3"** (`ui/app/connectors/[id]/page.tsx:379` prefixes "v" onto a value that
+   already starts with "v").
+6. **Connectors list layout at 1440 px:** a Working connector's state line ("in sync · Complete 3 s ago  last sync 5 s
+   ago") runs into the Last-sync column and overlaps "102 records, every check passed"; stray "–" marks in the
+   Model-tokens cell of a connector with 0 tokens over 2 repairs; "Discovered vendors" sits outside the content gutter.
+7. **PABX panel:** the Link state row prints raw debug text (`up · accepted=2 dropped=0 layouts={"DR": [...]}`); show
+   plain state (up/down, re-handshaking). "Postings arriving: 420 received · last 11 m ago" right after the build:
+   the time must be when the relay received the posting, not a seeded timestamp. The resync burst arrived while the
+   panel still read "down": the new postings must arrive after the link is back up (the "postings resume" beat).
+8. **Small cuts:** sync-runs table jams Records into Fingerprint ("420572dedd7…"); Releases cell reads "verifier
+   passed active" with no separator; Knowledge Decisions reads "Approved Approved page_to_cursor → r3"; chapter 2 reads
+   "Small model: tried" when L2 was skipped (say skipped); "live since" shows the release's creation time instead of
+   when it went live.
+
+Tests: unit/UI tests per item, Playwright layout assertions for 6, existing e2e testids keep working, full gates green.
+Owner step after: keyed walkthrough re-run.
 
 ### REQ-066 — Beacon protocol pins the frontier model (2026-11-01)
 Status: DONE (sbx1 2026-10-31 -- freeze writes beacon-frontier-model (+ agent form when it differs), parse reads both, bench-beacon refuses on mismatch, real run requires the line, verify-beacon/EVIDENCE.md show the pin, docs updated; 9 new unit tests, full python gates green; owner step: keyed rehearsal/real run exercises the gate live)
