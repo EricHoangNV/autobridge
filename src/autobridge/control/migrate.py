@@ -212,6 +212,12 @@ _REVISION_EFFECTS: tuple[tuple[str, dict[str, Any]], ...] = (
             },
         },
     ),
+    (
+        # REQ-075: persisted per-connector money sketches for live
+        # money_scale_shift detection (one row per connector).
+        "0016_connector_value_baseline",
+        {"tables": ["connector_value_baselines"], "columns": [], "checks": {}},
+    ),
 )
 
 
