@@ -2,7 +2,40 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01 08:45): **REQ-069** (REQ-066/067/068 done; the real beacon freeze waits for REQ-069). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01 09:45): **REQ-070** (REQ-066..069 done; the real beacon freeze waits for REQ-070). Do not start REQ-051 until the owner says so.
+
+### REQ-070 — Semantic escalation keeps a passing retry proposal (deck 5 Approve path) (2026-11-01)
+Status: OPEN
+Owner keyed walkthrough on `df09f082`: `tmp/walkthrough-df09f082/FINDINGS.md` (gitignored; read in place). Everything
+else matched the script; this is the one remaining deck 5 defect.
+
+Live trace: call 1 answered `{"escalate": <question>, "rationale", "proposal": {Reservation checks/3 compare_to →
+$.net_sum}}`; the REQ-069 gate refused it (FolioCharge.money_invariant still fails) and the one retry ran. Call 2
+answered a plain `{"patch": [Reservation checks/3 + FolioCharge checks/2 compare_to → $.net_sum]}`, which passed the
+dry-run. `src/autobridge/repair/ladder.py` (~line 2750, "retry answered with a plain patch: supersedes the
+escalation") then cleared the model's question and treated it as an ordinary L3 patch; for SEMANTIC_VALUE_DRIFT L4
+escalates ("never auto-patched") with the engine's generic question and no proposal (`candidate_patch` None), so the
+operator gets no Approve and loses the model's question.
+
+1. When the retry follows a refused **escalation proposal**, the retry's answer is a corrected proposal for that same
+   escalation: a passing plain patch becomes the escalation's proposal (operator-approved, never auto-applied), and
+   the escalation keeps call 1's question and rationale. Label/effect come from the model (call 1's proposal label
+   and effect, or the retry's if it sent them); do not write new label text in code beyond the existing neutral
+   fallback. A semantic drift is still never auto-patched. A retry that fails the gate still drops to question-only
+   with the model's question kept (not the engine's generic one).
+2. Clear call 1's `proposal_dropped` / drop reason when the retry's proposal is adopted, so the record and UI do not
+   say "dropped" and "verified" at once. The header must not read "verifier 1/1 checks pass" next to "No patch
+   proposed".
+3. The retry prompt (`config/prompts/l3_patch_retry.md`) may state the expected answer form for a retried escalation
+   proposal (escalate + corrected proposal); no steering toward a specific patch. Re-key replay fixtures if hashes
+   change.
+4. Note the benchmark / beacon effect (engine arms on semantic faults: an escalation can now carry a passing retry
+   proposal; it is still never auto-applied, so verified/wrong-shipped counts should not change) in the build note.
+
+Tests: call-1 escalation proposal refused → retry plain patch passes → escalation with model question + proposal;
+retry fails → question-only keeps the model question; drop reason cleared on adoption. Full gates green. Owner step
+after: keyed `make record-frontier SCENARIO=gross_to_net`, then the keyed walkthrough re-run (deck 5 must reach
+Approve → r2 → verifying sync → ● Working).
 
 ### REQ-069 — Demo walkthrough round 3: the dry-run gate checks every failing check; release numbers; rollback wording (2026-11-01)
 Status: DONE (sbx1 2026-11-01 -- all 6 items code-done, full gates green; owner steps: keyed record-frontier gross_to_net then keyed walkthrough re-run to close)
