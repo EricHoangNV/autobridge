@@ -93,7 +93,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
     error: detailError,
     isLoading: detailLoading,
     mutate: mutateDetail,
-  } = useSWR<ConnectorDetail>(`/connectors/${encodeURIComponent(connectorId)}`, fetcher, {
+  } = useSWR<ConnectorDetail>(connectorId ? `/connectors/${encodeURIComponent(connectorId)}` : null, fetcher, {
     refreshInterval: 2000,
   });
 
@@ -197,7 +197,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
     return activeRelease;
   })();
 
-  if (detailLoading) {
+  if (detailLoading || !connectorId) {
     return (
       <div data-testid="connector-detail-page" className="px-10 py-8 text-center text-sm text-ink-2">
         Loading connector…

@@ -259,4 +259,19 @@ describe("ConnectorDetailPage", () => {
     render(<ConnectorDetailPage params={{ id: "conn-abc-123" }} />);
     expect(screen.getByText("Loading connector…")).toBeInTheDocument();
   });
+
+  it("does not fetch /connectors/ (the list) before a Promise params resolves", () => {
+    // Production passes params as a Promise: until it resolves the id is "",
+    // and `/connectors/` answers with the connector list, which crashed the page.
+    mockedUseSWR.mockImplementation(((key: string | null) => ({
+      data: key === "/connectors/" ? [mockDetail] : undefined,
+      error: undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+    })) as never);
+
+    render(<ConnectorDetailPage params={new Promise<{ id: string }>(() => {}) as never} />);
+    expect(mockedUseSWR.mock.calls.map((c) => c[0])).not.toContain("/connectors/");
+    expect(screen.getByText("Loading connector…")).toBeInTheDocument();
+  });
 });
