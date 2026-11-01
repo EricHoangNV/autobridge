@@ -5,7 +5,7 @@
 Owner priority (2026-11-01 11:05): **REQ-071, then REQ-072** (REQ-066..070 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
 
 ### REQ-072 — A stack restart mid-sync must not wedge a connector in "sync running" (2026-11-01)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-01 04:07)
 Owner local stack, 2026-11-01 10:50: `make local-down && make local-up` while MeridianPMS had a sync in flight.
 On startup `reclaim_orphaned_jobs()` (`src/autobridge/control/app.py`, `JobRunner.reclaim_orphaned` in
 `src/autobridge/control/jobs.py`) moved the `running` sync job back to `queued` (attempts 1/3), but nothing ever
