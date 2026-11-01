@@ -2,7 +2,33 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01 11:20): **REQ-072, then REQ-073** (REQ-066..071 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-01 12:20): **REQ-074** (REQ-066..073 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+
+### REQ-074 — Repair page round 2: what REQ-073 left on approved repairs (2026-11-01)
+Status: OPEN
+Owner session browser check on `6e99ef96` (local stack, approved repairs from the demo run). REQ-073 items 1 (per-repair
+model calls), 5 (no Reject/Roll back after approval) and 7 (Sync runs note on one line) are confirmed live. Remaining:
+
+1. **Approval steps on a repair whose release was later replaced.** Atlas repair `34cca645` (L1 `page_to_cursor`,
+   approved → r2 `08b53387`; Atlas later moved r1 → r3 in the deck-3 encore) shows "✓ Approval recorded", then "○ Release
+   activated — waiting for activation", "○ Verifying sync — waiting for the next sync", "○ Sync Complete". r2 *was*
+   activated and synced Complete before r3 replaced it. Derive the steps from history (activation record / sync runs on
+   that release), and say when it was later replaced (e.g. "r2 was live 10:21–10:22, replaced by r3").
+2. **Rail headline on an approved business decision reads "Still climbing: the verifier has not run yet"** (Harbor
+   repair `77853663`, approved, verifier report 1/1 pass). An approved repair never reads "climbing"; show the approved
+   state (e.g. "Business decision: approved — shipped").
+3. **Developer text after approval** in the "If you click Approve / Deny…" section: "Already approved by Eric. Approving
+   again re-activates the same release." and "Repair decision is 'approved', not 'propose': nothing to approve." On an
+   approved repair that section is not shown (there is nothing left to click).
+4. **Hypotheses tile on a rule fix still shows zeros** (REQ-073 item 3 not visible on `34cca645`): "Hypotheses · probes 0 ·
+   enumerated, then filtered", a bare "0", and "0 resolved without enumeration". With no hypotheses: one plain line or
+   no tile, never a bare 0.
+5. **Verifier tile repeats itself** on `34cca645`: "✓/— · passed on this patch · pass · report ee21f3a2 · … · passed on
+   this patch". One verdict, once; no "✓/—" glyph when the check count is unknown.
+
+Tests: page tests for each item using the shapes above (approved L1 repair whose release was replaced; approved business
+decision; approved repair hides the preview section; 0-hypothesis rule fix; verifier without counts). Existing e2e
+testids keep working, full gates green. Owner step after: browser check of the same repairs.
 
 ### REQ-072 — A stack restart mid-sync must not wedge a connector in "sync running" (2026-11-01)
 Status: DONE (sbx1 2026-11-01 -- orphan sync/build fail at startup + stale-job bound unblocks scheduler + build claims exactly its job; full gates green; owner step: none -- restart/scheduler behaviour is unit-covered, no live stack needed)
