@@ -260,6 +260,32 @@ describe("ConnectorDetailPage", () => {
     expect(screen.getByText("Loading connector…")).toBeInTheDocument();
   });
 
+  it("links an escalated repair on open drift instead of 'No repair proposed yet'", () => {
+    const withDrift = { ...mockDetail, open_drift: [{ id: "drift-1", drift_class: "SEMANTIC_VALUE_DRIFT" }] };
+    const escalated = {
+      id: "repair-esc-1",
+      drift_event_ids: ["drift-1"],
+      decision: "escalate",
+      approval: null,
+      ladder_level_reached: 3,
+      rule_id: null,
+      model_usage: { frontier_tokens: 4436, calls: 1 },
+      created_at: new Date().toISOString(),
+    };
+    mockedUseSWR.mockImplementation(((key: string | null) => ({
+      data:
+        key === "/connectors/conn-abc-123" ? withDrift : key === "/repairs" ? [escalated] : key?.endsWith("/sync-runs") ? mockSyncRuns : undefined,
+      error: undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+    })) as never);
+
+    render(<ConnectorDetailPage params={{ id: "conn-abc-123" }} />);
+    expect(screen.getByText(/Repair repair-e is waiting for you/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Review repair/ })).toHaveAttribute("href", "/repairs/repair-esc-1");
+    expect(screen.queryByText(/No repair proposed yet/)).not.toBeInTheDocument();
+  });
+
   it("does not fetch /connectors/ (the list) before a Promise params resolves", () => {
     // Production passes params as a Promise: until it resolves the id is "",
     // and `/connectors/` answers with the connector list, which crashed the page.

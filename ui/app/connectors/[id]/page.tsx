@@ -235,7 +235,11 @@ export default function ConnectorDetailPage({ params }: PageProps) {
     (r.drift_event_ids ?? []).some((id) => openDriftIds.has(id)),
   );
   const waiting = waitingRepairs(myRepairs);
-  const waitingRepair = waiting[0] ?? null;
+  // An escalated repair on open drift is waiting for a decision too.
+  const escalated = myRepairs
+    .filter((r) => r.decision === "escalate" && !r.approval)
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  const waitingRepair = waiting[0] ?? escalated[0] ?? null;
 
   // Sync-run id → open drift (+ its repair) for the fingerprint change notes.
   const repairByDriftId = new Map<string, string>();
