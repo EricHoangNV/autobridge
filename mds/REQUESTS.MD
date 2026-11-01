@@ -5,7 +5,7 @@
 Owner priority (2026-11-01 02:40): **REQ-068** (REQ-066/067 done; the real beacon freeze waits for REQ-068). Do not start REQ-051 until the owner says so.
 
 ### REQ-068 — Demo walkthrough round 2: honest deck 5 Approve path, remaining UI and wording fixes (2026-11-01)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-01 00:44)
 Owner keyed browser walkthrough on `338a2ee1` (Contributor, blank-slate seed, decks 1-7 + closing, 2026-11-01
 02:12-02:30). Findings and screenshots: `tmp/walkthrough-338a2ee1/FINDINGS.md` (gitignored; read in place from the main
 checkout, do not edit `tmp/`). Script to match: `tmp/demo-flow/demo-flow.md` §5.2 (read in place). REQ-067 items 1, 2,
