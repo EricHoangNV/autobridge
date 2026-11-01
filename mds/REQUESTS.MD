@@ -46,7 +46,7 @@ Owner decision (2026-11-01): **take the first option — persist a live baseline
    REQ) and do not touch `verifier/hidden_cases/heldout/` or `experiments/beacon/`.
 
 ### REQ-076 — Directive: §5 test hermeticity — UI suite flaked once under full `make test` (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-01 07:39)
+Status: DONE (sbx1 2026-11-01 -- runtime-line race fixed: REQ-050 test now waitFors the settled build-run detail instead of reading the interim 'job starting' line; 10/10 full UI suites green + full make test green; no owner step left)
 Found by the 2026-11-01 directives audit: one full `make test` run failed `ui/components/NewConnectorForm.test.tsx > sends no runtime choice; the engine's decision reads cloud for HTTP docs (REQ-050)` (339/340 UI tests passed); the same file passes standalone (26/26) and the full UI suite passes standalone (340/340). REQ-064's build note reports the same pattern ("two full-suite flakes ... both pass standalone"). Find the shared-state/timing cause (no retries or quarantines as the fix), add a regression test or isolation fix, and note the root cause in the build note.
 
 ### REQ-072 — A stack restart mid-sync must not wedge a connector in "sync running" (2026-11-01)

@@ -3095,3 +3095,11 @@ No bench runs (paid; owner session runs the dev benchmark after this REQ). No he
 Benchmark note (engine arms): the bench money-shift detection now goes through the same bounded sketch
 the product persists, so a dev-bench re-run should reproduce the same B1 detections (bench no longer
 credits anything the live path cannot see). No scorecard regeneration here.
+
+### REQ-076 — UI full-suite flake root cause (sbx1 2026-11-01)
+Agent: opencode meta/muse-spark-1.3 (escalation)
+- Root cause: timing race in `ui/components/NewConnectorForm.test.tsx > sends no runtime choice; the engine's decision reads cloud for HTTP docs (REQ-050)`. The test waited for `submit-success` (rendered by `setResult` + `setSubmitState("done")` right after the build-start POST) and then read `build-runtime-decision` synchronously. But that line shows the interim `job starting…` until `BuildProgress` finishes its two sequential fetches (job poll → build-run detail) — usually 1–2 microtasks later, so the test passed standalone and most full-suite runs, but under parallel-worker load the detail fetch lagged and the assertion saw `expected 'job starting…' to contain 'runs: cloud'`. Reproduced 1/8 full-suite runs before the fix (same signature as the audit's 339/340 run).
+- Not shared state: `fetchMock` is per-file with `resetAllMocks` + route-by-substring matching (longest match wins), no cross-file leakage; the mount-time `/demo/simulators` fetch is stubbed. Pure intra-test async ordering.
+- Fix (test only, no retries/quarantines, no component change): assert the settled runtime line with `waitFor(... toContain "runs: cloud")` — the same pattern the PABX test in the same file already uses for its `runs: on-premise edge agent, via the relay` line. 7 insertions, 1 deletion.
+- Verification: single file 26/26; full UI suite 10/10 consecutive runs 348/348 (before: 1 failure in 8 runs with the exact audited signature); full `make test` green (autobridge 3020 @90.12%, verifier 138 @91.04%, simulators 415 @90.50%, UI 348); `make lint`, `make typecheck`, `make ui-typecheck`, `make openapi-check` green.
+- Full-suite flakes of this shape seen in earlier notes (scheduler-teardown `Task was destroyed`, sqlite I/O on full disks, DNS-guard ERROR) are different mechanisms; this one was a genuine test bug, now fixed. No owner step left.

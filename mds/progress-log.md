@@ -4162,3 +4162,6 @@ fail-soft), `connector_value_baselines` table + migration 0016, `_detect_open` l
 `docs/architecture.md` B1 paragraph updated. 13 new unit tests; full gates green (autobridge 3020
 passed @90%, verifier 91.04%, UI 348, lint/typecheck/ui-typecheck/openapi-check). E2E not runnable in
 sbx1 (no stack). Owner step: dev benchmark re-run in the owner session (paid, not run here).
+
+## 2026-11-01 — REQ-076 DONE (sbx1, Agent: opencode meta/muse-spark-1.3 (escalation))
+UI full-suite flake root-caused to a timing race in the REQ-050 NewConnectorForm test (read `build-runtime-decision` before the build-run detail fetch landed; saw interim `job starting…`). Fixed with `waitFor` on the settled line (test-only, same pattern as the PABX test). 10/10 full UI suites 348/348 + full `make test` green (3020 @90.12% / 138 @91.04% / 415 @90.50%). No owner step left. All Phase 1 + Phase 2 + REQ-001…076 code-done (REQ-051 deferred; VERIFY/browser/keyed steps with owner).
