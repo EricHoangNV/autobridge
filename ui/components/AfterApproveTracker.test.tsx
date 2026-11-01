@@ -102,4 +102,32 @@ describe("deriveTrackerSteps (REQ-073 item 4)", () => {
     expect(approved).toBe(false);
     expect(steps).toEqual([]);
   });
+
+  it("a version-superseded candidate with no surviving sync rows still reads done with a replaced-by line (REQ-074 item 1)", () => {
+    const { steps } = deriveTrackerSteps({
+      repairId: "rep-1",
+      approval: approval(),
+      connector: { id: "c1", active_release_id: "rel-3", state: "working", activity: "all clear", releases },
+      syncRuns: [],
+    });
+    const byKey = Object.fromEntries(steps.map((s) => [s.key, s]));
+    expect(byKey.approval.done).toBe(true);
+    expect(byKey.activated.done).toBe(true);
+    expect(byKey.sync.done).toBe(true);
+    expect(byKey.complete.done).toBe(true);
+    expect(byKey.activated.detail).toContain("replaced by r3");
+  });
+
+  it("names the replaced-by release from the sync history (REQ-074 item 1)", () => {
+    const { steps } = deriveTrackerSteps({
+      repairId: "rep-1",
+      approval: approval(),
+      connector: { id: "c1", active_release_id: "rel-3", state: "working", activity: "all clear", releases },
+      syncRuns: [
+        syncOn("rel-2", "Complete", "2026-11-01T10:21:00Z"),
+        syncOn("rel-2", "Complete", "2026-11-01T10:22:00Z"),
+      ],
+    });
+    expect(steps.find((s) => s.key === "activated")?.detail).toContain("replaced by r3");
+  });
 });

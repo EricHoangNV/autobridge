@@ -1281,4 +1281,148 @@ describe("RepairDetailPage", () => {
     // The report id reads once on the page.
     expect(screen.getByTestId("repair-section-did").textContent?.match(/report-xyz|report report-xy/g)?.length ?? 0).toBeLessThanOrEqual(2);
   });
+
+  it("an approved repair whose release was later replaced reads done with a replaced-by line (REQ-074 item 1)", () => {
+    mockAll(
+      {
+        ...mockRepair,
+        decision: "approved",
+        ladder_level_reached: 1,
+        rule_id: "page_to_cursor",
+        approval: {
+          id: "ap-1",
+          actor: "eric",
+          decision: "approve",
+          from_release_id: "rel-1",
+          to_release_id: "rel-2",
+          created_at: "2026-11-01T10:20:00.000Z",
+        },
+      },
+      undefined,
+      undefined,
+      {
+        ...mockConnector,
+        active_release_id: "rel-3",
+        state: "working",
+        activity: "in sync",
+        releases: [
+          { id: "rel-1", version: 1, spec: {}, parent_release_id: null },
+          { id: "rel-2", version: 2, spec: {}, parent_release_id: "rel-1", provenance_repair_run_id: "repair-abc-123" },
+          { id: "rel-3", version: 3, spec: {}, parent_release_id: "rel-1" },
+        ],
+      },
+      undefined,
+      undefined,
+      [
+        { id: "sync-a", release_id: "rel-2", outcome: "Complete", unmet_criteria: [], started_at: "2026-11-01T10:21:00.000Z" },
+        { id: "sync-b", release_id: "rel-2", outcome: "Complete", unmet_criteria: [], started_at: "2026-11-01T10:22:00.000Z" },
+      ],
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    for (const step of ["approval", "activated", "sync", "complete"]) {
+      expect(screen.getByTestId(`after-approve-step-${step}`)).toHaveAttribute("data-done", "yes");
+    }
+    expect(screen.getByTestId("after-approve-step-activated")).toHaveTextContent(/replaced by r3/);
+  });
+
+  it("an approved business decision never reads climbing (REQ-074 item 2)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "approved",
+      ladder_level_reached: 4,
+      candidate_patch: [],
+      verifier_report_id: "report-h1",
+      visible_test_results: [{ name: "money_invariant", passed: true }],
+      rule_id: null,
+      escalation_bundle: {
+        reason: "gross_to_net: semantic drift",
+        question: "Should total_amount track net?",
+        suggested_action: "manual review",
+        proposal: {
+          label: "Accept net",
+          effect: "Retarget the totals check.",
+          patch: [{ op: "replace", path: "/entities/Reservation/checks/2/compare_to", value: "$.net_sum" }],
+          dry_run: "tested on the current records: the checks pass",
+        },
+      },
+      approval: {
+        id: "ap-2",
+        actor: "eric",
+        decision: "approve",
+        from_release_id: "r1",
+        to_release_id: "r2",
+        created_at: new Date().toISOString(),
+      },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("repair-decision-line")).toHaveTextContent("Business decision: approved — shipped");
+    expect(screen.getByTestId("repair-decision-line")).not.toHaveTextContent("Still climbing");
+    expect(screen.getByTestId("rail-plain-line")).toHaveTextContent("Approved — shipped");
+  });
+
+  it("an approved repair hides the Approve/Deny preview section (REQ-074 item 3)", () => {
+    mockAll({
+      ...mockRepair,
+      decision: "approved",
+      approval: {
+        id: "ap-1",
+        actor: "eric",
+        decision: "approve",
+        from_release_id: "rel-1",
+        to_release_id: "rel-2",
+        created_at: new Date().toISOString(),
+      },
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.queryByTestId("rail-consequences")).not.toBeInTheDocument();
+  });
+
+  it("a waiting repair keeps the Approve/Deny preview section (REQ-074 item 3)", () => {
+    mockAll();
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("rail-consequences")).toBeInTheDocument();
+  });
+
+  it("a zero-count funnel reads as no enumeration, never a bare 0 (REQ-074 item 4)", () => {
+    mockAll(
+      mockRepair,
+      mockLedger,
+      [
+        {
+          id: "deriv-0",
+          kind: "hypothesis",
+          payload: {
+            stages: [
+              { name: "generated", count: 0, ids: [] },
+              { name: "distinct", count: 0, ids: [] },
+            ],
+          },
+          parent_ids: [],
+          run_id: "repair_runs:repair-abc-123",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      mockConnector,
+      [],
+    );
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("proof-hypotheses")).toHaveTextContent("no hypotheses needed: a rule matched");
+    expect(screen.getByTestId("proof-hypotheses")).not.toHaveTextContent("enumerated, then filtered");
+    expect(screen.queryByTestId("hypothesis-funnel")).not.toBeInTheDocument();
+  });
+
+  it("a verifier report without counts reads one verdict, no glyph (REQ-074 item 5)", () => {
+    mockAll({
+      ...mockRepair,
+      visible_test_results: [],
+      verifier_report_id: "ee21f3a2-0000",
+    });
+    render(<RepairDetailPage params={{ id: "repair-abc-123" }} />);
+    expect(screen.getByTestId("verifier-verdict-badge")).toHaveAttribute("data-verdict", "pass");
+    expect(screen.getByTestId("verifier-verdict")).toHaveTextContent("passed on this patch");
+    expect(screen.getByTestId("verifier-verdict")).not.toHaveTextContent("✓");
+    expect(screen.queryByTestId("verifier-checks-line")).not.toBeInTheDocument();
+    // One "passed on this patch" only — the Verdict owns it.
+    expect(screen.getByTestId("proof-verifier").textContent?.match(/passed on this patch/g)?.length).toBe(1);
+  });
 });

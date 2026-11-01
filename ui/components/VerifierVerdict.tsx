@@ -57,7 +57,10 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
     return decision === "propose" ? "pass" : "fail";
   })();
 
-  const scoreHead = total > 0 ? passed : verdict === "pass" ? "✓" : "—";
+  // REQ-074 item 5: one verdict, once. With visible checks the score
+  // reads N of M; when the check count is unknown there is no "✓/—"
+  // glyph — the badge below already carries the verdict.
+  const scoreHead = total > 0 ? passed : null;
   const scoreNote =
     total > 0
       ? passed === total
@@ -74,13 +77,17 @@ export function VerifierVerdict({ verifierReportId, visibleTestResults, escalati
           Not run yet. The verifier waits for a patch.
         </p>
       ) : null}
+      {total > 0 ? (
       <dl className="repair-score repair-past">
         <dt className="num">
           {scoreHead}
-          <small>/{total > 0 ? total : "—"}</small>
+          <small>/{total}</small>
         </dt>
         <dd>{scoreNote}</dd>
       </dl>
+      ) : hasReport ? (
+      <p data-testid="verifier-score-note" className="text-sm text-ink-2">{scoreNote}</p>
+      ) : null}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <span data-testid="verifier-verdict-badge" data-verdict={verdict} className="font-mono text-xs text-ink-2">
           {verdict}

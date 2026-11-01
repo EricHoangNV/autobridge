@@ -50,12 +50,25 @@ type RepairLite = {
 export type TrackerStep = { key: string; label: string; done: boolean; detail: string | null };
 
 /**
- * REQ-073 item 4: every step derives from the real records — the approval
- * row, the connector's active release, and the sync runs on the new
- * release — so a shipped fix shows all steps done. A candidate release
- * that went live and was later superseded (e.g. Activating r1 for a second
- * break) still reads done: a sync ran on it, so it was active.
+ * REQ-073 item 4 / REQ-074 item 1: every step derives from the real
+ * records — the approval row, the connector's active release, and the
+ * sync runs on the new release — so a shipped fix shows all steps done.
+ * A candidate release that went live and was later superseded (e.g.
+ * Activating r1 for a second break) still reads done: a sync ran on it,
+ * so it was active. When the sync history no longer lists those runs
+ * but the release versions prove it (active moved past the candidate),
+ * the steps still read done with a "replaced by rN" line — never
+ * "waiting for activation" on a release that already went live.
  */
+function shortClock(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
 export function deriveTrackerSteps({
   repairId,
   approval,
@@ -94,8 +107,31 @@ export function deriveTrackerSteps({
     .sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : 0));
   const firstVerifying = onCandidate.length ? onCandidate[0] : null;
   const firstComplete = onCandidate.find((s) => s.outcome === "Complete") ?? null;
-  const activated = candidateId !== null && (activeId === candidateId || onCandidate.length > 0);
-  const complete = firstComplete !== null;
+  const candidateVersion = versionOf(candidateId);
+  const activeVersion = versionOf(activeId);
+  // REQ-074 item 1: versions prove a superseded candidate went live even
+  // when its sync rows have fallen out of the history.
+  const supersededByVersion =
+    candidateVersion !== null && activeVersion !== null && activeVersion > candidateVersion;
+  const replacedByLabel =
+    activeId !== null && activeId !== candidateId
+      ? (() => {
+          const v = versionOf(activeId);
+          return v !== null ? `r${v}` : activeId.slice(0, 8);
+        })()
+      : null;
+  const liveWindow = (() => {
+    if (!onCandidate.length) return null;
+    const first = shortClock(onCandidate[0].started_at);
+    const last = shortClock(onCandidate[onCandidate.length - 1].started_at);
+    if (!first) return null;
+    return last && last !== first ? `${first}–${last}` : first;
+  })();
+  const activated = candidateId !== null && (activeId === candidateId || onCandidate.length > 0 || supersededByVersion);
+  const syncDone = firstVerifying !== null || supersededByVersion;
+  // A superseded candidate with no surviving sync rows must still have
+  // run before it was replaced; when rows survive, they decide.
+  const complete = firstComplete !== null || (supersededByVersion && onCandidate.length === 0);
   const working = (connector?.state ?? "") === "working";
   const activeLabel = (() => {
     const v = versionOf(activeId);
@@ -116,17 +152,23 @@ export function deriveTrackerSteps({
       detail:
         activeId === candidateId && candidateId !== null
           ? `${candidateLabel} is active`
-          : activated
-            ? `${candidateLabel} went live${activeLabel ? ` (now on ${activeLabel})` : ""}`
-            : "waiting for activation",
+          : activated && replacedByLabel
+            ? liveWindow
+              ? `${candidateLabel} went live ${liveWindow}, replaced by ${replacedByLabel}`
+              : `${candidateLabel} went live, replaced by ${replacedByLabel}`
+            : activated
+              ? `${candidateLabel} went live${activeLabel ? ` (now on ${activeLabel})` : ""}`
+              : "waiting for activation",
     },
     {
       key: "sync",
       label: "Verifying sync",
-      done: firstVerifying !== null,
+      done: syncDone,
       detail: firstVerifying
         ? `${firstVerifying.outcome}${firstVerifying.unmet_criteria?.length ? `: ${firstVerifying.unmet_criteria.join(", ")}` : ""}`
-        : "waiting for the next sync",
+        : supersededByVersion
+          ? `ran before it was replaced by ${replacedByLabel ?? "a later release"}`
+          : "waiting for the next sync",
     },
     {
       key: "complete",

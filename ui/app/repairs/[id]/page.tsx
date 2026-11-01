@@ -569,8 +569,19 @@ export default function RepairDetailPage({ params }: PageProps) {
   // REQ-054 item 4: model cost lives once, in the proof tile. The decided
   // line names the decision only; the rail names the rule, never the tokens.
   // Terminal states read first: a rejected or failed repair is never "ready".
+  // REQ-074 item 2: an approved repair never reads "climbing" — an
+  // approved business decision (escalation history) reads approved-shipped
+  // as a business decision, a rule-fix approval reads shipped.
+  const approvedIsBusiness =
+    !!repair.escalation_bundle || (repair.ladder_level_reached ?? 0) >= 3;
   const decisionLine = repair.decision === "climbing"
     ? `Repairing at L${runningRung}: the engine is still climbing — no Approve or Reject until it decides`
+    : repair.decision === "approved"
+      ? approvedIsBusiness
+        ? "Business decision: approved — shipped"
+        : repair.approval?.actor
+          ? `Approved by ${repair.approval.actor} — shipped`
+          : "Approved — shipped"
     : isEscalated && repair.approval?.decision === "approve"
       // REQ-049 item 6: an approved proposal is a business decision by
       // the operator — never a "verified fix".
@@ -887,9 +898,12 @@ export default function RepairDetailPage({ params }: PageProps) {
   const showLedger = ledgerCallCount > 0 || climbingNow;
 
   // Hypotheses + probes: one tile when the rule needed no enumeration.
+  // REQ-074 item 4: a funnel of all-zero stages is no enumeration — one
+  // plain line, never a bare "0".
   const probeCount = probes?.length ?? 0;
   const funnelTotal = funnelStages.length ? funnelStages[0].count : 0;
-  const showFunnel = funnelStages.length > 0 || climbingNow;
+  const funnelHasCounts = funnelStages.some((s) => s.count > 0 || (s.ids?.length ?? 0) > 0);
+  const showFunnel = (funnelStages.length > 0 && funnelHasCounts) || climbingNow;
   const showHypotheses = (hypotheses?.length ?? 0) > 0;
   const showProbes = probeCount > 0;
 
@@ -1211,13 +1225,14 @@ export default function RepairDetailPage({ params }: PageProps) {
                   modelEscalated={modelAsked}
                   proposalDryRun={modelProposal?.dryRun ?? null}
                 />
+                {/* REQ-074 item 5: the Verdict block owns the single
+                    verdict line — no second "passed on this patch" here
+                    when the check count is unknown. */}
+                {totalTests > 0 ? (
                 <span data-testid="verifier-checks-line" className="s num">
-                  {totalTests > 0
-                    ? `${passedCount}/${totalTests} checks pass`
-                    : hasReport
-                      ? "passed on this patch"
-                      : "no visible checks recorded"}
+                  {`${passedCount}/${totalTests} checks pass`}
                 </span>
+                ) : null}
               </div>
               <div data-testid="proof-hypotheses">
                 <span className="k">Hypotheses · probes</span>
@@ -1579,6 +1594,9 @@ export default function RepairDetailPage({ params }: PageProps) {
                   onActionComplete={() => mutateRepair()}
                 />
               </div>
+              {/* REQ-074 item 3: on an approved repair there is nothing
+                  left to click — the preview section stays hidden. */}
+              {repair.approval?.decision !== "approve" ? (
               <details data-testid="rail-consequences" className="mt-3 border-t border-rule">
                 <summary className="cursor-pointer py-2 text-xs text-ink-2 hover:text-ink hover:underline">
                   ▸ If you click Approve / Deny…
@@ -1587,6 +1605,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                   <ApprovePreviewSection repairId={repair.id} />
                 </div>
               </details>
+              ) : null}
               <AfterApproveTracker repairId={repair.id} connectorId={primaryConnectorId} />
             </div>
           ) : isTerminal ? (
@@ -1621,6 +1640,9 @@ export default function RepairDetailPage({ params }: PageProps) {
                   onActionComplete={() => mutateRepair()}
                 />
               </div>
+              {/* REQ-074 item 3: on an approved repair there is nothing
+                  left to click — the preview section stays hidden. */}
+              {repair.decision !== "approved" ? (
               <details data-testid="rail-consequences" className="mt-3 border-t border-rule">
                 <summary className="cursor-pointer py-2 text-xs text-ink-2 hover:text-ink hover:underline">
                   ▸ If you click Approve / Deny…
@@ -1629,6 +1651,7 @@ export default function RepairDetailPage({ params }: PageProps) {
                   <ApprovePreviewSection repairId={repair.id} />
                 </div>
               </details>
+              ) : null}
               <AfterApproveTracker repairId={repair.id} connectorId={primaryConnectorId} />
             </div>
           ) : (
