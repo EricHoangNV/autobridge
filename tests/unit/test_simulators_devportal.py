@@ -157,7 +157,8 @@ def test_fias_portal_is_a_document_viewer_and_offline() -> None:
     html = r.text
     assert "Grand Plaza" in html
     assert "Simulated vendor documentation" in html
-    assert "CONFIDENTIAL" in html
+    assert "SAMPLE FOR DEMO" in html
+    assert "CONFIDENTIAL" not in html
     # Viewer chrome: file header bar, thumbnail rail, zoom, page count.
     assert "Grand_Plaza_PABX_Interface_Specification_FIAS_v1.0.pdf" in html
     assert 'id="rail"' in html and 'id="zin"' in html
