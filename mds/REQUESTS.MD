@@ -5,7 +5,18 @@
 Owner priority (2026-11-01): **REQ-078** (REQ-066..077 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-078 — When the engine does not know, it asks: model first, operator last; and a beacon that grades it fairly (2026-11-01)
-Status: DONE (sbx1 2026-11-01 -- engine climbs every repairable class with verified candidates, class-neutral evidence, 9 detection fixes, Error grading, frozen budgets, append/resume, warm learns in-run, agent isolation, per-instance stats; 24 new tests incl. detection sweep + resume; full gates green (autobridge 3065 @90.02%, verifier @90.94%, simulators @90.50%); lint/typecheck/openapi green; BENCH_TRIALS=1 ablation 12/12 matched; docs (architecture/safety-model/benchmark) updated; demo.md unchanged (deck-5 escalation shape holds); owner step: keyed make bench-beacon REHEARSE=<round> FAULTS=10 TRIALS=1)
+Status: OPEN (reopened 2026-11-02 by owner check of 916ce205 -- items 8 (simulators) and 10 (rehearsal) not done)
+Owner check (2026-11-02, on `916ce205`): items 1-7 and 9 landed; two parts are missing, finish them in this REQ.
+- **Item 8, simulator defects: no file under `simulators/` changed.** Fix: meridian serializers crash on non-ISO /
+  renamed / nested dates (`simulators/meridianpms/app.py` ~306-308, ~382 `fromisoformat`); atlas folio rename never
+  serves the new key (`simulators/atlaspms/app.py` ~340-360, no `_extra_wire_fields`); atlas defaults missing amounts
+  to `"0"` (~270); meridian `dates/cutoff` never manifests but is keyed `repair` (fix the fault or the answer key in
+  `simulators/common/faultgen.py` / `verifier/beacon.py`). Extend the item-4 detection sweep so these instances are
+  served without a crash and detected.
+- **Item 10, the rehearsal was not run** ("no live stack"). The stack runs inside the opencode sandbox: from the
+  worktree, `make up`, then `make bench-beacon REHEARSE=<a published drand round> FAULTS=10 TRIALS=1` (the frontier
+  key comes from `.env`), then `make down`. Report every arm's verified score, cost and wrong patches proposed /
+  released in the Status line, whatever they are. Do not freeze, tag or commit anything under `experiments/beacon/`.
 Owner principle (2026-11-01): **the engine must ASK when it does not know** — any drift that L0/L1 cannot repair climbs
 to the model (L2/L3), and only when the model cannot produce a verified fix does it ask the operator. A hard-coded list
 of drift classes (or families, vendors, scenarios) that may reach the model is the wrong approach and must go. The
