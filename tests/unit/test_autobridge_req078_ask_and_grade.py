@@ -312,6 +312,43 @@ def test_detection_sweep_no_silent_wrong_records() -> None:
     assert not silent, f"silent wrong records (Complete, 0 signals): {silent[:10]}"
 
 
+def test_detection_rehearsal_misses_now_detected() -> None:
+    """REQ-078 (reopened 2026-11-02, round 6603643 rehearsal misses).
+
+    legacystay ``gross_net`` was 0 signals / Complete (silent): the
+    cent-rounded wire values never ratio exactly 0.5, so the exact-match
+    observer stayed blind. Meridian reservation ``nesting`` classified
+    ``ENUM_NEW_VALUE`` (11 signals): the wrapped record reads as unknown
+    enums, but the emptied wire keys name the structural cause. Both must
+    detect (and then climb per item 1); a true vocab change still reads
+    ENUM_NEW_VALUE.
+    """
+    from bench import ablation as _ablation
+    from bench import faults as _faults
+    from bench.beacon_run import engine_spec_for
+
+    cases = [
+        # (vendor, index, seed_hex, expected drift class)
+        ("legacystay", 2, "cd" * 32, "SEMANTIC_VALUE_DRIFT"),
+        ("meridian", 13, "ab" * 32, "SCHEMA_RENAME"),
+        ("harbor", 61, "cd" * 32, "ENUM_NEW_VALUE"),
+    ]
+    for vendor, index, seed_hex, expected in cases:
+        pre_spec = engine_spec_for({"vendor": vendor, "index": index}, None)
+        assert pre_spec is not None, (vendor, index)
+        faulted, baseline = _faults.beacon_sync_pair(
+            vendor=vendor, eval_seed_hex=seed_hex, index=index, spec=dict(pre_spec),
+        )
+        faulted_canon = faulted.get("canonical_records") or {}
+        baseline_canon = baseline.get("canonical_records") or {}
+        assert faulted_canon != baseline_canon, (vendor, index, "records must differ")
+        diag = _ablation.derive_from_summaries(
+            dict(pre_spec), baseline_summary=baseline, faulted_summary=faulted,
+        )
+        assert list(diag.signals), (vendor, index, "no signals")
+        assert diag.drift_class == expected, (vendor, index, diag.drift_class)
+
+
 def test_beacon_resume_keeps_landed_rows(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Grades appended as they land survive a mid-run abort: a rerun
     resumes from them (no summary.json), while a finished run (summary

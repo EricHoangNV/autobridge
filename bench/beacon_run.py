@@ -909,6 +909,7 @@ def _derive_fias_diagnostics(
             signals=(),
             classification_reason="No drift signals observed",
             faulted_outcome=str(faulted_summary.get("outcome", "")),
+            faulted_summary=dict(faulted_summary),
         )
     classification = classify([signal])
     return _ablation.DerivedDiagnostics(
@@ -917,6 +918,7 @@ def _derive_fias_diagnostics(
         signals=(signal,),
         classification_reason=classification.reason,
         faulted_outcome=str(faulted_summary.get("outcome", "")),
+        faulted_summary=dict(faulted_summary),
     )
 
 
@@ -1668,6 +1670,19 @@ def _attempt_summary_for(result: Any, candidate: dict[str, Any] | None) -> str:
             return "engine: no drift detected (0 signals), no repair run opened (Complete, no patch)"
         if decision == "escalate":
             question = spec.get("question") if isinstance(spec.get("question"), str) else ""
+            # REQ-078 (reopened 2026-11-02): name the rung that decided — a
+            # row whose model was asked never reads "escalate at L4 (no
+            # rule)". L3-attempted escalations carry the model's question.
+            if bool(spec.get("l3_attempted")):
+                if question and question.strip():
+                    return (
+                        f"engine: detected {drift} ({n_signals} signals) -> "
+                        f"L3 model escalated: {question.strip()[:200]}"
+                    )
+                return (
+                    f"engine: detected {drift} ({n_signals} signals) -> "
+                    f"L3 model escalated (no question recorded)"
+                )
             if question and question.strip():
                 return f"engine: detected {drift} ({n_signals} signals) -> escalate at L{level} ({rule}) with operator question"
             return (
@@ -1719,7 +1734,11 @@ def _blocked_step_for(result: Any, outcome_report: dict[str, Any]) -> str | None
         if n_missing == 0:
             return "detection: announced/served shape breaks no mapping (missing: none) — nothing to repair"
         if decision == "escalate" and not rule:
-            base = f"ladder: no rule matched {drift} at L{level}, escalated without a patch"
+            # REQ-078 (reopened 2026-11-02): name the rung that decided.
+            if bool(spec.get("l3_attempted")):
+                base = f"ladder: L3 model escalated {drift} (no verified patch)"
+            else:
+                base = f"ladder: no rule matched {drift} at L{level}, escalated without a patch"
         else:
             base = f"ladder: escalated at L{level} (rule: {rule or 'none'})"
         # REQ-063 item 2: say whether the escalation carries the operator question.

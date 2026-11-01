@@ -498,16 +498,24 @@ def _match_semantic(grouped: dict[str, list[DriftSignal]]) -> tuple[str, list[st
 # Priority ordered matchers — most specific / highest severity first.
 # ENUM must precede CAPABILITY_REMOVED because status_vocab_change produces
 # zero_records + Blocked with unknown_enum, but should be ENUM not capability.
+# Structural wire matchers (rename / emptied) precede ENUM:
+# a wrapped (nested) record also reads as unknown enums + zero records, but
+# the emptied wire keys name the structural cause (REQ-078 reopened
+# 2026-11-02: meridian nesting read as ENUM_NEW_VALUE). A true vocab change
+# carries no emptied/keys evidence (its fields stay populated with the new
+# codes), so it still reaches ENUM. Date/type matchers stay below ENUM: a
+# keys_changed fingerprint side-effect of a new code must not steal the
+# ENUM classification.
 _MATCHERS: list[Callable[..., tuple[str, list[str], str] | None]] = [
     _match_auth_revoked,
     _match_auth_expired,
+    _match_wire_schema_rename,
+    _match_emptied_field,
     _match_enum_new_value,
     _match_capability_removed,
     _match_rate_limit,
     _match_transient,
     _match_pagination_change,
-    _match_wire_schema_rename,
-    _match_emptied_field,
     _match_date_shift,
     _match_schema_from_types,
     _match_semantic,

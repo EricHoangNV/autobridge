@@ -601,6 +601,11 @@ class DerivedDiagnostics:
     # Complete, production opens no repair run — the arm reports Complete
     # with no patch (the ladder is never called).
     faulted_outcome: str = ""
+    # REQ-078 (reopened 2026-11-02): the faulted sync summary itself, so the
+    # bench engine arm can call the same input-preparation function
+    # production calls (prepare_climb_inputs + build_dry_run_fault) instead
+    # of climbing with no evidence. Carried through, never a case label.
+    faulted_summary: Any = None
 
 
 def derive_from_summaries(
@@ -657,6 +662,7 @@ def derive_from_summaries(
         signals=tuple(signals),
         classification_reason=classification.reason,
         faulted_outcome=str(faulted_summary.get("outcome", "")),
+        faulted_summary=dict(faulted_summary),
     )
 
 
@@ -800,13 +806,13 @@ def run_engine_arm(
 ) -> Any:
     """Run an engine arm (c/d/e) end to end through RepairController.
 
-    The real path, with no case-supplied diagnostics: sync the pre-drift
-    spec against the served fault → detector → classifier → the engine's
-    own hypothesis enumerator → ladder → verifier gate (grading). Phase 1
-    runs the deterministic ladder (never a model call); phase 2 climbs
-    with the shared frontier provider only when the derived drift class
-    is semantically ambiguous (``SEMANTIC_VALUE_DRIFT``) and the
-    enumerator yielded hypotheses.
+    The production path, with no case-supplied diagnostics: sync the
+    pre-drift spec against the served fault → detector → classifier →
+    the shared input-preparation function production calls
+    (``prepare_climb_inputs`` + ``build_dry_run_fault``) → ladder →
+    verifier gate (grading). Phase 1 runs the deterministic ladder (never
+    a model call); phase 2 climbs L0 → L1 → L2 → L3 → L4 with the shared
+    frontier provider for every repairable class (REQ-078 item 1).
 
     ``derive`` overrides the serving step (ablation serves sim scenarios;
     the beacon run serves public instances) — it must derive from equal
@@ -863,6 +869,33 @@ def run_engine_arm(
                 context_hash=None,
             )
         run_id = f"ablation-{ablation}-{case.scenario_id}-{getattr(inputs, 'trial', 0)}"
+        # REQ-078 (reopened 2026-11-02): the bench engine arm takes the
+        # production path — the same shared input-preparation function
+        # production calls (prepare_climb_inputs + build_dry_run_fault),
+        # not a bench-only copy. The faulted sync summary rides the
+        # diagnostics; without it the L3 prompt renders "(none recorded)".
+        _summary = getattr(diag, "faulted_summary", None)
+        _summary_dict = _summary if isinstance(_summary, dict) else None
+        _prepared: dict[str, Any] = {"evidence": None, "stages": None}
+        try:
+            from autobridge.repair.controller import prepare_climb_inputs as _prepare_climb_inputs  # noqa: PLC0415
+
+            _prepared = _prepare_climb_inputs(
+                spec=case.spec,
+                signals=list(diag.signals or ()),
+                summary=_summary_dict,
+                sync_run_id=run_id,
+                drift_class=diag.drift_class,
+            ) or {"evidence": None, "stages": None}
+        except Exception:
+            _prepared = {"evidence": None, "stages": None}
+        _dry_fault: dict[str, Any] | None = None
+        try:
+            from autobridge.repair.dryrun import build_dry_run_fault as _build_dry_run_fault  # noqa: PLC0415
+
+            _dry_fault = _build_dry_run_fault(_summary_dict)
+        except Exception:
+            _dry_fault = None
         common = dict(
             spec=case.spec,
             drift_class=diag.drift_class,
@@ -892,6 +925,9 @@ def run_engine_arm(
                 provider=active_provider,
                 hypotheses=list(hyps),
                 enumerator_yield_count=len(hyps),
+                evidence=(dict(_prepared.get("evidence") or {})) or None,
+                hypothesis_stages=list(_prepared.get("stages") or []),
+                dry_run_fault=_dry_fault,
                 **common,
             )
         elapsed_ms = (time.monotonic() - start) * 1000.0
@@ -919,6 +955,17 @@ def run_engine_arm(
             except Exception:
                 cost = None
         patch = result.candidate_patch
+        # REQ-078 (reopened 2026-11-02): name the rung that decided — a row
+        # whose model was asked must never read "escalate at L4 (no rule)".
+        # L3 counts as attempted when the trace holds a level-3 rung.
+        _l3_attempted = False
+        try:
+            for _e in list(getattr(result, "ladder_trace", None) or []):
+                if isinstance(_e, dict) and int(_e.get("level", -1)) == 3:
+                    _l3_attempted = True
+                    break
+        except Exception:
+            _l3_attempted = False
         # REQ-063 item 2: the engine's L4 escalation carries the question the
         # ladder wrote (open question, else the escalation bundle's). The
         # row reports it via operator_question; when the ladder writes none
@@ -968,6 +1015,9 @@ def run_engine_arm(
                 # REQ-078 item 5: a budget-exhausted climb grades as its
                 # own failure class, never as an escalation.
                 "budget_exhausted": _ladder_hit_budget(result),
+                # REQ-078 (reopened 2026-11-02): the row's reason names the
+                # rung that decided (L3 model escalated vs L4 no-rule).
+                "l3_attempted": _l3_attempted,
             },
             prompt=None,
             context_hash=engine_context_hash,

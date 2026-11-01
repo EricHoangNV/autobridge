@@ -1337,43 +1337,57 @@ def _observe_money_scale_shift(
                     )
                 )
                 continue
-            # REQ-078 item 4: any constant ratio across >= 90% of rows
-            # counts (gross→net ×0.25 / ×0.5 is invisible to the
-            # power-of-ten check above). Exact Decimal ratios only.
-            ratios: dict[str, int] = {}
+            # REQ-078 item 4 (reopened 2026-11-02): any constant ratio across
+            # >= 90% of rows counts (gross→net ×0.25 / ×0.5). Ratios
+            # cluster with a 1% relative tolerance around their median —
+            # exact Decimal equality misses real shifts because the wire
+            # serves cents: ×0.5 of $144.65 is $72.33 (ratio 0.50003…),
+            # not exactly 0.5. Power-of-ten moves stay exact above.
+            _ratio_vals: list[Any] = []
             for k in cur_by_key:
                 cur_v = _decimal_of(cur_by_key[k].get(money_field))
                 base_v = _decimal_of(base_by_key[k].get(money_field))
                 if cur_v is None or base_v is None or cur_v == 0 or base_v == 0:
                     continue
                 try:
-                    ratio = (cur_v / base_v).normalize()
+                    _ratio_vals.append(cur_v / base_v)
                 except Exception:
                     continue
-                ratios[str(ratio)] = ratios.get(str(ratio), 0) + 1
-            best_ratio = max(ratios.values()) if ratios else 0
-            if best_ratio / matched < _SCALE_MATCH_RATE:
+            if len(_ratio_vals) < _SCALE_MIN_PAIRS:
                 continue
-            best_ratio_s = next(r for r, c in ratios.items() if c == best_ratio)
-            if float(best_ratio_s) == 1.0:
+            _ordered = sorted(_ratio_vals)
+            _median = _ordered[len(_ordered) // 2]
+            try:
+                _tol = abs(_median) * _Decimal("0.01")
+                _near = sum(1 for _r in _ratio_vals if abs(_r - _median) <= _tol)
+            except Exception:
+                continue
+            if _near / len(_ratio_vals) < _SCALE_MATCH_RATE:
+                continue
+            try:
+                _median_f = float(_median)
+            except Exception:
+                continue
+            if abs(_median_f - 1.0) <= 0.01:
                 # No shift: the rows are unchanged (a constant ratio of 1
                 # across the baseline is the no-drift shape, never drift).
                 continue
+            _factor_s = f"{_median_f:.4g}"
             signals.append(
                 DriftSignal(
                     kind="money_scale_shift",
                     entity=entity,
                     severity="high",
                     message=(
-                        f"Money field {money_field} shifted by x{best_ratio_s} for {entity}: "
-                        f"{best_ratio}/{matched} rows (same keys and counts — constant ratio)"
+                        f"Money field {money_field} shifted by x{_factor_s} for {entity}: "
+                        f"{_near}/{len(_ratio_vals)} rows (same keys and counts — constant ratio)"
                     ),
                     details={
                         "entity": entity,
                         "money_field": money_field,
-                        "factor": best_ratio_s,
-                        "matched_pairs": matched,
-                        "shifted_pairs": best_ratio,
+                        "factor": _factor_s,
+                        "matched_pairs": len(_ratio_vals),
+                        "shifted_pairs": _near,
                         "wire_evidence": "canonical",
                     },
                     source_run_id=source_run_id,

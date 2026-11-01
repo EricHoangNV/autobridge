@@ -248,6 +248,78 @@ def test_engine_semantic_climb_uses_provider() -> None:
     assert res.frontier_tokens > 0
 
 
+def test_engine_arm_climbs_with_production_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REQ-078 (reopened 2026-11-02): the bench engine arm takes the
+    production path — the model climb carries the shared input-preparation
+    output (evidence + hypothesis stages + dry-run fault), never None.
+
+    ``engine_no_knowledge`` on a structural drift misses deterministically
+    and climbs with the FakeProvider; the phase-2 ``handle`` call must hold
+    evidence with a spec subtree and the fault parcel (the L3 prompt reads
+    them instead of "(none recorded)")."""
+    import bench.ablation as ab
+    from autobridge.repair.controller import RepairController
+
+    seen: list[dict[str, Any]] = []
+    orig_handle = RepairController.handle
+
+    def _spy(self: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.append(dict(kwargs))
+        return orig_handle(self, *args, **kwargs)
+
+    monkeypatch.setattr(RepairController, "handle", _spy)
+    cfg = HarnessConfig()
+    inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
+    case = ab.ablation_case_for_scenario("page_to_cursor")
+    res = ab.run_engine_arm(inputs, case, ablation="engine_no_knowledge", provider=FakeProvider())
+    assert res.spec is not None and res.spec["decision"] == "escalate"
+    # The model climb runs through a deterministic probe first (nested
+    # handle calls); exactly one call wires the provider.
+    climbs = [c for c in seen if c.get("provider") is not None]
+    assert len(climbs) == 1, [sorted(c) for c in seen]
+    climb = climbs[0]
+    assert climb.get("provider") is not None
+    evidence = climb.get("evidence")
+    assert isinstance(evidence, dict) and evidence, "model climb carries no evidence"
+    assert isinstance(evidence.get("spec_subtree"), dict) and evidence["spec_subtree"], "no spec subtree"
+    assert isinstance(evidence.get("raw_records"), list) and evidence["raw_records"], "no records sample"
+    assert climb.get("dry_run_fault") is not None, "model climb carries no dry-run fault"
+    assert isinstance(climb.get("hypothesis_stages"), list) and climb["hypothesis_stages"], "no stages"
+
+
+def test_l3_prompt_blocks_recorded_for_beacon_structural_drift() -> None:
+    """REQ-078 (reopened 2026-11-02): the L3 prompt rendered from a beacon
+    engine arm for a structural drift records every evidence block — none
+    reads "(none recorded)" and the spec subtree / records sample exist."""
+    from autobridge.repair.controller import prepare_climb_inputs
+    from autobridge.repair.ladder import _l3_evidence_blocks
+    from bench import faults as _faults
+    from bench.ablation import derive_from_summaries
+    from bench.beacon_run import engine_spec_for
+
+    seed_hex = "ab" * 32
+    pre_spec = engine_spec_for({"vendor": "atlas", "index": 40}, None)
+    assert pre_spec is not None
+    faulted, baseline = _faults.beacon_sync_pair(
+        vendor="atlas", eval_seed_hex=seed_hex, index=40, spec=dict(pre_spec),
+    )
+    diag = derive_from_summaries(dict(pre_spec), baseline_summary=baseline, faulted_summary=faulted)
+    assert diag.drift_class == "SCHEMA_RENAME"
+    assert diag.faulted_summary, "diagnostics carry no faulted summary"
+    prepared = prepare_climb_inputs(
+        spec=dict(pre_spec),
+        signals=list(diag.signals or ()),
+        summary=diag.faulted_summary if isinstance(diag.faulted_summary, dict) else None,
+        sync_run_id="beacon-test-run",
+        drift_class=diag.drift_class,
+    )
+    blocks = _l3_evidence_blocks(prepared.get("evidence"))
+    for name, block in blocks.items():
+        assert block != "(none recorded)", f"L3 prompt block missing: {name}"
+    assert prepared["evidence"]["spec_subtree"], "spec subtree missing"
+    assert prepared["evidence"]["raw_records"], "records sample missing"
+
+
 def test_engine_arm_handle_kwargs_carry_no_case_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fails if any arm receives a field the others do not (REQ-024 check).
 
