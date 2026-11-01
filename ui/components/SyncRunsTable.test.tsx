@@ -61,3 +61,77 @@ describe("SyncRunsTable", () => {
     expect(screen.getByTestId("fingerprint-sync-full-id-1").getAttribute("title")).toBe("fp-xyz-789-full");
   });
 });
+
+describe("SyncRunsTable edge link note (REQ-071)", () => {
+  const edgeLink = (overrides: Record<string, unknown> = {}) => ({
+    link_up: true,
+    reconnects: 2,
+    posting_keys_total: 2,
+    posting_keys_unique: 2,
+    posting_keys: ["k-a", "k-b"],
+    posting_keys_truncated: false,
+    ...overrides,
+  });
+
+  const edgeRun = (id: string, link: Record<string, unknown>, records: number) =>
+    mkSyncRun({
+      id,
+      records_observed: { FolioCharge: records },
+      data_readiness: { freshness: "current", completeness: "complete", edge_link: link },
+    });
+
+  it("notes a drop on the later row when the reconnect counter went up", () => {
+    const earlier = edgeRun("s-earlier", edgeLink({ reconnects: 2, posting_keys: ["k-a", "k-b"] }), 10);
+    const later = edgeRun(
+      "s-later",
+      edgeLink({ reconnects: 3, posting_keys_total: 3, posting_keys_unique: 3, posting_keys: ["k-a", "k-b", "k-c"] }),
+      13,
+    );
+    // Newest first, the API order.
+    render(<SyncRunsTable syncRuns={[later, earlier]} isEdge />);
+    expect(screen.getByTestId("link-note-s-later")).toHaveTextContent(
+      "link dropped, re-handshaked · +3 postings, 0 lost, 0 duplicated",
+    );
+    expect(screen.queryByTestId("link-note-s-earlier")).not.toBeInTheDocument();
+  });
+
+  it("reads link down when the link was down at sync time", () => {
+    const run = edgeRun("s-down", edgeLink({ link_up: false, reconnects: 0 }), 10);
+    render(<SyncRunsTable syncRuns={[run]} isEdge />);
+    expect(screen.getByTestId("link-note-s-down")).toHaveTextContent("link down");
+  });
+
+  it("shows no note when nothing changed", () => {
+    const earlier = edgeRun("s-earlier", edgeLink({ reconnects: 2 }), 10);
+    const later = edgeRun("s-later", edgeLink({ reconnects: 2 }), 10);
+    render(<SyncRunsTable syncRuns={[later, earlier]} isEdge />);
+    expect(screen.queryByTestId("link-note-s-later")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("link-note-s-earlier")).not.toBeInTheDocument();
+  });
+
+  it("computes lost and duplicated from the relay idempotency keys", () => {
+    const earlier = edgeRun("s-earlier", edgeLink({ reconnects: 4, posting_keys: ["k-a", "k-b", "k-c"] }), 10);
+    const later = edgeRun(
+      "s-later",
+      edgeLink({
+        reconnects: 5,
+        posting_keys_total: 4,
+        posting_keys_unique: 3,
+        posting_keys: ["k-b", "k-c", "k-d"],
+      }),
+      12,
+    );
+    render(<SyncRunsTable syncRuns={[later, earlier]} isEdge />);
+    expect(screen.getByTestId("link-note-s-later")).toHaveTextContent(
+      "link dropped, re-handshaked · +2 postings, 1 lost, 1 duplicated",
+    );
+  });
+
+  it("leaves non-edge rows unchanged", () => {
+    const earlier = edgeRun("s-earlier", edgeLink({ reconnects: 2 }), 10);
+    const later = edgeRun("s-later", edgeLink({ reconnects: 3 }), 13);
+    render(<SyncRunsTable syncRuns={[later, earlier]} />);
+    expect(screen.queryByTestId("link-note-s-later")).not.toBeInTheDocument();
+    expect(screen.getByTestId("sync-run-row-s-later")).toBeInTheDocument();
+  });
+});

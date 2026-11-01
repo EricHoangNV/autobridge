@@ -568,6 +568,35 @@ def run_sync_handler(
     checkpoint = payload.get("checkpoint", {}) or {}
     summary = execute_sync(spec_dict, http_client, checkpoint=checkpoint, feed_reader=feed_reader)
 
+    # REQ-071: an edge (``fias_tcp``) sync records the link at sync time —
+    # the agent's ``link_up`` and its reconnect counter (parsed from the
+    # relay heartbeat's ``accepted=N``) plus the relay's idempotency-key
+    # counts for that agent — on the SyncRun's ``data_readiness`` (no new
+    # store, no migration). Best-effort and short-timeout inside
+    # ``link_snapshot``: a dead relay is a missing snapshot, never a
+    # slow or failed sync.
+    if (
+        isinstance(spec_dict, dict)
+        and isinstance(spec_dict.get("source"), dict)
+        and spec_dict["source"].get("protocol") == "fias_tcp"
+        and feed_reader is not None
+        and hasattr(feed_reader, "link_snapshot")
+    ):
+        snapshot: Any = None
+        try:
+            from autobridge.control.models import Connector  # noqa: PLC0415
+
+            release_connector_id = release.connector_id if release is not None else ""
+            connector = ctx.session.get(Connector, release_connector_id)
+            candidates = [release_connector_id, getattr(connector, "name", "") or ""]
+            snapshot = feed_reader.link_snapshot(candidates)
+        except Exception:
+            snapshot = None
+        if snapshot is not None:
+            readiness = dict(summary.get("data_readiness") or {})
+            readiness["edge_link"] = snapshot
+            summary["data_readiness"] = readiness
+
     run = create_sync_run_row(
         session=ctx.session,
         release_id=release_id,

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -27,6 +28,42 @@ class FeedError(Exception):
     The sync engine maps this to a ``Blocked`` run naming
     ``feed_unavailable`` — a transport failure, never a guessed patch.
     """
+
+
+#: The agent heartbeat detail carries the reconnect counter as
+#: ``accepted=N`` (``links_accepted`` on the agent, incremented on each
+#: re-established link). REQ-071 records it on the SyncRun so a short
+#: link drop between two syncs still shows in the sync-runs table, driven
+#: by the counter rather than the link state at sync time.
+_ACCEPTED_RE = re.compile(r"accepted=(\d+)")
+
+#: Cap on stored idempotency keys per edge-link snapshot (REQ-071). PABX
+#: volumes are tens of keys; above the cap only counts are stored and the
+#: row note falls back to count-based lost/duplicated, still from keys.
+_MAX_SNAPSHOT_KEYS = 10_000
+
+#: Timeout for the best-effort link snapshot (REQ-071). The relay was
+#: just contacted by the feed read, so this stays off the sync's
+#: critical path; a dead relay is a missing snapshot, never a slow sync.
+_SNAPSHOT_TIMEOUT_S = 2.0
+
+
+def parse_reconnects(link_detail: Any) -> int:
+    """Parse the ``accepted=N`` reconnect counter from heartbeat detail.
+
+    Missing or unparseable detail reads 0 (old heartbeats carry none);
+    the counter only ever moves up, so the first snapshot is the baseline.
+    """
+    try:
+        match = _ACCEPTED_RE.search(str(link_detail or ""))
+    except Exception:
+        return 0
+    if not match:
+        return 0
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return 0
 
 
 class FeedReader(Protocol):
@@ -117,6 +154,74 @@ class RelayFeedReader:
     def token_configured(self) -> bool:
         """Whether a token was supplied (never the value)."""
         return bool(self._token)
+
+    def link_snapshot(self, agent_candidates: list[str]) -> dict[str, Any] | None:
+        """Best-effort edge link state at sync time (REQ-071).
+
+        Matches the agent the way the PABX panel does (by connector id,
+        then connector name, then the first known agent — one relay, one
+        PABX), parses the ``accepted=N`` reconnect counter from its
+        heartbeat detail, and counts the relay's idempotency keys for
+        that agent (total vs unique, plus the sorted key list up to
+        ``_MAX_SNAPSHOT_KEYS``). Lost/duplicated counts downstream are
+        computed from these keys, never assumed.
+
+        Any failure (relay down, unexpected shape) returns None — a
+        missing snapshot, never a failed sync. The token value is never
+        stored or returned.
+        """
+        import httpx
+
+        try:
+            headers = {"Authorization": f"Bearer {self._token}"}
+            # trust_env=False: relay traffic is loopback/cluster-local and
+            # must never consult system proxy settings (agent-thread fork
+            # safety, same as read()).
+            with httpx.Client(trust_env=False, timeout=_SNAPSHOT_TIMEOUT_S) as client:
+                agents_resp = client.get(f"{self.relay_url}/v1/agents", headers=headers)
+                agents_resp.raise_for_status()
+                agents_payload = agents_resp.json()
+            agents = agents_payload.get("agents", []) if isinstance(agents_payload, dict) else []
+            if not isinstance(agents, list):
+                return None
+            by_id = {a.get("agent_id"): a for a in agents if isinstance(a, dict)}
+            match: Any = None
+            for candidate in agent_candidates or []:
+                if candidate and candidate in by_id:
+                    match = by_id[candidate]
+                    break
+            if match is None and agents:
+                match = agents[0]
+            if not isinstance(match, dict):
+                return None
+            agent_id = str(match.get("agent_id") or "")
+            link_up = bool(match.get("link_up", False))
+            reconnects = parse_reconnects(match.get("link_detail"))
+            with httpx.Client(trust_env=False, timeout=_SNAPSHOT_TIMEOUT_S) as client:
+                postings_resp = client.get(
+                    f"{self.relay_url}/v1/postings",
+                    params={"agent_id": agent_id} if agent_id else None,
+                    headers=headers,
+                )
+                postings_resp.raise_for_status()
+                postings_payload = postings_resp.json()
+            postings = postings_payload.get("postings", []) if isinstance(postings_payload, dict) else []
+            if not isinstance(postings, list):
+                postings = []
+            keys = [str(p.get("idempotency_key")) for p in postings if isinstance(p, dict) and p.get("idempotency_key")]
+            unique = len(set(keys))
+            truncated = len(keys) > _MAX_SNAPSHOT_KEYS
+            return {
+                "agent_id": agent_id,
+                "link_up": link_up,
+                "reconnects": reconnects,
+                "posting_keys_total": len(keys),
+                "posting_keys_unique": unique,
+                "posting_keys": sorted(set(keys)) if not truncated else [],
+                "posting_keys_truncated": truncated,
+            }
+        except Exception:
+            return None
 
     def read(self, feed: FeedSpec | dict[str, Any], operation_name: str) -> list[dict[str, Any]]:
         """Fetch, filter by record type, and fold resends."""

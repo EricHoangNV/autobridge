@@ -412,7 +412,7 @@ export default function ConnectorDetailPage({ params }: PageProps) {
       <section className="cols">
         <div>
           <h2 className="sec">Sync runs</h2>
-          <SyncRunsTable syncRuns={syncRuns ?? (detail.last_sync ? [detail.last_sync as SyncRunOut] : [])} />
+          <SyncRunsTable syncRuns={syncRuns ?? (detail.last_sync ? [detail.last_sync as SyncRunOut] : [])} isEdge={isEdge} />
           {isEdge ? <PabxPanel connectorId={detail.id} connectorName={detail.name} /> : null}
         </div>
         <div>

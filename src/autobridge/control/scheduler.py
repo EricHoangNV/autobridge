@@ -252,6 +252,8 @@ def snapshot_edge_links(session: Any) -> int:
     except Exception:
         return 0
     agents = view.get("agents", []) if isinstance(view, dict) else []
+    if not isinstance(agents, list):
+        agents = []
     by_id = {a.get("agent_id"): a for a in agents if isinstance(a, dict)}
     try:
         connectors = session.execute(select(Connector)).scalars().all()
@@ -264,7 +266,16 @@ def snapshot_edge_links(session: Any) -> int:
             kind = "local_process"
         if kind != "edge":
             continue
+        # REQ-071: match the agent the same way the PABX panel does
+        # (by connector id, then connector name, then the first known
+        # agent — one relay, one PABX). The live demo's agent id
+        # (``grand-plaza-pabx``) equals neither the connector id nor its
+        # name, so id/name-only matching recorded ``link_up: false`` /
+        # ``agent_seen: false`` every tick while the agent reported up.
         match = by_id.get(conn.id) or by_id.get(conn.name)
+        if match is None and agents:
+            first = agents[0]
+            match = first if isinstance(first, dict) else None
         try:
             session.add(
                 PabxLinkEvent(

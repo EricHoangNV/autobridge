@@ -29,7 +29,7 @@ Do not touch the uncommitted UI work in the owner's checkout (`ui/app/connectors
 `ui/app/globals.css`).
 
 ### REQ-071 — Deck 7: the PABX link drop stays visible in Sync runs (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-01 11:38)
+Status: DONE (sbx1 2026-11-01 -- edge link on SyncRun + sync-runs drop note + live-agent event match + docs; full gates green; owner step: keyed walkthrough of deck 7 to close)
 Owner demo run, deck 7 (`make demo-break SCENARIO=fias_link_resync`): the PABX connector page shows only the live link
 state, so a presenter who switches to the page a few seconds late never sees the drop (up → down → re-handshaking →
 up takes ~8-10 s). Owner decision: show it in the existing **Sync runs** table, which is persisted and newest-first.

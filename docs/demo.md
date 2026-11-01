@@ -390,6 +390,11 @@ GET  /connectors/{id}                        → ● Working; GET /drift, /repai
 
 Renders in the PABX panel on the connector page (link state, postings
 arriving, record layout) and in `/knowledge` (`PABX edge` under v3).
+After the fact the drop stays visible in the Sync runs table: the first
+sync after a resync notes "link dropped, re-handshaked · +N postings,
+0 lost, 0 duplicated" (from the reconnect counter and the relay's
+idempotency keys), and a sync taken while the link is down reads
+"link down".
 Live, step 8 ensures the connector, builds the committed FIAS docs with
 `spec_vocabulary: v3`, asserts the engine's edge runtime on the record,
 baseline-syncs `Complete`, then drops and resyncs the link and asserts
