@@ -683,6 +683,10 @@ Answer key (REQ-080 item 4): a rename to a name that plausibly denotes
 the same field expects a `repair`; a rename to a misleading new name
 (one that plausibly denotes a *different* field) expects an escalation
 with one operator question — a guessed patch there is not credited.
-The L1 `rename_field` rule pairs only unambiguous renames and declines
-misleading ones, so they climb to the model, whose evidence carries the
+The L1 `rename_field` rule repairs only unambiguous renames by a
+generic, vocabulary-free test (exactly one mapped field emptied or
+vanished, exactly one new wire key with values of the expected shape,
+and a new name lexically close to the old wire key or the canonical
+field name); every other inferred pairing climbs to the model, whose
+evidence carries the
 new wire keys and a redacted raw vendor-record sample.

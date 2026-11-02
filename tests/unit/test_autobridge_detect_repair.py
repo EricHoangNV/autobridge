@@ -418,7 +418,7 @@ def test_none_delta_never_cached() -> None:
 
     # A later, different drift must not L0-hit the unrelated cached patch.
     wire = [
-        {"reservation_id": "R0001", "primaryOccupant": "Guest 1"},
+        {"reservation_id": "R0001", "guest_names": "Guest 1"},
     ]
     summary = {
         "outcome": "Complete",

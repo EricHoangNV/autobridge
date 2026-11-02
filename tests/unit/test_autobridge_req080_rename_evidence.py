@@ -93,16 +93,50 @@ def test_rename_vocabulary_partitions_the_pool() -> None:
             assert len(owners) == 1, (name, owners)
 
 
-def test_engine_vocabulary_matches_generator_partition() -> None:
-    """The engine's rename vocabulary agrees with the generator's key.
+def test_engine_has_no_name_vocabulary() -> None:
+    """Engine code never copies the answer key's name vocabulary.
 
-    Both fold names the same way; a drift here means the engine and the
-    answer key disagree about what is misleading.
+    The generator's ``NAME_POOL`` (and any per-field name list derived
+    from it) is grading data: it lives in ``simulators``/``verifier``
+    only. This test fails if any engine source names a pool member as a
+    wire key — in its original form or folded into a string literal — or
+    defines a per-field name vocabulary. Documented prose exemptions:
+    ``"narrative"`` is a stop word in the docs-discovery stop list
+    (``discovery/bootstrap.py``) and otherwise appears only as unquoted
+    prose ("narrative docs"), never as a wire key.
     """
-    from autobridge.repair.rules import rename_field as rf
+    from pathlib import Path
+
     from simulators.common import faultgen as fg
 
-    assert rf.RENAME_PLAUSIBLE_NEW_NAMES == fg.RENAME_PLAUSIBLE
+    def _fold(name: object) -> str:
+        return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+    root = Path(__file__).resolve().parents[2] / "src" / "autobridge"
+    assert root.is_dir(), f"engine root missing: {root}"
+    offenders: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "RENAME_PLAUSIBLE" in text or "_names_different_field" in text:
+            offenders.append(f"{path.name}: per-field name vocabulary")
+            continue
+        for name in fg.NAME_POOL:
+            folded = _fold(name)
+            if name == "narrative":
+                # Prose use only ("narrative docs", stop-word tuple); a
+                # wire-key use would quote the bare name outside the
+                # exempted stop-word line.
+                for lineno, line in enumerate(text.splitlines(), 1):
+                    if '"narrative", "documentation"' in line:
+                        continue
+                    if f'"{name}"' in line or f"'{name}'" in line:
+                        offenders.append(f"{path.name}:{lineno}: pool name {name!r}")
+            else:
+                if name in text:
+                    offenders.append(f"{path.name}: pool name {name!r} (original form)")
+                elif f'"{folded}"' in text or f"'{folded}'" in text or f"`{folded}`" in text:
+                    offenders.append(f"{path.name}: pool name {name!r} (folded literal)")
+    assert not offenders, "engine copies answer-key vocabulary:\n" + "\n".join(offenders)
 
 
 def test_reference_solver_reaches_escalate_for_misleading_rename() -> None:
@@ -467,26 +501,77 @@ def _rename_ctx(spec: dict[str, Any], signals: list[Any], drift_class: str = "SC
     )
 
 
-def test_misleading_wire_pairing_declines_plausible_fires() -> None:
-    """departure_date -> checkinDate declines; -> checkoutDate fires."""
+def test_lexically_close_rename_repairs_with_matching_values() -> None:
+    """A near-identical new name with a matching sample repairs at L1."""
     from autobridge.drift.signals import DriftSignal
     from autobridge.repair.rules import rename_field as rf
 
-    def _ctx(new_key: str) -> Any:
+    sig = DriftSignal(
+        kind="keys_changed",
+        operation="list_reservations",
+        entity="Reservation",
+        severity="medium",
+        message="rename",
+        details={"entity": "Reservation", "missing": ["endDate"], "added": [{"key": "endDates", "sample": "2026-11-06", "type": "str"}]},
+    )
+    assert rf.precondition(_rename_ctx(_wire_spec(), [sig])) is True
+
+
+def test_lexically_unrelated_names_decline_and_climb() -> None:
+    """Unrelated new names (in or out of any list) are not an L1 match.
+
+    ``checkinDate`` for ``endDate`` and ``checkOutTs`` (outside every
+    generator list) both decline however the values pair: the drift
+    climbs to the model with the new-key evidence instead.
+    """
+    from autobridge.drift.signals import DriftSignal
+    from autobridge.repair.rules import rename_field as rf
+
+    def _ctx(new_key: str, sample: str = "2026-11-06") -> Any:
         sig = DriftSignal(
             kind="keys_changed",
             operation="list_reservations",
             entity="Reservation",
             severity="medium",
             message="rename",
-            details={"entity": "Reservation", "missing": ["endDate"], "added": [{"key": new_key, "sample": "x", "type": "str"}]},
+            details={"entity": "Reservation", "missing": ["endDate"], "added": [{"key": new_key, "sample": sample, "type": "str"}]},
         )
         return _rename_ctx(_wire_spec(), [sig])
 
     assert rf.precondition(_ctx("checkinDate")) is False
-    assert rf.precondition(_ctx("reservationStatus")) is False
-    assert rf.precondition(_ctx("checkoutDate")) is True
-    assert rf.precondition(_ctx("guestIdentifier")) is True
+    assert rf.precondition(_ctx("reservationStatus", sample="confirmed")) is False
+    assert rf.precondition(_ctx("checkOutTs")) is False
+    # A distant name does not repair even when the sample pairs by value.
+    assert rf.precondition(_ctx("guestIdentifier", sample="2026-11-06")) is False
+
+
+def test_distant_delta_rename_declines_close_delta_fires() -> None:
+    """Delta-inferred renames take the same generic gate (no word lists)."""
+    from autobridge.repair.context import RepairContext
+    from autobridge.repair.rules import rename_field as rf
+
+    def _delta(old: str, new: str) -> Any:
+        from autobridge.drift.fingerprint import FingerprintDelta
+
+        return FingerprintDelta(
+            fingerprint_changed=True,
+            pagination_changed=False,
+            keys_changed=False,
+            types_changed=True,
+            changed_entities=["Reservation"],
+            pagination_details={},
+            keys_details={},
+            types_details={"Reservation": {"previous": {old: "str", "other": "str"}, "current": {new: "str", "other": "str"}}},
+        )
+
+    far = RepairContext(
+        spec=_wire_spec(), signals=[], fingerprint_delta=_delta("endDate", "checkinDate"), drift_class="SCHEMA_RENAME", extra={},
+    )
+    assert rf.precondition(far) is False
+    near = RepairContext(
+        spec=_wire_spec(), signals=[], fingerprint_delta=_delta("endDate", "endDates"), drift_class="SCHEMA_RENAME", extra={},
+    )
+    assert rf.precondition(near) is True
 
 
 def test_explicit_extra_rename_is_exempt_from_plausibility_gate() -> None:

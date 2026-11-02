@@ -3235,3 +3235,60 @@ Agent: opencode meta/muse-spark-1.3 (escalation)
 - Gates: targeted files green; `make lint` + import-linter clean; `make typecheck` clean; full `make test` green (autobridge 3107 @90.06%, verifier 139 @90.92%, simulators 422 @90.57%, UI 350). No e2e (no live stack in this sandbox; in-process beacon_sync_pair + TestClient cover the change). Note: `test_beacon_eval_script.py::test_push_aborts_without_confirm` fails under bare `uv run pytest` in this sandbox but passes under `make test`; verified pre-existing on the clean tree (stdin/TTY quirk), untouched.
 - Directives check (`./directives-for.sh`, no args): §§1/2/4 apply; complied (JSON-Patch repairs only, no trust-boundary imports — the engine table mirrors the pool by value and is cross-checked, never imported; money Decimal; same-seed datasets). The engine vocabulary intentionally mirrors the beacon pool partition per the owner's item-4 decision (documented in the table docstring).
 - Owner step after: keyed rehearsal on this commit (extends the REQ-078 item-4 sweep), then close. Do not freeze/tag/commit under experiments/beacon.
+
+### REQ-080 follow-up (2026-11-02) — answer-key vocabulary out of the engine; generic L1 rename gate
+Agent: opencode meta/muse-spark-1.3-contributor (escalation)
+
+Owner reopen (on `aa2a6fa7`): `RENAME_PLAUSIBLE_NEW_NAMES` + `_names_different_field`
+mirrored the generator's `RENAME_PLAUSIBLE` inside the engine, so the engine
+decided repair-vs-ask exactly as the grader expects, and distant-but-unlisted
+names (e.g. `checkOutTs`) still auto-repaired on value pairing alone.
+
+- `src/autobridge/repair/rules/rename_field.py`: deleted the vocabulary, the
+  predicate and the fold helper. Inferred pairings (delta or wire) now repair
+  at L1 only when ALL hold: exactly one mapped field emptied/vanished and
+  exactly one new wire key (`_wire_shape_sets`, keys_changed preferred over
+  emptied candidates); the new key's sample is a present scalar of the shape
+  the spec's transform pipeline expects (`_sample_matches_field`: date
+  transforms require a date-like sample, money a numeric-like one, otherwise
+  any scalar; delta source requires same wire type before/after); and the new
+  name is lexically close to the old wire key or the canonical field name
+  (`difflib.SequenceMatcher` over folded names >= 0.75 — a generic
+  near-match bar: `endDates`/`guestNames`/`Status` clear it,
+  `checkinDate`/`checkOutTs`/`guestIdentifier`/`primaryOccupant` do not).
+  Anything else declines and climbs with the REQ-080 evidence. Explicit
+  caller statements (`extra`: FIAS handshake, framed records, test
+  scaffolding, e2e inject helpers) are checked first and stay exempt — a
+  statement is not an inference. `_delta_rename_info` now returns None when
+  more than one entity shows a single rename (ambiguous overall).
+- `tests/unit/test_autobridge_req080_rename_evidence.py`: replaced the
+  vocab-equality test with `test_engine_has_no_name_vocabulary` (scans
+  `src/autobridge/` for every `NAME_POOL` member in original or folded
+  quoted-literal form, plus the `RENAME_PLAUSIBLE*`/`_names_different_field`
+  identifiers; verified it flags the pre-fix file; two documented prose
+  exemptions only: quoted `"narrative"` on the docs-discovery stop-word line,
+  unquoted "narrative docs" prose). Replaced the old gate test with:
+  close-rename fires, `checkinDate`/`reservationStatus`/`checkOutTs`/distant
+  names decline, delta close-fires / distant-declines. Generator/verifier
+  key tests, the L3-prompt test, the misleading-climb test (`lastModified`,
+  similarity ~0.3) and the sweep are unchanged and green.
+- Incidental fixtures updated to the new (intended) behavior — distant
+  renames now climb instead of L1-repairing: `repair_rules` + `ladder`
+  `guest_identifier`/`guestIdentifier` delta fixtures → `guest_names`/
+  `guestNames`; `detector_wire_evidence` wires `primaryOccupant`→`guest_names`,
+  `guestIdentifier`→`guestNames`; `detect_repair::test_none_delta_never_cached`
+  wire → `guest_names`. Extra-based paths (matrix/e2e inject helpers, FIAS,
+  budgeted ladder) are untouched and still fire.
+- Docs (`architecture.md`, `benchmark.md`): engine wording now describes the
+  generic test (lexical closeness + value shape, no word lists); the
+  answer-key language (plausible vs misleading) stays on the generator side.
+- Benchmark effect (expected, owner-ordered): distant renames (e.g. dev
+  `rename_guest_id` → `guest_identifier`, sim 0.58) now climb to the model
+  instead of L1-repairing; `meridian_state_renamed` (`status`→`Status`,
+  sim 1.0) still repairs at L1. Dev/bench numbers will move on the next
+  keyed re-run; nothing was re-run here (no frontier key in sandbox).
+- Gates: `make lint`, `make typecheck` green; `make test` green —
+  autobridge 3109 passed / 90%, verifier 139 / 91%, simulators 422 / 91%,
+  UI 350. E2E not run (no live stack in this sandbox); the in-process
+  detector→L1 paths cover the change in unit tests.
+- Owner step: keyed rehearsal with FRONTIER_API_KEY on this commit, then close.

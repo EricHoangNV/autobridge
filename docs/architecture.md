@@ -275,9 +275,14 @@ provenance in `classification.details["wire_evidence"]` (signal kind,
 operation, source `raw_pages` vs `records`). L1 rules read the evidence from
 `ctx.signals` (`repair/rules/wire.py`); a response leaf and a request param
 are different names, so `cursor_param` is never taken from the wire.
-A rename to a name that plausibly denotes a *different* field is
-ambiguous even single↔single (REQ-080): `rename_field` declines it and
-the drift climbs to the model, whose evidence carries the new wire keys
+A rename to a lexically unrelated name is ambiguous even single↔single
+(REQ-080): `rename_field` repairs an inferred rename only when exactly
+one mapped field emptied or vanished, exactly one new wire key carries
+values of the expected shape, and the new name is lexically close to
+the old wire key or the canonical field name (a generic string
+similarity — no word lists, no per-field vocabulary, so the engine
+never copies the answer key). Anything else declines and the drift
+climbs to the model, whose evidence carries the new wire keys
 and a redacted raw vendor-record sample. Ambiguous evidence (several added keys) stays unclaimed: no guessing, the
 drift falls back to the previous classification and escalates.
 

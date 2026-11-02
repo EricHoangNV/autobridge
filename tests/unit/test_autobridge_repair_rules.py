@@ -153,7 +153,7 @@ def test_rename_field_precondition_true_via_delta() -> None:
     from autobridge.repair.rules.rename_field import precondition
 
     spec = _load_spec("atlaspms")
-    delta = _delta_with_types("Reservation", "guest_name", "guest_identifier", "str", "str")
+    delta = _delta_with_types("Reservation", "guest_name", "guest_names", "str", "str")
     ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
     assert precondition(ctx) is True
 
@@ -165,7 +165,7 @@ def test_rename_field_precondition_true_via_extra() -> None:
     ctx = RepairContext(
         spec=spec,
         drift_class="SCHEMA_RENAME",
-        extra={"entity": "Reservation", "field": "guest_name", "new_field": "guest_identifier"},
+        extra={"entity": "Reservation", "field": "guest_name", "new_field": "guest_names"},
     )
     assert precondition(ctx) is True
 
@@ -174,7 +174,7 @@ def test_rename_field_precondition_false_wrong_class() -> None:
     from autobridge.repair.rules.rename_field import precondition
 
     spec = _load_spec("atlaspms")
-    delta = _delta_with_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_with_types("Reservation", "guest_name", "guest_names")
     ctx = RepairContext(spec=spec, drift_class="PAGINATION_CHANGE", fingerprint_delta=delta)
     assert precondition(ctx) is False
 
@@ -215,17 +215,17 @@ def test_rename_field_patch_shape() -> None:
     from autobridge.repair.rules.rename_field import generate_patch
 
     spec = _load_spec("atlaspms")
-    delta = _delta_with_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_with_types("Reservation", "guest_name", "guest_names")
     ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
     patch = generate_patch(ctx)
     assert len(patch) == 1
     op = patch[0]
     assert op["op"] == "replace"
     assert op["path"] == "/entities/Reservation/fields/guest_name/path"
-    assert op["value"] == "$.guest_identifier"
+    assert op["value"] == "$.guest_names"
     # Validate patch applies
     result = apply_patch(spec, patch)
-    assert result["entities"]["Reservation"]["fields"]["guest_name"]["path"] == "$.guest_identifier"
+    assert result["entities"]["Reservation"]["fields"]["guest_name"]["path"] == "$.guest_names"
 
 
 def test_rename_field_patch_via_extra_new_path() -> None:
@@ -235,7 +235,7 @@ def test_rename_field_patch_via_extra_new_path() -> None:
     ctx = RepairContext(
         spec=spec,
         drift_class="SCHEMA_RENAME",
-        extra={"entity": "Reservation", "field": "guest_name", "new_field": "guest_identifier", "new_path": "$.guest.identifier"},
+        extra={"entity": "Reservation", "field": "guest_name", "new_field": "guest_names", "new_path": "$.guest.identifier"},
     )
     patch = generate_patch(ctx)
     assert patch[0]["value"] == "$.guest.identifier"
@@ -254,11 +254,11 @@ def test_rename_field_patch_empty_without_info() -> None:
 
 
 def test_rename_field_precondition_true_via_wire_names() -> None:
-    """Wire-key delta (guestName -> guestIdentifier) resolves canonical field."""
+    """Wire-key delta (guestName -> guestNames) resolves canonical field."""
     from autobridge.repair.rules.rename_field import precondition
 
     spec = _load_spec("atlaspms")
-    delta = _delta_with_types("Reservation", "guestName", "guestIdentifier")
+    delta = _delta_with_types("Reservation", "guestName", "guestNames")
     ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
     assert precondition(ctx) is True
 
@@ -268,18 +268,18 @@ def test_rename_field_patch_shape_via_wire_names() -> None:
     from autobridge.repair.rules.rename_field import generate_patch
 
     spec = _load_spec("atlaspms")
-    delta = _delta_with_types("Reservation", "guestName", "guestIdentifier")
+    delta = _delta_with_types("Reservation", "guestName", "guestNames")
     ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
     patch = generate_patch(ctx)
     assert patch == [
         {
             "op": "replace",
             "path": "/entities/Reservation/fields/guest_name/path",
-            "value": "$.guestIdentifier",
+            "value": "$.guestNames",
         }
     ]
     result = apply_patch(spec, patch)
-    assert result["entities"]["Reservation"]["fields"]["guest_name"]["path"] == "$.guestIdentifier"
+    assert result["entities"]["Reservation"]["fields"]["guest_name"]["path"] == "$.guestNames"
 
 
 def test_rename_field_precondition_true_via_wire_signal() -> None:
@@ -297,7 +297,7 @@ def test_rename_field_precondition_true_via_wire_signal() -> None:
                 "details": {
                     "entity": "Reservation",
                     "missing": ["guestName"],
-                    "added": [{"key": "guestIdentifier", "sample": "Guest 1", "type": "str"}],
+                    "added": [{"key": "guestNames", "sample": "Guest 1", "type": "str"}],
                 },
             }
         ],
@@ -1025,7 +1025,7 @@ def test_type_coerce_patch_via_type_change_extra() -> None:
 
 def test_matching_rules_finds_correct() -> None:
     spec = _load_spec("atlaspms")
-    delta = _delta_with_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_with_types("Reservation", "guest_name", "guest_names")
     ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
     matched = matching_rules(ctx)
     ids = [r.id for r in matched]
@@ -1040,7 +1040,7 @@ def test_matching_rules_none_for_unknown() -> None:
 
 def test_registry_entry_precondition_and_patch_delegation() -> None:
     spec = _load_spec("atlaspms")
-    delta = _delta_with_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_with_types("Reservation", "guest_name", "guest_names")
     ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
     entry = get_rule("rename_field")
     assert entry.precondition(ctx) is True

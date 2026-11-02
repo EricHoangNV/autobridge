@@ -65,8 +65,8 @@ def _delta_pagination(op: str, prev: str, cur: str) -> FingerprintDelta:
 
 def test_knowledge_cache_put_and_lookup() -> None:
     cache = KnowledgeCache()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
-    patch = [{"op": "replace", "path": "/entities/Reservation/fields/guest_name/path", "value": "$.guest_identifier"}]
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
+    patch = [{"op": "replace", "path": "/entities/Reservation/fields/guest_name/path", "value": "$.guest_names"}]
     entry = cache.put("AtlasPMS", delta, patch, "rename_field", drift_class="SCHEMA_RENAME", confidence=0.92)
     assert entry.vendor == "AtlasPMS"
     assert entry.rule_id == "rename_field"
@@ -79,8 +79,8 @@ def test_knowledge_cache_put_and_lookup() -> None:
 
 def test_knowledge_cache_vendor_case_insensitive() -> None:
     cache = KnowledgeCache()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
-    patch = [{"op": "replace", "path": "/entities/Reservation/fields/guest_name/path", "value": "$.guest_identifier"}]
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
+    patch = [{"op": "replace", "path": "/entities/Reservation/fields/guest_name/path", "value": "$.guest_names"}]
     cache.put("AtlasPMS", delta, patch, "rename_field")
     # Different case should hit
     assert cache.lookup("atlaspms", delta) is not None
@@ -90,7 +90,7 @@ def test_knowledge_cache_vendor_case_insensitive() -> None:
 
 
 def test_knowledge_cache_delta_signature_deterministic() -> None:
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     sig1 = delta_signature(delta)
     sig2 = delta_signature(delta)
     assert sig1 == sig2
@@ -189,7 +189,7 @@ def test_knowledge_cache_dict_delta() -> None:
 def test_ladder_l0_hit_returns_cached_patch() -> None:
     spec = _load_spec()
     cache = KnowledgeCache()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     # Use a valid patch that actually applies to spec
     ctx = RepairContext(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta)
     from autobridge.repair.registry import get_rule
@@ -210,7 +210,7 @@ def test_ladder_l0_hit_returns_cached_patch() -> None:
 def test_ladder_l0_miss_falls_through_to_l1() -> None:
     spec = _load_spec()
     cache = KnowledgeCache()  # empty
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     res = run_ladder(spec, "SCHEMA_RENAME", fingerprint_delta=delta, knowledge_cache=cache)
     assert res.decision == "propose"
     assert res.ladder_level_reached == 1
@@ -226,7 +226,7 @@ def test_ladder_l0_miss_falls_through_to_l1() -> None:
 def test_ladder_l0_invalid_cached_patch_falls_through() -> None:
     spec = _load_spec()
     cache = KnowledgeCache()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     bad_patch = [{"op": "replace", "path": "/nonexistent", "value": "x"}]
     cache.put(spec["connector"]["vendor"], delta, bad_patch, "rename_field", drift_class="SCHEMA_RENAME")
     res = run_ladder(spec, "SCHEMA_RENAME", fingerprint_delta=delta, knowledge_cache=cache)
@@ -241,7 +241,7 @@ def test_ladder_l0_invalid_cached_patch_falls_through() -> None:
 
 def test_ladder_no_cache_uses_l1() -> None:
     spec = _load_spec()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     res = run_ladder(spec, "SCHEMA_RENAME", fingerprint_delta=delta, knowledge_cache=None)
     assert res.decision == "propose"
     assert res.ladder_level_reached == 1
@@ -251,7 +251,7 @@ def test_ladder_no_cache_uses_l1() -> None:
 def test_ladder_no_delta_no_l0() -> None:
     spec = _load_spec()
     cache = KnowledgeCache()
-    res = run_ladder(spec, "SCHEMA_RENAME", knowledge_cache=cache, extra={"entity": "Reservation", "field": "guest_name", "new_field": "guest_identifier"})
+    res = run_ladder(spec, "SCHEMA_RENAME", knowledge_cache=cache, extra={"entity": "Reservation", "field": "guest_name", "new_field": "guest_names"})
     # No delta so L0 not attempted, L1 should still succeed via extra
     assert res.decision == "propose"
     assert res.rule_id == "rename_field"
@@ -264,7 +264,7 @@ def test_ladder_no_delta_no_l0() -> None:
 
 def test_ladder_l1_rename_field() -> None:
     spec = _load_spec()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     res = run_ladder(spec, "SCHEMA_RENAME", fingerprint_delta=delta)
     assert res.decision == "propose"
     assert res.rule_id == "rename_field"
@@ -273,7 +273,7 @@ def test_ladder_l1_rename_field() -> None:
     assert res.candidate_patch[0]["path"] == "/entities/Reservation/fields/guest_name/path"
     # Verify patch applies and validates
     patched = apply_patch(spec, res.candidate_patch)
-    assert patched["entities"]["Reservation"]["fields"]["guest_name"]["path"] == "$.guest_identifier"
+    assert patched["entities"]["Reservation"]["fields"]["guest_name"]["path"] == "$.guest_names"
     assert res.model_usage["frontier_tokens"] == 0
 
 
@@ -488,7 +488,7 @@ def test_ladder_auth_revoked_escalates_no_patch() -> None:
 def test_ladder_capability_removed_ignores_cache_and_rules() -> None:
     spec = _load_spec()
     cache = KnowledgeCache()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     # Even if cache has entry, should still escalate
     cache.put(spec["connector"]["vendor"], delta, [{"op": "replace", "path": "/a", "value": "b"}], "rename_field")
     res = run_ladder(spec, "CAPABILITY_REMOVED", fingerprint_delta=delta, knowledge_cache=cache)
@@ -543,7 +543,7 @@ def test_controller_handle_persists_repair_run() -> None:
     _, ctrl, SessionLocal = _make_controller_engine()
     spec = _load_spec()
     s = SessionLocal()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     res = ctrl.handle(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta, session=s)
     s.commit()
     assert res.decision == "propose"
@@ -564,7 +564,7 @@ def test_controller_propose_caches_nothing_until_approved() -> None:
 
     cache, ctrl, SessionLocal = _make_controller_engine()
     spec = _load_spec()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     s = SessionLocal()
     res1 = ctrl.handle(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta, session=s)
     s.commit()
@@ -665,7 +665,7 @@ def test_controller_auth_expired_refresh_vs_escalate() -> None:
 def test_controller_handle_without_session_no_db_side_effect() -> None:
     _, ctrl, SessionLocal = _make_controller_engine()
     spec = _load_spec()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     res = ctrl.handle(spec=spec, drift_class="SCHEMA_RENAME", fingerprint_delta=delta, session=None)
     assert res.decision == "propose"
     # No row persisted
@@ -720,7 +720,7 @@ def test_ladder_trace_structure() -> None:
     assert "drift_class" in res.ladder_trace[0]
 
     spec2 = _load_spec()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
     res2 = run_ladder(spec2, "SCHEMA_RENAME", fingerprint_delta=delta)
     assert any(t["level"] == 1 for t in res2.ladder_trace)
     assert any("rule_id" in t for t in res2.ladder_trace)
@@ -845,11 +845,11 @@ def test_l0_misses_across_drift_classes() -> None:
     """Same vendor + delta learned under SCHEMA_RENAME must miss for UNKNOWN."""
     from autobridge.repair.knowledge import delta_has_content
 
-    assert delta_has_content(_delta_types("Reservation", "guest_name", "guest_identifier"))
+    assert delta_has_content(_delta_types("Reservation", "guest_name", "guest_names"))
     spec = _load_spec()
     cache = KnowledgeCache()
-    delta = _delta_types("Reservation", "guest_name", "guest_identifier")
-    patch = [{"op": "replace", "path": "/entities/Reservation/fields/guest_name/path", "value": "$.guest_identifier"}]
+    delta = _delta_types("Reservation", "guest_name", "guest_names")
+    patch = [{"op": "replace", "path": "/entities/Reservation/fields/guest_name/path", "value": "$.guest_names"}]
     cache.put("AtlasPMS", delta, patch, "rename_field", drift_class="SCHEMA_RENAME")
     res = run_ladder(spec, "UNKNOWN", fingerprint_delta=delta, knowledge_cache=cache)
     assert res.ladder_level_reached != 0, "L0 must not fire across drift classes"
@@ -927,7 +927,7 @@ def test_controller_handle_persists_honest_derivation() -> None:
     ctrl.handle(
         spec=spec,
         drift_class="SCHEMA_RENAME",
-        fingerprint_delta=_delta_types("Reservation", "guest_name", "guest_identifier"),
+        fingerprint_delta=_delta_types("Reservation", "guest_name", "guest_names"),
         # Fast-path signals are often never persisted as records: unknown
         # parent ids must not fail the derivation append.
         signals=[{"kind": "keys", "evidence_ids": ["ghost-evidence-id"]}],
@@ -957,7 +957,7 @@ def test_controller_handle_persists_honest_derivation() -> None:
     ctrl.handle(
         spec=spec,
         drift_class="SCHEMA_RENAME",
-        fingerprint_delta=_delta_types("Reservation", "guest_name", "guest_identifier"),
+        fingerprint_delta=_delta_types("Reservation", "guest_name", "guest_names"),
         hypotheses=[_H()],
         enumerator_yield_count=7,
         session=s2,

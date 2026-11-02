@@ -1,15 +1,28 @@
-"""rename_field rule — fuzzy field rename with value-shape match.
+"""rename_field rule — rename repair only for unambiguous wire evidence.
 
-Precondition: drift is SCHEMA_RENAME where one field was renamed to a new
-name with the same type (e.g. guest_name -> guest_identifier). Detected via
-FingerprintDelta.types_details or via explicit rename info in ctx.extra.
+Precondition: drift is SCHEMA_RENAME where exactly one mapped field
+vanished or went dark and exactly one new wire key carries values of the
+shape the spec expects for that field. The new name must also be
+lexically close to the old wire key or the canonical field name (a
+generic string similarity over the folded names — no word lists, no
+per-field vocabulary).
 
-Patch: updates the source JSONPath for the canonical field to point at the
-new source field name.
+Anything else (several missing or added keys, no value evidence, a
+lexically unrelated name, an added object holding the missing key) is
+not an L1 match: the rule declines and the drift climbs to the model,
+which sees the new keys and raw records and patches or asks one
+question. An explicit caller-supplied rename (``extra`` — a vendor
+announcement, a framed record) is a statement, not an inference, and is
+exempt from the closeness and value gates.
+
+Patch: updates the source JSONPath for the canonical field to point at
+the new source field name.
 """
 
 from __future__ import annotations
 
+import difflib
+import re
 from typing import TYPE_CHECKING, Any
 
 from autobridge.repair.rules.wire import wire_rename_hint
@@ -22,83 +35,60 @@ CONFIDENCE = 0.92
 VERIFICATION_LEVEL = "visible"
 PRODUCES_PATCH = True
 
+#: Minimum folded-name similarity for an inferred rename to repair at L1.
+#: A generic near-match bar: trivial relabels (a suffix, a case change)
+#: clear it, unrelated names do not. Anything below climbs to the model.
+_LEXICAL_SIMILARITY_THRESHOLD = 0.75
 
-def _normalize_rename_name(name: Any) -> str:
-    """Lowercase alphanumeric fold for rename-plausibility comparison."""
+#: Transform names whose values must read as dates (closed transform set).
+_DATE_TRANSFORMS = frozenset(
+    {"date_local", "datetime_utc", "business_date", "date", "datetime"}
+)
+
+#: Transform names whose values must read as numbers.
+_MONEY_TRANSFORMS = frozenset({"money"})
+
+_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+_DATE_ALT_RE = re.compile(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}")
+_MONEY_RE = re.compile(r"^-?[\d,]*(\.\d+)?$")
+
+
+def _fold_name(name: Any) -> str:
+    """Lowercase alphanumeric fold for generic name comparison."""
     return "".join(ch for ch in str(name).lower() if ch.isalnum())
 
 
-#: Canonical-field name vocabulary (REQ-080): normalized wire/record
-#: names that plausibly denote each renameable canonical field. A
-#: detector-inferred pairing to a name that plausibly denotes a
-#: *different* field is ambiguous — the vendor may have changed semantics,
-#: not just the label — so the rule declines and the drift climbs to the
-#: model, which sees the new keys and raw records and decides (patch or
-#: one question). Names in no group (vendor-specific labels the
-#: vocabulary never saw) still pair at L1, as before.
-RENAME_PLAUSIBLE_NEW_NAMES: dict[str, frozenset[str]] = {
-    "guest_name": frozenset({
-        "guestname", "primaryoccupant", "guestfullname", "visitorname",
-        "occupantname", "bookername",
-    }),
-    "status": frozenset({
-        "status", "reservationstatus", "bookingstate", "staystatus",
-        "foliostate",
-    }),
-    "total_amount": frozenset({
-        "totalamount", "amount", "grandtotal", "totalnet", "chargetotal",
-        "amountgross", "nettotal",
-    }),
-    "amount": frozenset({
-        "totalamount", "amount", "grandtotal", "totalnet", "chargetotal",
-        "amountgross", "nettotal",
-    }),
-    "arrival_date": frozenset({"arrivaldate", "checkindate", "arrivalday"}),
-    "departure_date": frozenset({"departuredate", "checkoutdate", "departureday"}),
-    "business_date": frozenset({"businessdate", "postingdate", "businessday"}),
-    "updated_at": frozenset({"updatedat", "lastmodified", "recordupdatedat"}),
-    "description": frozenset({
-        "description", "chargememo", "linedescription", "narrative",
-        "memotext",
-    }),
-    "posted_at": frozenset({
-        "postedat", "postedinstant", "transactiontime", "createdinstant",
-        "valuetimestamp",
-    }),
-}
+def _name_similarity(first: Any, second: Any) -> float:
+    """Generic folded-name similarity in [0, 1] (no word lists)."""
+    left, right = _fold_name(first), _fold_name(second)
+    if not left or not right:
+        return 0.0
+    return difflib.SequenceMatcher(None, left, right).ratio()
 
 
-def _names_different_field(canonical_old: str, new_field: Any) -> bool:
-    """Whether the new wire key plausibly denotes a different field.
-
-    True when the normalized new name sits in the vocabulary group of a
-    canonical field other than the resolved old one (e.g. a departure
-    date landing in ``checkinDate``). Names the vocabulary never saw
-    return False — the value-pairing stands as before.
-    """
-    norm = _normalize_rename_name(new_field)
-    own = RENAME_PLAUSIBLE_NEW_NAMES.get(canonical_old, frozenset())
-    if norm in own:
-        return False
-    return any(norm in group for group in RENAME_PLAUSIBLE_NEW_NAMES.values())
+def _names_lexically_close(old_wire_key: Any, canonical_old: Any, new_field: Any) -> bool:
+    """Whether the new name is a near-match of the old wire key or field."""
+    return max(
+        _name_similarity(new_field, old_wire_key),
+        _name_similarity(new_field, canonical_old),
+    ) >= _LEXICAL_SIMILARITY_THRESHOLD
 
 
 def _rename_info(ctx: RepairContext) -> tuple[str, str, str, str] | None:
-    """Resolve (entity, old_field, new_field, source) from delta, extra or wire.
+    """Resolve (entity, old_field, new_field, source) from extra, delta or wire.
 
-    *source* is ``"delta"`` (fingerprint rename), ``"extra"`` (an explicit
-    caller-supplied rename, e.g. a vendor-announced layout change) or
+    *source* is ``"extra"`` (an explicit caller-supplied rename, e.g. a
+    vendor-announced layout change), ``"delta"`` (fingerprint rename) or
     ``"wire"`` (detector value-pairing from keys_changed /
-    mapped_field_emptied). The REQ-080 plausibility gate applies to
-    inferred pairings (delta, wire), never to an explicit caller
-    statement.
+    mapped_field_emptied). An explicit caller statement wins over
+    inference: it is exempt from the closeness and value gates below.
     """
-    info = _delta_rename_info(ctx.fingerprint_delta)
-    if info is not None:
-        return (*info, "delta")
     info = _extra_rename_info(ctx)
     if info is not None:
         return (*info, "extra")
+    info = _delta_rename_info(ctx.fingerprint_delta)
+    if info is not None:
+        return (*info, "delta")
     # Wire evidence (REQ-027): single missing + single added wire key
     # observed on the raw records by the detector.
     hint = wire_rename_hint(ctx.signals)
@@ -166,7 +156,9 @@ def _canonical_field_for(ctx: RepairContext, entity: str, name: str) -> str | No
 def _delta_rename_info(delta: Any | None) -> tuple[str, str, str] | None:
     """Extract (entity, old_field, new_field) from FingerprintDelta.
 
-    Returns None if delta does not look like a single-field rename.
+    Returns None unless the delta shows exactly one single-field rename
+    overall: several renames (or a rename plus other changes) are not an
+    unambiguous L1 match and climb instead.
     """
     if delta is None:
         return None
@@ -181,6 +173,7 @@ def _delta_rename_info(delta: Any | None) -> tuple[str, str, str] | None:
             details = delta if any(isinstance(v, dict) and "previous" in v for v in delta.values()) else None
     if not details:
         return None
+    found: tuple[str, str, str] | None = None
     for entity, info in details.items():
         if not isinstance(info, dict):
             continue
@@ -193,11 +186,144 @@ def _delta_rename_info(delta: Any | None) -> tuple[str, str, str] | None:
         removed = prev_fields - cur_fields
         added = cur_fields - prev_fields
         if len(removed) == 1 and len(added) == 1:
-            old_field = next(iter(removed))
-            new_field = next(iter(added))
-            # Same type is expected for rename; still consider if different as fallback
-            return (entity, old_field, new_field)
-    return None
+            if found is not None:
+                return None
+            found = (entity, next(iter(removed)), next(iter(added)))
+    return found
+
+
+def _delta_same_type(delta: Any | None, entity: str, old_field: str, new_field: str) -> bool:
+    """Whether the delta shows the same wire type before and after."""
+    details: dict[str, Any] | None = None
+    if delta is None:
+        return False
+    if hasattr(delta, "types_details"):
+        details = delta.types_details
+    elif isinstance(delta, dict):
+        details = delta.get("types_details")
+    if not isinstance(details, dict):
+        return False
+    info = details.get(entity)
+    if not isinstance(info, dict):
+        return False
+    prev = info.get("previous")
+    cur = info.get("current")
+    if not isinstance(prev, dict) or not isinstance(cur, dict):
+        return False
+    return old_field in prev and new_field in cur and prev[old_field] == cur[new_field]
+
+
+def _wire_shape_sets(ctx: RepairContext, entity: str) -> tuple[set[str], set[str]]:
+    """Old and new wire keys the signals report for one entity.
+
+    Prefers the ``keys_changed`` novel-key shape (it excludes perennial
+    unmapped keys the build probe saw); falls back to the
+    ``mapped_field_emptied`` added-key candidates when no ``keys_changed``
+    signal names the entity.
+    """
+    from autobridge.repair.rules.wire import _signal_triples  # noqa: PLC0415
+
+    missing_kc: set[str] = set()
+    added_kc: set[str] = set()
+    emptied_old: set[str] = set()
+    emptied_new: set[str] = set()
+    for _kind, _op, details in _signal_triples(ctx.signals):
+        sig_entity = details.get("entity")
+        if isinstance(sig_entity, str) and isinstance(entity, str) and sig_entity != entity:
+            continue
+        if _kind == "keys_changed":
+            for name in details.get("missing") or []:
+                if isinstance(name, str):
+                    missing_kc.add(name)
+            for entry in details.get("added") or []:
+                if isinstance(entry, dict) and isinstance(entry.get("key"), str):
+                    added_kc.add(str(entry["key"]))
+        elif _kind == "mapped_field_emptied":
+            wire_key = details.get("wire_key")
+            if isinstance(wire_key, str):
+                emptied_old.add(wire_key)
+            for name in details.get("added_candidates") or []:
+                if isinstance(name, str):
+                    emptied_new.add(name)
+    if missing_kc or added_kc:
+        return (missing_kc, added_kc)
+    return (emptied_old, emptied_new)
+
+
+def _added_sample(ctx: RepairContext, new_field: str) -> tuple[Any, str | None]:
+    """Sample value and type the detector saw for a new wire key."""
+    from autobridge.repair.rules.wire import _signal_triples  # noqa: PLC0415
+
+    for _kind, _op, details in _signal_triples(ctx.signals):
+        if _kind != "keys_changed":
+            continue
+        for entry in details.get("added") or []:
+            if isinstance(entry, dict) and str(entry.get("key") or "") == str(new_field):
+                return (entry.get("sample"), entry.get("type"))
+    return (None, None)
+
+
+def _spec_transform_names(ctx: RepairContext, entity: str, canonical: str) -> set[str]:
+    """Transform pipeline names declared for one canonical field."""
+    entities = ctx.spec.get("entities", {})
+    ent_spec = entities.get(entity) if isinstance(entities, dict) else None
+    fields = ent_spec.get("fields") if isinstance(ent_spec, dict) else None
+    field = fields.get(canonical) if isinstance(fields, dict) else None
+    if not isinstance(field, dict):
+        return set()
+    names: set[str] = set()
+    for tr in field.get("transform") or []:
+        if isinstance(tr, str):
+            names.add(tr)
+        elif isinstance(tr, dict) and isinstance(tr.get("name"), str):
+            names.add(str(tr["name"]))
+    return names
+
+
+def _looks_like_date(value: Any) -> bool:
+    """Whether a scalar value reads as a calendar date/datetime."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    text = value.strip()
+    try:
+        from datetime import datetime  # noqa: PLC0415
+
+        datetime.fromisoformat(text.replace("Z", "+00:00").replace(" ", "T", 1) if " " in text and "T" not in text else text.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        pass
+    return bool(_DATE_PREFIX_RE.match(text) or _DATE_ALT_RE.match(text))
+
+
+def _looks_like_money(value: Any) -> bool:
+    """Whether a scalar value reads as a monetary amount."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    if not isinstance(value, str) or not value.strip():
+        return False
+    return bool(_MONEY_RE.match(value.strip().replace(",", "")) and any(ch.isdigit() for ch in value))
+
+
+def _sample_matches_field(sample: Any, transforms: set[str]) -> bool:
+    """Whether a new-key sample fits the shape the spec expects.
+
+    The check derives only from the field's declared transform pipeline
+    (the closed transform set) — never from field-name word lists. A
+    field with no shape-declaring transform accepts any present scalar.
+    """
+    if sample is None:
+        return False
+    if isinstance(sample, (dict, list)):
+        return False
+    if isinstance(sample, str) and not sample.strip():
+        return False
+    if transforms & _DATE_TRANSFORMS:
+        return _looks_like_date(sample)
+    if transforms & _MONEY_TRANSFORMS:
+        return _looks_like_money(sample)
+    return isinstance(sample, (str, int, float, bool))
 
 
 def _extra_rename_info(ctx: RepairContext) -> tuple[str, str, str] | None:
@@ -301,10 +427,19 @@ def _added_holds_missing(ctx: RepairContext, old_field: str, new_field: str) -> 
 
 
 def precondition(ctx: RepairContext) -> bool:
-    """True when a single-field rename can be inferred."""
+    """True when an unambiguous rename is inferred (or stated).
+
+    An explicit caller statement (``extra``) repairs as before. An
+    inferred pairing (``delta`` or ``wire``) repairs only when the
+    evidence is unambiguous by a generic, vocabulary-free test: exactly
+    one mapped field emptied or vanished, exactly one new wire key, the
+    new key's values match the lost values in type and shape, and the new
+    name is lexically close to the old wire key or the canonical field
+    name. Anything else declines so the drift climbs to the model.
+    """
     if ctx.drift_class != "SCHEMA_RENAME":
         return False
-    # Try delta first, then extra, then wire evidence
+    # Explicit caller statements first, then delta, then wire evidence
     info = _rename_info(ctx)
     if info is None:
         return False
@@ -315,18 +450,30 @@ def precondition(ctx: RepairContext) -> bool:
     canonical_old = _canonical_field_for(ctx, entity, old_field)
     if canonical_old is None or not _spec_field_paths(ctx, entity, canonical_old):
         return False
-    # REQ-080: an inferred pairing to a name that plausibly denotes a
-    # different field is ambiguous (misleading rename) — decline so the
-    # drift climbs to the model, which sees the new keys and raw records
-    # and asks one operator question instead of guessing. Explicit caller
-    # statements (extra) are exempt: the caller named the rename.
-    if source in ("delta", "wire") and _names_different_field(canonical_old, new_field):
-        return False
     # REQ-078 item 4: an added object that contains the missing keys is a
     # path move, not a rename — refuse so nested_path_shift (or the model
-    # climb) owns it instead of proposing e.g. guest_name → $.localInfo.
+    # climb) owns it instead of proposing a rename into an object.
     if _added_holds_missing(ctx, old_field, new_field):
         return False
+    if source == "extra":
+        # A stated rename is not an inference: the gates below do not apply.
+        pass
+    elif source == "delta":
+        if not _delta_same_type(ctx.fingerprint_delta, entity, old_field, new_field):
+            return False
+        if not _names_lexically_close(old_field, canonical_old, new_field):
+            return False
+    else:  # source == "wire"
+        old_set, new_set = _wire_shape_sets(ctx, entity)
+        if old_set != {old_field} or new_set != {new_field}:
+            return False
+        sample, _sample_type = _added_sample(ctx, new_field)
+        if not _sample_matches_field(
+            sample, _spec_transform_names(ctx, entity, canonical_old)
+        ):
+            return False
+        if not _names_lexically_close(old_field, canonical_old, new_field):
+            return False
     # New field should not already be a canonical field name in that entity
     # (otherwise it's not a rename of source path but a different kind)
     # We allow it — but require old != new, unless the caller names an

@@ -232,7 +232,7 @@ def test_rename_from_wire_only_on_complete_sync() -> None:
     """
     spec = _page_spec()
     wire = [
-        {"reservation_id": f"R{i:04d}", "primaryOccupant": f"Guest {i}"}
+        {"reservation_id": f"R{i:04d}", "guest_names": f"Guest {i}"}
         for i in range(3)
     ]
     results = {
@@ -252,7 +252,7 @@ def test_rename_from_wire_only_on_complete_sync() -> None:
     assert wire_sigs, "detector must emit wire schema evidence"
     details = wire_sigs[0].details
     assert details["missing"] == ["guest_name"]
-    assert [a["key"] for a in details["added"]] == ["primaryOccupant"]
+    assert [a["key"] for a in details["added"]] == ["guest_names"]
 
     classification = classify(signals)
     assert classification.drift_class == "SCHEMA_RENAME"
@@ -267,7 +267,7 @@ def test_rename_from_wire_only_on_complete_sync() -> None:
         {
             "op": "replace",
             "path": "/entities/Reservation/fields/guest_name/path",
-            "value": "$.primaryOccupant",
+            "value": "$.guest_names",
         }
     ]
 
@@ -493,14 +493,14 @@ def test_annotated_baseline_stays_quiet_with_phantom_mapping() -> None:
 
 
 def test_annotated_rename_repairs_from_detector_inputs_only() -> None:
-    """Faulted wire (guestName gone, guestIdentifier new) heals at L1, 0 calls."""
+    """Faulted wire (guestName gone, guestNames new) heals at L1, 0 calls."""
     from autobridge.engine.detect_repair import build_detector_delta
 
     spec = _annotated_live_like_spec()
     wire = []
     for i in range(3):
         rec = _live_wire(i)
-        rec["guestIdentifier"] = rec.pop("guestName")
+        rec["guestNames"] = rec.pop("guestName")
         wire.append(rec)
     summary = _summary(_live_results(wire), outcome="Complete", unmet=[], observed={"Reservation": 3})
     signals = signals_from_sync(summary, spec=spec)
@@ -508,7 +508,7 @@ def test_annotated_rename_repairs_from_detector_inputs_only() -> None:
     assert len(wire_sigs) == 1, [f"{s.kind}: {s.details}" for s in signals]
     details = wire_sigs[0].details
     assert details["missing"] == ["guestName"], details
-    assert [a["key"] for a in details["added"]] == ["guestIdentifier"], details
+    assert [a["key"] for a in details["added"]] == ["guestNames"], details
 
     assert classify(signals).drift_class == "SCHEMA_RENAME"
     delta = build_detector_delta(spec, list(signals))
@@ -521,7 +521,7 @@ def test_annotated_rename_repairs_from_detector_inputs_only() -> None:
     assert result.ladder_level_reached == 1
     _zero_usage(result)
     assert result.candidate_patch == [
-        {"op": "replace", "path": "/entities/Reservation/fields/guest_name/path", "value": "$.guestIdentifier"}
+        {"op": "replace", "path": "/entities/Reservation/fields/guest_name/path", "value": "$.guestNames"}
     ]
 
 
