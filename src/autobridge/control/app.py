@@ -239,6 +239,7 @@ async def _scheduler_loop(interval_s: float) -> None:
 
     factory = get_session_factory()
     running = False
+    current: asyncio.Task[None] | None = None
 
     def _done(_task: Any) -> None:
         nonlocal running
@@ -247,12 +248,22 @@ async def _scheduler_loop(interval_s: float) -> None:
     while True:
         if not running:
             running = True
-            task = asyncio.create_task(asyncio.to_thread(_run_scheduler_pass, factory))
-            task.add_done_callback(_done)
+            current = asyncio.create_task(asyncio.to_thread(_run_scheduler_pass, factory))
+            current.add_done_callback(_done)
         try:
             await asyncio.sleep(interval_s)
         except asyncio.CancelledError:
             break
+    # REQ-079: never abandon an in-flight pass on shutdown. The pass runs
+    # on a worker thread that cancellation cannot stop; dropping the task
+    # here let the thread outlive the loop (and the test's monkeypatched
+    # env), resolving default URLs after teardown — a DNS-guard trip in
+    # whichever test ran next. Await it so the thread finishes first.
+    if current is not None and not current.done():
+        try:
+            await current
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 app = FastAPI(

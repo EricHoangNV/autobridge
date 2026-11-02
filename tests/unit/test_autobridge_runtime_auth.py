@@ -629,12 +629,12 @@ def test_oauth2_secret_not_in_token_fetch_error(monkeypatch: pytest.MonkeyPatch)
     assert "leak-me-not-999" not in repr(exc.value)
 
 
-def test_bearer_header_does_not_log_secret_in_exception():
+def test_bearer_header_does_not_log_secret_in_exception(monkeypatch: pytest.MonkeyPatch):
     # Ensure that when we construct headers, the secret is only in the returned dict
     # and not in any log; we simulate by checking that the function's error path
     # doesn't include secret value (covered above) and that success path's header
     # is correctly formed.
-    os.environ["CHECK_SECRET"] = "check-123"
+    monkeypatch.setenv("CHECK_SECRET", "check-123")
     auth = AuthSpec(type="bearer", credential_ref="CHECK_SECRET")
     headers = build_auth_headers(auth)
     assert headers["Authorization"] == "Bearer check-123"
@@ -645,7 +645,6 @@ def test_bearer_header_does_not_log_secret_in_exception():
     with pytest.raises(AuthError) as exc:
         build_auth_headers(auth2)
     assert "check-123" not in str(exc.value)
-    del os.environ["CHECK_SECRET"]
 
 
 # ---------------------------------------------------------------------------

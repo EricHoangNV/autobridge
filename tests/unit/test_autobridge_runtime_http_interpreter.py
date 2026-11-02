@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import os
 import time
 from unittest.mock import Mock
 
@@ -146,16 +145,13 @@ def test_build_auth_headers_missing(monkeypatch: pytest.MonkeyPatch) -> None:
         build_auth_headers(auth)
 
 
-def test_build_auth_headers_unsupported() -> None:
+def test_build_auth_headers_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
     # Construct via model_validate to bypass type check
     auth = AuthSpec.model_validate({"type": "bearer", "credential_ref": "X"})
     auth.type = "unknown"  # type: ignore[assignment]
-    os.environ["X"] = "tok"
-    try:
-        with pytest.raises(AuthError, match="Unsupported"):
-            build_auth_headers(auth)  # type: ignore[arg-type]
-    finally:
-        del os.environ["X"]
+    monkeypatch.setenv("X", "tok")
+    with pytest.raises(AuthError, match="Unsupported"):
+        build_auth_headers(auth)  # type: ignore[arg-type]
 
 
 def test_http_client_url_for() -> None:
@@ -924,10 +920,8 @@ def test_interpreter_empty_page() -> None:
     monkeypatch.undo()
 
 
-def test_interpreter_no_next() -> None:
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+def test_interpreter_no_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     pagination = {
         "strategy": "cursor",
         "cursor_param": "cursor",
@@ -946,10 +940,8 @@ def test_interpreter_no_next() -> None:
     assert result.stop_reason == "no_next"
 
 
-def test_interpreter_null_cursor_empty_string() -> None:
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+def test_interpreter_null_cursor_empty_string(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     pagination = {
         "strategy": "cursor",
         "cursor_param": "cursor",
@@ -968,10 +960,8 @@ def test_interpreter_null_cursor_empty_string() -> None:
     assert result.stop_reason == "null_cursor"
 
 
-def test_interpreter_page_limit() -> None:
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+def test_interpreter_page_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     pagination = {
         "strategy": "cursor",
         "cursor_param": "cursor",
@@ -1043,10 +1033,8 @@ def test_interpreter_implicit_empty_page(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result.stop_reason in ("empty_page_implicit", "no_next_token")
 
 
-def test_interpreter_checkpoint_max() -> None:
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+def test_interpreter_checkpoint_max(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     pagination = {
         "strategy": "cursor",
         "cursor_param": "cursor",
@@ -1069,10 +1057,8 @@ def test_interpreter_checkpoint_max() -> None:
     assert result.checkpoint_value == "2024-01-03"
 
 
-def test_interpreter_checkpoint_min() -> None:
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+def test_interpreter_checkpoint_min(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     pagination = {
         "strategy": "cursor",
         "cursor_param": "cursor",
@@ -1094,10 +1080,8 @@ def test_interpreter_checkpoint_min() -> None:
     assert result.checkpoint_value == "2024-01-01"
 
 
-def test_interpreter_checkpoint_mixed_types() -> None:
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+def test_interpreter_checkpoint_mixed_types(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     pagination = {
         "strategy": "cursor",
         "cursor_param": "cursor",

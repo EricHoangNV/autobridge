@@ -4244,3 +4244,36 @@ Agent: opencode meta/muse-wonder-1.0 (escalation)
 **Notes for next iteration:**
 - Agent: opencode meta/muse-wonder-1.0 (escalation)
 - REQ-079 blocks a reliably green `make test`; REQ-078 keyed rehearsal and P1.W10.3 remain owner steps; REQ-051 deferred.
+
+## REQ-079 — full-make-test teardown DNS flake fixed (two cross-test leaks)
+**Date:** 2026-11-02
+**Ref:** REQ-079 (directives audit d2a13125..b773926b: 3068 passed + 4/3 teardown DNS-guard ERRORs)
+**Agent:** opencode meta/muse-spark-1.3 (escalation)
+
+**What was done:**
+- Root-caused both leaks with a stack-dumping DNS guard + env-leak detector (temporary, reverted byte-identical afterwards):
+  - Leak A (proxy/gateway trip): `test_scheduler_loop_ticks_off_thread_and_skips_overlap` abandoned an in-flight `asyncio.to_thread` pass on `wait_for` timeout; the worker thread fired `snapshot_edge_links → _relay_get` after monkeypatch teardown with the default `http://edge-relay:8000`, resolving the proxy host in the next test. Proven: trip `gateway.docker.internal:3128` on thread `asyncio_0` during the following test's setup.
+  - Leak B (localhost trips): `run_beacon()` called `_placeholder_credential_env()`, a bare `setdefault` of ATLAS/HARBOR/BENCH_API_KEY with no cleanup; any `run_beacon` test without `_clean_bench_env` (the resume test) leaked the keys process-globally, so later activation-style syncs passed auth and did real HTTP to `localhost:8106`. Deterministic repro: resume test + activation file = 3 teardown ERRORs, same as the audit.
+- Fix A (`src/autobridge/control/app.py`): `_scheduler_loop` tracks the in-flight pass task and awaits it after `CancelledError` instead of abandoning it (also fixes prod lifespan shutdown orphaning pass writes). Test file unchanged except the new regression test; the old "Task was destroyed" warning is gone.
+- Fix B (`bench/beacon_run.py`): `_placeholder_credential_env()` is now a context manager (save/setdefault/restore); `run_beacon` wraps its body in `with`. Direct-call test updated to the CM with restore assertions.
+- Fix C (same leak family): raw `os.environ[...] = ...` sets in unit tests converted to `monkeypatch.setenv` (transforms x4 TEST_TOKEN, runtime_http_interpreter x7, bench_oneshot FAKE_SECRET, runtime_auth CHECK_SECRET). try/finally-guarded sets left as-is.
+- Regression tests: `test_scheduler_loop_shutdown_joins_in_flight_pass` (fails on old code: pending task + warning), resume-path `run_beacon` env-restoration assertions in `test_beacon_resume_keeps_landed_rows` (fails on old code: leaked keys), CM unit test. Verified both fail pre-fix via stash-and-check.
+- Gates: lint, typecheck, ui-typecheck, openapi-check green; full `make test` green with no teardown errors (autobridge 3069 @90.05%, verifier 139 @90.80%, simulators 422 @90.48%, UI 350 passed).
+
+**Key decisions:**
+- Fixed at the source (join/restore), no retries or quarantines per REQ-076's rule; the DNS guard itself untouched.
+- Did not add a permanent env-leak guard to conftest (audit-sensitive shared file); the two targeted regression tests pin the fixed leaks.
+- pytest-randomly shuffles unit order (installed though unlisted in `make test`), which is why victims varied run to run.
+
+**Files changed:**
+- `src/autobridge/control/app.py` — join in-flight pass on loop shutdown
+- `bench/beacon_run.py` — placeholder credential env as context manager + `with` in `run_beacon`
+- `tests/unit/test_autobridge_req030_scheduler_state.py` — shutdown-join regression test
+- `tests/unit/test_autobridge_req078_ask_and_grade.py` — resume-path no-leak assertions
+- `tests/unit/test_autobridge_beacon_run_extra.py` — CM test with restore assertions
+- `tests/unit/test_autobridge_transforms.py`, `test_autobridge_runtime_http_interpreter.py`, `test_autobridge_bench_oneshot.py`, `test_autobridge_runtime_auth.py` — monkeypatch conversions
+- `mds/REQUESTS.MD` — REQ-079 moved to Resolved with Resolution
+
+**Notes for next iteration:**
+- REQ-080 (renamed field as model evidence) is open on main with owner priority after REQ-078; it landed mid-task (commit `01f3f4be`) and needs a rebase before push.
+- Owner keyed/live VERIFY remainders unchanged (REQ-078 rehearsal, REQ-074 browser check, REQ-071/070/069, REQ-065/063/062/061/060); REQ-051 still deferred.

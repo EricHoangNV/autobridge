@@ -1873,10 +1873,31 @@ def _grade_arm_result(
         grade.wrong_patch_proposed = 1
 
 
-def _placeholder_credential_env() -> None:
-    """Ensure the bench credential refs resolve (non-secret placeholder)."""
-    for ref in ("ATLAS_API_KEY", "HARBOR_API_KEY", "BENCH_API_KEY"):
+_PLACEHOLDER_CREDENTIAL_REFS = ("ATLAS_API_KEY", "HARBOR_API_KEY", "BENCH_API_KEY")
+
+
+@contextlib.contextmanager
+def _placeholder_credential_env() -> Any:
+    """Placeholder bench credentials, restored on exit (REQ-079).
+
+    Engine arms resolve ``${ATLAS_API_KEY}`` / ``${HARBOR_API_KEY}`` / …
+    placeholders from the process env at sync time, so the run installs
+    non-secret fixture values — but a bare ``setdefault`` leaked them
+    process-globally, and later unit tests then synced localhost
+    connectors for real (DNS-guard teardown flake). Save/restore around
+    the run instead; never leak into the caller's environment.
+    """
+    saved = {ref: os.environ.get(ref) for ref in _PLACEHOLDER_CREDENTIAL_REFS}
+    for ref in _PLACEHOLDER_CREDENTIAL_REFS:
         os.environ.setdefault(ref, BEACON_BENCH_CREDENTIAL)
+    try:
+        yield
+    finally:
+        for ref, value in saved.items():
+            if value is None:
+                os.environ.pop(ref, None)
+            else:
+                os.environ[ref] = value
 
 
 @dataclass
@@ -2064,180 +2085,180 @@ def run_beacon(
           f"frozen_at={protocol.frozen_at_utc} rehearsal={protocol.rehearsal} "
           f"frontier-model={protocol.frontier_model or 'unpinned'}"
           + (f" agent-model={protocol.agent_model}" if protocol.agent_model else ""), flush=True)
-    _placeholder_credential_env()
-    _ensure_prompts()
-    cfg = config if config is not None else default_beacon_config()
-    # REQ-078 item 7: the frozen budgets win for the run — one token
-    # ceiling and one wall clock for every arm (the agent included).
-    # A pre-REQ-078 protocol without the lines keeps env/defaults.
-    if config is None:
-        try:
-            import dataclasses as _dc_cfg
+    with _placeholder_credential_env():
+        _ensure_prompts()
+        cfg = config if config is not None else default_beacon_config()
+        # REQ-078 item 7: the frozen budgets win for the run — one token
+        # ceiling and one wall clock for every arm (the agent included).
+        # A pre-REQ-078 protocol without the lines keeps env/defaults.
+        if config is None:
+            try:
+                import dataclasses as _dc_cfg
 
-            _cfg_kwargs: dict[str, Any] = {}
-            if protocol.token_ceiling is not None:
-                _cfg_kwargs["token_ceiling"] = int(protocol.token_ceiling)
-            if protocol.wall_clock_s is not None:
-                _cfg_kwargs["wall_clock_s"] = float(protocol.wall_clock_s)
-            if _cfg_kwargs:
-                cfg = _dc_cfg.replace(cfg, **_cfg_kwargs)
-        except Exception:
-            pass
-    print(f"beacon run: token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
-    warm = knowledge_warm
-    warm_info: dict[str, Any] = {"source": "caller-supplied", "entries": 0, "fixes": []}
-    if warm is None and "autobridge_warm" in protocol.arms:
-        from bench.ablation import warm_knowledge as _warm_knowledge
-        from bench.ablation import warm_provenance as _warm_provenance
-        from bench.harness import list_scenarios as _list_dev
-
-        dev_ids = _list_dev(visibility="dev")
-        warm = _warm_knowledge(dev_ids, provider=provider, verifier_url=verifier_url)
-        try:
-            provenance = _warm_provenance(warm)
-            fixes = provenance.get("fixes", [])
-        except Exception:
-            fixes = []
-        warm_info = {
-            "source": "dev split only (never beacon instances)",
-            "entries": len(fixes),
-            "fixes": fixes,
-        }
-        print(f"beacon run: warm cache holds {len(fixes)} dev-split fix(es) "
-              f"(autobridge_warm pre-warmed; autobridge_cold starts empty)", flush=True)
-    elif warm is not None:
-        try:
+                _cfg_kwargs: dict[str, Any] = {}
+                if protocol.token_ceiling is not None:
+                    _cfg_kwargs["token_ceiling"] = int(protocol.token_ceiling)
+                if protocol.wall_clock_s is not None:
+                    _cfg_kwargs["wall_clock_s"] = float(protocol.wall_clock_s)
+                if _cfg_kwargs:
+                    cfg = _dc_cfg.replace(cfg, **_cfg_kwargs)
+            except Exception:
+                pass
+        print(f"beacon run: token_ceiling={cfg.token_ceiling} wall_clock={cfg.wall_clock_s}s", flush=True)
+        warm = knowledge_warm
+        warm_info: dict[str, Any] = {"source": "caller-supplied", "entries": 0, "fixes": []}
+        if warm is None and "autobridge_warm" in protocol.arms:
+            from bench.ablation import warm_knowledge as _warm_knowledge
             from bench.ablation import warm_provenance as _warm_provenance
+            from bench.harness import list_scenarios as _list_dev
 
+            dev_ids = _list_dev(visibility="dev")
+            warm = _warm_knowledge(dev_ids, provider=provider, verifier_url=verifier_url)
+            try:
+                provenance = _warm_provenance(warm)
+                fixes = provenance.get("fixes", [])
+            except Exception:
+                fixes = []
             warm_info = {
-                "source": "caller-supplied",
-                "entries": len(_warm_provenance(warm).get("fixes", [])),
-                "fixes": _warm_provenance(warm).get("fixes", []),
+                "source": "dev split only (never beacon instances)",
+                "entries": len(fixes),
+                "fixes": fixes,
             }
-        except Exception:
-            warm_info = {"source": "caller-supplied", "entries": 0, "fixes": []}
-    else:
-        warm_info = {"source": "none (no autobridge_warm arm)", "entries": 0, "fixes": []}
-        print("beacon run: no autobridge_warm arm — no warm-up (cold only)", flush=True)
-    vendors = load_vendors()
-    admin = admin_urls(vendors)
-    public = public_urls(vendors)
-    result = BeaconRunResult(protocol=protocol, eval_seed_hex=eval_seed_hex, randomness_hex=verified.randomness_hex)
-    # Restore resumed rows (grades keep their frozen order; warm re-learns
-    # from newly verified fixes — pre-resume in-run learning is not
-    # replayed, and the summary says so).
-    _done: set[tuple[int, int]] = set()
-    for _row in _resume_grades:
-        try:
-            _grade = BeaconArmGrade(
-                arm=str(_row.get("arm", "?")),
-                instance_index=int(_row.get("instance_index", -1)),
-                trial=int(_row.get("trial", 0)),
-                vendor=str(_row.get("vendor", "?")),
-                family=str(_row.get("family", "?")),
-            )
-            for _k, _v in _row.items():
-                if hasattr(_grade, _k):
-                    with contextlib.suppress(Exception):
-                        setattr(_grade, _k, _v)
-            result.grades.append(_grade)
-            _done.add((_grade.instance_index, _grade.trial))
-        except Exception:
-            continue
-    _resumed_from = len(result.grades)
-    _resume_by_index: dict[int, dict[str, Any]] = {}
-    for _d in _resume_instances:
-        try:
-            _resume_by_index[int(_d.get("index", -1))] = _d
-        except Exception:
-            continue
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _grades_path = out_dir / "grades.jsonl"
-    if _resume_grades:
-        print(
-            f"beacon run: resumed ({_resumed_from} rows kept; "
-            "warm re-learns from newly verified fixes only)",
-            flush=True,
-        )
-    _aborted: str | None = None
-    for index in range(protocol.faults):
-        vendor_cfg = vendors[index % len(vendors)]
-        if index in _resume_by_index:
-            descriptor = _resume_by_index[index]
+            print(f"beacon run: warm cache holds {len(fixes)} dev-split fix(es) "
+                  f"(autobridge_warm pre-warmed; autobridge_cold starts empty)", flush=True)
+        elif warm is not None:
+            try:
+                from bench.ablation import warm_provenance as _warm_provenance
+
+                warm_info = {
+                    "source": "caller-supplied",
+                    "entries": len(_warm_provenance(warm).get("fixes", [])),
+                    "fixes": _warm_provenance(warm).get("fixes", []),
+                }
+            except Exception:
+                warm_info = {"source": "caller-supplied", "entries": 0, "fixes": []}
         else:
+            warm_info = {"source": "none (no autobridge_warm arm)", "entries": 0, "fixes": []}
+            print("beacon run: no autobridge_warm arm — no warm-up (cold only)", flush=True)
+        vendors = load_vendors()
+        admin = admin_urls(vendors)
+        public = public_urls(vendors)
+        result = BeaconRunResult(protocol=protocol, eval_seed_hex=eval_seed_hex, randomness_hex=verified.randomness_hex)
+        # Restore resumed rows (grades keep their frozen order; warm re-learns
+        # from newly verified fixes — pre-resume in-run learning is not
+        # replayed, and the summary says so).
+        _done: set[tuple[int, int]] = set()
+        for _row in _resume_grades:
             try:
-                descriptor = push_beacon(eval_seed_hex, index, vendor_cfg.vendor, admin_url=admin.get(vendor_cfg.vendor))
-            except BeaconError as exc:
-                # Infrastructure error (simulator unreachable): abort the
-                # run without recording a loss — no summary is written, so
-                # a rerun resumes from the landed rows.
-                _aborted = f"infrastructure abort at instance {index}: {exc}"
-                print(f"beacon run: {_aborted}", flush=True)
-                break
-            _resume_by_index[index] = descriptor
-            with contextlib.suppress(Exception):
-                (out_dir / "instances.json").write_text(
-                    json.dumps([_resume_by_index[i] for i in sorted(_resume_by_index)], sort_keys=True, indent=2) + "\n",
-                    encoding="utf-8",
+                _grade = BeaconArmGrade(
+                    arm=str(_row.get("arm", "?")),
+                    instance_index=int(_row.get("instance_index", -1)),
+                    trial=int(_row.get("trial", 0)),
+                    vendor=str(_row.get("vendor", "?")),
+                    family=str(_row.get("family", "?")),
                 )
-        if index >= len(result.instances):
-            result.instances.append(descriptor)
-        print(f"beacon run: instance {index} vendor={vendor_cfg.vendor} family={descriptor['family']}", flush=True)
-        # REQ-063 item 3: fail loudly before spending any arm budget on an
-        # instance the connector cannot distinguish from the baseline.
-        try:
-            sanity_flags = sanity_unchanged_repairs(eval_seed_hex, [descriptor], vendors)
-        except BeaconError as exc:
-            _aborted = f"infrastructure abort at instance {index} (sanity check): {exc}"
-            print(f"beacon run: {_aborted}", flush=True)
-            break
-        if sanity_flags:
-            flag = sanity_flags[0]
-            raise BeaconError(
-                "beacon sanity: instance "
-                f"{flag['index']} ({flag['vendor']}/{flag['family']} {flag['params']}) "
-                f"expects {flag['expected']} but its faulted canonical output equals "
-                "the baseline under the pre-drift spec — generator bug, refusing run"
-            )
-        for trial in range(protocol.trials):
-            if (index, trial) in _done:
+                for _k, _v in _row.items():
+                    if hasattr(_grade, _k):
+                        with contextlib.suppress(Exception):
+                            setattr(_grade, _k, _v)
+                result.grades.append(_grade)
+                _done.add((_grade.instance_index, _grade.trial))
+            except Exception:
                 continue
+        _resumed_from = len(result.grades)
+        _resume_by_index: dict[int, dict[str, Any]] = {}
+        for _d in _resume_instances:
             try:
-                grades, _reports = run_instance_trial(
-                    protocol, eval_seed_hex, descriptor, trial,
-                    config=cfg, runners=runners, provider=provider,
-                    knowledge_warm=warm, verifier_url=verifier_url,
-                    vendors=vendors, vendor_cfg=vendor_cfg, public_url=public.get(vendor_cfg.vendor, ""),
-                )
-            except BeaconError as exc:
-                _aborted = f"infrastructure abort at instance {index} trial {trial}: {exc}"
-                print(f"beacon run: {_aborted}", flush=True)
-                break
-            except Exception as exc:
-                # A non-infrastructure crash of one trial also aborts
-                # without recording losses for the unrun rows.
-                _aborted = f"abort at instance {index} trial {trial}: {type(exc).__name__}: {exc}"
-                print(f"beacon run: {_aborted}", flush=True)
-                break
-            for _g in grades:
-                result.grades.append(_g)
-                # REQ-078 item 8: each grade row lands as it is graded.
+                _resume_by_index[int(_d.get("index", -1))] = _d
+            except Exception:
+                continue
+        out_dir.mkdir(parents=True, exist_ok=True)
+        _grades_path = out_dir / "grades.jsonl"
+        if _resume_grades:
+            print(
+                f"beacon run: resumed ({_resumed_from} rows kept; "
+                "warm re-learns from newly verified fixes only)",
+                flush=True,
+            )
+        _aborted: str | None = None
+        for index in range(protocol.faults):
+            vendor_cfg = vendors[index % len(vendors)]
+            if index in _resume_by_index:
+                descriptor = _resume_by_index[index]
+            else:
                 try:
-                    with open(_grades_path, "a", encoding="utf-8") as _fh:
-                        _fh.write(json.dumps(_g.to_dict(), sort_keys=True, default=str) + "\n")
-                except Exception:
-                    pass
+                    descriptor = push_beacon(eval_seed_hex, index, vendor_cfg.vendor, admin_url=admin.get(vendor_cfg.vendor))
+                except BeaconError as exc:
+                    # Infrastructure error (simulator unreachable): abort the
+                    # run without recording a loss — no summary is written, so
+                    # a rerun resumes from the landed rows.
+                    _aborted = f"infrastructure abort at instance {index}: {exc}"
+                    print(f"beacon run: {_aborted}", flush=True)
+                    break
+                _resume_by_index[index] = descriptor
+                with contextlib.suppress(Exception):
+                    (out_dir / "instances.json").write_text(
+                        json.dumps([_resume_by_index[i] for i in sorted(_resume_by_index)], sort_keys=True, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+            if index >= len(result.instances):
+                result.instances.append(descriptor)
+            print(f"beacon run: instance {index} vendor={vendor_cfg.vendor} family={descriptor['family']}", flush=True)
+            # REQ-063 item 3: fail loudly before spending any arm budget on an
+            # instance the connector cannot distinguish from the baseline.
+            try:
+                sanity_flags = sanity_unchanged_repairs(eval_seed_hex, [descriptor], vendors)
+            except BeaconError as exc:
+                _aborted = f"infrastructure abort at instance {index} (sanity check): {exc}"
+                print(f"beacon run: {_aborted}", flush=True)
+                break
+            if sanity_flags:
+                flag = sanity_flags[0]
+                raise BeaconError(
+                    "beacon sanity: instance "
+                    f"{flag['index']} ({flag['vendor']}/{flag['family']} {flag['params']}) "
+                    f"expects {flag['expected']} but its faulted canonical output equals "
+                    "the baseline under the pre-drift spec — generator bug, refusing run"
+                )
+            for trial in range(protocol.trials):
+                if (index, trial) in _done:
+                    continue
+                try:
+                    grades, _reports = run_instance_trial(
+                        protocol, eval_seed_hex, descriptor, trial,
+                        config=cfg, runners=runners, provider=provider,
+                        knowledge_warm=warm, verifier_url=verifier_url,
+                        vendors=vendors, vendor_cfg=vendor_cfg, public_url=public.get(vendor_cfg.vendor, ""),
+                    )
+                except BeaconError as exc:
+                    _aborted = f"infrastructure abort at instance {index} trial {trial}: {exc}"
+                    print(f"beacon run: {_aborted}", flush=True)
+                    break
+                except Exception as exc:
+                    # A non-infrastructure crash of one trial also aborts
+                    # without recording losses for the unrun rows.
+                    _aborted = f"abort at instance {index} trial {trial}: {type(exc).__name__}: {exc}"
+                    print(f"beacon run: {_aborted}", flush=True)
+                    break
+                for _g in grades:
+                    result.grades.append(_g)
+                    # REQ-078 item 8: each grade row lands as it is graded.
+                    try:
+                        with open(_grades_path, "a", encoding="utf-8") as _fh:
+                            _fh.write(json.dumps(_g.to_dict(), sort_keys=True, default=str) + "\n")
+                    except Exception:
+                        pass
+            if _aborted is not None:
+                break
         if _aborted is not None:
-            break
-    if _aborted is not None:
-        print(f"beacon run: aborted ({len(result.grades)} rows landed; rerun resumes)", flush=True)
+            print(f"beacon run: aborted ({len(result.grades)} rows landed; rerun resumes)", flush=True)
+            return result
+        result.summary = summarize_grades(result.grades)
+        result.summary["warm"] = warm_info
+        if _resumed_from:
+            result.summary["resumed_from_rows"] = _resumed_from
+        _write_results(result, out_dir)
         return result
-    result.summary = summarize_grades(result.grades)
-    result.summary["warm"] = warm_info
-    if _resumed_from:
-        result.summary["resumed_from_rows"] = _resumed_from
-    _write_results(result, out_dir)
-    return result
 
 
 def _write_results(result: BeaconRunResult, out_dir: pathlib.Path) -> None:

@@ -616,7 +616,7 @@ def test_map_records_timezone_field_kind() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sync_blocked_on_unknown_enum() -> None:
+def test_sync_blocked_on_unknown_enum(monkeypatch: pytest.MonkeyPatch) -> None:
     import httpx
 
     from autobridge.engine.sync_run import execute_sync
@@ -640,9 +640,7 @@ def test_sync_blocked_on_unknown_enum() -> None:
 
         return HttpClient("https://example.com", retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=3), client_factory=factory, sleep_fn=lambda _: None)
 
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     spec_dict = {
         "spec_version": 1,
         "connector": {"id": "testconn", "vendor": "Test", "runtime_target": "cloud"},
@@ -680,7 +678,7 @@ def test_sync_blocked_on_unknown_enum() -> None:
     assert any("unknown_enum" in c for c in summary["unmet_criteria"])
 
 
-def test_sync_money_decimal_and_date_boundary() -> None:
+def test_sync_money_decimal_and_date_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     import httpx
 
     from autobridge.engine.sync_run import execute_sync
@@ -704,9 +702,7 @@ def test_sync_money_decimal_and_date_boundary() -> None:
 
         return HttpClient("https://example.com", retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=3), client_factory=factory, sleep_fn=lambda _: None)
 
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     spec_dict = {
         "spec_version": 1,
         "connector": {"id": "testconn", "vendor": "Test", "runtime_target": "cloud"},
@@ -763,7 +759,7 @@ def test_sync_money_decimal_and_date_boundary() -> None:
     assert summary["checkpoint_values"]["list_reservations"] == "2026-10-03T10:00:00+00:00"
 
 
-def test_sync_degraded_via_checks() -> None:
+def test_sync_degraded_via_checks(monkeypatch: pytest.MonkeyPatch) -> None:
     import httpx
 
     from autobridge.engine.sync_run import execute_sync
@@ -787,9 +783,7 @@ def test_sync_degraded_via_checks() -> None:
 
         return HttpClient("https://example.com", retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=3), client_factory=factory, sleep_fn=lambda _: None)
 
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     spec_dict = {
         "spec_version": 1,
         "connector": {"id": "testconn", "vendor": "Test", "runtime_target": "cloud"},
@@ -853,7 +847,7 @@ def test_determine_outcome_blocked_precedence() -> None:
     assert "unknown_enum" in unmet
 
 
-def test_execute_sync_repeated_cursor_still_degraded() -> None:
+def test_execute_sync_repeated_cursor_still_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
     import httpx
 
     from autobridge.engine.sync_run import execute_sync
@@ -877,9 +871,7 @@ def test_execute_sync_repeated_cursor_still_degraded() -> None:
 
         return HttpClient("https://example.com", retry=RetryPolicy(statuses=[429, 503], backoff="exponential", max_attempts=3), client_factory=factory, sleep_fn=lambda _: None)
 
-    import os
-
-    os.environ["TEST_TOKEN"] = "tok"
+    monkeypatch.setenv("TEST_TOKEN", "tok")
     spec_dict = {
         "spec_version": 1,
         "connector": {"id": "testconn", "vendor": "Test", "runtime_target": "cloud"},

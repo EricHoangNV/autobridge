@@ -353,8 +353,15 @@ def test_beacon_resume_keeps_landed_rows(tmp_path: Any, monkeypatch: pytest.Monk
     """Grades appended as they land survive a mid-run abort: a rerun
     resumes from them (no summary.json), while a finished run (summary
     present) still refuses."""
+    import os as _os
+
     import bench.beacon_run as br
 
+    # REQ-079: the run's placeholder credentials must not leak
+    # process-globally — a leak made later localhost syncs resolve for
+    # real and trip the DNS guard in whichever test ran next.
+    _refs = ("ATLAS_API_KEY", "HARBOR_API_KEY", "BENCH_API_KEY")
+    _saved = {ref: _os.environ.pop(ref, None) for ref in _refs}
     out_dir = tmp_path / "r"
     out_dir.mkdir()
     landed = [
@@ -414,3 +421,10 @@ def test_beacon_resume_keeps_landed_rows(tmp_path: Any, monkeypatch: pytest.Monk
     # …and a finished run refuses.
     with pytest.raises(br.BeaconError):
         br.run_beacon(protocol, output_dir=out_dir, runners={})
+    for _ref in _refs:
+        _restored = _os.environ.pop(_ref, None)
+        _want = _saved[_ref]
+        if _want is None:
+            assert _restored is None, f"run_beacon leaked {_ref} process-globally"
+        else:
+            _os.environ[_ref] = _want

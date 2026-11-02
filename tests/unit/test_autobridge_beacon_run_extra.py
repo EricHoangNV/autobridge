@@ -651,10 +651,21 @@ def test_sync_candidate_real_runtime() -> None:
 
 
 def test_placeholder_env_and_summarize_edges() -> None:
-    saved = {ref: os.environ.pop(ref, None) for ref in ("ATLAS_API_KEY", "HARBOR_API_KEY", "BENCH_API_KEY")}
+    refs = ("ATLAS_API_KEY", "HARBOR_API_KEY", "BENCH_API_KEY")
+    saved = {ref: os.environ.pop(ref, None) for ref in refs}
     try:
-        beacon_run._placeholder_credential_env()
-        assert os.environ["ATLAS_API_KEY"] == beacon_run.BEACON_BENCH_CREDENTIAL
+        with beacon_run._placeholder_credential_env():
+            for ref in refs:
+                assert os.environ[ref] == beacon_run.BEACON_BENCH_CREDENTIAL
+        # REQ-079: restored on exit, never leaked process-globally (a leak
+        # made later localhost syncs resolve for real and trip the DNS guard).
+        for ref in refs:
+            assert ref not in os.environ, ref
+        # A pre-existing operator value survives the run untouched.
+        os.environ["HARBOR_API_KEY"] = "operator-key"
+        with beacon_run._placeholder_credential_env():
+            assert os.environ["HARBOR_API_KEY"] == "operator-key"
+        assert os.environ["HARBOR_API_KEY"] == "operator-key"
     finally:
         for ref, value in saved.items():
             if value is None:

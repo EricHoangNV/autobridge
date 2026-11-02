@@ -3201,3 +3201,16 @@ Warm == cold (4-entry dev cache, nothing fires). Simulators untouched (item-8
 fixes from 32a482c7 verified present + green). Docs need no change (nothing
 describes the old behaviour). Owner step: keyed rehearsal with live key on
 this commit, then close.
+
+### REQ-079 — full-make-test teardown DNS flake (two cross-test leaks fixed)
+Agent: opencode meta/muse-spark-1.3 (escalation)
+
+Root causes (both proven with stacks + deterministic repros before fixing):
+1. Scheduler tick: `_scheduler_loop` abandoned its in-flight `to_thread` pass on cancellation; the worker thread (`asyncio_0`) fired `snapshot_edge_links → _relay_get` after monkeypatch teardown with the default relay URL, resolving the proxy host (`gateway.docker.internal:3128`) during the next test → teardown ERROR there. Same abandonment existed on control lifespan shutdown.
+2. Placeholder env: `run_beacon()` → `_placeholder_credential_env()` did bare `os.environ.setdefault` of ATLAS/HARBOR/BENCH_API_KEY with no cleanup; any `run_beacon` test without `_clean_bench_env` (the resume test) leaked the keys, so later activation-style syncs passed auth and did real HTTP to `localhost:8106` (3 teardown ERRORs on the sync-expecting-200 tests; 422-path tests unaffected since they refuse before HTTP).
+
+Fixes: (1) `_scheduler_loop` tracks the current pass task and awaits it after `CancelledError` (6 lines in `src/autobridge/control/app.py`); the loop test itself needed no change — the "Task was destroyed" warning is gone. (2) `_placeholder_credential_env()` is now a `@contextmanager` (save/setdefault/restore) and `run_beacon` wraps its body in `with` (mechanical re-indent of lines 2089–2261). (3) All raw `os.environ[...] = ...` sets in unit tests converted to `monkeypatch.setenv` (TEST_TOKEN x10, X, FAKE_SECRET_FOR_TEST, CHECK_SECRET); try/finally-guarded sets left alone.
+
+Gotchas: pytest-randomly IS installed and shuffles unit order (not mentioned in `make test`), so victims varied run to run and ordered runs stayed green — this made the flake look like a same-test issue until the per-test leak detector showed otherwise. `PYTEST_CURRENT_TEST` + port logging in a temporary conftest patch gave the decisive attribution (reverted byte-identical; `git diff` on conftest is empty). Stash-and-check proved both regression tests fail on old code.
+
+Gates: lint, typecheck (`mypy src/autobridge bench` 133 files), ui-typecheck, openapi-check green; full `make test` green, no teardown errors: autobridge 3069 passed @90.05%, verifier 139 @90.80%, simulators 422 @90.48%, UI 350 passed. No docs page describes this behaviour (no doc change needed); trust-boundary contracts kept (bench still never imports verifier).

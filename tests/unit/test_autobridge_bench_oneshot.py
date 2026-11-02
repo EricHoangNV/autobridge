@@ -692,18 +692,14 @@ def test_harness_arm_literal_includes_one_shot() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_one_shot_prompt_never_contains_secret_values() -> None:
+def test_one_shot_prompt_never_contains_secret_values(monkeypatch: pytest.MonkeyPatch) -> None:
     # Create a fake env var that looks like a credential value
-    import os
-
-    os.environ["FAKE_SECRET_FOR_TEST"] = "supersecretvalue123"
+    monkeypatch.setenv("FAKE_SECRET_FOR_TEST", "supersecretvalue123")
     inp = _inputs()
     # The prompt built should contain credential refs (env key names) but not values
     prompt = build_one_shot_prompt(inp, docs_text=None)
     assert "supersecretvalue123" not in prompt
     assert inp.credential_refs[0] in prompt
-    # Cleanup
-    del os.environ["FAKE_SECRET_FOR_TEST"]
 
 
 def test_reexport_via_fake_cli() -> None:

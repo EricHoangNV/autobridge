@@ -527,6 +527,60 @@ def test_scheduler_loop_ticks_off_thread_and_skips_overlap(
     assert len(opened) < 4, f"overlap guard must skip ticks while a pass runs: {len(opened)}"
 
 
+def test_scheduler_loop_shutdown_joins_in_flight_pass(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-079: cancelling ``_scheduler_loop`` joins the in-flight pass.
+
+    The pass runs on a worker thread that cancellation cannot stop; the
+    loop used to abandon its task, and the thread then outlived the test
+    and resolved the default edge-relay URL after monkeypatch teardown —
+    a DNS-guard teardown trip in whichever test ran next. Shutdown now
+    awaits the pass, so no task is left pending and the pass's work,
+    done under this test's env, completes before the loop closes.
+    """
+    import asyncio as _asyncio
+    import contextlib as _contextlib
+    import time as _time
+
+    import autobridge.control.app as _app
+
+    monkeypatch.setenv("EDGE_RELAY_URL", "http://127.0.0.1:9")
+    factory = session_factory(create_engine(f"sqlite:///{tmp_path}/join.db"))
+    Base.metadata.create_all(factory().bind)  # type: ignore[union-attr]
+    finished: list[str] = []
+
+    def _fake_factory() -> object:
+        opened = factory
+
+        class _Ctx:
+            def __enter__(self) -> object:
+                _time.sleep(0.2)  # longer than the shutdown below
+                finished.append("pass")
+                return opened()
+
+            def __exit__(self, *exc: object) -> bool:
+                return False
+
+        return _Ctx()
+
+    monkeypatch.setattr(
+        "autobridge.control.deps.get_session_factory", lambda: _fake_factory
+    )
+    loop = _asyncio.new_event_loop()
+    try:
+        task = loop.create_task(_app._scheduler_loop(0.05))
+        loop.run_until_complete(_asyncio.sleep(0.1))  # let the first pass start
+        task.cancel()
+        with _contextlib.suppress(_asyncio.CancelledError):
+            loop.run_until_complete(task)
+        pending = [t for t in _asyncio.all_tasks(loop) if not t.done()]
+        assert not pending, "shutdown must join the in-flight pass task"
+        assert finished == ["pass"], "the in-flight pass runs to completion"
+    finally:
+        loop.close()
+
+
 def test_sqlite_engine_uses_wal_and_busy_timeout(tmp_path: pathlib.Path) -> None:
     """Scheduler + API share one SQLite file: WAL keeps passes from locking
     API writes out (readers never block writers; writers wait their turn)."""
