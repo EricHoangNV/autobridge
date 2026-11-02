@@ -10,7 +10,22 @@ Found by the 2026-11-02 directives audit (diff `d2a13125..b773926b`). Two consec
 
 
 ### REQ-078 — When the engine does not know, it asks: model first, operator last; and a beacon that grades it fairly (2026-11-01)
-Status: DONE (sbx1 2026-11-01 -- bench engine arm takes the production path (shared prepare_climb_inputs + faulted summary, L3 blocks recorded), reason names L3 vs L4, legacystay gross_net + meridian nesting fixed + sweep extended, 3 new tests, full gates green; unkeyed rehearsal round 6603643 FAULTS=10 TRIALS=1: engine 0.40/0.40/$0/0tok/0 wrong, frontier 0.00 (no key); owner step: keyed rehearsal with live key on this commit, then close)
+Status: OPEN (reopened 2026-11-02 by owner keyed rehearsal on fd2c8388 -- the frontier agent runs in the repo, not its sandbox dir; item 6 not met)
+Owner keyed rehearsal (2026-11-02, `fd2c8388`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1, live key):
+every engine arm 0.30 (0 wrong; model questions now cite the evidence), frontier_agent 0.20 (3 wrong proposed),
+frontier_oneshot 0.20. Instances 7-9 failed on every model arm from a network outage on the owner side (not a defect).
+On instances 0 and 5 (atlas rename) the agent answered `{"patch": []}` without reading any input: its opencode session
+ran in `.worktrees/verify` (the repo), its reads of `evidence.md` / `pre_drift_spec.yaml` there failed, and it gave up.
+Cause: `OpenCodeCliDriver.run` (`bench/baseline_coding_agent.py` ~964-985) sets `cwd=` to the sandbox dir but copies
+the parent environment, and opencode takes its working directory from the inherited `PWD`, not the process cwd
+(owner reproduced in the sandbox: stale `PWD` -> session directory is the repo; `PWD` = sandbox dir -> session
+directory is the sandbox dir). So the agent never saw its files, and it sat in the repo where verifier/generator
+sources are readable — the item-6 isolation is not in force. Finish in this REQ:
+- Set the child's `PWD` to the sandbox dir in `OpenCodeCliDriver.run` (and any other driver that spawns an agent CLI
+  with `cwd=`). Add a test that fails if the spawned env's `PWD` differs from `cwd`.
+- Mark DONE after the tests and full gates pass; the owner runs the keyed rehearsal on the result (Ralph's sandbox has
+  no frontier key). Do not freeze, tag or commit under `experiments/beacon/`.
+Previous status: DONE (sbx1 2026-11-01 -- bench engine arm takes the production path (shared prepare_climb_inputs + faulted summary, L3 blocks recorded), reason names L3 vs L4, legacystay gross_net + meridian nesting fixed + sweep extended, 3 new tests, full gates green; unkeyed rehearsal round 6603643 FAULTS=10 TRIALS=1: engine 0.40/0.40/$0/0tok/0 wrong, frontier 0.00 (no key); owner step: keyed rehearsal with live key on this commit, then close)
 Owner keyed rehearsal (2026-11-02, `db9f2db6`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1, live key):
 frontier_agent 0.60 ($0.016/run, 4 wrong patches proposed, 0 released), frontier_oneshot 0.20, every engine arm 0.30
 (~6k tokens, $0.0008/run, 0 wrong). The engine now reaches the model on every fault, but repaired none: every model
