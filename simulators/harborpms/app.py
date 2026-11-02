@@ -145,6 +145,30 @@ def _wrap_wire(wire: dict[str, Any], parents: list[str]) -> dict[str, Any]:
     return out
 
 
+def _inner_get(rec: Any, key: str, default: Any = None) -> Any:
+    """Internal field read that survives a nesting wrap (REQ-084)."""
+    # (_split_nesting is total over any input: no fallback needed.)
+    inner, _ = _split_nesting(rec if isinstance(rec, dict) else {})
+    if isinstance(inner, dict) and key in inner:
+        return inner[key]
+    return default
+
+
+def _wire_get(wire: Any, key: str, default: Any = None) -> Any:
+    """Wire leaf read that survives a nesting wrap (REQ-084)."""
+    node = wire
+    for _ in range(6):
+        if isinstance(node, dict) and key in node:
+            return node[key]
+        if isinstance(node, dict) and len(node) == 1:
+            _k, _v = next(iter(node.items()))
+            if isinstance(_v, dict) and isinstance(_k, str) and _k:
+                node = _v
+                continue
+        return default
+    return default
+
+
 def _to_harbor_reservation(rec: dict[str, Any]) -> dict[str, Any]:
     """Map a canonical reservation record to Harbor's messy shape."""
     # REQ-083 D17: nest the projected wire record, not the internal one.
@@ -222,7 +246,7 @@ def list_reservations(
 
     prop_filter = request.query_params.get("property_id")
     if prop_filter:
-        data = [r for r in data if str(r.get("property_id")) == prop_filter]
+        data = [r for r in data if str(_wire_get(r, "property_id", "")) == prop_filter]
 
     from simulators.common import beacon_serve as _beacon
 
@@ -272,10 +296,10 @@ def list_folios(
 
     prop_filter = request.query_params.get("property_id")
     if prop_filter:
-        data = [r for r in data if str(r.get("property_id")) == prop_filter]
+        data = [r for r in data if str(_wire_get(r, "property_id", "")) == prop_filter]
     res_filter = request.query_params.get("reservation_id")
     if res_filter:
-        data = [r for r in data if str(r.get("reservation_id")) == res_filter]
+        data = [r for r in data if str(_wire_get(r, "reservation_id", "")) == res_filter]
 
     from simulators.common import beacon_serve as _beacon
 
@@ -317,7 +341,7 @@ def get_reservation(
 
     dataset = get_dataset_for_current_state()
     for rec in dataset["reservations"]:
-        if str(rec.get("reservation_id")) == reservation_id:
+        if str(_inner_get(rec, "reservation_id", "")) == reservation_id:
             return {"data": _to_harbor_reservation(rec)}
     raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Reservation not found"})
 
@@ -344,11 +368,11 @@ def list_nested_folios(
 
     dataset = get_dataset_for_current_state()
     # Verify reservation exists (return 404 if not, like a true nested resource)
-    reservation_ids = {str(r.get("reservation_id")) for r in dataset["reservations"]}
+    reservation_ids = {str(_inner_get(r, "reservation_id", "")) for r in dataset["reservations"]}
     if reservation_id not in reservation_ids:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Reservation not found"})
 
-    data = [f for f in dataset["folios"] if str(f.get("reservation_id")) == reservation_id]
+    data = [f for f in dataset["folios"] if str(_inner_get(f, "reservation_id", "")) == reservation_id]
     data = [_to_harbor_folio(f) for f in data]
 
     from simulators.common import beacon_serve as _beacon
@@ -380,7 +404,7 @@ def get_folio(
 
     dataset = get_dataset_for_current_state()
     for rec in dataset["folios"]:
-        if str(rec.get("charge_id")) == charge_id:
+        if str(_inner_get(rec, "charge_id", "")) == charge_id:
             return {"data": _to_harbor_folio(rec)}
     raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Folio charge not found"})
 

@@ -252,16 +252,16 @@ def _paginate_by_cursor(items: list[dict[str, Any]], count: int, cursor: str | N
     The returned cursor is ``None`` only when the page carries no data, so a
     client stops on a null cursor or a short page — the documented contract.
     """
-    ordered = sorted(items, key=lambda r: str(r.get("Id", "")))
+    ordered = sorted(items, key=lambda r: str(_wire_value(r, "Id", "")))
     start = 0
     if cursor is not None:
-        ids = [str(r.get("Id", "")) for r in ordered]
+        ids = [str(_wire_value(r, "Id", "")) for r in ordered]
         try:
             start = ids.index(cursor) + 1
         except ValueError:
             start = 0  # unknown cursor restarts from the beginning
     page = ordered[start : start + count]
-    out_cursor = str(page[-1].get("Id", "")) if page else None
+    out_cursor = str(_wire_value(page[-1], "Id", "")) if page else None
     return page, out_cursor
 
 
@@ -387,6 +387,30 @@ def _wrap_wire(wire: dict[str, Any], parents: list[str]) -> dict[str, Any]:
     for parent in reversed(parents):
         out = {parent: out}
     return out
+
+
+def _wire_value(wire: Any, key: str, default: Any = None) -> Any:
+    """Leaf value from a possibly nesting-wrapped wire record (REQ-084).
+
+    The nesting fault wraps the projected wire as ``{parent: {...}}``; a
+    filter or cursor that reads ``w["ServiceId"]`` would KeyError on the
+    wrapper and a sync would 500 instead of serving the nested shape a
+    path patch can repair. Descend through single-key wrappers until the
+    key is found or the record is flat.
+    """
+    seen = 0
+    node = wire
+    while isinstance(node, dict) and seen < 6:
+        if key in node:
+            return node[key]
+        if len(node) == 1:
+            _k, _v = next(iter(node.items()))
+            if isinstance(_v, dict) and isinstance(_k, str) and _k:
+                node = _v
+                seen += 1
+                continue
+        return default
+    return default
 
 
 def service_id_for(property_id: str) -> str:
@@ -608,16 +632,16 @@ def reservations_get_all(body: dict[str, Any]) -> Response:
     wires = [to_wire_reservation(r, scenario_id) for r in dataset.get("reservations", [])]
     if enterprise_ids is not None:
         wanted = set(enterprise_ids)
-        wires = [w for w in wires if str(w["ServiceId"]).removeprefix("SVC-") in wanted]
+        wires = [w for w in wires if str(_wire_value(w, "ServiceId", "")).removeprefix("SVC-") in wanted]
     if service_ids is not None:
-        wires = [w for w in wires if str(w["ServiceId"]) in set(service_ids)]
+        wires = [w for w in wires if str(_wire_value(w, "ServiceId", "")) in set(service_ids)]
     if reservation_ids is not None:
-        wires = [w for w in wires if str(w["Id"]) in set(reservation_ids)]
+        wires = [w for w in wires if str(_wire_value(w, "Id", "")) in set(reservation_ids)]
     if states is not None:
-        wires = [w for w in wires if str(w.get("State", w.get("Status"))) in set(states)]
+        wires = [w for w in wires if str(_wire_value(w, "State", _wire_value(w, "Status", ""))) in set(states)]
     if interval is not None:
         start, end = interval
-        wires = [w for w in wires if start <= str(w["UpdatedUtc"]) <= end]
+        wires = [w for w in wires if start <= str(_wire_value(w, "UpdatedUtc", "")) <= end]
     page, out_cursor = _paginate_by_cursor(wires, count, cursor)
     return _json_response({"Reservations": page, _cursor_leaf(scenario_id): out_cursor})
 
@@ -634,24 +658,31 @@ def customers_get_all(body: dict[str, Any]) -> Response:
     dataset = get_dataset_for_current_state()
     wires = []
     for r in dataset.get("reservations", []):
-        account = account_id_for(str(r.get("reservation_id")))
-        updated = _parse_iso_dt(r.get("updated_at"))
-        wire = to_wire_customer(account, r.get("guest_name"), _utc_z(updated) if updated is not None else None)  # type: ignore[arg-type]
+        # REQ-084 item 1: the nesting fault wraps the internal record —
+        # unwrap before reading reservation_id / guest_name / updated_at,
+        # as to_wire_reservation and to_wire_order_item already do. Without
+        # this the endpoint serves Id "ACC-None" and drops the names, and no
+        # spec patch can repoint a join to data that is not served.
+        # (_split_nesting is total over any input: no fallback needed.)
+        inner, _parents = _split_nesting(r if isinstance(r, dict) else {})
+        account = account_id_for(str(inner.get("reservation_id")))
+        updated = _parse_iso_dt(inner.get("updated_at"))
+        wire = to_wire_customer(account, inner.get("guest_name"), _utc_z(updated) if updated is not None else None)  # type: ignore[arg-type]
         # REQ-080 item 1: a renamed field vanishes from the wire — the
         # customer row's derived names/instant drop when the source record
         # no longer carries the field. Baseline nulls (field present but
         # None) keep today's null keys.
-        if "guest_name" not in r:
+        if "guest_name" not in inner:
             for _drop in ("FirstName", "LastName", "Email"):
                 wire.pop(_drop, None)
-        if "updated_at" not in r:
+        if "updated_at" not in inner:
             wire.pop("UpdatedUtc", None)
         wires.append(wire)
     if customer_ids is not None:
-        wires = [w for w in wires if str(w["Id"]) in set(customer_ids)]
+        wires = [w for w in wires if str(_wire_value(w, "Id", "")) in set(customer_ids)]
     if interval is not None:
         start, end = interval
-        wires = [w for w in wires if start <= str(w.get("UpdatedUtc")) <= end]
+        wires = [w for w in wires if start <= str(_wire_value(w, "UpdatedUtc", "")) <= end]
     page, out_cursor = _paginate_by_cursor(wires, count, cursor)
     return _json_response({"Customers": page, _cursor_leaf(scenario_id): out_cursor})
 
@@ -671,14 +702,14 @@ def order_items_get_all(body: dict[str, Any]) -> Response:
     wires = [to_wire_order_item(f) for f in dataset.get("folios", [])]
     if enterprise_ids is not None:
         wanted = set(enterprise_ids)
-        wires = [w for w in wires if str(w["ServiceId"]).removeprefix("SVC-") in wanted]
+        wires = [w for w in wires if str(_wire_value(w, "ServiceId", "")).removeprefix("SVC-") in wanted]
     if account_ids is not None:
-        wires = [w for w in wires if str(w["AccountId"]) in set(account_ids)]
+        wires = [w for w in wires if str(_wire_value(w, "AccountId", "")) in set(account_ids)]
     if order_item_ids is not None:
-        wires = [w for w in wires if str(w["Id"]) in set(order_item_ids)]
+        wires = [w for w in wires if str(_wire_value(w, "Id", "")) in set(order_item_ids)]
     if interval is not None:
         start, end = interval
-        wires = [w for w in wires if start <= str(w.get("UpdatedUtc")) <= end]
+        wires = [w for w in wires if start <= str(_wire_value(w, "UpdatedUtc", "")) <= end]
     page, out_cursor = _paginate_by_cursor(wires, count, cursor)
     return _json_response({"OrderItems": page, _cursor_leaf(scenario_id): out_cursor})
 

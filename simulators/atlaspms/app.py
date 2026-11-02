@@ -311,6 +311,35 @@ def _wrap_wire(wire: dict[str, Any], parents: list[str]) -> dict[str, Any]:
     return out
 
 
+def _inner_get(rec: Any, key: str, default: Any = None) -> Any:
+    """Internal field read that survives a nesting wrap (REQ-084).
+
+    The nesting fault wraps the internal record as ``{parent: {...}}``;
+    a lookup by ``reservation_id`` on the wrapper would miss and a
+    detail/guest lookup would 404 instead of serving the nested shape.
+    """
+    # (_split_nesting is total over any input: no fallback needed.)
+    inner, _ = _split_nesting(rec if isinstance(rec, dict) else {})
+    if isinstance(inner, dict) and key in inner:
+        return inner[key]
+    return default
+
+
+def _wire_get(wire: Any, key: str, default: Any = None) -> Any:
+    """Wire leaf read that survives a nesting wrap (REQ-084)."""
+    node = wire
+    for _ in range(6):
+        if isinstance(node, dict) and key in node:
+            return node[key]
+        if isinstance(node, dict) and len(node) == 1:
+            _k, _v = next(iter(node.items()))
+            if isinstance(_v, dict) and isinstance(_k, str) and _k:
+                node = _v
+                continue
+        return default
+    return default
+
+
 def to_wire_reservation(rec: dict[str, Any]) -> dict[str, Any]:
     """Internal reservation -> getReservations list item (camelCase)."""
     # REQ-081 item 5: nesting applies to the projected wire record.
@@ -370,8 +399,13 @@ def to_wire_reservation(rec: dict[str, Any]) -> dict[str, Any]:
 
 def to_wire_reservation_detail(rec: dict[str, Any]) -> dict[str, Any]:
     """Internal reservation -> getReservation detail object."""
-    item = to_wire_reservation(rec)
-    total = _Decimal(str(rec.get("total_amount", "0"))) if "total_amount" in rec else None
+    # REQ-084: unwrap a nesting-wrapped internal record before reading
+    # total_amount, and build the detail from the flat list item (the list
+    # serializer wraps the projected wire — the detail wraps the same way).
+    # (_split_nesting is total over any input: no fallback needed.)
+    _inner, _detail_parents = _split_nesting(rec if isinstance(rec, dict) else {})
+    item = to_wire_reservation(_inner)
+    total = _Decimal(str(_inner.get("total_amount", "0"))) if "total_amount" in _inner else None
     guest_name = str(item.get("guestName") or "")
     first, _, last = guest_name.partition(" ")
     detail: dict[str, Any] = {
@@ -396,11 +430,17 @@ def to_wire_reservation_detail(rec: dict[str, Any]) -> dict[str, Any]:
             detail[key] = item[key]
     if total is not None:
         detail["total"] = total
+    if _detail_parents:
+        return _wrap_wire(detail, _detail_parents)
     return detail
 
 
 def to_wire_guest(rec: dict[str, Any]) -> dict[str, Any]:
     """Internal reservation -> getGuest object (primary guest)."""
+    # REQ-084: unwrap a nesting-wrapped internal record first — the guest
+    # endpoint is a derived endpoint like customers_get_all.
+    # (_split_nesting is total over any input: no fallback needed.)
+    rec, _ = _split_nesting(rec if isinstance(rec, dict) else {})
     guest: dict[str, Any] = {}
     # REQ-080 item 1: a renamed-away guest_name vanishes from the wire.
     if "guest_name" in rec:
@@ -610,11 +650,11 @@ def get_reservations(
     qp = request.query_params
     prop_filter = qp.get("propertyID")
     if prop_filter:
-        recs = [r for r in recs if str(r.get("property_id")) == prop_filter]
+        recs = [r for r in recs if str(_inner_get(r, "property_id")) == prop_filter]
     wire = [to_wire_reservation(r) for r in recs]
     status_filter = qp.get("status")
     if status_filter:
-        wire = [w for w in wire if str(w.get("status")) == status_filter]
+        wire = [w for w in wire if str(_wire_get(w, "status", "")) == status_filter]
     for lo, hi, key in (
         ("modifiedFrom", "modifiedTo", "dateModified"),
         ("checkInFrom", "checkInTo", "startDate"),
@@ -623,9 +663,9 @@ def get_reservations(
     ):
         lo_v, hi_v = qp.get(lo), qp.get(hi)
         if lo_v:
-            wire = [w for w in wire if str(w.get(key, "")) >= lo_v]
+            wire = [w for w in wire if str(_wire_get(w, key, "")) >= lo_v]
         if hi_v:
-            wire = [w for w in wire if str(w.get(key, "")) <= hi_v]
+            wire = [w for w in wire if str(_wire_get(w, key, "")) <= hi_v]
     return _json_response(_paginate(request, wire, scenario_id, count))
 
 
@@ -642,7 +682,7 @@ def get_reservation(
         raise HTTPException(status_code=422, detail={"code": "missing_param", "message": "reservationID is required"})
     dataset = get_dataset_for_current_state()
     for rec in dataset["reservations"]:
-        if str(rec.get("reservation_id")) == reservationID and (propertyID is None or str(rec.get("property_id")) == propertyID):
+        if str(_inner_get(rec, "reservation_id")) == reservationID and (propertyID is None or str(_inner_get(rec, "property_id")) == propertyID):
             return _json_response({"success": True, "data": to_wire_reservation_detail(rec)})
     raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Reservation not found"})
 
@@ -662,7 +702,7 @@ def get_guest(
         raise HTTPException(status_code=422, detail={"code": "missing_param", "message": "reservationID or guestID is required"})
     dataset = get_dataset_for_current_state()
     for rec in dataset["reservations"]:
-        rid = str(rec.get("reservation_id"))
+        rid = str(_inner_get(rec, "reservation_id", ""))
         if (reservation_id is not None and rid == reservation_id) or (
             guest_id is not None and guest_id_for(rid) == guest_id
         ):
@@ -683,9 +723,9 @@ def get_transactions(
     qp = request.query_params
     prop_filter = qp.get("propertyID")
     if prop_filter:
-        recs = [r for r in recs if str(r.get("property_id")) == prop_filter]
+        recs = [r for r in recs if str(_inner_get(r, "property_id")) == prop_filter]
     res_filter = qp.get("reservationID")
     if res_filter:
-        recs = [r for r in recs if str(r.get("reservation_id")) == res_filter]
+        recs = [r for r in recs if str(_inner_get(r, "reservation_id")) == res_filter]
     wire = [to_wire_transaction(r) for r in recs]
     return _json_response(_paginate(request, wire, scenario_id, count))

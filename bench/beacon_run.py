@@ -1235,13 +1235,182 @@ def _verifier_post(verifier_url: str, path: str, payload: dict[str, Any], timeou
     return data
 
 
+#: Secret-hint keys masked in persisted model traces (REQ-084 item 3).
+#: Same hint set as the evidence redaction (``bench/evidence.py``):
+#: credential *names* travel, values never do.
+_TRACE_SECRET_HINTS = ("token", "key", "secret", "password", "auth", "credential", "session")
+
+#: Assignment-shaped secrets inside free text (``key: value`` / ``key=value``).
+_TRACE_SECRET_RE = None  # compiled lazily (``re`` import is cheap, kept local)
+
+
+def _trace_secret_re() -> Any:
+    global _TRACE_SECRET_RE
+    if _TRACE_SECRET_RE is None:
+        import re as _re2
+
+        _TRACE_SECRET_RE = (
+            _re2.compile(
+                r"(?i)\b[\w-]*(token|api[_-]?key|client[_-]?secret|password|authorization|session[_-]?token)\b\s*[:=]\s*\S+"
+            ),
+            _re2.compile(r"(?i)\b(bearer)\b\s+\S+"),
+        )
+    return _TRACE_SECRET_RE
+
+
+def _redact_trace_value(key: str, value: Any, *, _depth: int = 0) -> Any:
+    """Redact one traced value: secret-hint keys masked, long text cut.
+
+    Same basis as the evidence redaction (secret names only, never
+    values); truncation is gentler (2000 chars) so a persisted L3 prompt
+    stays readable enough to trace a live failure offline.
+    """
+    lowered = str(key).lower()
+    if any(hint in lowered for hint in _TRACE_SECRET_HINTS):
+        return "***"
+    if isinstance(value, dict):
+        if _depth >= 4:
+            return "{...}"
+        return {str(k): _redact_trace_value(str(k), v, _depth=_depth + 1) for k, v in list(value.items())[:50]}
+    if isinstance(value, list):
+        return [_redact_trace_value(key, v, _depth=_depth + 1) for v in value[:50]]
+    if isinstance(value, str):
+        key_re, bearer_re = _trace_secret_re()
+        scrubbed = key_re.sub(lambda m: m.group(0).split(":")[0].split("=")[0] + ":***", value)
+        scrubbed = bearer_re.sub(lambda m: m.group(1) + " ***", scrubbed)
+        if len(scrubbed) > 2000:
+            return scrubbed[:2000] + "… (truncated)"
+        return scrubbed
+    return value
+
+
+def _redact_trace_messages(messages: Any) -> Any:
+    """Redact a provider request (list of ``{role, content}`` dicts)."""
+    if not isinstance(messages, list):
+        return _redact_trace_value("messages", messages)
+    out = []
+    for msg in messages:
+        if isinstance(msg, dict):
+            out.append({str(k): _redact_trace_value(str(k), v) for k, v in msg.items()})
+        else:
+            out.append(_redact_trace_value("message", msg))
+    return out
+
+
+class _TraceRecordingProvider:
+    """Provider wrapper recording redacted (request, response) per call.
+
+    REQ-084 item 3: the engine arm's L3 request and response were never
+    persisted (in-memory session), so a live failure no in-process
+    reproduction explains could not be traced. The wrapper delegates
+    every call to the inner provider and appends a redacted copy —
+    request messages, response text, tier/purpose/model/usage — to
+    :attr:`calls`. Secrets never: key names only (see
+    :func:`_redact_trace_value`).
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.calls: list[dict[str, Any]] = []
+
+    def complete(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int = 1024,
+        tier: str = "small",
+        purpose: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Any:
+        result = self._inner.complete(
+            list(messages), max_tokens=max_tokens, tier=tier, purpose=purpose, tools=tools
+        )
+        try:
+            usage = getattr(result, "usage", None)
+            if usage is None:
+                usage_dict: dict[str, Any] = {}
+            elif isinstance(usage, dict):
+                usage_dict = {str(k): int(v) if isinstance(v, (int, float)) else v for k, v in usage.items()}
+            else:
+                usage_dict = {
+                    "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                    "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+                    "reasoning_tokens": int(getattr(usage, "reasoning_tokens", 0) or 0),
+                }
+        except Exception:
+            usage_dict = {}
+        try:
+            model = None
+            for attr in ("frontier_model", "small_model", "model"):
+                candidate = getattr(self._inner, attr, None)
+                if isinstance(candidate, str) and candidate:
+                    if attr == "frontier_model" and tier != "frontier":
+                        continue
+                    if attr == "small_model" and tier != "small":
+                        continue
+                    model = candidate
+                    break
+        except Exception:
+            model = None
+        with contextlib.suppress(Exception):
+            self.calls.append({
+                "tier": str(tier),
+                "purpose": str(purpose),
+                "model": model,
+                "max_tokens": int(max_tokens),
+                "request": _redact_trace_messages(messages),
+                "response_text": _redact_trace_value("response_text", getattr(result, "text", "") or ""),
+                "usage": usage_dict,
+            })
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def _write_arm_trace(
+    trace_dir: str | pathlib.Path,
+    index: int,
+    trial: int,
+    vendor: str,
+    family: str,
+    arm: str,
+    sink: list[dict[str, Any]] | None,
+) -> None:
+    """Persist one arm's model request/response for an instance (REQ-084/3).
+
+    Written under ``<round>/traces/`` next to ``grades.jsonl`` so a live
+    failure is traceable offline. Never raises: tracing must not break a
+    run (a failure prints and the run continues without that file).
+    """
+    try:
+        out = pathlib.Path(trace_dir) / "traces"
+        out.mkdir(parents=True, exist_ok=True)
+        if sink:
+            entry = dict(sink[0])
+        else:
+            entry = {"arm": arm, "calls": [], "brief": None,
+                     "note": "no provider-backed model calls recorded (custom runner)"}
+        payload = {
+            "arm": arm, "instance_index": int(index), "trial": int(trial),
+            "vendor": str(vendor), "family": str(family),
+            **entry,
+        }
+        (out / f"instance-{int(index)}-trial-{int(trial)}-{arm}.json").write_text(
+            json.dumps(payload, sort_keys=True, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        print(f"beacon run: trace write failed for instance {index} arm {arm}: {exc}", flush=True)
+
+
 def run_instance_trial(
     protocol: BeaconProtocol,
     eval_seed_hex: str,
     descriptor: dict[str, Any],
     trial: int,
     *,
-    config: Any,
+    config: Any = None,
     runners: dict[str, Any] | None = None,
     provider: Any | None = None,
     knowledge_warm: Any | None = None,
@@ -1249,6 +1418,7 @@ def run_instance_trial(
     vendors: list[BeaconVendor] | None = None,
     vendor_cfg: BeaconVendor | None = None,
     public_url: str = "",
+    trace_dir: str | pathlib.Path | None = None,
 ) -> tuple[list[BeaconArmGrade], dict[str, Any]]:
     """Run all protocol arms on one beacon instance × trial; grade each.
 
@@ -1291,8 +1461,12 @@ def run_instance_trial(
         start = time.monotonic()
         grade = BeaconArmGrade(arm=arm, instance_index=index, trial=trial, vendor=vendor, family=str(descriptor["family"]))
         try:
+            sink: list[dict[str, Any]] = []
             result = _run_arm(arm, inputs, case, runners, prov, knowledge_warm,
-                              descriptor=descriptor, eval_seed_hex=eval_seed_hex)
+                              descriptor=descriptor, eval_seed_hex=eval_seed_hex,
+                              trace_sink=sink if trace_dir is not None else None)
+            if trace_dir is not None:
+                _write_arm_trace(trace_dir, index, trial, vendor, str(descriptor["family"]), arm, sink)
         except Exception as exc:
             grade.error = f"{type(exc).__name__}: {exc}"[:500]
             grade.executed = True
@@ -1433,6 +1607,7 @@ def _run_arm(
     *,
     descriptor: dict[str, Any] | None = None,
     eval_seed_hex: str | None = None,
+    trace_sink: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Dispatch one arm (custom runners win, for unit tests/offline runs).
 
@@ -1445,6 +1620,11 @@ def _run_arm(
     engine — the shared :func:`beacon_bench_context` (pre-drift spec +
     faulted-sync evidence) rendered through the same file-based bench
     prompts — instead of the legacy whole-spec path.
+
+    REQ-084 item 3: when *trace_sink* is given, provider-backed arms
+    record their redacted model request/response into it (one entry per
+    arm); the agent arm records its rendered brief instead (its model
+    runs in a CLI subprocess, not through the provider).
     """
     from bench import ablation as _ablation
 
@@ -1457,7 +1637,16 @@ def _run_arm(
                 ctx = beacon_bench_context(descriptor, case, inputs, eval_seed_hex)
             except Exception:
                 ctx = None
-        return _ablation.run_frontier_oneshot_arm(inputs, provider=provider, case=case, context=ctx)
+        recorder: Any | None = None
+        effective = provider
+        if trace_sink is not None:
+            inner = provider if provider is not None else _ablation.ablation_provider()
+            recorder = _TraceRecordingProvider(inner)
+            effective = recorder
+        result = _ablation.run_frontier_oneshot_arm(inputs, provider=effective, case=case, context=ctx)
+        if trace_sink is not None:
+            trace_sink.append({"arm": arm, "calls": list(recorder.calls) if recorder is not None else [], "brief": None})
+        return result
     if arm == "frontier_agent":
         ctx = None
         if case is not None and descriptor is not None and eval_seed_hex:
@@ -1465,7 +1654,19 @@ def _run_arm(
                 ctx = beacon_bench_context(descriptor, case, inputs, eval_seed_hex)
             except Exception:
                 ctx = None
-        return _ablation.run_frontier_agent_arm(inputs, case=case, context=ctx)
+        result = _ablation.run_frontier_agent_arm(inputs, case=case, context=ctx)
+        if trace_sink is not None:
+            brief = ""
+            try:
+                from bench.context import messages_to_text as _to_text
+                from bench.context import render_frontier_agent_brief as _render_brief
+
+                brief = _to_text(_render_brief(inputs, ctx)).strip() if ctx is not None else ""
+            except Exception:
+                brief = ""
+            trace_sink.append({"arm": arm, "calls": [],
+                               "brief": _redact_trace_value("brief", brief)})
+        return result
     if arm in ("engine_no_knowledge", "autobridge_cold", "autobridge_warm"):
         if case is None:
             # No in-process spec for this vendor: the engine cannot
@@ -1493,8 +1694,21 @@ def _run_arm(
         def _derive(_spec: dict[str, Any], _case: Any, _inputs: Any) -> Any:
             return diag
 
+        # REQ-084 item 3: record the engine arm's model request/response
+        # per instance (redacted) — a live failure no in-process
+        # reproduction explains must stay traceable offline.
+        engine_recorder: Any | None = None
+        engine_effective = provider
+        if trace_sink is not None:
+            engine_inner = provider if provider is not None else _ablation.ablation_provider()
+            engine_recorder = _TraceRecordingProvider(engine_inner)
+            engine_effective = engine_recorder
         result = _ablation.run_engine_arm(inputs, case, ablation=cast("Any", arm),
-                                          provider=provider, knowledge=knowledge, derive=_derive)
+                                          provider=engine_effective, knowledge=knowledge, derive=_derive)
+        if trace_sink is not None:
+            trace_sink.append({"arm": arm,
+                               "calls": list(engine_recorder.calls) if engine_recorder is not None else [],
+                               "brief": None})
         try:
             import dataclasses as _dataclasses
 
@@ -2041,6 +2255,192 @@ def _preflight_repair_index(vendor: str, eval_seed_hex: str, pos: int) -> int:
     raise BeaconError(f"preflight: no repair instance for {vendor} in 50 rounds (seed cannot prove it)")
 
 
+def _wire_by_op(summary: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Served wire records by operation name (for reference-patch pairing)."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    op_results = summary.get("operation_results", {})
+    if isinstance(op_results, dict):
+        for op, res in op_results.items():
+            recs = res.get("records") if isinstance(res, dict) else getattr(res, "records", None)
+            if isinstance(recs, list):
+                out[str(op)] = [r for r in recs if isinstance(r, dict)]
+    return out
+
+
+@contextlib.contextmanager
+def _faulted_transport_for(vendor: str, eval_seed_hex: str, index: int, spec: dict[str, Any]) -> Any:
+    """In-process faulted serving for ``sync_candidate`` (the real path).
+
+    Mirrors the A2 prover: the same vendor app + beacon slot the arms
+    sync against, with the spec's own base path joined (so meridian's
+    ``/api/connector/v1`` rides along). Yields a ``client_factory`` for
+    :func:`sync_candidate`.
+    """
+    import importlib as _importlib
+    import urllib.parse as _urlparse
+
+    from autobridge.runtime.http import resolve_env_placeholders as _resolve
+    from bench import faults as _faults
+    from simulators.common import beacon_serve as _beacon
+
+    with _faults.isolated_sim_state(), _faults.fake_env():
+        _beacon.set_beacon(eval_seed_hex, index)
+        app = _importlib.import_module(_faults._BEACON_VENDOR_APPS[vendor]).app
+        base_path = _urlparse.urlsplit(_resolve(str(spec["source"]["base_url"]))).path.rstrip("/")
+        fake_base = _faults._FAKE_BASE_URL + base_path
+
+        def factory(**_kw: Any) -> Any:
+            from starlette.testclient import TestClient
+
+            return TestClient(app, base_url=fake_base)
+
+        try:
+            yield factory
+        finally:
+            from simulators.common import state as _sim_state
+
+            _sim_state.set_beacon_state(None, None)
+
+
+def preflight_prove_repairs(
+    protocol: BeaconProtocol,
+    *,
+    eval_seed_hex: str,
+    vendors: list[BeaconVendor] | None = None,
+    verifier_url: str | None = None,
+) -> dict[str, Any]:
+    """Prove every drawn ``repair`` instance is reachable by a spec patch.
+
+    REQ-084 item 2: the old preflight proved only that the unfaulted
+    baseline passes the judge, while ``reference_patch_for`` was called
+    only from a unit test on another seed and entity — so a meridian
+    reservation nesting was never proven and no arm could pass it. For
+    every drawn instance whose key is ``repair``: build
+    ``reference_patch_for``, push it through the real ``sync_candidate``
+    path and the judge, and fail loudly with the instance, the patch and
+    the failed checks when it does not pass. Rehearsals included (this
+    runs inside :func:`preflight_beacon`, which ``run_beacon`` executes
+    before the first arm).
+
+    Returns ``{"proved": [indices]}``. Raises :class:`BeaconError` on the
+    first unprovable repair — an unreachable ``repair`` key is a harness
+    bug (or a wrong key), never a silent arm loss.
+    """
+    from bench import faults as _faults
+    from bench import reference_patch as _refpatch
+
+    vendor_list = list(vendors) if vendors is not None else load_vendors()
+    try:
+        seed = bytes.fromhex(str(eval_seed_hex).strip())
+    except (ValueError, AttributeError) as exc:
+        raise BeaconError(f"preflight: bad eval seed hex: {exc}") from exc
+    if len(seed) != 32:
+        raise BeaconError(f"preflight: eval seed must be 32 bytes, got {len(seed)}")
+    proved: list[int] = []
+    for index in range(int(protocol.faults)):
+        try:
+            from simulators.common import faultgen as _faultgen
+
+            inst = _faultgen.generate_instance(seed, index)
+        except (ValueError, KeyError) as exc:
+            raise BeaconError(f"preflight: bad instance {index}: {exc}") from exc
+        if str(inst.get("expected", "")) != "repair":
+            continue
+        vendor = str(inst.get("vendor", ""))
+        family = str(inst.get("family", ""))
+        desc = {"index": index, "vendor": vendor}
+        spec = engine_spec_for(desc, vendor_list)
+        if spec is None:
+            raise BeaconError(f"preflight: no pre-drift spec for vendor {vendor!r} (instance {index})")
+        try:
+            faulted, baseline = _faults.beacon_sync_pair(
+                vendor=vendor, eval_seed_hex=str(eval_seed_hex), index=index, spec=spec
+            )
+        except Exception as exc:
+            raise BeaconError(
+                f"preflight: repair instance {index} ({vendor}/{family} "
+                f"{dict(inst.get('params', {}))}): faulted sync failed: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        patch = _refpatch.reference_patch_for(
+            inst, spec,
+            faulted_wire=_wire_by_op(faulted), baseline_wire=_wire_by_op(baseline),
+        )
+        if not patch:
+            raise BeaconError(
+                f"preflight: no reference patch for repair instance {index} "
+                f"({vendor}/{family} {dict(inst.get('params', {}))}) — "
+                "unreachable by any patch"
+            )
+        if vendor == "fias-pabx":
+            try:
+                from autobridge.spec.patch import apply_patch as _apply_patch
+
+                patched = _apply_patch(dict(spec), list(patch))
+                faulted2, _baseline2 = _faults.beacon_sync_pair(
+                    vendor=vendor, eval_seed_hex=str(eval_seed_hex), index=index, spec=patched
+                )
+            except Exception as exc:
+                raise BeaconError(
+                    f"preflight: repair instance {index} ({vendor}/{family} "
+                    f"{dict(inst.get('params', {}))}): patched sync failed: "
+                    f"{type(exc).__name__}: {exc} patch={patch}"
+                ) from exc
+            if str(faulted2.get("outcome", "")) != "Complete":
+                raise BeaconError(
+                    f"preflight: repair instance {index} ({vendor}/{family} "
+                    f"{dict(inst.get('params', {}))}): patched sync "
+                    f"{faulted2.get('outcome')} {faulted2.get('unmet_criteria')} patch={patch}"
+                )
+            produced = canonical_to_records(faulted2.get("canonical_records", {}))
+        else:
+            try:
+                from autobridge.spec.patch import apply_patch as _apply_patch
+
+                patched = _apply_patch(dict(spec), list(patch))
+                with _faulted_transport_for(vendor, str(eval_seed_hex), index, spec) as factory:
+                    summary = sync_candidate(patched, "http://localhost:9", client_factory=factory)
+            except Exception as exc:
+                raise BeaconError(
+                    f"preflight: repair instance {index} ({vendor}/{family} "
+                    f"{dict(inst.get('params', {}))}): candidate sync failed: "
+                    f"{type(exc).__name__}: {exc} patch={patch}"
+                ) from exc
+            if str(summary.get("outcome", "")) != "Complete":
+                raise BeaconError(
+                    f"preflight: repair instance {index} ({vendor}/{family} "
+                    f"{dict(inst.get('params', {}))}): candidate sync "
+                    f"{summary.get('outcome')} {summary.get('unmet_criteria')} patch={patch}"
+                )
+            produced = canonical_to_records(summary.get("canonical_records", {}))
+        if verifier_url:
+            try:
+                base_records = unfaulted_baseline_records(vendor, str(eval_seed_hex), index, spec)
+            except Exception as exc:
+                raise BeaconError(
+                    f"preflight: repair instance {index} ({vendor}/{family}): "
+                    f"baseline failed: {type(exc).__name__}: {exc}"
+                ) from exc
+            try:
+                judged = _verifier_post(
+                    verifier_url,
+                    "/beacon/records",
+                    {"eval_seed_hex": str(eval_seed_hex), "index": index,
+                     "records": produced, "spec": patched,
+                     "baseline_records": base_records},
+                )
+            except BeaconError as exc:
+                raise BeaconError(f"preflight: repair instance {index}: judge unreachable: {exc}") from exc
+            if str(judged.get("verdict", "fail")) != "pass":
+                raise BeaconError(
+                    f"preflight: repair instance {index} ({vendor}/{family} "
+                    f"{dict(inst.get('params', {}))}): reference repair fails the judge: "
+                    f"{judged.get('failed_checks', [])} patch={patch}"
+                )
+        proved.append(index)
+    return {"proved": proved}
+
+
 def preflight_beacon(
     protocol: BeaconProtocol,
     *,
@@ -2065,6 +2465,10 @@ def preflight_beacon(
     3. the unfaulted output passes the records judge (HTTP vendors
        against the oracle; ``fias-pabx`` against its own unfaulted
        output — the one judging regime, wired end to end);
+    4. every drawn instance whose key is ``repair`` is proven reachable:
+       ``reference_patch_for`` through the real ``sync_candidate`` path
+       and the judge (REQ-084 item 2) — a meridian reservation nesting
+       was never proven before, and no arm could pass it;
 
     plus once: both frontier drivers' rendered prompts are non-empty and
     the agent CLI child ``PWD`` equals the sandbox dir. Raises
@@ -2127,6 +2531,20 @@ def preflight_beacon(
                     f"preflight: {vendor} unfaulted sync fails the judge: {failed}"
                 )
         report["vendors"][vendor] = {"url": url, "records": len(baseline.get("reservations", [])) + len(baseline.get("folios", []))}
+    # REQ-084 item 2: prove every drawn repair instance is reachable — the
+    # reference repair through the real sync_candidate path and the judge.
+    # Runs inside the placeholder credential env (same as the arms); without
+    # a verifier URL the sync half still runs and only the judge is skipped.
+    try:
+        _repair_proof = preflight_prove_repairs(
+            protocol, eval_seed_hex=eval_seed_hex, vendors=vendor_list,
+            verifier_url=verifier_url,
+        )
+    except BeaconError:
+        raise
+    except Exception as exc:
+        raise BeaconError(f"preflight: repair proof failed: {type(exc).__name__}: {exc}") from exc
+    report["repairs"] = _repair_proof
     # Frontier prompt wiring (A4): both drivers' rendered prompts non-empty.
     from bench.context import messages_to_text as _to_text
     from bench.context import render_frontier_agent_brief as _render_brief
@@ -2718,6 +3136,9 @@ def run_beacon(
                         config=cfg, runners=runners, provider=provider,
                         knowledge_warm=warm, verifier_url=verifier_url,
                         vendors=vendors, vendor_cfg=vendor_cfg, public_url=public.get(vendor_cfg.vendor, ""),
+                        # REQ-084 item 3: each arm's model request/response
+                        # lands under <round>/traces/ next to grades.jsonl.
+                        trace_dir=out_dir,
                     )
                 except BeaconError as exc:
                     _aborted = f"infrastructure abort at instance {index} trial {trial}: {exc}"

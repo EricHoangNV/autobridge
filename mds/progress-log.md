@@ -4316,3 +4316,6 @@ Claimed REQ-081, implemented all 7 items, 12 new tests in test_autobridge_req081
 - Owner step: keyed rehearsal with FRONTIER_API_KEY on this commit (round 6603643 or newer), report every arm, then close REQ-083 (and REQ-078/080/081 with it).
 - Do not freeze, tag or commit under `experiments/beacon/` (owner runs the real freeze).
 - New tests must match `test_autobridge_*`/`test_simulators_*` gate patterns or CI never runs them (renamed 7 files this run).
+
+## 2026-11-02 — REQ-084 DONE (sbx1; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Meridian nesting is reachable by patch again (customers unwrap + audit of every derived endpoint), the preflight now proves every drawn `repair` instance through the real candidate sync + judge (fails loudly), and each arm's redacted model request/response lands under `<round>/traces/`. Full gates green (autobridge 3216 @90.03%, verifier 139 @90.35%, simulators 433 @90.18%, UI 350; lint/typecheck green; e2e skipped — no live stack, in-process coverage instead). Owner step: keyed rehearsal after REQ-085 lands.
