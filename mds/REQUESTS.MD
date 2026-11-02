@@ -2,7 +2,57 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-02): **REQ-083** (REQ-066..081 done; the real beacon freeze waits for it). REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-02 23:30): **REQ-084 then REQ-085** (REQ-066..083 done; the real beacon freeze waits for them). One REQ per iteration: finish, gate, commit, then the next. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+
+### REQ-084 — Meridian nesting is unreachable by any patch (customers endpoint ignores nesting); preflight proves the drawn repairs; L3 traces kept (2026-11-02)
+Status: OPEN
+Keyed rehearsal on `0f079c17` (round 6603643, instance 3, meridian `nesting` `{entity: reservation, parents: [stay]}`,
+expected repair): every arm fails `field_missing`; the generator's own reference repair fails the same way
+(`field_missing` 27 = the non-null guest names). Reproduced in-process. Three small items, harness and simulator
+only; no engine change.
+1. `simulators/meridianpms/app.py` `customers_get_all` (~637-645) reads `reservation_id` / `guest_name` /
+   `updated_at` from the internal dataset record without `_split_nesting`, unlike `to_wire_reservation` (~424) and
+   `to_wire_order_item` (~525). Under nesting it serves `Id: "ACC-None"` and drops the names, and no spec patch can
+   repoint a join to data that is not served. Unwrap with `_split_nesting(r)` first, as the other two do. Check every
+   other derived endpoint in every simulator for the same omission (any place that reads an internal record field
+   after a nesting fault must unwrap). Test: the reference nesting repair for a meridian reservation nesting passes
+   the judge in-process.
+2. The REQ-083 A2 preflight (`bench/beacon_run.py` `preflight_beacon` ~2106-2125) proves only that the unfaulted
+   baseline passes the judge; `reference_patch_for` (`bench/reference_patch.py`) is called only from a unit test on
+   another seed and entity, so a meridian reservation nesting was never proven. Extend the preflight: for every
+   drawn instance whose key is `repair`, build `reference_patch_for`, push it through the real `sync_candidate` and
+   the judge, and fail loudly with the instance, the patch and the failed checks when it does not pass. Rehearsals
+   included.
+3. The engine arm's L3 request and response are not persisted (in-memory sqlite session, `bench/ablation.py`
+   ~1180), so a live failure that in-process reproduction cannot explain (instance 1, harbor dates: engine arms
+   failed `business_date_mismatch` + `record_set_mismatch`, which no transform value reproduces offline) cannot be
+   traced. Write each arm's model request and response per instance, redacted the same way as evidence, under the
+   rehearsal/round directory next to `grades.jsonl`. Secrets never: key names only.
+Then mark DONE after full gates pass; the owner runs the keyed rehearsal after REQ-085. Do not freeze, tag or commit
+under `experiments/beacon/`.
+
+### REQ-085 — The engine's model can add a transform argument or repoint a join: evidence shows transforms, pointers allow it (2026-11-02)
+Status: OPEN
+Keyed rehearsal on `0f079c17` (round 6603643, instance 1, harbor `dates/format` `%m-%d-%Y`, expected repair): both
+frontier arms passed with `add /entities/<E>/fields/<f>/transform/0/args/input_format`; all three engine arms, on
+the same model, replaced the whole transform and failed. Not variance: the engine's model is not shown, and not
+allowed, the patch the frontier made. General engine evidence; no vocabulary, no fault knowledge.
+1. `build_generic_l3_evidence` (`src/autobridge/repair/controller.py` ~1220-1240) renders each field as a bare path
+   string and never its current `transform` list, so the model cannot see `business_date` with `cutoff`/`tz` and add
+   one argument; it must invent the whole list. Render each field's transform steps (name and args) next to its
+   path(s), for every field in the subtree.
+2. The allowed L3 pointers (`controller.py` ~1255-1256, checked by exact membership in `repair/ladder.py`
+   ~2029-2031) are only `/fields/F/path`, `/paths`, `/paths/N` and `/fields/F/transform`. Add, for each existing
+   step `i` of a field's transform, `/fields/F/transform/i/args` and `/fields/F/transform/i/args/<arg>` for the
+   arguments the transform declares (`TRANSFORM_ARGS`), so an add-arg or replace-arg patch passes
+   `_l3_pointer_error`. Add the entity join pointers (`/entities/E/joins/i/local_key`, `/joins/i/foreign_key`,
+   `/joins/i/fields/F/path`) so a join can be repointed after a nesting or rename; render the joins in the evidence
+   the same way. Whole-transform replace stays allowed.
+3. Tests: the L3 prompt for a field with a `business_date` transform shows the step and its args; an add-arg patch
+   and a join repoint pass the pointer gate; a pointer outside the listed members is still rejected. Generic specs,
+   not rehearsal instances.
+Then mark DONE after full gates pass; the owner runs the keyed rehearsal. Do not freeze, tag or commit under
+`experiments/beacon/`.
 
 ### REQ-083 — The beacon must be able to credit a correct answer before it measures anyone: harness self-test, one judging regime, honest scoring (2026-11-02)
 Status: DONE (sbx1 2026-11-02 -- all 19 items code-done: part A harness self-test + preflight, A2 reference-repair proofs through sync_candidate, A3 one judging regime, A4 URL/credential wiring; part B honest judge/scoring/docs; part C date-only calendar dates + rename evidence pairing + L2 dry-run gate + generator-ref removal; part D projected-wire nesting + meridian format exclusion + IP fictionalization; full gates green; owner step: keyed rehearsal on this commit, then close)
