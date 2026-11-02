@@ -32,7 +32,7 @@ Then mark DONE after full gates pass; the owner runs the keyed rehearsal after R
 under `experiments/beacon/`.
 
 ### REQ-085 — The engine's model can add a transform argument or repoint a join: evidence shows transforms, pointers allow it (2026-11-02)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-02 17:08)
 Keyed rehearsal on `0f079c17` (round 6603643, instance 1, harbor `dates/format` `%m-%d-%Y`, expected repair): both
 frontier arms passed with `add /entities/<E>/fields/<f>/transform/0/args/input_format`; all three engine arms, on
 the same model, replaced the whole transform and failed. Not variance: the engine's model is not shown, and not
