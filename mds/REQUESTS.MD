@@ -2,7 +2,30 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-02): **REQ-081** (REQ-066..080 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-02): **REQ-081**, then **REQ-082** (REQ-066..080 done; the real beacon freeze waits for REQ-081). Do not start REQ-051 until the owner says so.
+
+### REQ-082 — Tests check every handled fault against the fault playbook; the engine never reads it (2026-11-02)
+Status: OPEN
+`docs/fault-playbook.md` (owner, 2026-11-02) is the reference dictionary: the escalation path, the expected handling
+per drift class, the catch-all rules, the L1 rules, the beacon answer key by family, and the named scenarios. It is
+for tests, reviewers and graders only. The engine decides from evidence and must never read, import, copy or encode
+it. Do:
+1. A machine-readable copy under `tests/` (e.g. `tests/playbook/fault_playbook.yaml`): per drift class and per
+   named scenario, the allowed rungs, whether a model call is allowed, the expected outcome(s), and the catch-all
+   rules. Keep it in sync with the doc (a test that fails when a class, scenario or family appears in one and not
+   the other).
+2. A matcher used by tests: given a handled fault (detected class, rung reached, decision, patch/question, model
+   tokens, sync outcome), it reports match or the exact mismatch. Run it over the existing dev scenarios, the
+   detection sweep and the beacon grading rows, and fail on mismatch. Catch-all rule 5 is checked explicitly: a
+   crash, an empty L3 prompt ("(none recorded)" in every evidence block) or a model answer saying no evidence was
+   given is a failure, never a correct escalation.
+3. A test that the yaml's beacon-family rows agree with `simulators/common/faultgen.py` `expected_for` for every
+   family and parameter branch.
+4. A guard test that fails if anything under `src/autobridge/` references the playbook files or its tables.
+5. Resolve the doc's open items (section 6): whether `AUTH_EXPIRED` climbs to the model when a provider is wired, and
+   whether the section-5 runtime/edge rows match their tests. If the engine's behavior differs from the playbook,
+   record it in this REQ's Status and in the doc for the owner to decide; never change engine behavior to fit the
+   playbook.
 
 ### REQ-081 — Rehearsal 6603643 on 8476da5e: evidence and grading gaps that hide or block correct answers (2026-11-02)
 Status: IN_PROGRESS (sbx1 since 2026-11-02 06:10)
