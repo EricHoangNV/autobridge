@@ -90,8 +90,8 @@ the code wins and this file is stale.
 | `semantic` | `gross_net` / `minor_major`, factor 0.5 or 0.25 | repair | Model patch from baseline-vs-faulted evidence. |
 | `semantic` | `decoy` (a tempting net field appears, gross is intact) | degraded_question | Model asks; no patch. |
 | `dates` | `cutoff` (meridian) | no_patch | The wire never serves business dates. |
-| `dates` | `cutoff` (others), `tz_shift` | repair | Model patch (transform args). |
-| `dates` | `format` (`%d/%m/%Y`, `%m-%d-%Y`) | repair | Needs the date input-format argument (REQ-081 item 4). |
+| `dates` | `cutoff` (others) | repair | Model patch (transform args). `tz_shift` is not drawn: no transform in the closed set expresses an hour/day offset. |
+| `dates` | `format` (`%d/%m/%Y`, `%m-%d-%Y`) | repair | Model patch: `input_format` on the date transform (a date-only value is never timezone- or cutoff-shifted). Not drawn for meridian (a UTC-instant vendor serves no verbatim date field). |
 | `transport_auth` | `throttle`, `retry_after`, `outage`, `token_expired` | no_patch | Backoff, retry or refresh. |
 | `transport_auth` | `token_revoked`, `endpoint_removed` | escalate | L4 directly, no model call. |
 | `fias_layout` | wire ids renamed / added / reordered | repair | L1 rename or model patch on `paths`. |
@@ -113,13 +113,15 @@ the code wins and this file is stale.
 | `cursor_repeat_token`, `duplicate_late_records`, `fias_duplicate_records` | runtime (dedupe / loop guard) | no_patch; no record lost or duplicated | |
 | `fias_link_resync`, `fias_ack_timeout`, `agent_restart_inflight`, `session_lost_with_command`, `stale_command`, `cloud_slow`, `fias_oversize_frame`, `fias_record_flood` | edge runtime / protocol | no_patch; the edge agent recovers, nothing lost or duplicated | Deck 7 (PABX) |
 
-## 6. Known gaps (as of 2026-11-02)
+## 6. Known gaps (as of 2026-11-03)
 
-- REQ-081 is open. Until it lands:
-  - semantic faults on specs without a `money_invariant` check reach the model with empty evidence;
-  - multi-path (`paths`) fields are hidden from the model;
-  - `dates/format` cannot be repaired.
-- `AUTH_EXPIRED` is outside the non-fixable and backoff sets, so with a model provider wired it may climb past the
-  deterministic refresh/escalate decision. To be confirmed by test.
+- `AUTH_EXPIRED` is outside the non-fixable and backoff sets, so with a model provider wired it may climb to the
+  model instead of ending at the deterministic refresh/escalate decision. To be confirmed by test.
+- Semantic L3 evidence carries the scale signal (factor, baseline estimate) only when the spec has no
+  `money_invariant` check; specs with one rely on the invariant's own readings.
+- Live (non-benchmark) silent-corruption detection has a persisted baseline for money fields only; date semantics
+  have no live baseline.
+- A misleading rename (section 4) is a model judgment over the paired old and new values; a small model sometimes
+  patches against a visible value mismatch. The verifier gate still blocks the patch and the ladder asks.
 - Section 5's runtime rows (dedupe, edge recovery) are taken from the scenario catalog
   (`simulators/common/faults.py`) and have not been re-verified against their tests for this file.

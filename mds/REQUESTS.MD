@@ -1702,8 +1702,74 @@ with `"…"` (`bench/demo.py:735`). `/knowledge` → `connectors` (list) → pro
 97e682c3 cannot help. Fix: assert on the raw response (keep `_redact_body` for printing only), and check every other
 `_assert_live` that reads nested values for the same trap. Gate: `make demo` 8/8 twice on a keyed local stack.
 
+### REQ-025 — Beacon evaluation: faults generated from public randomness nobody could know in advance (2026-10-28)
+Status: IN_PROGRESS (sbx1 since 2026-10-29 00:55; sub-step A merged 2026-10-29; sub-step B code DONE 2026-10-29: client, serving, make eval-freeze/bench-beacon/verify-beacon/beacon-eval, docs, 5 live rehearsals + live repair proof; dependency RESOLVED 2026-10-29 (REQ-024 owner check fix: beacon engine arms now observe instances end-to-end via derive_beacon_diagnostics); remaining: live frontier numbers (needs FRONTIER_API_KEY), the real frozen run)
+Owner: prove we could not have prepared for the test even if we wanted to. The private-seed held-out split (REQ-007)
+only seals instance data for four public fault types, and the builder has tests for those types. The headline
+evaluation becomes a **beacon run**: the test's data *and* fault details are derived from a public random value that
+did not exist when the code was frozen. Same boundaries as everywhere: the generator and answer key live on the
+simulators/verifier side; the engine never imports, reads or reaches them.
+1. **Fault generator from building blocks** (`simulators/common/faultgen.py` + verifier counterpart). Input: a 32-byte
+   seed. Output: N fault instances across the five vendors (Atlas, Meridian, Harbor, LegacyStay, FIAS PABX), each a
+   family plus seed-chosen parameters, never a fixed scenario:
+   - rename: which field, new name from a large word pool (e.g. `guest_name` → `primaryOccupant`);
+   - nesting: depth and new parent key;
+   - pagination: strategy switch, new parameter and cursor field names;
+   - code list: new status codes and the canonical value each one means;
+   - semantic: gross ↔ net, minor ↔ major units, a decoy field with a generated name;
+   - dates: cutoff hour, time-zone shift, date format;
+   - transport and auth: throttle rate, `Retry-After`, outage length, token expired vs revoked, endpoint removed;
+   - FIAS: `PS` layout change (field added, renamed, reordered), resync, ACK timeout.
+   Each instance carries its **answer key**, kept by the verifier only: the canonical truth data and the correct
+   outcome class: `repair` (verifier-accepted patch on hidden cases), `escalate` (no patch; escalated), or
+   `degraded_question` (ambiguous semantic: `Degraded` with one operator question, no guessed patch).
+   Families and parameter pools are fixed in code before the freeze; only the parameters come from the seed.
+2. **Generator tests (before any real run).** Property tests over thousands of random seeds in `make test`: every
+   instance is internally consistent (the mutated vendor really serves the mutated shape; FIAS records match the
+   announced layout), deterministic for a seed, and its answer key matches the oracle. A **reference solver** that is
+   given the instance's parameters must reach the correct outcome class on every instance; an instance the reference
+   solver cannot handle is a generator bug (no impossible questions).
+3. **Beacon client**, in the bench harness (which never sees generator internals; it passes only the seed to the
+   simulators and verifier). Fetch a drand round from
+   the League of Entropy mainnet (`https://api.drand.sh/public/<round>` plus the chain info), **verify its signature**
+   against the chain's public key with a pinned pure-Python library (fail closed if verification fails), compute the
+   round for a UTC time, and derive `seed = sha256(randomness ‖ "autobridge-eval-v1")`, then per instance
+   `sha256(seed ‖ instance index)`.
+4. **Protocol commit (freeze).** `make eval-freeze ROUND_AFTER=<UTC time> FAULTS=<N>` writes
+   `experiments/beacon/protocol.md` (round rule: first round at or after the time; N instances; arms; metrics; "one run,
+   no retries, results published whatever they are"; the engine and generator commit) and refuses to run if the target
+   round already exists. The owner commits it, tags `eval-freeze`, and pushes before the round time.
+5. **The run.** `make bench-beacon`: reads the protocol, refuses if the round is not yet published or if a result for it
+   already exists (no re-rolls), fetches and verifies the round, prints the evidence on screen (round number, time,
+   randomness, verification URL, freeze commit and its push time), generates the instances, runs every REQ-024 arm on
+   the same instances under matched budget, grades with the verifier against the answer keys, and writes
+   `experiments/beacon/<round>/` (instances with parameters, per-arm grades, tokens, cost, time, a summary with
+   intervals). Runs in Docker and in local mode (REQ-017).
+6. **Rehearsals on past rounds.** `make bench-beacon REHEARSE=<round>` uses an already-published round (clearly
+   labelled "rehearsal"; output under `experiments/beacon/rehearsals/`) to debug the pipeline and learn the expected
+   score range. Run at least five rehearsals before the freeze; record them.
+6b. **One unattended command** (owner, 2026-10-28: no time to do this by hand or on camera). `make beacon-eval
+   FAULTS=<N> [DELAY_MIN=20]`: checks no ralph loop is running and the tree is clean; runs `eval-freeze` with
+   `ROUND_AFTER` = now + DELAY_MIN; commits the protocol, tags `eval-freeze`, pushes both (asks once for "yes" before
+   the push, unless `CONFIRM=yes`); records GitHub's push time from the API; waits for the round; runs `bench-beacon`
+   unattended; writes a one-page `experiments/beacon/<round>/EVIDENCE.md` (round, time, randomness, verification URL,
+   freeze commit and push time, per-arm summary) and a terminal-style `evidence.png` screenshot of it for the deck;
+   commits and pushes the results. Resumable: if interrupted after the freeze, rerunning it continues the same round
+   (never a new one silently). Total hands-on time: one command and one "yes".
+7. **Reproduce.** `make verify-beacon ROUND=<round>`: anyone re-fetches and verifies the round, regenerates the
+   instances, checks they match the published ones, and can rerun the grading from the tagged commit.
+8. **Docs.** docs/benchmark.md "Beacon evaluation": why (commit-then-reveal with public randomness), what a judge can
+   check, the honest scope (fault *families* are known by design: that is the engine's knowledge; the *instances*
+   could not be known), and how the REQ-007 held-out split relates (kept as the frozen secondary benchmark: new data for
+   known fault types).
+Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make bench-heldout` keeps working.
+
+---
+
+## Resolved Requests (reference only)
+
 ### REQ-028 — Benchmark-driven engine fixes (owner rehearsal 2026-10-29) (2026-10-29)
-Status: BLOCKED (sbx1 2026-10-30 -- code re-verified: fixes (a)(b)(safe-c) + scoped oneshot docs + arm availability + `ran` label + warm-never-worse test all present and green targeted; keyed bench-ablation outstanding)
+Status: DONE (2026-11-03 -- superseded: every item was re-verified under the beacon grading rework (REQ-062, REQ-063, REQ-078, REQ-083); the keyed bench-ablation is replaced by the keyed beacon rehearsal)
 Blocked: owner run `BENCH_TRIALS=1 make bench-ablation` with FRONTIER_API_KEY set (sandbox has none), record the table, confirm cold 6/6 repairs, warm >= cold, 0 wrong patches, frontier_oneshot tokens > 0; then close.
 Priority: right after REQ-027 (the rename fix in progress there covers item 1).
 Owner decision (2026-10-29): **the benchmark runs in the sandbox** (OpenCode is there; the host has none). Provide one
@@ -1745,9 +1811,98 @@ tokens. Gaps, in order:
    field (e.g. `ran`) or drop it so nobody reads it as a pass.
 Acceptance: rerun `BENCH_TRIALS=1 make bench-ablation` and record the table in BUILD-NOTES each time; target
 AutoBridge cold 6/6 repairs, warm ≥ cold everywhere, 0 wrong patches, frontier_oneshot actually called (tokens > 0).
+Resolution: folded into the beacon REQs; no separate keyed ablation is pending.
+
+### REQ-024 — Make the held-out claim checkable, and prove the engine beats an untrained frontier model (2026-10-28)
+Status: DONE (2026-11-03 -- superseded: the held-out split is retired; the beacon run (REQ-025, REQ-062..083) is the checkable claim and the engine-vs-frontier comparison)
+Owner: "Ralph never saw the held-out data" and "AutoBridge beats a frontier model on its own because the engine knows
+more" must be things a judge can check, not things we say. Never read, print, move or regenerate the private seeds;
+never touch `verifier/hidden_cases/heldout/SHA256SUMS`. Everything below that needs the seed files is a script the
+**owner** runs; scripts print counts and hashes only, never seed or nonce values.
+**A. Held-out integrity, checkable**
+1. *Leak audit* `scripts/heldout_leak_audit.py` (owner runs it with `HELDOUT_DIR`): reads each private file's nonce and
+   seed in memory and its sha256, then scans every `ralph-logs/*.jsonl` transcript, every blob in the full git history
+   (`git rev-list --all` + `git cat-file`), every file under `.worktrees/`, and the sandbox-visible project folder for
+   any occurrence of a nonce, a seed file's sha256, or a seed file's raw bytes. Output: one line per source with
+   counts ("0 hits in 109 transcripts, 0 in 2 140 blobs …") and exit 1 on any hit. Unit-tested with a fake heldout dir.
+   The audit result is written into the scorecard.
+2. *Isolation evidence*: a doc section (docs/benchmark.md "Held-out protocol") showing the sandboxes mount only the
+   project folder (`sbx ls` workspace column), `HELDOUT_DIR` is outside it, the bench reads it only for heldout runs,
+   and the freeze commit (`ff372083`) with its GitHub push time. Add a CI-free check script that prints these facts.
+3. *Public timestamp*: document the owner step to create a signed tag `heldout-freeze` on `ff372083` and a GitHub
+   release for it (GitHub records the time; optional OpenTimestamps proof of `SHA256SUMS` committed beside it).
+4. *Reveal after the run*: after the single Nov 3 run, the owner publishes the seed files under
+   `verifier/hidden_cases/heldout/revealed/` (an owner commit). Add `make verify-heldout-reveal` that checks them
+   against the frozen `SHA256SUMS` and reruns `make bench-heldout` from them, so anyone can reproduce the scorecard.
+   Until the owner does this, the folder must not exist (guard test).
+5. *Honest scope* in docs/benchmark.md: what is sealed is the instance data (seeds); the four scenario definitions are
+   public and the builder saw them. Unseen-vendor generalization is measured separately on LegacyStay (REQ-019 item 5).
+**B. Engine vs. untrained frontier model, same model on every arm**
+1. Every arm that calls a frontier model uses the same `FRONTIER_MODEL` through the same provider (REQ-021), so the
+   only difference between arms is the engine. Add a coding-agent driver that runs OpenCode headless with that model
+   (`BASELINE_DRIVER=opencode`), and make it the default instead of `claude`; keep `claude` / `codex` available.
+2. Ablation arms, all under the same matched budget (tokens, wall clock, docs, sandbox, credentials, visible tests; the
+   existing `assert_inputs_equal` self-test extended to every arm):
+   a. `frontier_oneshot`: the model alone, one prompt with the docs.
+   b. `frontier_agent`: the model as a coding agent with tools (the untrained-frontier baseline).
+   c. `engine_no_knowledge`: AutoBridge with L0 and L1 disabled (ladder, verifier gate and budgets kept, so only the
+      model repairs).
+   d. `autobridge_cold`: full AutoBridge, empty learned knowledge.
+   e. `autobridge_warm`: full AutoBridge after learning on the dev split only (never on held-out).
+   c vs d isolates what the engine's built-in knowledge (rules + known fixes) adds; d vs e isolates learning; b vs d is
+   the headline.
+3. Metrics per arm, scenario and overall, with mean and 95 % interval over ≥ 5 trials (different seeds derived from the
+   private seed for held-out, from the dev seeds otherwise): verified completion rate (judged only by the verifier),
+   wrong patches that reached a release (must be 0 for AutoBridge), correct escalations (escalated exactly when the
+   scenario says it must), frontier tokens, estimated cost (REQ-021 prices), wall time.
+4. *Learning curve* (dev split): the same drift injected 5 times in a row; plot frontier tokens per repair for b, d and
+   e. Expected: b pays every time, d pays once then 0, e is 0 from the start. Saved as `experiments/learning_curve.md`
+   with the raw rows.
+5. *Pre-registration*: before the Nov 3 run, commit `experiments/preregistration.md` (arms, metrics, trials, budgets,
+   primary hypothesis, e.g. "on held-out, `autobridge_cold` reaches a verified-completion rate at least that of
+   `frontier_agent` with at least 10× fewer frontier tokens", and that results are published whatever they are). The
+   scorecard links the pre-registration commit and the leak-audit result.
+6. Dev-split rehearsal: `make bench` runs all arms on the dev split now (real numbers, REQ-008), so the protocol is
+   debugged before the one held-out run.
+
+**Owner check after sub-step A (2026-10-29, on e1960ca7): the leak audit always FAILs, on false positives.** Owner ran
+`HELDOUT_DIR=~/autobridge-heldout python3 scripts/heldout_leak_audit.py` on the host: `FAIL` with transcripts 3 hits
+(ralph-logs iter8 2026-10-27, iter5 2026-10-28, iter16 2026-10-29), worktrees 1 hit
+(`.worktrees/sbx1/verifier/hidden_cases/heldout/SHA256SUMS`), project 4 (the same four). Classified by token kind
+(owner-side, no values printed): **every hit is a sha256 hex from the committed manifest; 0 raw-file hits, 0 nonce
+hits.** The sha256 values are public by design (they are in `SHA256SUMS` in the public repo; that is the point of
+the freeze), so seeing them proves nothing. Fix: (1) search only for material that is actually secret, the raw seed
+file bytes and the nonce (and any other field the seeds hold that is not in the public manifest), never the
+manifest's hashes; (2) the public-manifest exclusion must cover every copy of the manifest (worktrees too), by
+content as it does now, not by path; (3) report hits per kind (`raw`, `nonce`) in the counts-only output and JSON so
+a FAIL says what leaked; (4) unit tests: a transcript quoting the public manifest is a pass, a transcript containing
+a nonce or raw bytes is a fail. Expected on the owner's host after the fix: `OK`, 0 hits. Keep "never prints secrets".
+
+**Owner check (2026-10-29, on f32b4b4b): the engine arms are handed the answer; the comparison is not matched. Fix
+before REQ-025 builds on it (the beacon run reuses these arms).** In `src/autobridge/bench/ablation.py` the engine
+arms call `RepairController.handle(...)` with case-supplied `drift_class` (e.g. `gross_to_net`, which is the answer
+label), `fingerprint_delta`, `hypotheses` (hand-written in `_gross_net_hypotheses`, priors 0.41/0.39 chosen so L2
+cannot decide) and `enumerator_yield_count`, all built from `config/ablation_cases.yaml`. The frontier arms get docs
+and a sandbox and must find the problem themselves. So the engine is benchmarked from a pre-diagnosed state while the
+model starts cold: a judge reading the code will say the headline number is rigged, and they would be right.
+`assert_all_inputs_equal` passes only because these fields live outside `HarnessInputs`.
+Fix: every arm gets exactly the same inputs (the pre-drift spec, the docs, the sandbox URL with the fault served by
+the simulator, budgets). The engine arms run the real path end to end: sync against the faulted sandbox → detector
+→ classifier → hypothesis engine → ladder → verifier gate, with no case-supplied drift class, delta, hypotheses or
+yield count. The case file may hold only what every arm gets (scenario id, connector, pre-drift spec source,
+budgets) plus grading data the arms never see. Add a test that fails if any arm receives a field the others do not,
+including through `RepairController.handle` kwargs. Report the rehearsal numbers again after the change, whatever
+they are (pre-registration: losses are published).
+Second, smaller: the same commit widened the W5.7 trust-boundary test (`test_04_bootstrap_unfamiliar_api.py`) so
+`src/autobridge/bench` may read `generated/connectors/*/reference/spec.yaml`, without an owner note. Reading the
+pre-drift reference spec as an equal input is fine; doing it from inside the engine package is what the test exists
+to forbid. Move the benchmark harness out of `src/autobridge` (e.g. a top-level `bench/` package that imports the
+engine, like the tests do) and revert the carve-out. From now on, never widen a guard test without an owner note in
+REQUESTS saying why.
+Resolution: replaced by the beacon evaluation; its arms, grading and preflight live under REQ-062..083.
 
 ### REQ-021 — Repeatable demo: full reset, pinned vocabulary, and proof of when the frontier model is called (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 19:10; matrix full-climb merged, remaining: owner record-frontier capture + live step-4 check)
+Status: DONE (2026-11-03 -- superseded in part by the beacon work: full reset, pinned vocabulary and the model-call proof are in (REQ-039/042/059/077); the owner's `make record-frontier SCENARIO=gross_to_net` capture is an owner step after the code freeze, not engine work)
 Owner: every demo scenario must run the same way every time, including REQ-020's "before" refusal after the vocabulary
 has been extended, and the demo must show that the frontier model is called only when cheaper rungs cannot handle the
 error. Today: `POST /demo/reset` (`src/autobridge/control/routes/demo.py`) resets only sim-atlas and sim-harbor; the L0
@@ -1875,159 +2030,8 @@ assertion that `make demo` step 4 passes live (owner's host) and in replay. Afte
    - Demo flow it must support, repeatably after `make demo-reset`: knowledge list empty → inject a drift → climb to
      L1/L2/L3, approve → a new entry appears on the page → inject the same drift again → L0 hit, 0 model calls, the
      entry's "times reused" goes up. Assert this sequence in an e2e test.
+Resolution: reset, vocabulary pin and frontier-call provenance landed under later REQs; the replay capture for the Harbor semantic step is recorded by the owner after the freeze.
 
-### REQ-024 — Make the held-out claim checkable, and prove the engine beats an untrained frontier model (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-28 22:48; sub-step A merged, sub-step B code-complete 2026-10-28: opencode default, 5 arms, metrics + CI, curve, prereg, bench wiring; leak-audit false-positive fix merged 2026-10-29; remaining: owner check "on f32b4b4b" FIXED 2026-10-29 (end-to-end engine arms, bench moved out of src/autobridge, rehearsal numbers reported); then live frontier numbers with FRONTIER_API_KEY + Nov 3 held-out run)
-Owner: "Ralph never saw the held-out data" and "AutoBridge beats a frontier model on its own because the engine knows
-more" must be things a judge can check, not things we say. Never read, print, move or regenerate the private seeds;
-never touch `verifier/hidden_cases/heldout/SHA256SUMS`. Everything below that needs the seed files is a script the
-**owner** runs; scripts print counts and hashes only, never seed or nonce values.
-**A. Held-out integrity, checkable**
-1. *Leak audit* `scripts/heldout_leak_audit.py` (owner runs it with `HELDOUT_DIR`): reads each private file's nonce and
-   seed in memory and its sha256, then scans every `ralph-logs/*.jsonl` transcript, every blob in the full git history
-   (`git rev-list --all` + `git cat-file`), every file under `.worktrees/`, and the sandbox-visible project folder for
-   any occurrence of a nonce, a seed file's sha256, or a seed file's raw bytes. Output: one line per source with
-   counts ("0 hits in 109 transcripts, 0 in 2 140 blobs …") and exit 1 on any hit. Unit-tested with a fake heldout dir.
-   The audit result is written into the scorecard.
-2. *Isolation evidence*: a doc section (docs/benchmark.md "Held-out protocol") showing the sandboxes mount only the
-   project folder (`sbx ls` workspace column), `HELDOUT_DIR` is outside it, the bench reads it only for heldout runs,
-   and the freeze commit (`ff372083`) with its GitHub push time. Add a CI-free check script that prints these facts.
-3. *Public timestamp*: document the owner step to create a signed tag `heldout-freeze` on `ff372083` and a GitHub
-   release for it (GitHub records the time; optional OpenTimestamps proof of `SHA256SUMS` committed beside it).
-4. *Reveal after the run*: after the single Nov 3 run, the owner publishes the seed files under
-   `verifier/hidden_cases/heldout/revealed/` (an owner commit). Add `make verify-heldout-reveal` that checks them
-   against the frozen `SHA256SUMS` and reruns `make bench-heldout` from them, so anyone can reproduce the scorecard.
-   Until the owner does this, the folder must not exist (guard test).
-5. *Honest scope* in docs/benchmark.md: what is sealed is the instance data (seeds); the four scenario definitions are
-   public and the builder saw them. Unseen-vendor generalization is measured separately on LegacyStay (REQ-019 item 5).
-**B. Engine vs. untrained frontier model, same model on every arm**
-1. Every arm that calls a frontier model uses the same `FRONTIER_MODEL` through the same provider (REQ-021), so the
-   only difference between arms is the engine. Add a coding-agent driver that runs OpenCode headless with that model
-   (`BASELINE_DRIVER=opencode`), and make it the default instead of `claude`; keep `claude` / `codex` available.
-2. Ablation arms, all under the same matched budget (tokens, wall clock, docs, sandbox, credentials, visible tests; the
-   existing `assert_inputs_equal` self-test extended to every arm):
-   a. `frontier_oneshot`: the model alone, one prompt with the docs.
-   b. `frontier_agent`: the model as a coding agent with tools (the untrained-frontier baseline).
-   c. `engine_no_knowledge`: AutoBridge with L0 and L1 disabled (ladder, verifier gate and budgets kept, so only the
-      model repairs).
-   d. `autobridge_cold`: full AutoBridge, empty learned knowledge.
-   e. `autobridge_warm`: full AutoBridge after learning on the dev split only (never on held-out).
-   c vs d isolates what the engine's built-in knowledge (rules + known fixes) adds; d vs e isolates learning; b vs d is
-   the headline.
-3. Metrics per arm, scenario and overall, with mean and 95 % interval over ≥ 5 trials (different seeds derived from the
-   private seed for held-out, from the dev seeds otherwise): verified completion rate (judged only by the verifier),
-   wrong patches that reached a release (must be 0 for AutoBridge), correct escalations (escalated exactly when the
-   scenario says it must), frontier tokens, estimated cost (REQ-021 prices), wall time.
-4. *Learning curve* (dev split): the same drift injected 5 times in a row; plot frontier tokens per repair for b, d and
-   e. Expected: b pays every time, d pays once then 0, e is 0 from the start. Saved as `experiments/learning_curve.md`
-   with the raw rows.
-5. *Pre-registration*: before the Nov 3 run, commit `experiments/preregistration.md` (arms, metrics, trials, budgets,
-   primary hypothesis, e.g. "on held-out, `autobridge_cold` reaches a verified-completion rate at least that of
-   `frontier_agent` with at least 10× fewer frontier tokens", and that results are published whatever they are). The
-   scorecard links the pre-registration commit and the leak-audit result.
-6. Dev-split rehearsal: `make bench` runs all arms on the dev split now (real numbers, REQ-008), so the protocol is
-   debugged before the one held-out run.
-
-**Owner check after sub-step A (2026-10-29, on e1960ca7): the leak audit always FAILs, on false positives.** Owner ran
-`HELDOUT_DIR=~/autobridge-heldout python3 scripts/heldout_leak_audit.py` on the host: `FAIL` with transcripts 3 hits
-(ralph-logs iter8 2026-10-27, iter5 2026-10-28, iter16 2026-10-29), worktrees 1 hit
-(`.worktrees/sbx1/verifier/hidden_cases/heldout/SHA256SUMS`), project 4 (the same four). Classified by token kind
-(owner-side, no values printed): **every hit is a sha256 hex from the committed manifest; 0 raw-file hits, 0 nonce
-hits.** The sha256 values are public by design (they are in `SHA256SUMS` in the public repo; that is the point of
-the freeze), so seeing them proves nothing. Fix: (1) search only for material that is actually secret, the raw seed
-file bytes and the nonce (and any other field the seeds hold that is not in the public manifest), never the
-manifest's hashes; (2) the public-manifest exclusion must cover every copy of the manifest (worktrees too), by
-content as it does now, not by path; (3) report hits per kind (`raw`, `nonce`) in the counts-only output and JSON so
-a FAIL says what leaked; (4) unit tests: a transcript quoting the public manifest is a pass, a transcript containing
-a nonce or raw bytes is a fail. Expected on the owner's host after the fix: `OK`, 0 hits. Keep "never prints secrets".
-
-**Owner check (2026-10-29, on f32b4b4b): the engine arms are handed the answer; the comparison is not matched. Fix
-before REQ-025 builds on it (the beacon run reuses these arms).** In `src/autobridge/bench/ablation.py` the engine
-arms call `RepairController.handle(...)` with case-supplied `drift_class` (e.g. `gross_to_net`, which is the answer
-label), `fingerprint_delta`, `hypotheses` (hand-written in `_gross_net_hypotheses`, priors 0.41/0.39 chosen so L2
-cannot decide) and `enumerator_yield_count`, all built from `config/ablation_cases.yaml`. The frontier arms get docs
-and a sandbox and must find the problem themselves. So the engine is benchmarked from a pre-diagnosed state while the
-model starts cold: a judge reading the code will say the headline number is rigged, and they would be right.
-`assert_all_inputs_equal` passes only because these fields live outside `HarnessInputs`.
-Fix: every arm gets exactly the same inputs (the pre-drift spec, the docs, the sandbox URL with the fault served by
-the simulator, budgets). The engine arms run the real path end to end: sync against the faulted sandbox → detector
-→ classifier → hypothesis engine → ladder → verifier gate, with no case-supplied drift class, delta, hypotheses or
-yield count. The case file may hold only what every arm gets (scenario id, connector, pre-drift spec source,
-budgets) plus grading data the arms never see. Add a test that fails if any arm receives a field the others do not,
-including through `RepairController.handle` kwargs. Report the rehearsal numbers again after the change, whatever
-they are (pre-registration: losses are published).
-Second, smaller: the same commit widened the W5.7 trust-boundary test (`test_04_bootstrap_unfamiliar_api.py`) so
-`src/autobridge/bench` may read `generated/connectors/*/reference/spec.yaml`, without an owner note. Reading the
-pre-drift reference spec as an equal input is fine; doing it from inside the engine package is what the test exists
-to forbid. Move the benchmark harness out of `src/autobridge` (e.g. a top-level `bench/` package that imports the
-engine, like the tests do) and revert the carve-out. From now on, never widen a guard test without an owner note in
-REQUESTS saying why.
-
-### REQ-025 — Beacon evaluation: faults generated from public randomness nobody could know in advance (2026-10-28)
-Status: IN_PROGRESS (sbx1 since 2026-10-29 00:55; sub-step A merged 2026-10-29; sub-step B code DONE 2026-10-29: client, serving, make eval-freeze/bench-beacon/verify-beacon/beacon-eval, docs, 5 live rehearsals + live repair proof; dependency RESOLVED 2026-10-29 (REQ-024 owner check fix: beacon engine arms now observe instances end-to-end via derive_beacon_diagnostics); remaining: live frontier numbers (needs FRONTIER_API_KEY), the real frozen run)
-Owner: prove we could not have prepared for the test even if we wanted to. The private-seed held-out split (REQ-007)
-only seals instance data for four public fault types, and the builder has tests for those types. The headline
-evaluation becomes a **beacon run**: the test's data *and* fault details are derived from a public random value that
-did not exist when the code was frozen. Same boundaries as everywhere: the generator and answer key live on the
-simulators/verifier side; the engine never imports, reads or reaches them.
-1. **Fault generator from building blocks** (`simulators/common/faultgen.py` + verifier counterpart). Input: a 32-byte
-   seed. Output: N fault instances across the five vendors (Atlas, Meridian, Harbor, LegacyStay, FIAS PABX), each a
-   family plus seed-chosen parameters, never a fixed scenario:
-   - rename: which field, new name from a large word pool (e.g. `guest_name` → `primaryOccupant`);
-   - nesting: depth and new parent key;
-   - pagination: strategy switch, new parameter and cursor field names;
-   - code list: new status codes and the canonical value each one means;
-   - semantic: gross ↔ net, minor ↔ major units, a decoy field with a generated name;
-   - dates: cutoff hour, time-zone shift, date format;
-   - transport and auth: throttle rate, `Retry-After`, outage length, token expired vs revoked, endpoint removed;
-   - FIAS: `PS` layout change (field added, renamed, reordered), resync, ACK timeout.
-   Each instance carries its **answer key**, kept by the verifier only: the canonical truth data and the correct
-   outcome class: `repair` (verifier-accepted patch on hidden cases), `escalate` (no patch; escalated), or
-   `degraded_question` (ambiguous semantic: `Degraded` with one operator question, no guessed patch).
-   Families and parameter pools are fixed in code before the freeze; only the parameters come from the seed.
-2. **Generator tests (before any real run).** Property tests over thousands of random seeds in `make test`: every
-   instance is internally consistent (the mutated vendor really serves the mutated shape; FIAS records match the
-   announced layout), deterministic for a seed, and its answer key matches the oracle. A **reference solver** that is
-   given the instance's parameters must reach the correct outcome class on every instance; an instance the reference
-   solver cannot handle is a generator bug (no impossible questions).
-3. **Beacon client**, in the bench harness (which never sees generator internals; it passes only the seed to the
-   simulators and verifier). Fetch a drand round from
-   the League of Entropy mainnet (`https://api.drand.sh/public/<round>` plus the chain info), **verify its signature**
-   against the chain's public key with a pinned pure-Python library (fail closed if verification fails), compute the
-   round for a UTC time, and derive `seed = sha256(randomness ‖ "autobridge-eval-v1")`, then per instance
-   `sha256(seed ‖ instance index)`.
-4. **Protocol commit (freeze).** `make eval-freeze ROUND_AFTER=<UTC time> FAULTS=<N>` writes
-   `experiments/beacon/protocol.md` (round rule: first round at or after the time; N instances; arms; metrics; "one run,
-   no retries, results published whatever they are"; the engine and generator commit) and refuses to run if the target
-   round already exists. The owner commits it, tags `eval-freeze`, and pushes before the round time.
-5. **The run.** `make bench-beacon`: reads the protocol, refuses if the round is not yet published or if a result for it
-   already exists (no re-rolls), fetches and verifies the round, prints the evidence on screen (round number, time,
-   randomness, verification URL, freeze commit and its push time), generates the instances, runs every REQ-024 arm on
-   the same instances under matched budget, grades with the verifier against the answer keys, and writes
-   `experiments/beacon/<round>/` (instances with parameters, per-arm grades, tokens, cost, time, a summary with
-   intervals). Runs in Docker and in local mode (REQ-017).
-6. **Rehearsals on past rounds.** `make bench-beacon REHEARSE=<round>` uses an already-published round (clearly
-   labelled "rehearsal"; output under `experiments/beacon/rehearsals/`) to debug the pipeline and learn the expected
-   score range. Run at least five rehearsals before the freeze; record them.
-6b. **One unattended command** (owner, 2026-10-28: no time to do this by hand or on camera). `make beacon-eval
-   FAULTS=<N> [DELAY_MIN=20]`: checks no ralph loop is running and the tree is clean; runs `eval-freeze` with
-   `ROUND_AFTER` = now + DELAY_MIN; commits the protocol, tags `eval-freeze`, pushes both (asks once for "yes" before
-   the push, unless `CONFIRM=yes`); records GitHub's push time from the API; waits for the round; runs `bench-beacon`
-   unattended; writes a one-page `experiments/beacon/<round>/EVIDENCE.md` (round, time, randomness, verification URL,
-   freeze commit and push time, per-arm summary) and a terminal-style `evidence.png` screenshot of it for the deck;
-   commits and pushes the results. Resumable: if interrupted after the freeze, rerunning it continues the same round
-   (never a new one silently). Total hands-on time: one command and one "yes".
-7. **Reproduce.** `make verify-beacon ROUND=<round>`: anyone re-fetches and verifies the round, regenerates the
-   instances, checks they match the published ones, and can rerun the grading from the tagged commit.
-8. **Docs.** docs/benchmark.md "Beacon evaluation": why (commit-then-reveal with public randomness), what a judge can
-   check, the honest scope (fault *families* are known by design: that is the engine's knowledge; the *instances*
-   could not be known), and how the REQ-007 held-out split relates (kept as the frozen secondary benchmark: new data for
-   known fault types).
-Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make bench-heldout` keeps working.
-
----
-
-## Resolved Requests (reference only)
 
 
 ### REQ-079 — Directive: §5 test hermeticity — full `make test` flakes with teardown DNS-guard errors on scheduler/activation tests (2026-11-02)
