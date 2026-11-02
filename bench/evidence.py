@@ -108,6 +108,43 @@ def render_sync_evidence(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_fault_vs_baseline(
+    faulted_summary: dict[str, Any], baseline_summary: dict[str, Any] | None
+) -> str:
+    """Faulted sample plus the engine's baseline sample (REQ-081 item 2).
+
+    The frontier arms get the same baseline the engine compares against
+    (same records, same redaction), clearly labelled baseline vs
+    faulted — so a 1/4 scale shift is visible to them as it is to the
+    engine. No diagnosis, no labels beyond the two sample headings.
+    """
+    faulted_text = render_sync_evidence(
+        faulted_summary if isinstance(faulted_summary, dict) else {}
+    )
+    if not isinstance(baseline_summary, dict):
+        return faulted_text
+    # Baseline sample: same operation sampling + same redaction as the
+    # faulted side, under its own heading.
+    op_results = baseline_summary.get("operation_results", {}) or {}
+    names = sorted(op_results) if isinstance(op_results, dict) else []
+    lines = [
+        "baseline sample (pre-drift values the engine compares against; same redaction):",
+    ]
+    shown = 0
+    for op_name in names[:_MAX_OPS]:
+        records = _records_of(op_results[op_name])
+        if not records:
+            continue
+        shown += 1
+        lines.append(f"- operation {op_name}: {len(records)} record(s); sample:")
+        for record in records[:_MAX_RECORDS_PER_OP]:
+            redacted = {str(k): _redact_value(str(k), v) for k, v in list(record.items())[:20]}
+            lines.append(f"  {redacted}")
+    if shown == 0:
+        lines.append("(no baseline records served)")
+    return faulted_text + "\n" + "\n".join(lines)
+
+
 def render_fault_evidence(
     spec: dict[str, Any],
     *,

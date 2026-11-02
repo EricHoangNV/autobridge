@@ -1071,6 +1071,73 @@ class OpenCodeCliDriver:
                     result = _dataclasses.replace(result, cost_usd=resolved["cost_usd"])
         result.exit_code = proc.returncode
         result.duration_ms = elapsed
+        # REQ-081 item 7: the stream may end on a tool step with no final
+        # text (a headless auto-rejected bash call) — re-prompt once in the
+        # same session for the final answer instead of scoring no_output.
+        if not result.text.strip() and result.session_id:
+            try:
+                _re_cmd = list(cmd)
+                # Reuse the same model flag; continue the same session.
+                _re_prompt = (
+                    "Please provide your final answer now as one JSON object "
+                    "only (the patch or escalation described in the task — no "
+                    "tool calls needed)."
+                )
+                # Insert --session <id> after "run" so the same session
+                # continues: opencode run --format json -m <model> --session
+                # <id> <prompt>.
+                try:
+                    _run_idx = _re_cmd.index("run")
+                except ValueError:
+                    _run_idx = 1
+                _re_cmd = (
+                    _re_cmd[: _run_idx + 1]
+                    + ["--session", str(result.session_id)]
+                    + _re_cmd[_run_idx + 1 :]
+                )
+                _re_cmd = _re_cmd[:-1] + [_re_prompt] if _re_cmd else [_re_prompt]
+                _re_proc = subprocess.run(
+                    _re_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=t,
+                    stdin=subprocess.DEVNULL,
+                    cwd=str(cwd),
+                    env=child_env,
+                )
+                if _re_proc.returncode == 0:
+                    _re_result = parse_opencode_output(_re_proc.stdout)
+                    if _re_result.text.strip():
+                        # Merge usage: keep the max counters from both runs.
+                        try:
+                            _in = max(
+                                int(result.usage.input_tokens or 0),
+                                int(_re_result.usage.input_tokens or 0),
+                            )
+                            _out = max(
+                                int(result.usage.output_tokens or 0),
+                                int(_re_result.usage.output_tokens or 0),
+                            )
+                            _rea = max(
+                                int(result.usage.reasoning_tokens or 0),
+                                int(_re_result.usage.reasoning_tokens or 0),
+                            )
+                            _merged_usage = Usage(
+                                input_tokens=_in,
+                                output_tokens=_out,
+                                reasoning_tokens=_rea,
+                            )
+                        except Exception:
+                            _merged_usage = _re_result.usage
+                        result = _dataclasses.replace(
+                            _re_result,
+                            usage=_merged_usage,
+                            session_id=result.session_id,
+                            exit_code=_re_proc.returncode,
+                            duration_ms=(time.monotonic() - start) * 1000.0,
+                        )
+            except Exception:
+                pass
         if not result.text.strip() and result.stream_error.strip():
             # The CLI exited 0 but reported only errors: fail loudly with
             # the reason instead of a silent no_output/unknown/0 row.

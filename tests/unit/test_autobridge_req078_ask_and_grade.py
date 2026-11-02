@@ -330,7 +330,9 @@ def test_detection_rehearsal_misses_now_detected() -> None:
     cases = [
         # (vendor, index, seed_hex, expected drift class)
         ("legacystay", 2, "cd" * 32, "SEMANTIC_VALUE_DRIFT"),
-        ("meridian", 13, "ab" * 32, "SCHEMA_RENAME"),
+        # REQ-081 item 5: nesting projects to the wire ({parent: {...}}),
+        # so top-level fields read as removed (nested_path_shift repairs).
+        ("meridian", 13, "ab" * 32, "SCHEMA_REMOVED"),
         ("harbor", 61, "cd" * 32, "ENUM_NEW_VALUE"),
     ]
     for vendor, index, seed_hex, expected in cases:

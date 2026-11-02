@@ -1050,7 +1050,27 @@ def build_generic_l3_evidence(
             if isinstance(_raw_checks, list):
                 checks = _raw_checks
             subtree[name] = {
-                "fields": {fn: str((fs or {}).get("path", ""))[:120] for fn, fs in list(fields.items())[:20] if isinstance(fs, dict)},
+                # REQ-081 item 6: multi-path fields (paths: [...]) render
+                # their paths, never "" — else a DA->CD layout rename is
+                # invisible and unpatchable in the L3 prompt.
+                "fields": {
+                    fn: (
+                        str((fs or {}).get("path", ""))[:120]
+                        if isinstance((fs or {}).get("path"), str)
+                        and (fs or {}).get("path")
+                        else (
+                            ", ".join(
+                                str(p)[:120]
+                                for p in (fs or {}).get("paths", [])
+                                if isinstance(p, str)
+                            )[:300]
+                            if isinstance((fs or {}).get("paths"), list)
+                            else ""
+                        )
+                    )
+                    for fn, fs in list(fields.items())[:20]
+                    if isinstance(fs, dict)
+                },
                 "checks": [str(c.get("kind") if isinstance(c, dict) else getattr(c, "kind", c))[:60] for c in list(checks)[:10]],
             }
     except Exception:
@@ -1068,6 +1088,23 @@ def build_generic_l3_evidence(
                 for fn in sorted(fields)[:20]:
                     allowed.append(f"/entities/{name}/fields/{fn}/path")
                     allowed.append(f"/entities/{name}/fields/{fn}/transform")
+                    # REQ-081 item 6: multi-path fields are patched via
+                    # /paths and /paths/N — allow them alongside /path.
+                    try:
+                        _fspec = fields.get(fn)
+                        _paths = (
+                            _fspec.get("paths")
+                            if isinstance(_fspec, dict)
+                            else None
+                        )
+                        if isinstance(_paths, list) and _paths:
+                            allowed.append(f"/entities/{name}/fields/{fn}/paths")
+                            for _idx in range(min(len(_paths), 8)):
+                                allowed.append(
+                                    f"/entities/{name}/fields/{fn}/paths/{_idx}"
+                                )
+                    except Exception:
+                        pass
             for idx, chk in enumerate(ent.get("checks") or []):
                 if isinstance(chk, dict) and chk.get("compare_to") is not None:
                     allowed.append(f"/entities/{name}/checks/{idx}/compare_to")
@@ -1287,11 +1324,99 @@ def prepare_semantic_inputs(
 
     source = f"sync_runs:{sync_run_id}" if sync_run_id else "live-sync"
     enumerated, _fields = _semantic.enumerate_money_hypotheses(spec, source=source)
+    # REQ-081 item 1: a spec with no money_invariant check yields no money
+    # fields, so 0 readings and empty L3 evidence — yet the detector's
+    # money_scale_shift signal names the money field and factor. Seed the
+    # money fields from the signal details so the model sees them.
+    if not enumerated:
+        _seeded: dict[str, str] = {}
+        for _sig in signals or []:
+            try:
+                _d = (
+                    _sig.get("details")
+                    if isinstance(_sig, dict)
+                    else getattr(_sig, "details", None)
+                )
+            except Exception:
+                _d = None
+            if not isinstance(_d, dict):
+                continue
+            _mf = _d.get("money_field")
+            _ent = _d.get("entity")
+            if (
+                isinstance(_mf, str)
+                and _mf
+                and isinstance(_ent, str)
+                and _ent
+                and _ent not in _seeded
+            ):
+                # Only seed fields the spec actually has (never invent).
+                try:
+                    _ent_spec = (spec.get("entities") or {}).get(_ent)
+                    _flds = (
+                        _ent_spec.get("fields")
+                        if isinstance(_ent_spec, dict)
+                        else None
+                    )
+                    if isinstance(_flds, dict) and _mf in _flds:
+                        _seeded[_ent] = _mf
+                except Exception:
+                    continue
+        if _seeded:
+            try:
+                from autobridge.discovery.docs_reader import Provenance as _Prov  # noqa: PLC0415
+                from autobridge.discovery.hypotheses import Hypothesis as _Hyp  # noqa: PLC0415
+                from autobridge.repair.semantic import AMOUNT_STRATEGIES as _STRATS  # noqa: PLC0415
+
+                for _ent_name, _fld in sorted(_seeded.items()):
+                    for _strat in _STRATS:
+                        enumerated.append(
+                            _Hyp(
+                                id=f"amount:{_fld}:{_strat}",
+                                family="amount",
+                                claim=f"field `{_fld}`: {_strat}",
+                                candidate_mapping_fragment={
+                                    "family": "amount",
+                                    "field": _fld,
+                                    "strategy": _strat,
+                                    "semantics": _strat,
+                                },
+                                prior=1.0 / 3.0,
+                                evidence_for=(
+                                    _Prov(
+                                        source=source,
+                                        line=1,
+                                        snippet=(
+                                            f"money_scale_shift on `{_fld}` "
+                                            f"for {_ent_name} (seeded from signal)"
+                                        ),
+                                    ),
+                                ),
+                                field=_fld,
+                                strategy=_strat,
+                            )
+                        )
+            except Exception:
+                pass
     failed = _semantic.money_invariant_failed(summary, signals)
     survivors = _semantic.filter_wire_consistent(enumerated, invariant_failed=failed)
     climbed, siblings = _semantic.select_climbed(survivors)
     stages = _semantic.funnel_stages(enumerated, survivors, climbed, siblings, source=source)
-    evidence = _semantic.build_l3_evidence(spec, summary, climbed)
+    evidence = _semantic.build_l3_evidence(
+        spec, summary, climbed, signals=list(signals or ())
+    )
+    # REQ-081 item 1: when the semantic evidence is still empty (no
+    # money_invariant, no climbed reading), fall back to the generic
+    # evidence — it yields a spec subtree and faulted records for this
+    # instance instead of "(none recorded)" everywhere.
+    if not evidence:
+        try:
+            evidence = build_generic_l3_evidence(
+                spec, list(signals or ()), None, summary, "SEMANTIC_VALUE_DRIFT",
+                failed_attempts=None,
+            ) or {}
+        except Exception:
+            evidence = {}
     return {
         "climbed": climbed,
         "siblings": list(siblings),

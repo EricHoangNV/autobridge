@@ -305,15 +305,15 @@ fault is detected as `Degraded` rather than looping.
 
 | Name | Purpose | Key args |
 |---|---|---|
-| `date_local` | UTC instant → property-local calendar date (midnight crossing handled) | `tz: <iana> | source`, default `source` (→ `UTC` when unresolved) |
-| `datetime_utc` | Local instant → UTC ISO (`+00:00`) | `tz: <iana> | source`, default `source` |
+| `date_local` | UTC instant → property-local calendar date (midnight crossing handled) | `tz: <iana> | source`, default `source` (→ `UTC` when unresolved); `input_format: "%m-%d-%Y"` etc (REQ-081: optional declarative input format, allow-list `%Y/%m/%d/%H/%M/%S` + `- / space : . T`) |
+| `datetime_utc` | Local instant → UTC ISO (`+00:00`) | `tz: <iana> | source`, default `source`; `input_format` (same allow-list) |
 | `money` | String/int/`Decimal` → `Decimal` quantized (float input is rejected) | `scale: 0..6` (default 2, uses `ROUND_HALF_UP`, strips `$`, `,`) |
 | `enum_map` | Vendor code → canonical vocab; unknown `block` | `map: { from: to, … }, on_unknown: block` |
 | `flatten` | `[[a],[b]]` → `[a,b]` | — |
 | `coalesce` | First non-empty | `default` / `value` / `fallback` / `else` / `values: […]` |
 | `const` | Replace with constant | `value: any` (required) |
 | `concat` | Join / prefix-suffix | `separator`, `prefix`, `suffix`, `values: […]` |
-| `business_date` | `posted_at` UTC → business date via cutoff | `tz: <iana> | source` (default `source`), `cutoff: 0..23` (default `4`) |
+| `business_date` | `posted_at` UTC → business date via cutoff | `tz: <iana> | source` (default `source`), `cutoff: 0..23` (default `4`); `input_format` (same allow-list) |
 
 `enum_map` with `on_unknown: block` is load-bearing: an unknown vendor value
 raises `TransformBlocked` and the sync handler maps it to `Blocked` with

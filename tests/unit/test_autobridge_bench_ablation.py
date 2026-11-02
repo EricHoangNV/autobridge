@@ -349,7 +349,11 @@ def test_engine_arm_handle_kwargs_carry_no_case_diagnostics(monkeypatch: pytest.
         fresh = ab.derive_diagnostics(case.spec, scenario_id=sid, connector_id=conn, seed=inputs.seed)
         for call in seen:
             assert call["drift_class"] == fresh.drift_class, sid
-            assert "validate_against" not in call, sid
+            # REQ-081 item 3: validate_against is the pre-drift spec itself
+            # (equal input every arm gets, as production passes it) — never
+            # a case-supplied diagnostic. It must equal case.spec when present.
+            if "validate_against" in call:
+                assert call["validate_against"] == case.spec, sid
             assert call["extra"] == {}, sid
             if call.get("hypotheses") is not None:
                 fresh_hyps = ab.enumerate_hypotheses(docs_ref=case.docs_ref, scenario_id=sid)

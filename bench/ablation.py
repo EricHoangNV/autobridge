@@ -909,6 +909,10 @@ def run_engine_arm(
             run_id=run_id,
             enable_knowledge=ablation != "engine_no_knowledge",
             enable_rules=ablation != "engine_no_knowledge",
+            # REQ-081 item 3: pass validate_against as production does, so
+            # the apply check and dry-run gate run in the bench arm.
+            validate_against=dict(case.spec),
+            dry_run_fault=_dry_fault,
         )
         # Phase 1: deterministic ladder first (never a model call).
         result = ctrl.handle(provider=None, hypotheses=None, enumerator_yield_count=None, **common)
@@ -927,7 +931,6 @@ def run_engine_arm(
                 enumerator_yield_count=len(hyps),
                 evidence=(dict(_prepared.get("evidence") or {})) or None,
                 hypothesis_stages=list(_prepared.get("stages") or []),
-                dry_run_fault=_dry_fault,
                 **common,
             )
         elapsed_ms = (time.monotonic() - start) * 1000.0

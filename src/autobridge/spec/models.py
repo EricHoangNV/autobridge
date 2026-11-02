@@ -167,6 +167,19 @@ class TransformStep(_Strict):
             scale = self.args["scale"]
             if not isinstance(scale, int) or isinstance(scale, bool) or not 0 <= scale <= 6:
                 raise ValueError("money 'scale' must be an int in 0..6")
+        # REQ-081 item 4: optional declarative input format for the date
+        # transforms — fixed allow-list only (no free code).
+        if self.name in ("date_local", "business_date", "datetime_utc") and "input_format" in self.args:
+            from autobridge.runtime.transforms.base import (  # noqa: PLC0415
+                is_allowed_date_input_format as _is_allowed_fmt,
+            )
+
+            _fmt = self.args.get("input_format")
+            if not _is_allowed_fmt(_fmt):
+                raise ValueError(
+                    "date transform 'input_format' must use only %Y/%m/%d/%H/%M/%S "
+                    "and - / space : . T separators"
+                )
         return self
 
 

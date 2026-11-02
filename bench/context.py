@@ -426,6 +426,33 @@ def write_agent_sandbox(context: BenchContext, dest: str | pathlib.Path) -> list
             raise RuntimeError(f"bench sandbox file escapes its directory: {name!r}")
         target.write_text(files[name], encoding="utf-8")
         written.append(name)
+    # REQ-081 item 7: explicit opencode permission config in the sandbox
+    # dir (project config, picked up because cwd is the sandbox dir). Deny
+    # what the agent may not use (outside reads, subagents, search, skills)
+    # and allow the sandbox tools — so a tool call never ends in a silent
+    # headless "ask" rejection with no final answer.
+    try:
+        _opencode_cfg = {
+            "$schema": "https://opencode.ai/config.json",
+            "permission": {
+                "external_directory": "deny",
+                "task": "deny",
+                "websearch": "deny",
+                "skill": "deny",
+                "lsp": "deny",
+                "read": "allow",
+                "glob": "allow",
+                "grep": "allow",
+                "bash": "allow",
+                "edit": "allow",
+                "webfetch": "allow",
+            },
+        }
+        (dest_path / "opencode.json").write_text(
+            json.dumps(_opencode_cfg, indent=2, sort_keys=True), encoding="utf-8"
+        )
+    except Exception:
+        pass
     return written
 
 

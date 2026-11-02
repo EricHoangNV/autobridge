@@ -714,15 +714,15 @@ def beacon_bench_context(
         example_spec_for,
         vendor_docs_text,
     )
-    from bench.evidence import render_sync_evidence, spec_to_yaml  # noqa: PLC0415
+    from bench.evidence import render_fault_vs_baseline, spec_to_yaml  # noqa: PLC0415
     from bench.faults import beacon_sync_pair as _beacon_sync_pair  # noqa: PLC0415
 
     @_functools.lru_cache(maxsize=256)
     def _cached_evidence(spec_json: str, seed_hex: str, index: int, vendor: str) -> str:
-        faulted_summary, _baseline_summary = _beacon_sync_pair(
+        faulted_summary, baseline_summary = _beacon_sync_pair(
             vendor=vendor, eval_seed_hex=seed_hex, index=index, spec=_json.loads(spec_json)
         )
-        return render_sync_evidence(faulted_summary)
+        return render_fault_vs_baseline(faulted_summary, baseline_summary)
 
     spec = dict(case.spec)
     spec_json = _json.dumps(spec, sort_keys=True, default=str)
@@ -1500,6 +1500,33 @@ def _summarize_result(result: Any) -> dict[str, Any]:
     }
 
 
+def _candidate_apply_error(result: Any, case: Any) -> str | None:
+    """Apply error when a proposed patch does not apply (REQ-081 item 3).
+
+    Returns the error string when the arm proposed a non-empty patch that
+    fails to apply to the pre-drift spec, else None. A patch that does
+    not apply is a wrong patch proposed, never \"no patch\".
+    """
+    try:
+        spec = getattr(result, "spec", None)
+        if not isinstance(spec, dict):
+            return None
+        patch = spec.get("candidate_patch")
+        if not patch or not isinstance(patch, list):
+            return None
+        if case is None or not isinstance(getattr(case, "spec", None), dict):
+            return None
+        from autobridge.spec.patch import apply_patch as _apply_patch  # noqa: PLC0415
+
+        try:
+            _apply_patch(copy.deepcopy(case.spec), list(patch))
+            return None
+        except Exception as exc:
+            return f"candidate patch does not apply: {type(exc).__name__}: {exc}"[:500]
+    except Exception:
+        return None
+
+
 def _candidate_spec_for(result: Any, case: Any) -> dict[str, Any] | None:
     """Candidate full spec from an arm result (engine patch or oneshot spec)."""
     spec = getattr(result, "spec", None)
@@ -1515,6 +1542,9 @@ def _candidate_spec_for(result: Any, case: Any) -> dict[str, Any] | None:
         try:
             return _apply_patch(candidate, list(patch))
         except Exception:
+            # REQ-081 item 3: never a silent loss — the caller records the
+            # apply error via _candidate_apply_error and counts it as a
+            # wrong patch proposed.
             return None
     # frontier_oneshot returns a full spec dict (no candidate_patch wrapper).
     if spec.get("operations") and spec.get("entities"):
@@ -1784,15 +1814,33 @@ def _grade_arm_result(
     vendor = str(descriptor["vendor"])
     case = beacon_case_for(descriptor, vendors)
     candidate = _candidate_spec_for(result, case)
+    # REQ-081 item 3: a proposed patch that does not apply is an error
+    # and a wrong patch proposed, never "no patch".
+    _apply_error = _candidate_apply_error(result, case) if candidate is None else None
+    if _apply_error is not None:
+        grade.error = _apply_error
+        grade.wrong_patch_proposed = 1
     records: dict[str, list[dict[str, Any]]] = {"reservations": [], "folios": []}
     records_verdict: str | None = None
     records_failed: list[str] = []
     synced = False
+    candidate_outcome: str | None = None
     if candidate is not None and http_sync and public_url:
         try:
             summary = sync_candidate(candidate, public_url)
             records = canonical_to_records(summary.get("canonical_records", {}))
             synced = True
+            # REQ-081 item 3: a candidate sync that ends non-Complete is
+            # recorded with its outcome, not as a silent loss.
+            candidate_outcome = str(summary.get("outcome", ""))
+            if candidate_outcome != "Complete":
+                records_verdict = "fail"
+                unmet = summary.get("unmet_criteria") or [f"sync_{candidate_outcome}"]
+                records_failed = [str(unmet[0])[:120]]
+                grade.error = (
+                    f"candidate sync {candidate_outcome}: "
+                    f"{str(unmet[0])[:200]}"
+                )[:500]
         except Exception as exc:
             grade.error = f"candidate sync failed: {type(exc).__name__}: {exc}"[:500]
     elif candidate is not None and not http_sync and vendor == "fias-pabx":

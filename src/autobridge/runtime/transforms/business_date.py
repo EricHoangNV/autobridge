@@ -15,7 +15,9 @@ from autobridge.runtime.transforms.base import (
     _parse_iso_datetime,
     _resolve_tz,
     apply_naive_tz,
+    is_allowed_date_input_format,
     parse_wire_datetime,
+    parse_with_input_format,
 )
 
 
@@ -61,6 +63,27 @@ def transform_business_date(
         return business.isoformat()
 
     s = str(value).strip()
+    # REQ-081 item 4: declarative input format (allow-listed only).
+    _input_fmt = args.get("input_format") if isinstance(args, dict) else None
+    if isinstance(_input_fmt, str) and _input_fmt and is_allowed_date_input_format(_input_fmt):
+        _parsed_fmt = parse_with_input_format(s, _input_fmt)
+        if _parsed_fmt is not None:
+            dt2 = apply_naive_tz(_parsed_fmt, args, context_tz)
+            tz_name2 = _resolve_tz(args.get("tz") if isinstance(args, dict) else None, context_tz)
+            cutoff2 = args.get("cutoff", args.get("cutoff_hour", 4)) if isinstance(args, dict) else 4
+            try:
+                cutoff_hour2 = int(cutoff2) if cutoff2 is not None else 4
+            except Exception:
+                cutoff_hour2 = 4
+            try:
+                tz2 = ZoneInfo(tz_name2)
+            except Exception:
+                tz2 = ZoneInfo("UTC")
+            local2 = dt2.astimezone(tz2)
+            business2 = local2.date()
+            if local2.hour < cutoff_hour2:
+                business2 = business2 - datetime.timedelta(days=1)
+            return business2.isoformat()
     # Pure date already
     if len(s) == 10 and s[4] == "-" and s[7] == "-":
         try:

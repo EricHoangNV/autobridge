@@ -247,8 +247,60 @@ def _extra_wire_fields(rec: dict[str, Any], consumed: set[str]) -> dict[str, Any
     return extra
 
 
+def _split_nesting(rec: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Unwrap beacon-nested internal records (REQ-081 item 5).
+
+    Returns ``(inner, parents)``; flat records return ``(rec, [])``. The
+    vendor projects the inner record and re-applies the parents to the
+    wire, so a path patch can repair the nesting.
+    """
+    inner = rec if isinstance(rec, dict) else {}
+    parents: list[str] = []
+    for _ in range(5):
+        if not isinstance(inner, dict):
+            break
+        if any(
+            k in inner
+            for k in (
+                "reservation_id",
+                "property_id",
+                "charge_id",
+                "arrival_date",
+                "departure_date",
+                "status",
+                "guest_name",
+                "guest_id",
+                "total_amount",
+                "amount",
+            )
+        ):
+            break
+        if len(inner) == 1:
+            _k, _v = next(iter(inner.items()))
+            if isinstance(_v, dict) and isinstance(_k, str) and _k:
+                parents.append(_k)
+                inner = _v
+                continue
+        break
+    return (inner if isinstance(inner, dict) else {}, parents)
+
+
+def _wrap_wire(wire: dict[str, Any], parents: list[str]) -> dict[str, Any]:
+    """Re-apply nesting parents to a projected wire record."""
+    out = wire
+    for parent in reversed(parents):
+        out = {parent: out}
+    return out
+
+
 def to_wire_reservation(rec: dict[str, Any]) -> dict[str, Any]:
     """Internal reservation -> getReservations list item (camelCase)."""
+    # REQ-081 item 5: nesting applies to the projected wire record.
+    _parents: list[str] = []
+    try:
+        rec, _parents = _split_nesting(rec if isinstance(rec, dict) else {})
+    except Exception:
+        _parents = []
     status = rec.get("status")
     wire_status = "canceled" if status == "cancelled" else status
     arrival = str(rec.get("arrival_date", ""))
@@ -293,6 +345,8 @@ def to_wire_reservation(rec: dict[str, Any]) -> dict[str, Any]:
             },
         )
     )
+    if _parents:
+        return _wrap_wire(item, _parents)
     return item
 
 
@@ -366,6 +420,12 @@ def to_wire_transaction(rec: dict[str, Any]) -> dict[str, Any]:
     item 1: the old key vanishes (emitted only when the record still
     carries the field) — a real vendor rename removes the old key.
     """
+    # REQ-081 item 5: nesting applies to the projected wire record.
+    _parents: list[str] = []
+    try:
+        rec, _parents = _split_nesting(rec if isinstance(rec, dict) else {})
+    except Exception:
+        _parents = []
     posted = rec.get("posted_at")
     # REQ-080 item 1: a renamed field vanishes from the wire. Each key
     # derived from a renameable record field is emitted only when the
@@ -398,6 +458,8 @@ def to_wire_transaction(rec: dict[str, Any]) -> dict[str, Any]:
             },
         )
     )
+    if _parents:
+        return _wrap_wire(wire, _parents)
     return wire
 
 

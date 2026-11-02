@@ -43,6 +43,40 @@ def _parse_iso_date_string(value: str) -> datetime.date | None:
     return None
 
 
+#: REQ-081 item 4: declarative input formats for the date transforms.
+#: Fixed allow-list of strptime directives (no free code) plus the
+#: literal separators a vendor date may use. The generator's DATE_FORMATS
+#: ("%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y") are all expressible here, and
+#: every generated date format must parse with this set.
+ALLOWED_DATE_INPUT_DIRECTIVES: tuple[str, ...] = ("%Y", "%m", "%d", "%H", "%M", "%S")
+ALLOWED_DATE_INPUT_LITERAL_CHARS: frozenset[str] = frozenset(
+    {"-", "/", " ", ":", ".", "T"}
+)
+
+
+def is_allowed_date_input_format(fmt: Any) -> bool:
+    """True when *fmt* uses only the allow-listed directives + literals."""
+    if not isinstance(fmt, str) or not fmt or len(fmt) > 64:
+        return False
+    tmp = fmt
+    for directive in ALLOWED_DATE_INPUT_DIRECTIVES:
+        tmp = tmp.replace(directive, "")
+    # Any remaining % starts an allow-listed directive → reject.
+    if "%" in tmp:
+        return False
+    return all((ch in ALLOWED_DATE_INPUT_LITERAL_CHARS) for ch in tmp)
+
+
+def parse_with_input_format(value: str, fmt: str) -> datetime.datetime | None:
+    """Parse *value* with declarative *fmt* (allow-listed only), else None."""
+    if not is_allowed_date_input_format(fmt):
+        return None
+    try:
+        return datetime.datetime.strptime(str(value).strip(), fmt)
+    except (ValueError, TypeError):
+        return None
+
+
 #: FIAS-style wire date/time shapes (framed hotel protocols): a six-digit
 #: property-local ``YYMMDD`` date, optionally followed by a six-digit
 #: ``HHMMSS`` time (space-separated or run together). Years are 2000+YY.

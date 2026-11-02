@@ -11,7 +11,9 @@ from autobridge.runtime.transforms.base import (
     _parse_iso_datetime,
     _resolve_tz,
     apply_naive_tz,
+    is_allowed_date_input_format,
     parse_wire_datetime,
+    parse_with_input_format,
 )
 
 
@@ -40,6 +42,16 @@ def transform_datetime_utc(
         return dt.astimezone(datetime.UTC).isoformat()
 
     s = str(value).strip()
+    # REQ-081 item 4: declarative input format (allow-listed only).
+    _input_fmt = args.get("input_format") if isinstance(args, dict) else None
+    if isinstance(_input_fmt, str) and _input_fmt and is_allowed_date_input_format(_input_fmt):
+        _parsed_fmt = parse_with_input_format(s, _input_fmt)
+        if _parsed_fmt is not None:
+            return (
+                apply_naive_tz(_parsed_fmt, args, context_tz, default="source")
+                .astimezone(datetime.UTC)
+                .isoformat()
+            )
     pure = _parse_iso_date_string(s)
     if pure is not None:
         tz_name = _resolve_tz(args.get("tz"), context_tz)

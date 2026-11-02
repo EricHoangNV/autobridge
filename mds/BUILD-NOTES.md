@@ -3292,3 +3292,14 @@ names (e.g. `checkOutTs`) still auto-repaired on value pairing alone.
   UI 350. E2E not run (no live stack in this sandbox); the in-process
   detector→L1 paths cover the change in unit tests.
 - Owner step: keyed rehearsal with FRONTIER_API_KEY on this commit, then close.
+
+### REQ-081 (sbx1 2026-11-02, Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+All 7 rehearsal-gap items code-done; full gates green (make lint, typecheck, test incl. UI 350 pass).
+- Item 1 (semantic L3 no-evidence): prepare_semantic_inputs seeds money fields from money_scale_shift signal details when the spec has no money_invariant; build_l3_evidence falls back to entity-by-field lookup and carries scale_signal (field, factor, observed vs baseline estimate); when semantic evidence is still empty it falls back to build_generic_l3_evidence. Harbor-shape prompts unchanged (scale_signal only when no money map) so existing replay hashes still hit.
+- Item 2 (equal baseline): bench/evidence.render_fault_vs_baseline renders faulted + baseline samples with identical redaction; beacon_bench_context uses it, so evidence.md labels baseline vs faulted.
+- Item 3 (unvalidated patches): bench/ablation run_engine_arm passes validate_against + dry_run_fault as production does; bench/beacon_run _candidate_apply_error records non-applying patches as error + wrong_patch_proposed; HTTP candidate sync ending non-Complete records its outcome instead of silent loss.
+- Item 4 (date input format): base.ALLOWED_DATE_INPUT_DIRECTIVES + is_allowed_date_input_format/parse_with_input_format; date_local/business_date/datetime_utc accept optional input_format; spec TransformStep validates allow-list; docs/connector-spec.md updated; harbor %m-%d-%Y repairable; all DATE_FORMATS round-trip.
+- Item 5 (meridian nesting): meridian + atlas to_wire unwrap nested internal records, project inner, re-wrap wire with parents (SVC-None/ACC-None gone); harbor/legacy already serve nested shape. Detection sweep updated: meridian nesting now SCHEMA_REMOVED (nested_path_shift handles it).
+- Item 6 (multi-path L3): generic evidence renders paths lists; allowed pointers include /paths + /paths/N; semantic allowed_l3_pointers + spec_subtree_for_entity surface paths.
+- Item 7 (agent no-answer): write_agent_sandbox writes opencode.json (deny external_directory/task/websearch/skill/lsp, allow sandbox tools); OpenCodeCliDriver re-prompts once in same session (--session) when text empty.
+Tests: tests/unit/test_autobridge_req081.py (12 tests, one+ per item); updated test_engine_arm guard to allow validate_against==case.spec (equal input, per item 3) and meridian nesting expectation to SCHEMA_REMOVED (per item 5 wire fix). No beacon freeze/tag/commit under experiments/beacon.

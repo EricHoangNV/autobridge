@@ -28,7 +28,7 @@ it. Do:
    playbook.
 
 ### REQ-081 — Rehearsal 6603643 on 8476da5e: evidence and grading gaps that hide or block correct answers (2026-11-02)
-Status: IN_PROGRESS (sbx1 since 2026-11-02 06:10)
+Status: DONE (sbx1 2026-11-02 -- all 7 items code-done: semantic signal-seeded evidence + generic fallback, equal baseline in frontier evidence, validate_against + apply-error grading, date input_format on 3 transforms, meridian+atlas nesting on wire, multi-path L3 pointers, agent permission + re-prompt; 12 new tests, full gates green; owner step: keyed rehearsal on this commit, then close)
 Owner keyed rehearsal (2026-11-02, `8476da5e`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1): autobridge_cold 0.60,
 engine_no_knowledge 0.60, autobridge_warm 0.40, frontier_agent 0.30, frontier_oneshot 0.20; 0 wrong patches released.
 The PWD fix works (all agent sessions ran in `/tmp/bench-agent-*` and read `evidence.md`). Each item below was traced

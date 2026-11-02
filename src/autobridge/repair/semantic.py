@@ -254,6 +254,17 @@ def allowed_l3_pointers(spec: dict[str, Any], entity: str) -> list[str]:
         pointers.append(base)
         for member in PATCHABLE_FIELD_MEMBERS:
             pointers.append(f"{base}/{member}")
+        # REQ-081 item 6: multi-path fields (paths: [...]) are patched
+        # via /paths and /paths/N.
+        try:
+            _fspec = fields.get(field_name)
+            _paths = _fspec.get("paths") if isinstance(_fspec, dict) else None
+            if isinstance(_paths, list) and _paths:
+                pointers.append(f"{base}/paths")
+                for _idx in range(min(len(_paths), 8)):
+                    pointers.append(f"{base}/paths/{_idx}")
+        except Exception:
+            pass
     if isinstance(entities, dict):
         for ent_name in sorted(entities):
             ent = entities[ent_name]
@@ -291,11 +302,24 @@ def spec_subtree_for_entity(spec: dict[str, Any], entity: str) -> dict[str, Any]
         for field_name in sorted(fields):
             field_spec = fields.get(field_name)
             base = f"/entities/{entity}/fields/{field_name}"
-            subtree_fields[str(field_name)] = {
+            _entry: dict[str, Any] = {
                 "pointer": base,
                 "path": field_spec.get("path") if isinstance(field_spec, dict) else None,
                 "transform": field_spec.get("transform") if isinstance(field_spec, dict) else None,
             }
+            # REQ-081 item 6: surface multi-path fields (paths: [...]) so
+            # the model sees and can patch them.
+            try:
+                _paths = (
+                    field_spec.get("paths")
+                    if isinstance(field_spec, dict)
+                    else None
+                )
+                if isinstance(_paths, list):
+                    _entry["paths"] = [str(p) for p in _paths[:8]]
+            except Exception:
+                pass
+            subtree_fields[str(field_name)] = _entry
     checks = ent_spec.get("checks") or []
     return {
         "entity": entity,
@@ -478,7 +502,10 @@ def _decimal_sum(rows: list[Any], field: str) -> Decimal:
 
 
 def build_l3_evidence(
-    spec: dict[str, Any], summary: dict[str, Any] | None, climbed: Hypothesis | None
+    spec: dict[str, Any],
+    summary: dict[str, Any] | None,
+    climbed: Hypothesis | None,
+    signals: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Redacted L3 evidence from the faulted sync (untrusted data, never secrets).
 
@@ -500,14 +527,27 @@ def build_l3_evidence(
         return {}
     field = climbed.field
     entities = spec.get("entities") or {}
+    _money_map = money_fields_of_spec(spec)
     ent_name = next(
         (
             name
             for name, ent in entities.items()
-            if isinstance(ent, dict) and money_fields_of_spec(spec).get(name) == field
+            if isinstance(ent, dict) and _money_map.get(name) == field
         ),
         "",
     )
+    # REQ-081 item 1: a spec with no money_invariant check has no money
+    # field map — fall back to the entity that actually carries the field
+    # so the evidence still names the field instead of returning {}.
+    if not ent_name and isinstance(entities, dict):
+        for _name, _ent in entities.items():
+            try:
+                _flds = _ent.get("fields") if isinstance(_ent, dict) else None
+                if isinstance(_flds, dict) and field in _flds:
+                    ent_name = str(_name)
+                    break
+            except Exception:
+                continue
     ent_spec = entities.get(ent_name) if isinstance(entities, dict) else None
     field_path = ""
     key_field = ""
@@ -536,8 +576,71 @@ def build_l3_evidence(
             if isinstance(first, dict) and first.get("gross_sum") is not None:
                 baseline_sum = str(first["gross_sum"])
                 break
+    # REQ-081 item 1: surface the detector's money_scale_shift signal —
+    # the field, the factor and baseline vs faulted values — so the L3
+    # prompt names them instead of rendering "(none recorded)".
+    scale_signal: dict[str, Any] = {}
+    try:
+        for _sig in list(signals or []):
+            _d = (
+                _sig.get("details")
+                if isinstance(_sig, dict)
+                else getattr(_sig, "details", None)
+            )
+            if not isinstance(_d, dict):
+                continue
+            if str(_d.get("money_field") or "") != field:
+                continue
+            _factor = _d.get("factor")
+            _msg = ""
+            try:
+                _msg = str(
+                    _sig.get("message")
+                    if isinstance(_sig, dict)
+                    else getattr(_sig, "message", "")
+                )[:300]
+            except Exception:
+                _msg = ""
+            scale_signal = {
+                "entity": _d.get("entity") or ent_name,
+                "money_field": field,
+                "factor": str(_factor) if _factor is not None else "",
+                "message": _msg,
+                "observed_sum": str(observed_sum),
+                "baseline_gross_sum": baseline_sum,
+            }
+            # Baseline estimate from the observed ratio (factor is
+            # faulted/baseline): baseline ≈ observed / factor.
+            try:
+                from decimal import Decimal as _Dec  # noqa: PLC0415
+
+                _f = _Dec(str(_factor))
+                if _f != 0:
+                    scale_signal["baseline_estimate"] = str(
+                        (observed_sum / _f).quantize(_Dec("0.01"))
+                        if observed_sum != 0
+                        else _Dec("0")
+                    )
+                    scale_signal["faulted_sum"] = str(observed_sum)
+            except Exception:
+                pass
+            if scale_signal.get("factor"):
+                break
+        # Fall back to the invariant sums when no scale signal names the
+        # field (harbor-style specs with money_invariant checks).
+        if not scale_signal:
+            scale_signal = {
+                "entity": ent_name,
+                "money_field": field,
+                "factor": "",
+                "message": "",
+                "observed_sum": str(observed_sum),
+                "baseline_gross_sum": baseline_sum,
+            }
+    except Exception:
+        scale_signal = {}
     pointers = allowed_l3_pointers(spec, ent_name)
-    return {
+    out: dict[str, Any] = {
         "spec_excerpt": {
             "entity": ent_name,
             "field": field,
@@ -571,3 +674,9 @@ def build_l3_evidence(
             summary, money_fields={field}, limit=2, entity=ent_name, spec=spec
         ),
     }
+    # REQ-081 item 1: only specs with no money_invariant (the seeded case)
+    # carry scale_signal — harbor-style specs keep the exact pre-REQ-081
+    # shape so existing replay captures (prompt hashes) still hit.
+    if not _money_map:
+        out["scale_signal"] = scale_signal
+    return out

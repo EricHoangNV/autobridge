@@ -341,6 +341,54 @@ def _wire_extras(rec: dict[str, Any], consumed: frozenset[str]) -> dict[str, Any
     return {k: v for k, v in rec.items() if k not in consumed}
 
 
+def _split_nesting(rec: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Unwrap beacon-nested internal records (REQ-081 item 5).
+
+    A nesting mutation wraps the internal record as ``{parent: {...}}``
+    (possibly several levels). The vendor projects the inner record and
+    re-applies the same parents to the wire record — as a real vendor
+    would — so a JSONPath patch (``$.parent.Id``) can repair it. Returns
+    ``(inner, parents)``; a flat record returns ``(rec, [])``.
+    """
+    inner = rec if isinstance(rec, dict) else {}
+    parents: list[str] = []
+    for _ in range(5):
+        if not isinstance(inner, dict):
+            break
+        # Flat when it carries any consumed key.
+        if any(
+            k in inner
+            for k in (
+                "reservation_id",
+                "property_id",
+                "charge_id",
+                "arrival_date",
+                "departure_date",
+                "status",
+                "guest_name",
+                "total_amount",
+                "amount",
+            )
+        ):
+            break
+        if len(inner) == 1:
+            _k, _v = next(iter(inner.items()))
+            if isinstance(_v, dict) and isinstance(_k, str) and _k:
+                parents.append(_k)
+                inner = _v
+                continue
+        break
+    return (inner if isinstance(inner, dict) else {}, parents)
+
+
+def _wrap_wire(wire: dict[str, Any], parents: list[str]) -> dict[str, Any]:
+    """Re-apply nesting parents to a projected wire record."""
+    out = wire
+    for parent in reversed(parents):
+        out = {parent: out}
+    return out
+
+
 def service_id_for(property_id: str) -> str:
     return f"SVC-{property_id}"
 
@@ -360,6 +408,14 @@ def to_wire_reservation(rec: dict[str, Any], scenario_id: str = "baseline") -> d
     crash the serializer. Unparseable dates null the derived UTC fields
     and ride the wire verbatim as extras, so the drift is observable.
     """
+    # REQ-081 item 5: nesting applies to the projected wire record, not
+    # the internal record — unwrap, project, then re-wrap the wire so a
+    # path patch ($.parent.Id) can repair it.
+    _parents: list[str] = []
+    try:
+        rec, _parents = _split_nesting(rec if isinstance(rec, dict) else {})
+    except Exception:
+        _parents = []
     arrival = _parse_iso_date(rec.get("arrival_date"))
     departure = _parse_iso_date(rec.get("departure_date"))
     updated = _parse_iso_dt(rec.get("updated_at"))
@@ -414,6 +470,8 @@ def to_wire_reservation(rec: dict[str, Any], scenario_id: str = "baseline") -> d
             if parsed is None:
                 extras[key] = raw
     wire.update(extras)
+    if _parents:
+        return _wrap_wire(wire, _parents)
     return wire
 
 
@@ -453,6 +511,12 @@ def to_wire_order_item(rec: dict[str, Any]) -> dict[str, Any]:
     null ``PostedUtc`` and ride the wire verbatim as extras; amounts stay
     Decimal end to end.
     """
+    # REQ-081 item 5: nesting applies to the projected wire record.
+    _parents: list[str] = []
+    try:
+        rec, _parents = _split_nesting(rec if isinstance(rec, dict) else {})
+    except Exception:
+        _parents = []
     try:
         gross = _Decimal(str(rec.get("amount", "0")))
     except Exception:
@@ -487,6 +551,8 @@ def to_wire_order_item(rec: dict[str, Any]) -> dict[str, Any]:
     if isinstance(raw_posted, str) and "posted_at" not in extras and posted is None:
         extras["posted_at"] = raw_posted
     wire.update(extras)
+    if _parents:
+        return _wrap_wire(wire, _parents)
     return wire
 
 
