@@ -5,7 +5,7 @@
 Owner priority (2026-11-02): **REQ-083** (REQ-066..081 done; the real beacon freeze waits for it). REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-083 — Rehearsal 6603643 on 7cd6ca27: date-only parse, meridian candidate sync, records judge for meridian and FIAS (2026-11-02)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-02 08:47)
 Owner keyed rehearsal (2026-11-02, `7cd6ca27`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1): autobridge_cold
 0.70, engine_no_knowledge 0.60, autobridge_warm 0.60, frontier_agent 0.50, frontier_oneshot 0.30; 0 wrong patches
 released. Three of the failing instances fail for reasons outside the arms' answers; each was reproduced in-process on
