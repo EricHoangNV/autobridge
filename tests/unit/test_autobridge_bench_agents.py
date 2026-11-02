@@ -744,3 +744,52 @@ def test_baseline_driver_kinds() -> None:
     assert isinstance(get_baseline_driver("opencode"), OpenCodeCliDriver)
     with pytest.raises(ValueError, match="unknown baseline driver kind"):
         get_baseline_driver("nope")
+
+
+# ---------------------------------------------------------------------------
+# REQ-078 (reopened 2026-11-02): the spawned agent CLI's PWD is the sandbox dir
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("driver_cls_name", ["claude", "codex", "opencode"])
+def test_agent_cli_child_pwd_is_sandbox_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, driver_cls_name: str
+) -> None:
+    """The child env's PWD matches cwd even when the parent PWD is stale.
+
+    opencode takes its working directory from the inherited PWD, not the
+    process cwd: with a stale parent PWD the agent session landed in the
+    repo instead of its sandbox dir, so the agent never saw its files.
+    Every driver that spawns an agent CLI with cwd= pins PWD to the
+    sandbox dir.
+    """
+    from bench.baseline_coding_agent import build_fake_codex_output
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    # Stale parent PWD, unlike the sandbox dir the harness wrote files to.
+    monkeypatch.setenv("PWD", str(tmp_path))
+    assert os.environ["PWD"] != str(sandbox)
+
+    if driver_cls_name == "claude":
+        stdout = build_fake_claude_output("patched spec")
+        driver = ClaudeCodeDriver(cli_path="agent-cli")
+    elif driver_cls_name == "codex":
+        stdout = build_fake_codex_output("patched spec")
+        driver = CodexCliDriver(cli_path="agent-cli")
+    else:
+        stdout = build_fake_opencode_output("patched spec")
+        driver = OpenCodeCliDriver(cli_path="agent-cli", session_db_path=str(tmp_path / "nope.db"))
+
+    captured: dict[str, object] = {}
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("bench.baseline_coding_agent.subprocess.run", fake_run)
+    driver.run("repair the spec", cwd=sandbox)
+    assert captured["cwd"] == str(sandbox)
+    child_env = captured["env"]
+    assert isinstance(child_env, dict)
+    assert child_env["PWD"] == str(sandbox)

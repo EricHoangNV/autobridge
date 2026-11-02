@@ -213,6 +213,23 @@ class ClaudeCliError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
+def _sandbox_env(cwd: Path | None) -> dict[str, str] | None:
+    """Child environment for an agent CLI spawned with *cwd*.
+
+    REQ-078 (reopened 2026-11-02): agent CLIs take their working
+    directory from the inherited ``PWD``, not the process cwd — a stale
+    parent ``PWD`` lands the agent session in the repo instead of its
+    sandbox dir, so the agent never sees its files. Pin ``PWD`` to the
+    sandbox dir the harness wrote the shared context files to.
+    ``None`` (no sandbox dir) means inherit the parent environment.
+    """
+    if cwd is None:
+        return None
+    child_env = dict(os.environ)
+    child_env["PWD"] = str(cwd)
+    return child_env
+
+
 class ClaudeCodeDriver:
     """Headless ``claude -p`` driver with usage capture.
 
@@ -263,6 +280,8 @@ class ClaudeCodeDriver:
                 # Never inherit stdin (REQ-061 item 2: same hang class as opencode).
                 stdin=subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
+                # REQ-078: pin PWD to the sandbox dir (helper docstring).
+                env=_sandbox_env(cwd),
             )
         except subprocess.TimeoutExpired as e:
             raise ClaudeCliError(
@@ -482,6 +501,8 @@ class CodexCliDriver:
                 # Never inherit stdin (REQ-061 item 2: same hang class as opencode).
                 stdin=subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
+                # REQ-078: pin PWD to the sandbox dir (helper docstring).
+                env=_sandbox_env(cwd),
             )
         except subprocess.TimeoutExpired as e:
             raise CodexCliError(
@@ -982,6 +1003,10 @@ class OpenCodeCliDriver:
             "ANTHROPIC_API_KEY",
         ):
             child_env.pop(_scrub, None)
+        # REQ-078 (reopened 2026-11-02): opencode takes its working
+        # directory from the inherited PWD, not the process cwd — pin it
+        # to the sandbox dir so the agent session lands in its sandbox.
+        child_env["PWD"] = str(cwd)
         try:
             proc = subprocess.run(
                 cmd,
