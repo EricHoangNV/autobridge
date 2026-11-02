@@ -5,7 +5,29 @@
 Owner priority (2026-11-02): **REQ-078**, then **REQ-080** (REQ-066..077 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
 
 ### REQ-080 — A renamed field reaches the model as evidence; a misleading new name expects a question (2026-11-02)
-Status: DONE (sbx1 2026-11-02 -- all 5 items code-done: faithful rename serving, detector new-keys-on-empty, L3 evidence with new keys + raw samples, misleading->escalate key + engine gate, 35 new tests + sweep extension + docs; full gates green; owner step: keyed rehearsal on this commit, then close)
+Status: OPEN (reopened 2026-11-02 by owner on aa2a6fa7 -- the engine decides renames from a copy of the answer key's name vocabulary)
+Owner check (2026-11-02, on `aa2a6fa7`): items 1-3 landed. Item 4 put the answer key into the engine, which is not allowed.
+`src/autobridge/repair/rules/rename_field.py` (~39-83) adds `RENAME_PLAUSIBLE_NEW_NAMES`, a hand-written vocabulary per
+canonical field, and the L1 rule declines or repairs by looking the new wire name up in it. It mirrors the generator's
+`RENAME_PLAUSIBLE` (`simulators/common/faultgen.py` ~454) and covers every `NAME_POOL` name, so on every beacon rename
+the engine decides "repair" vs "ask" exactly as the grader expects, without the model and without reasoning over the
+evidence. It is also a fixed list of when to ask, which the owner rejected in REQ-078: the engine asks because the
+evidence is ambiguous, not because a name is on a list. And for any real name outside the table (e.g. `checkOutTs`)
+the rule still auto-repairs on value pairing alone. Finish in this REQ:
+- Remove `RENAME_PLAUSIBLE_NEW_NAMES` and `_names_different_field` (and any other name vocabulary) from engine code.
+- L1 repairs a rename by itself only when the evidence is unambiguous by a generic, vocabulary-free test: exactly one
+  mapped field emptied/vanished, exactly one new wire key, the new key's values match the lost values (type/format and
+  value pairing), and the new name is lexically close to the old wire key or the canonical field name (a generic string
+  similarity, no word lists). Anything else is not an L1 match: it climbs to the model with the REQ-080 evidence (new
+  keys + samples + raw records), and the model patches or asks.
+- The answer key's name vocabulary stays in the generator/verifier only (grading data). Engine code never imports,
+  copies or derives from it.
+- Tests: an engine-side test that fails if any engine source (`src/autobridge/`) contains a `NAME_POOL` name or a
+  per-field name vocabulary; L1 repairs a lexically close rename with matching values; L1 declines (climbs) for a
+  lexically unrelated name such as `checkinDate` for `endDate`, and for a name outside any list such as `checkOutTs`
+  when it is not lexically close; the climb's L3 prompt shows the new key and samples.
+Do not freeze, tag or commit under `experiments/beacon/`; the owner runs the keyed rehearsal after this lands.
+Previous status: DONE (sbx1 2026-11-02 -- all 5 items code-done: faithful rename serving, detector new-keys-on-empty, L3 evidence with new keys + raw samples, misleading->escalate key + engine gate, 35 new tests + sweep extension + docs; full gates green; owner step: keyed rehearsal on this commit, then close)
 Found in the owner keyed rehearsal on `fd2c8388` (round 6603643, instances 0 and 5: atlas `rename`,
 `departure_date` -> `reservationStatus` / `checkinDate`). Atlas served `endDate: ""` plus the new key holding exactly the
 departure dates, e.g. `{"startDate": "2026-11-03", "endDate": "", "checkinDate": "2026-11-06"}`. Every engine arm
