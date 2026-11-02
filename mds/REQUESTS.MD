@@ -5,7 +5,7 @@
 Owner priority (2026-11-02 23:30): **REQ-084 then REQ-085** (REQ-066..083 done; the real beacon freeze waits for them). One REQ per iteration: finish, gate, commit, then the next. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-084 — Meridian nesting is unreachable by any patch (customers endpoint ignores nesting); preflight proves the drawn repairs; L3 traces kept (2026-11-02)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-02 16:24)
 Keyed rehearsal on `0f079c17` (round 6603643, instance 3, meridian `nesting` `{entity: reservation, parents: [stay]}`,
 expected repair): every arm fails `field_missing`; the generator's own reference repair fails the same way
 (`field_missing` 27 = the non-null guest names). Reproduced in-process. Three small items, harness and simulator
