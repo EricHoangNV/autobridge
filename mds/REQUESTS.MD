@@ -5,7 +5,7 @@
 Owner priority (2026-11-02): **REQ-081** (REQ-066..080 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-081 — Rehearsal 6603643 on 8476da5e: evidence and grading gaps that hide or block correct answers (2026-11-02)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-02 06:10)
 Owner keyed rehearsal (2026-11-02, `8476da5e`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1): autobridge_cold 0.60,
 engine_no_knowledge 0.60, autobridge_warm 0.40, frontier_agent 0.30, frontier_oneshot 0.20; 0 wrong patches released.
 The PWD fix works (all agent sessions ran in `/tmp/bench-agent-*` and read `evidence.md`). Each item below was traced
