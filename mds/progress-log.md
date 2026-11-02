@@ -4280,3 +4280,6 @@ Agent: opencode meta/muse-wonder-1.0 (escalation)
 
 ## 2026-11-02 03:2x UTC — REQ-078 PWD remainder (sbx1)
 Agent: opencode meta/muse-spark-1.3 (escalation). Pinned the spawned agent CLI's `PWD` to the sandbox dir in all three bench drivers (`bench/baseline_coding_agent.py`: opencode + new shared `_sandbox_env` for claude/codex); added a parametrized test that fails if the child env's `PWD` differs from `cwd` (verified 3/3 fail pre-fix, 3/3 pass post-fix). Full `make test` green (3072 / 139 / 422 / UI 350; coverage 90.03 / 90.80 / 90.48). Merged to main; owner keyed rehearsal next.
+
+## 2026-11-02 04:4x UTC — REQ-080 code-done (sbx1)
+Agent: opencode meta/muse-spark-1.3 (escalation). All 5 items: faithful rename serving (atlas/meridian), detector new-keys-on-empty, L3 evidence with new keys + raw vendor samples, misleading->escalate answer key + engine gate, 35 new tests + sweep extension + docs. Full `make test` green (3107/139/422/UI 350; 90.06/90.92/90.57). Merged to main; owner keyed rehearsal next.

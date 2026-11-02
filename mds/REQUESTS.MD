@@ -5,7 +5,7 @@
 Owner priority (2026-11-02): **REQ-078**, then **REQ-080** (REQ-066..077 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
 
 ### REQ-080 — A renamed field reaches the model as evidence; a misleading new name expects a question (2026-11-02)
-Status: IN_PROGRESS (sbx1 since 2026-11-02 03:28)
+Status: DONE (sbx1 2026-11-02 -- all 5 items code-done: faithful rename serving, detector new-keys-on-empty, L3 evidence with new keys + raw samples, misleading->escalate key + engine gate, 35 new tests + sweep extension + docs; full gates green; owner step: keyed rehearsal on this commit, then close)
 Found in the owner keyed rehearsal on `fd2c8388` (round 6603643, instances 0 and 5: atlas `rename`,
 `departure_date` -> `reservationStatus` / `checkinDate`). Atlas served `endDate: ""` plus the new key holding exactly the
 departure dates, e.g. `{"startDate": "2026-11-03", "endDate": "", "checkinDate": "2026-11-06"}`. Every engine arm
