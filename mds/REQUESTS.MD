@@ -2,7 +2,48 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-02): **REQ-081** (REQ-066..080 done; the real beacon freeze waits for it). REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-02): **REQ-083** (REQ-066..081 done; the real beacon freeze waits for it). REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+
+### REQ-083 — Rehearsal 6603643 on 7cd6ca27: date-only parse, meridian candidate sync, records judge for meridian and FIAS (2026-11-02)
+Status: OPEN
+Owner keyed rehearsal (2026-11-02, `7cd6ca27`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1): autobridge_cold
+0.70, engine_no_knowledge 0.60, autobridge_warm 0.60, frontier_agent 0.50, frontier_oneshot 0.30; 0 wrong patches
+released. Three of the failing instances fail for reasons outside the arms' answers; each was reproduced in-process on
+that commit. Fix all; add a test per item. The atlas misleading rename (instance 0: cold asked, the others patched) is
+model variance; no change.
+1. **A date-only `input_format` value shifts back one day** (harbor `dates/format` `%m-%d-%Y`, instance 1; the
+   engine's 3-op transform patch fails `business_date_mismatch`). `date_local`
+   (`src/autobridge/runtime/transforms/date_local.py` ~68) parses "10-16-2026" to midnight, `apply_naive_tz` treats it
+   as UTC, and the property timezone conversion yields 2026-10-15; `business_date`
+   (`runtime/transforms/business_date.py` ~70-82) does the same and also applies the cutoff to midnight. The plain ISO
+   date path returns the date unchanged. Fix: when the input format carries no time directive (`%H`/`%M`/`%S`), the
+   parsed value is a calendar date: return it as is, with no timezone conversion and no cutoff, in both transforms.
+   Also, `input_format` is documented only in `docs/connector-spec.md`: list it in the capabilities transform args
+   (`src/autobridge/control/routes/capabilities.py` ~142), the L3 patch prompt's transform list, and the frontier arms'
+   prompt/evidence, so a model can know it exists. Tests: run with a non-UTC `context_tz` (the REQ-081 test at
+   `tests/unit/test_autobridge_req081.py` ~136 runs in UTC); the harbor format fault repaired with `input_format`
+   passes the records judge.
+2. **Bench candidate sync cannot reach meridian** (instances 3 and 8: every arm's applied patch ends
+   `candidate sync Blocked: http_error`). `_PLACEHOLDER_CREDENTIAL_REFS` (`bench/beacon_run.py` ~1924) covers atlas,
+   harbor and bench keys only, so meridian's body-field auth raises "Missing env var 'MERIDIAN_CLIENT_TOKEN'", reported
+   as `http_error` (`sync_run.py` ~252). Behind it, `sync_candidate` (~1023) uses the simulator's public URL and drops
+   the spec `base_url` path (`/api/connector/v1`), so requests 404. Fix: give the candidate sync the meridian
+   credential values the simulator accepts and keep the spec's base path; do the same check for every vendor.
+3. **An unfaulted meridian sync fails the records judge** (so no meridian repair can pass even after item 2): the
+   pre-drift spec over the unfaulted simulator fails `business_date_mismatch` (4 of 13) and `money_mismatch` (30);
+   under nesting, the folio `reservation_id` comes out missing (`field_missing` 83). Not traced to a line (suspects:
+   `property_id` `SVC-prop-001`, joined totals, the cutoff). Find the cause and fix whichever side is wrong
+   (simulator, verifier baseline or spec). Add a guard test: for every vendor, the pre-drift spec over the unfaulted
+   simulator passes `judge_produced_records`.
+4. **The FIAS feed is judged against the PMS folio dataset** (fias_layout, instance 4: the arms' amount->RG and DA->CD
+   patch was right but failed `loss_detected`, `no_loss`, `record_set_mismatch`). `verifier/beacon.py` (~416-420)
+   compares the FIAS posting against `generate_dataset`'s 80 folios, so even the unfaulted feed fails. Fix: for the
+   `fias_layout` and `fias_link` families, judge against the records the pre-drift spec produces over the unfaulted
+   feed. Also `verifier/checks.py` (~111-112) reports one loss as both `no_loss` and `loss_detected`: report it once.
+   And `bench/faults.py` (~547-548) gives `TA` and `TM` the same value (1250), so after `TA` is renamed nothing tells
+   the new key from `TM`: give `TM` a distinct value (the answer key stays `repair`).
+Then mark DONE after full gates pass; the owner runs the keyed rehearsal. Do not freeze, tag or commit under
+`experiments/beacon/`.
 
 ### REQ-082 — Tests check every handled fault against the fault playbook; the engine never reads it (2026-11-02)
 Status: DEFERRED (owner 2026-11-02: not needed for the hackathon; do not start)
