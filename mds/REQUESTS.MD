@@ -4,69 +4,109 @@
 
 Owner priority (2026-11-02): **REQ-083** (REQ-066..081 done; the real beacon freeze waits for it). REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
-### REQ-083 — Rehearsal 6603643 on 7cd6ca27: date-only parse, meridian candidate sync, records judge for meridian and FIAS (2026-11-02)
-Status: IN_PROGRESS (sbx1 since 2026-11-02 08:47)
-Owner keyed rehearsal (2026-11-02, `7cd6ca27`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1): autobridge_cold
-0.70, engine_no_knowledge 0.60, autobridge_warm 0.60, frontier_agent 0.50, frontier_oneshot 0.30; 0 wrong patches
-released. Three of the failing instances fail for reasons outside the arms' answers; each was reproduced in-process on
-that commit. Fix all; add a test per item. The atlas misleading rename (instance 0: cold asked, the others patched) is
-model variance; no change.
-1. **A date-only `input_format` value shifts back one day** (harbor `dates/format` `%m-%d-%Y`, instance 1; the
-   engine's 3-op transform patch fails `business_date_mismatch`). `date_local`
-   (`src/autobridge/runtime/transforms/date_local.py` ~68) parses "10-16-2026" to midnight, `apply_naive_tz` treats it
-   as UTC, and the property timezone conversion yields 2026-10-15; `business_date`
-   (`runtime/transforms/business_date.py` ~70-82) does the same and also applies the cutoff to midnight. The plain ISO
-   date path returns the date unchanged. Fix: when the input format carries no time directive (`%H`/`%M`/`%S`), the
-   parsed value is a calendar date: return it as is, with no timezone conversion and no cutoff, in both transforms.
-   Also, `input_format` is documented only in `docs/connector-spec.md`: list it in the capabilities transform args
-   (`src/autobridge/control/routes/capabilities.py` ~142), the L3 patch prompt's transform list, and the frontier arms'
-   prompt/evidence, so a model can know it exists. Tests: run with a non-UTC `context_tz` (the REQ-081 test at
-   `tests/unit/test_autobridge_req081.py` ~136 runs in UTC); the harbor format fault repaired with `input_format`
-   passes the records judge.
-2. **Bench candidate sync cannot reach meridian** (instances 3 and 8: every arm's applied patch ends
-   `candidate sync Blocked: http_error`). `_PLACEHOLDER_CREDENTIAL_REFS` (`bench/beacon_run.py` ~1924) covers atlas,
-   harbor and bench keys only, so meridian's body-field auth raises "Missing env var 'MERIDIAN_CLIENT_TOKEN'", reported
-   as `http_error` (`sync_run.py` ~252). Behind it, `sync_candidate` (~1023) uses the simulator's public URL and drops
-   the spec `base_url` path (`/api/connector/v1`), so requests 404. Fix: give the candidate sync the meridian
-   credential values the simulator accepts and keep the spec's base path; do the same check for every vendor.
-3. **An unfaulted meridian sync fails the records judge** (so no meridian repair can pass even after item 2): the
-   pre-drift spec over the unfaulted simulator fails `business_date_mismatch` (4 of 13) and `money_mismatch` (30);
-   under nesting, the folio `reservation_id` comes out missing (`field_missing` 83). Not traced to a line (suspects:
-   `property_id` `SVC-prop-001`, joined totals, the cutoff). Find the cause and fix whichever side is wrong
-   (simulator, verifier baseline or spec). Add a guard test: for every vendor, the pre-drift spec over the unfaulted
-   simulator passes `judge_produced_records`.
-4. **The FIAS feed is judged against the PMS folio dataset** (fias_layout, instance 4: the arms' amount->RG and DA->CD
-   patch was right but failed `loss_detected`, `no_loss`, `record_set_mismatch`). `verifier/beacon.py` (~416-420)
-   compares the FIAS posting against `generate_dataset`'s 80 folios, so even the unfaulted feed fails. Fix: for the
-   `fias_layout` and `fias_link` families, judge against the records the pre-drift spec produces over the unfaulted
-   feed. Also `verifier/checks.py` (~111-112) reports one loss as both `no_loss` and `loss_detected`: report it once.
-   And `bench/faults.py` (~547-548) gives `TA` and `TM` the same value (1250), so after `TA` is renamed nothing tells
-   the new key from `TM`: give `TM` a distinct value (the answer key stays `repair`).
-Then mark DONE after full gates pass; the owner runs the keyed rehearsal. Do not freeze, tag or commit under
-`experiments/beacon/`.
+### REQ-083 — The beacon must be able to credit a correct answer before it measures anyone: harness self-test, one judging regime, honest scoring (2026-11-02)
+Status: OPEN
+Supersedes the first REQ-083 text (1ef5f511). Owner review (2026-11-02) of the last two days: five rehearsals of round
+6603643 each surfaced new harness defects (empty prompt, wrong cwd, unvalidated patches, dropped candidate sync, no
+meridian credentials, dropped URL prefix, FIAS judged against the folio dataset). Each fix was right; the pattern is
+not. Nothing proves the apparatus works before it measures. At HEAD, three of five vendors cannot pass a `repair`
+instance by any patch, the warm arm can never reuse what it learns, and the judge credits no-op patches. Last keyed
+rehearsal on `7cd6ca27`: cold 0.70, no_knowledge 0.60, warm 0.60, agent 0.50, oneshot 0.30; those numbers partly
+measure harness repair. Fix in the order below; part A before anything else; add a test per item. Everything here is
+bench, verifier or simulator work except part C. The engine must keep deciding from observed evidence only: no
+vocabulary, no fault-family knowledge, no reads of `docs/fault-playbook.md`, `simulators/` or `verifier/`.
 
-### REQ-082 — Tests check every handled fault against the fault playbook; the engine never reads it (2026-11-02)
-Status: DEFERRED (owner 2026-11-02: not needed for the hackathon; do not start)
-`docs/fault-playbook.md` (owner, 2026-11-02) is the reference dictionary: the escalation path, the expected handling
-per drift class, the catch-all rules, the L1 rules, the beacon answer key by family, and the named scenarios. It is
-for tests, reviewers and graders only. The engine decides from evidence and must never read, import, copy or encode
-it. Do:
-1. A machine-readable copy under `tests/` (e.g. `tests/playbook/fault_playbook.yaml`): per drift class and per
-   named scenario, the allowed rungs, whether a model call is allowed, the expected outcome(s), and the catch-all
-   rules. Keep it in sync with the doc (a test that fails when a class, scenario or family appears in one and not
-   the other).
-2. A matcher used by tests: given a handled fault (detected class, rung reached, decision, patch/question, model
-   tokens, sync outcome), it reports match or the exact mismatch. Run it over the existing dev scenarios, the
-   detection sweep and the beacon grading rows, and fail on mismatch. Catch-all rule 5 is checked explicitly: a
-   crash, an empty L3 prompt ("(none recorded)" in every evidence block) or a model answer saying no evidence was
-   given is a failure, never a correct escalation.
-3. A test that the yaml's beacon-family rows agree with `simulators/common/faultgen.py` `expected_for` for every
-   family and parameter branch.
-4. A guard test that fails if anything under `src/autobridge/` references the playbook files or its tables.
-5. Resolve the doc's open items (section 6): whether `AUTH_EXPIRED` climbs to the model when a provider is wired, and
-   whether the section-5 runtime/edge rows match their tests. If the engine's behavior differs from the playbook,
-   record it in this REQ's Status and in the doc for the owner to decide; never change engine behavior to fit the
-   playbook.
+**A. Harness self-test (the root cause).** A parametrised test over every vendor in `config/beacon_vendors.yaml`,
+and a preflight that `run_beacon` executes before the first arm (rehearsals included) and that fails loudly:
+1. The pre-drift spec synced over the UNFAULTED simulator passes `judge_produced_records`. Today: atlas and harbor
+   pass; legacystay fails `field_missing` (`simulators/legacystay/app.py` ~90-115 `_null_chaos` nulls names and
+   descriptions the baseline has); meridian fails `money_mismatch` 30/30 (the dataset draws reservation
+   `total_amount` at random, `simulators/common/generator.py` ~270, while meridian serves no reservation money and the
+   spec sums folio lines) and `business_date_mismatch` (specs carry one static `America/New_York` zone while the
+   dataset spans three property zones; `spec/models.py` ~587 allows `static|field` only); fias-pabx fails by
+   construction (item 3). Fix each on the side that is wrong: make the dataset's reservation total the sum of its
+   folio lines; make the baseline (not the spec) tolerate the legacystay null quirk or drop the quirk; give the spec a
+   per-record timezone source (a `field` pointing at the property's zone, as the sims already serve it) or make
+   every property NY for the beacon dataset and say so in `protocol.md`.
+2. For every family keyed `repair`, the generator's reference repair, expressed as a spec patch in the closed
+   transform/pointer vocabulary, applied through the REAL `sync_candidate` path (vendor public URL + spec `base_url`
+   path + the credential env the simulator accepts) passes the judge. Today `inverse_canonicalize`
+   (`simulators/common/faultgen.py` ~1086-1248) proves recoverability in Python only. Where no spec patch can express
+   the repair, the key is unreachable: see part B.
+3. One judging regime for all vendors: the records judge compares produced records against what the pre-drift spec
+   produces over the unfaulted simulator (not `generate_dataset` directly), for HTTP vendors and FIAS alike. This
+   replaces the FIAS-only special case the old item 4 proposed. `verifier/beacon.py` `baseline_for` (~348-350, 415).
+4. Each arm's wiring is exercised in the same preflight: the frontier drivers' rendered prompt is non-empty and the
+   child `PWD` equals the sandbox dir; the engine arm's candidate sync reaches every vendor (today
+   `_PLACEHOLDER_CREDENTIAL_REFS`, `bench/beacon_run.py` ~1924, covers atlas/harbor/bench only, so meridian raises
+   "Missing env var 'MERIDIAN_CLIENT_TOKEN'" reported as `http_error`; and `sync_candidate` ~1023-1045 uses the
+   public URL without the spec's `/api/connector/v1` base path).
+
+**B. Answer key and judge honesty.**
+5. The judge must compare every canonical field, not key presence. `_check_canonical_field_coverage`
+   (`verifier/beacon.py` ~438-466) counts a present `None` as covered, and `check_business_date` (`verifier/checks.py`
+   ~181-183) compares only `arrival_date` and folio `business_date`; `departure_date`, `status`, `description`,
+   `updated_at` are never compared, so an unrepaired atlas `departure_date` rename passes as a repair. Compare values
+   (money exact, dates exact, strings exact) for every canonical field the baseline has.
+6. Pagination param renames are unobservable: the new request param names (`faultgen.py` ~305-330 pools) are never
+   served, announced or documented, the simulator ignores unknown params, yet the verifier demands the exact tokens
+   (`verifier/beacon.py` ~499-525). Announce them the way a vendor would: the served vendor docs (the same docs every
+   arm reads) describe the new parameters for the faulted round. No arm may get them any other way.
+7. `dates/tz_shift` and `dates/cutoff` on multi-zone datasets are keyed `repair` with no transform that can express
+   the repair (no hour/day offset arg; one static zone). Either make them expressible (an allow-listed offset, the
+   per-record zone from item 1) and prove it through item 2, or remove them from the generator's draw and record the
+   removal in `protocol.md`. Do not key `repair` for anything item 2 cannot prove.
+8. Key contradictions and collisions: `netTotal`/`totalNet` are in both `RENAME_PLAUSIBLE[total_amount]`
+   (expects repair) and `DECOY_POOL` (expects a question) (`faultgen.py` ~205, ~454): remove them from one side.
+   `bench/faults.py` ~547-548 gives `TA` and `TM` the same value (1250): give `TM` a distinct value.
+9. Scoring: a candidate sync that fails for a harness reason (missing credential, bad URL, verifier `BeaconError`,
+   `sync_candidate` raising) is recorded as `error` with the cause and is NOT `wrong_patch_proposed`
+   (`bench/beacon_run.py` ~1829-1843, ~1886-1889, ~1921-1923); a raising `sync_candidate` must never grade as a pass.
+   `correct_escalation` counts only a Blocked-with-question outcome on an instance whose key accepts a question; a
+   no-patch `Complete` on a throttle is `verified_completion`, not an escalation (~1906-1912). `verifier/checks.py`
+   ~106-112 reports one loss once.
+10. The warm arm never hits its own cache: in-run learning stores under the descriptor vendor (`atlas`,
+    `bench/beacon_run.py` ~1326) while the ladder looks up under the spec's `connector.vendor` (`AtlasPMS`,
+    `repair/ladder.py` ~1443, `knowledge.py` ~68 lowercases only). Store and look up under the same key; the dev-split
+    pre-warm must use the same. Test: a warm reuse within one run is observed (`warm_used_learned_from` set).
+11. Token accounting on one basis: the engine arm's `small_tokens` is set from the ladder's total input tokens
+    (`bench/beacon_run.py` ~1215-1218, `bench/ablation.py` ~943-949), so engine "small" includes frontier input while
+    the frontier arms report in+out as `frontier_tokens`. Report in/out per model tier the same way for every arm.
+12. Docs: `docs/benchmark.md` (~548 oracle-baseline framing, ~593 "one L3 call per semantic instance", ~621 FIAS
+    "verified in-process") and the rehearsal `protocol.md` ("escalated exactly when the instance says so") must match
+    the code after this REQ. State plainly that both arms get the stored last-good baseline.
+
+**C. Engine (small, evidence-only; after A and B).**
+13. Date-only values are calendar dates: when a `date_local` / `business_date` input carries no time component, from
+    `input_format` without `%H/%M/%S` (`runtime/transforms/date_local.py` ~64-74, `business_date.py` ~67-86) or from
+    the YYMMDD wire path (`business_date.py` ~95-119, `date_local.py` ~82-90), return it unchanged: no timezone
+    conversion, no cutoff. A time-bearing `input_format` without an offset is vendor wall time: default `naive_as`
+    to `source`. `datetime_utc` keeps its midnight-in-source-zone semantics. List `input_format` in the capabilities
+    transform args (`control/routes/capabilities.py` ~142), the L3 patch prompt and the frontier evidence. Tests run
+    with a non-UTC `context_tz`.
+14. Rename evidence pairs old and new values: `build_generic_l3_evidence` (`repair/controller.py` ~973) takes no
+    baseline, so the model judges a rename from the new name, one faulted sample and the spec field name. Add the
+    vanished key's last-good values next to the new key's values (from the stored baseline/last-good records the
+    engine already holds), and let the L1 `rename_field` gate (`repair/rules/rename_field.py` ~253-263, ~309-326)
+    require value agreement on more than one sample, declining otherwise. Generic: no name lists.
+15. The L2 "confident winner" is promoted with a pointer check only (`repair/controller.py` ~645-676) while the
+    comment promises the dry-run; run the dry-run gate before `propose`, as the comment says.
+16. Remove generator references from engine comments and tests: `runtime/transforms/base.py` ~48-50,
+    `date_local.py` ~62, `runtime/checks.py` ~298; `tests/unit/test_autobridge_req081.py` ~131 imports
+    `simulators.common.faultgen.DATE_FORMATS` into an engine test (move that assertion to a bench/verifier test).
+
+**D. Simulator realism (do not bend the sims toward the engine).**
+17. Harbor and legacystay nesting wraps the record before their own projection, so their vendor quirks vanish under
+    nesting (harbor serves `confirmed` instead of `H1` and drops `date`, `simulators/harborpms/app.py` ~99-105;
+    legacystay drops its null quirk). Nest the projected wire record, as meridian/atlas do after 7cd6ca27.
+18. Meridian's `dates/format` support adds a raw snake_case `arrival_date: "23/10/2026"` extra to a UTC-instant
+    vendor (`simulators/meridianpms/app.py` ~466-471): tuned for solvability, not realism. Serve the format change on
+    the field the vendor actually has, or exclude that family for meridian and record it in `protocol.md`.
+19. IP and realism: `simulators/docs/fias-pabx.md` ~4 expands FIAS to a real vendor protocol name; `config/demo_targets.yaml`
+    ~27, ~57 name real products ("-style"); `simulators/common/generator.py` ~65 uses real people's names. Replace all
+    with fictional ones.
+Then mark DONE after full gates pass and the part A preflight passes for every vendor; the owner runs the keyed
+rehearsal. Do not freeze, tag or commit under `experiments/beacon/`.
 
 ### REQ-081 — Rehearsal 6603643 on 8476da5e: evidence and grading gaps that hide or block correct answers (2026-11-02)
 Status: DONE (sbx1 2026-11-02 -- all 7 items code-done: semantic signal-seeded evidence + generic fallback, equal baseline in frontier evidence, validate_against + apply-error grading, date input_format on 3 transforms, meridian+atlas nesting on wire, multi-path L3 pointers, agent permission + re-prompt; 12 new tests, full gates green; owner step: keyed rehearsal on this commit, then close)
