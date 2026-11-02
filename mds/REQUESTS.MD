@@ -5,7 +5,7 @@
 Owner priority (2026-11-01): **REQ-078** (REQ-066..077 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
 
 ### REQ-079 — Directive: §5 test hermeticity — full `make test` flakes with teardown DNS-guard errors on scheduler/activation tests (2026-11-02)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-02 02:07)
 Found by the 2026-11-02 directives audit (diff `d2a13125..b773926b`). Two consecutive full `make test` runs in sbx1: 3068 passed, then 4 (run 1) / 3 (run 2) teardown ERRORs — `tests/unit/conftest.py:88` asserts no real DNS lookups, and a background thread resolves `localhost` during whichever test is running (`test_autobridge_activation.py::*`, `test_autobridge_req030_scheduler_state.py::test_busy_reason_connector_not_found`). All affected tests pass standalone and pairwise (38/38, 3x). Same family as REQ-076 and the Cycle-6 `bench/stack_mode.py` 127.0.0.1 probe fix; a stale `.local/ACTIVE` (Oct 30, no live stack) is present in the worktree. The audited range touches no scheduler/thread/localhost code, so the leak pre-dates it: find the thread that outlives its test (scheduler tick, probe, or job worker resolving a `localhost` base/control URL), stop or join it at test end, and add a regression test. No retries or quarantines as the fix (REQ-076 rule). Until then `make test` is not reliably green, which blocks the §5 gate.
 
 
