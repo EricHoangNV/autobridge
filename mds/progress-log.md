@@ -4325,3 +4325,30 @@ Engine L3 evidence now shows each field's transform steps (name + args) next to 
 
 ## 2026-11-02 — REQ-086 code-done (sbx1)
 Agent: opencode meta/muse-spark-1.3-contributor (escalation). `semantic/gross_net` re-keyed from `repair` to `degraded_question` across generator, verifier, bench prover text and docs; `_assert_semantic_scaled` replaces the Python-inverse proof; 3 new test files + 3 margin tests; full make test green (autobridge 90.01%, verifier 90.60%, simulators 90.07%, UI 350), lint/typecheck green. Owner step: keyed rehearsal, then close. Note: autobridge 90% gate is hash-seed marginal at this commit (89.99-90.01 across identical-code runs); +3 stable test lines added as margin.
+
+## REQ-087 — dry-run gate judges under the spec's declared zone
+**Date:** 2026-11-02
+**Ref:** REQUESTS REQ-087 (keyed rehearsal on 27a6858e, harbor dates/format)
+**Agent:** opencode meta/muse-spark-1.3-contributor (escalation)
+
+**What was done:**
+- Added `spec_static_tz` in `src/autobridge/runtime/checks.py` (single shared helper for the spec's static `timezone_source`; handles dict and object specs, None for field-kind/missing).
+- `src/autobridge/engine/sync_run.py`: `_spec_static_tz` is now a thin wrapper over the shared helper; sync behaviour unchanged.
+- `src/autobridge/repair/dryrun.py`: `_evaluate_checks_on_records` takes `context_tz` and forwards it to `evaluate_entity_checks`; `_entities_failing_old_checks` judges under the spec's zone; `dry_run_proposal` judges the patched-spec pass under the patched spec's zone (falling back to the pre-drift spec's).
+- New `tests/unit/test_autobridge_req087_dryrun_tz.py` (4 tests): helper values; old-check pass agrees with `evaluate_entity_checks(..., context_tz)`; correct `input_format` repair passes; genuinely wrong business date still refused.
+- REQUESTS.MD: REQ-087 marked DONE in place with Resolution line (matches sibling convention).
+
+**Key decisions:**
+- Helper lives in `runtime/checks.py` (no `repair` -> `engine` import, no trust-boundary change; both callers already import from there).
+- Patched-spec zone preferred for the patched pass, pre-drift zone as fallback (a repair patch does not change `source`, so both agree in practice).
+- No change to the checks, the transform vocabulary, or prompts — pure plumbing fix.
+
+**Files changed:**
+- `src/autobridge/runtime/checks.py` — new `spec_static_tz`.
+- `src/autobridge/engine/sync_run.py` — wrapper + shared import.
+- `src/autobridge/repair/dryrun.py` — `context_tz` threading (3 call sites).
+- `tests/unit/test_autobridge_req087_dryrun_tz.py` — new (Harbor-bootstrap-based valid spec).
+- `mds/REQUESTS.MD`, `mds/progress-state.md`, `mds/progress-log.md`, `mds/BUILD-NOTES.md` — bookkeeping.
+
+**Notes for next iteration:**
+- Owner step: keyed rehearsal on this commit (round 6603643), then close. Do not freeze/tag/commit under `experiments/beacon/`.

@@ -5,7 +5,7 @@
 Owner priority (2026-11-03 03:40): **REQ-087** (REQ-066..086 done; the real beacon freeze waits for it). One REQ per iteration. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-087 — The dry-run gate judges checks without the spec's declared zone and refuses correct date repairs (2026-11-03)
-Status: IN_PROGRESS (sbx1 since 2026-11-02 20:01)
+Status: DONE (sbx1 2026-11-02 -- all 2 items code-done: shared spec_static_tz helper in runtime/checks.py used by sync_run + dryrun, context_tz forwarded in old-check + patched passes; 4 new tests, full gates green; owner step: keyed rehearsal, then close)
 Keyed rehearsal on `27a6858e` (round 6603643, preflight ok for 5 vendors), instance 1, harbor `dates`
 `{mode: format, date_format: "%m-%d-%Y"}`, expected repair: all three engine arms' L3 proposed `input_format:
 "%m-%d-%Y"` on the three date transforms (the same effect as the generator's reference patch), the dry-run gate
@@ -31,6 +31,7 @@ to the checks themselves, the vocabulary or the prompts:
    pass agrees with `evaluate_entity_checks` called with the same zone.
 Then mark DONE after full gates pass; the owner runs the keyed rehearsal. Do not freeze, tag or commit under
 `experiments/beacon/`.
+Resolution: one shared `spec_static_tz` helper next to `evaluate_entity_checks`; `sync_run` and `dryrun` both use it; `_evaluate_checks_on_records` forwards `context_tz` so both passes judge under the spec's declared zone.
 
 ### REQ-084 — Meridian nesting is unreachable by any patch (customers endpoint ignores nesting); preflight proves the drawn repairs; L3 traces kept (2026-11-02)
 Status: DONE (sbx1 2026-11-02 -- all 3 items code-done: meridian customers unwrap + derived-endpoint audit, preflight proves every drawn repair, per-instance redacted L3 traces; 12 new tests, full gates green; owner step: keyed rehearsal after REQ-085)
