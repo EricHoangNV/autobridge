@@ -2,10 +2,10 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-02): **REQ-081**, then **REQ-082** (REQ-066..080 done; the real beacon freeze waits for REQ-081). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-02): **REQ-081** (REQ-066..080 done; the real beacon freeze waits for it). REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-082 — Tests check every handled fault against the fault playbook; the engine never reads it (2026-11-02)
-Status: OPEN
+Status: DEFERRED (owner 2026-11-02: not needed for the hackathon; do not start)
 `docs/fault-playbook.md` (owner, 2026-11-02) is the reference dictionary: the escalation path, the expected handling
 per drift class, the catch-all rules, the L1 rules, the beacon answer key by family, and the named scenarios. It is
 for tests, reviewers and graders only. The engine decides from evidence and must never read, import, copy or encode
