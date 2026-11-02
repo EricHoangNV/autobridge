@@ -2,7 +2,58 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-02): **REQ-078**, then **REQ-080** (REQ-066..077 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-02): **REQ-081** (REQ-066..080 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+
+### REQ-081 — Rehearsal 6603643 on 8476da5e: evidence and grading gaps that hide or block correct answers (2026-11-02)
+Status: OPEN
+Owner keyed rehearsal (2026-11-02, `8476da5e`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1): autobridge_cold 0.60,
+engine_no_knowledge 0.60, autobridge_warm 0.40, frontier_agent 0.30, frontier_oneshot 0.20; 0 wrong patches released.
+The PWD fix works (all agent sessions ran in `/tmp/bench-agent-*` and read `evidence.md`). Each item below was traced
+offline on that commit (FakeProvider, in-process sims). Fix all; add a test per item.
+1. **Semantic L3 gets no evidence when the spec has no `money_invariant` check** (legacystay gross_net, instance 7).
+   `prepare_climb_inputs` (`src/autobridge/repair/controller.py` ~1243) sends SEMANTIC_VALUE_DRIFT to
+   `prepare_semantic_inputs`, which builds money fields only from `money_invariant` checks (`repair/semantic.py`
+   ~308-319, ~362); the legacystay spec has none, so 0 readings and `build_l3_evidence` returns `{}` (~499). The L3
+   prompt renders "(none recorded)" everywhere and the model answers "no spec, records, or evidence". The detector's
+   `money_scale_shift` signal (factor 0.25, `money_field` in its details) never reaches the model. Fix: seed the money
+   fields from the signal details, and when the semantic evidence is still empty fall back to
+   `build_generic_l3_evidence` (it yields a subtree and records for this instance). Test: render the L3 prompt for this
+   instance; it must name the field, the factor, and baseline vs faulted values, with no "(none recorded)".
+2. **Equal baseline (owner decision 2026-11-02).** The frontier arms' `evidence.md` shows only the faulted values, so
+   a 1/4 scale shift is invisible to them while the engine compares against its stored baseline. Give both frontier
+   arms the same baseline sample the engine uses (same records, same redaction), clearly labelled baseline vs faulted.
+3. **Candidate patches are not validated in the bench engine arm, and a patch that does not apply vanishes.**
+   `bench/ablation.py` (~899-912) calls the ladder without `validate_against`, so the apply check (`ladder.py` ~2039)
+   and dry-run gate (~2271) are skipped; then `_candidate_spec_for` (`bench/beacon_run.py` ~1516-1517) swallows the
+   apply failure (`except: return None`) and the row reads "Complete (patch=False)" with no error (harbor dates,
+   instance 1). Fix: pass `validate_against` as production does; for every arm, a proposed patch that does not apply
+   is recorded as an error and counted as a wrong patch proposed, never as "no patch". Likewise a candidate sync that
+   ends non-Complete in the HTTP grading path (`beacon_run.py` ~1797-1801) is recorded with its outcome, not as a
+   silent loss.
+4. **Date input format (owner decision 2026-11-02): add an input-format argument to the date transforms.** No
+   transform in the closed set parses `%m-%d-%Y`: `date_local` takes ISO or FIAS YYMMDD only and passes
+   "10-15-2026" through unchanged, so the harbor `dates/format` fault (expected `repair`) is unsolvable; the generator
+   proves recoverability with Python `strptime` (`simulators/common/faultgen.py` ~1235-1244), not with the transform
+   set. Add an optional declarative input format to `date_local` / `business_date` (and `datetime_utc` if it applies),
+   with a fixed allow-list of format directives (no free code), in the spec schema, runtime, `capabilities.json`, the
+   L3 transform list and the docs. Test: the harbor format fault is repairable with it; each generated date format is
+   parseable by it.
+5. **Meridian nesting is unsolvable as served** (instance 3). The fault nests the internal record before projection,
+   so `to_wire_reservation` (`simulators/meridianpms/app.py` ~362) emits `Id: null`, `ServiceId: "SVC-None"`,
+   `AccountId: "ACC-None"`; the entity key and join keys are not patchable and the folio join cannot be recovered.
+   Fix: apply nesting to the projected wire record (as a vendor would), so a path patch can repair it; check the other
+   vendors' nesting the same way. Extend the detection sweep.
+6. **L3 evidence hides multi-path fields** (fias-pabx layout, instance 4: DA->CD). `build_generic_l3_evidence`
+   (`controller.py` ~1053) renders only `fields/<f>/path`, and allowed pointers (~1069-1070) are only `/path` and
+   `/transform`; `charge_id`, `posted_at`, `business_date` use `paths: [$.DA, $.TI]`, so they render as "" and cannot
+   be patched. Fix: render `paths`, allow `/paths` and `/paths/N`.
+7. **The frontier agent's run ends with no answer after a rejected tool call** (instance 7: the agent ran a bash
+   command, opencode auto-rejected it in headless mode, and the session ended with no final text -> "no_output").
+   The bench agent's opencode config sets no `permission` block, so the default "ask" becomes a silent rejection.
+   Fix: give the bench agent an explicit permission config (deny what it may not use, allow its sandbox dir), and when
+   the stream ends on a tool step with no final answer, re-prompt once in the same session for the final answer.
+Then mark DONE after full gates pass; the owner runs the keyed rehearsal. Do not freeze, tag or commit under
+`experiments/beacon/`.
 
 ### REQ-080 — A renamed field reaches the model as evidence; a misleading new name expects a question (2026-11-02)
 Status: DONE (sbx1 2026-11-02 -- answer-key vocabulary removed from engine; generic lexical+value+single-shape L1 gate; full gates green; owner step: keyed rehearsal on this commit, then close)
