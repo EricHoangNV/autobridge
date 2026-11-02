@@ -2,7 +2,35 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 00:45): **REQ-086** (REQ-066..085 done; the real beacon freeze waits for it). One REQ per iteration. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 03:40): **REQ-087** (REQ-066..086 done; the real beacon freeze waits for it). One REQ per iteration. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+
+### REQ-087 — The dry-run gate judges checks without the spec's declared zone and refuses correct date repairs (2026-11-03)
+Status: OPEN
+Keyed rehearsal on `27a6858e` (round 6603643, preflight ok for 5 vendors), instance 1, harbor `dates`
+`{mode: format, date_format: "%m-%d-%Y"}`, expected repair: all three engine arms' L3 proposed `input_format:
+"%m-%d-%Y"` on the three date transforms (the same effect as the generator's reference patch), the dry-run gate
+refused it twice with `check(s) still fail on the current records: FolioCharge.business_date_invariant`, and the
+arms ended with the fallback question. Reproduced in-process on the same instance: the model's patch and the
+reference patch both sync `Complete` with no unmet criteria through `beacon_sync_pair`, and both pass
+`dry_run_proposal` as soon as `evaluate_entity_checks` receives `context_tz="America/New_York"` (the spec's static
+`timezone_source`). Mechanism: the sync evaluates checks with `context_tz=_spec_static_tz(spec)`
+(`src/autobridge/engine/sync_run.py` ~38-54 and ~366-372, REQ-083 A1), but the dry-run's
+`_evaluate_checks_on_records` (`src/autobridge/repair/dryrun.py` ~441-481) never passes it, so the business-date
+invariant is derived under the legacy per-property map and UTC only. Before the patch the faulted `business_date`
+(`10-16-2026`) does not parse and the check skips the record, so no entity fails the old-check pass; after the patch
+it parses and fails for every record whose property sits outside the legacy zones. The gate therefore blocks exactly
+the repairs it should pass, in both the old-spec and the patched-spec passes. One root cause, small scope; no change
+to the checks themselves, the vocabulary or the prompts:
+1. One helper for the spec's static declared zone, importable by both the sync and the dry-run without a
+   `repair` → `engine` import (for example next to `evaluate_entity_checks` in `src/autobridge/runtime/checks.py`);
+   `sync_run` and `dryrun` both use it. `_evaluate_checks_on_records` passes `context_tz` through to
+   `evaluate_entity_checks` so the old-check pass and the patched-spec pass judge under the same zone as the sync.
+2. Tests (`tests/unit/test_autobridge_req053_dryrun.py` or a sibling): a spec with a static `timezone_source` whose
+   records derive business dates under that zone but not under UTC or the legacy map — the dry-run passes a correct
+   `input_format` date repair and still refuses a patch that leaves a genuinely wrong business date; the old-check
+   pass agrees with `evaluate_entity_checks` called with the same zone.
+Then mark DONE after full gates pass; the owner runs the keyed rehearsal. Do not freeze, tag or commit under
+`experiments/beacon/`.
 
 ### REQ-084 — Meridian nesting is unreachable by any patch (customers endpoint ignores nesting); preflight proves the drawn repairs; L3 traces kept (2026-11-02)
 Status: DONE (sbx1 2026-11-02 -- all 3 items code-done: meridian customers unwrap + derived-endpoint audit, preflight proves every drawn repair, per-instance redacted L3 traces; 12 new tests, full gates green; owner step: keyed rehearsal after REQ-085)
