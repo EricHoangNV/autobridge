@@ -5,7 +5,7 @@
 Owner priority (2026-11-02): **REQ-083** (REQ-066..081 done; the real beacon freeze waits for it). REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-083 — The beacon must be able to credit a correct answer before it measures anyone: harness self-test, one judging regime, honest scoring (2026-11-02)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-02 09:17)
 Supersedes the first REQ-083 text (1ef5f511). Owner review (2026-11-02) of the last two days: five rehearsals of round
 6603643 each surfaced new harness defects (empty prompt, wrong cwd, unvalidated patches, dropped candidate sync, no
 meridian credentials, dropped URL prefix, FIAS judged against the folio dataset). Each fix was right; the pattern is
