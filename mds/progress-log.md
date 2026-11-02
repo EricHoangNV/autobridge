@@ -4277,3 +4277,6 @@ Agent: opencode meta/muse-wonder-1.0 (escalation)
 **Notes for next iteration:**
 - REQ-080 (renamed field as model evidence) is open on main with owner priority after REQ-078; it landed mid-task (commit `01f3f4be`) and needs a rebase before push.
 - Owner keyed/live VERIFY remainders unchanged (REQ-078 rehearsal, REQ-074 browser check, REQ-071/070/069, REQ-065/063/062/061/060); REQ-051 still deferred.
+
+## 2026-11-02 03:2x UTC — REQ-078 PWD remainder (sbx1)
+Agent: opencode meta/muse-spark-1.3 (escalation). Pinned the spawned agent CLI's `PWD` to the sandbox dir in all three bench drivers (`bench/baseline_coding_agent.py`: opencode + new shared `_sandbox_env` for claude/codex); added a parametrized test that fails if the child env's `PWD` differs from `cwd` (verified 3/3 fail pre-fix, 3/3 pass post-fix). Full `make test` green (3072 / 139 / 422 / UI 350; coverage 90.03 / 90.80 / 90.48). Merged to main; owner keyed rehearsal next.

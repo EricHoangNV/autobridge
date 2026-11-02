@@ -36,7 +36,7 @@ being shown the new key. The question was not a judgment over the evidence; the 
 Do not freeze, tag or commit under `experiments/beacon/`; the owner runs the keyed rehearsal after this lands.
 
 ### REQ-078 — When the engine does not know, it asks: model first, operator last; and a beacon that grades it fairly (2026-11-01)
-Status: IN_PROGRESS (sbx1 since 2026-11-02 03:10)
+Status: DONE (sbx1 2026-11-02 -- PWD pinned to the sandbox dir in all three agent CLI drivers + parametrized test; full gates green; owner step: keyed rehearsal on this commit, then close)
 Owner keyed rehearsal (2026-11-02, `fd2c8388`, opencode sandbox, round 6603643, FAULTS=10 TRIALS=1, live key):
 every engine arm 0.30 (0 wrong; model questions now cite the evidence), frontier_agent 0.20 (3 wrong proposed),
 frontier_oneshot 0.20. Instances 7-9 failed on every model arm from a network outage on the owner side (not a defect).
