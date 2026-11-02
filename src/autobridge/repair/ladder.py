@@ -1955,13 +1955,16 @@ L2_CONFIDENCE_THRESHOLD = 0.70
 #: remains in this module. The answer shapes (a patch proposal or an
 #: explicit escalation, never invented paths) are unchanged from REQ-044.
 
-#: Fallback pointer shape when the climb carries no patch target (REQ-044).
-#: A semantic fix remaps a field's wire path or transform; anything outside
-#: ``/entities/<entity>/fields/<field>/(path|transform)`` is rejected before
-#: the verifier (the reported ``/mappings/...`` invention fails here, with
-#: one retry, instead of reaching the gate).
+#: Fallback pointer shape when the climb carries no patch target (REQ-044,
+#: extended REQ-085 with the transform-arg and join shapes the evidence
+#: allows). A fix remaps a field's wire path or transform, adds/replaces
+#: one transform argument, or repoints a join; anything outside these
+#: members is rejected before the verifier (the reported ``/mappings/...``
+#: invention fails here, with one retry, instead of reaching the gate).
 _L3_FIELD_POINTER = __import__("re").compile(
-    r"^/entities/[^/]+/fields/[^/]+(?:/(?:path|transform))?$"
+    r"^/entities/[^/]+/fields/[^/]+(?:/(?:path|paths(?:/\d+)?|transform(?:/\d+(?:/args(?:/[^/]+)?)?)?))?$"
+    r"|^/entities/[^/]+/joins/\d+/(?:local_key|foreign_key)$"
+    r"|^/entities/[^/]+/joins/\d+/fields/[^/]+/path$"
 )
 
 
@@ -2033,7 +2036,8 @@ def _l3_pointer_error(
         elif not _L3_FIELD_POINTER.match(path):
             return (
                 f"patch touches '{path}', outside "
-                "/entities/<entity>/fields/<field>/(path|transform)"
+                "/entities/<entity>/fields/<field>/(path|paths|transform/...)"
+                " or /entities/<entity>/joins/<i>/(local_key|foreign_key|fields/<f>/path)"
             )
     if target_spec is None:
         return None

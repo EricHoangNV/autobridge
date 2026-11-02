@@ -1128,6 +1128,82 @@ def _pair_new_key_with_baseline(
     return None
 
 
+def _field_evidence(fs: dict[str, Any]) -> dict[str, Any]:
+    """Render one field's path(s) plus its transform steps (REQ-085).
+
+    The model must see the current transform list (step names and
+    args), so it can add or replace a single argument — e.g. add
+    ``input_format`` to a ``business_date`` step — instead of
+    inventing the whole list. Values are truncated data, never
+    secrets; args come from the spec the engine holds.
+    """
+    out: dict[str, Any] = {}
+    _path = fs.get("path")
+    if isinstance(_path, str) and _path:
+        out["path"] = _path[:120]
+    _paths = fs.get("paths")
+    if isinstance(_paths, list) and _paths:
+        out["paths"] = [str(p)[:120] for p in _paths if isinstance(p, str)][:8]
+    steps: list[dict[str, Any]] = []
+    _transform = fs.get("transform")
+    if isinstance(_transform, list):
+        for step in _transform[:8]:
+            if not isinstance(step, dict):
+                continue
+            _name = step.get("name")
+            _args = step.get("args")
+            steps.append(
+                {
+                    "name": str(_name)[:60] if isinstance(_name, str) else _name,
+                    "args": (
+                        {str(k)[:60]: str(v)[:120] for k, v in list(_args.items())[:12]}
+                        if isinstance(_args, dict)
+                        else _args
+                    ),
+                }
+            )
+    out["transform"] = steps
+    return out
+
+
+def _joins_evidence(ent: dict[str, Any]) -> list[dict[str, Any]]:
+    """Render an entity's declarative joins for the L3 prompt (REQ-085).
+
+    A nesting or rename can move the keys a join reads; the model
+    needs the join keys and joined-field paths to repoint them.
+    """
+    rendered: list[dict[str, Any]] = []
+    _joins = ent.get("joins")
+    if not isinstance(_joins, list):
+        return rendered
+    for join in _joins[:8]:
+        if not isinstance(join, dict):
+            continue
+        _fields: dict[str, Any] = {}
+        _jf = join.get("fields")
+        if isinstance(_jf, dict):
+            for _fn, _fs in list(_jf.items())[:12]:
+                if not isinstance(_fs, dict):
+                    continue
+                _jp = _fs.get("path")
+                if isinstance(_jp, str) and _jp:
+                    _fields[str(_fn)[:60]] = _jp[:120]
+                    continue
+                _jps = _fs.get("paths")
+                if isinstance(_jps, list) and _jps:
+                    _fields[str(_fn)[:60]] = [str(p)[:120] for p in _jps if isinstance(p, str)][:8]
+        rendered.append(
+            {
+                "from_operation": str(join.get("from_operation", ""))[:60],
+                "local_key": str(join.get("local_key", ""))[:120],
+                "foreign_key": str(join.get("foreign_key", ""))[:120],
+                "as": str(join.get("as", ""))[:60],
+                "fields": _fields,
+            }
+        )
+    return rendered
+
+
 def build_generic_l3_evidence(
     spec: dict[str, Any],
     signals: list[Any],
@@ -1219,25 +1295,19 @@ def build_generic_l3_evidence(
                 # REQ-081 item 6: multi-path fields (paths: [...]) render
                 # their paths, never "" — else a DA->CD layout rename is
                 # invisible and unpatchable in the L3 prompt.
+                # REQ-085: each field renders its transform steps (name
+                # and args) next to its path(s), so the model can add or
+                # replace one argument (e.g. business_date input_format)
+                # instead of inventing the whole transform list.
                 "fields": {
-                    fn: (
-                        str((fs or {}).get("path", ""))[:120]
-                        if isinstance((fs or {}).get("path"), str)
-                        and (fs or {}).get("path")
-                        else (
-                            ", ".join(
-                                str(p)[:120]
-                                for p in (fs or {}).get("paths", [])
-                                if isinstance(p, str)
-                            )[:300]
-                            if isinstance((fs or {}).get("paths"), list)
-                            else ""
-                        )
-                    )
+                    fn: _field_evidence(fs)
                     for fn, fs in list(fields.items())[:20]
                     if isinstance(fs, dict)
                 },
                 "checks": [str(c.get("kind") if isinstance(c, dict) else getattr(c, "kind", c))[:60] for c in list(checks)[:10]],
+                # REQ-085: render the entity joins the same way, so a
+                # join can be repointed after a nesting or rename.
+                "joins": _joins_evidence(ent),
             }
     except Exception:
         subtree = {}
@@ -1251,6 +1321,12 @@ def build_generic_l3_evidence(
                 continue
             fields = ent.get("fields") or {}
             if isinstance(fields, dict):
+                try:
+                    from autobridge.runtime.transforms import (  # noqa: PLC0415
+                        TRANSFORM_ARGS as _TRANSFORM_ARGS,
+                    )
+                except Exception:
+                    _TRANSFORM_ARGS = {}
                 for fn in sorted(fields)[:20]:
                     allowed.append(f"/entities/{name}/fields/{fn}/path")
                     allowed.append(f"/entities/{name}/fields/{fn}/transform")
@@ -1271,6 +1347,47 @@ def build_generic_l3_evidence(
                                 )
                     except Exception:
                         pass
+                    # REQ-085: an add-arg or replace-arg patch touches
+                    # /transform/i/args[/<arg>]; allow each existing
+                    # step's args node and the args the step's
+                    # transform declares, so the gate passes the
+                    # frontier's add-arg repair. Whole-transform
+                    # replace stays allowed (above).
+                    try:
+                        _steps = (
+                            _fspec.get("transform")
+                            if isinstance(_fspec, dict)
+                            else None
+                        )
+                        if isinstance(_steps, list):
+                            for _i, _step in enumerate(_steps[:8]):
+                                if not isinstance(_step, dict):
+                                    continue
+                                _base = f"/entities/{name}/fields/{fn}/transform/{_i}/args"
+                                allowed.append(_base)
+                                _tname = _step.get("name")
+                                for _arg in _TRANSFORM_ARGS.get(_tname, ()) if isinstance(_tname, str) else ():
+                                    allowed.append(f"{_base}/{_arg}")
+                    except Exception:
+                        pass
+            # REQ-085: a nesting or rename can move the keys a join
+            # reads; allow repointing the join keys and the joined
+            # fields' paths.
+            try:
+                _joins = ent.get("joins")
+                if isinstance(_joins, list):
+                    for _ji, _join in enumerate(_joins[:8]):
+                        if not isinstance(_join, dict):
+                            continue
+                        _jbase = f"/entities/{name}/joins/{_ji}"
+                        allowed.append(f"{_jbase}/local_key")
+                        allowed.append(f"{_jbase}/foreign_key")
+                        _jfields = _join.get("fields")
+                        if isinstance(_jfields, dict):
+                            for _jfn in sorted(_jfields)[:12]:
+                                allowed.append(f"{_jbase}/fields/{_jfn}/path")
+            except Exception:
+                pass
             for idx, chk in enumerate(ent.get("checks") or []):
                 if isinstance(chk, dict) and chk.get("compare_to") is not None:
                     allowed.append(f"/entities/{name}/checks/{idx}/compare_to")
@@ -1443,7 +1560,7 @@ def build_generic_l3_evidence(
             "document": "connector spec",
             "drift_class": drift_class,
             "allowed_ops": ["replace", "add", "remove"],
-            "allowed_pointers": sorted(set(allowed))[:80],
+            "allowed_pointers": sorted(set(allowed))[:240],
         },
         "spec_subtree": subtree,
         "raw_records": sample_rows[:6],

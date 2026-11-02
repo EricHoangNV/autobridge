@@ -32,8 +32,10 @@ Design principles (plan §1):
    money semantics stay a business decision (the model's patch rides the
    escalation bundle as the proposal). L3 evidence is class-neutral
    (signals + messages, fingerprint delta, unmet criteria, failed L1
-   attempts, relevant spec subtree, faulted-records sample); allowed
-   pointers derive from what the delta touches. A failed L1 dry-run climbs
+   attempts, relevant spec subtree — each field with its transform steps
+   and args, plus the entity joins — faulted-records sample); allowed
+   pointers derive from what the delta touches (field paths, per-step
+   transform args, join keys). A failed L1 dry-run climbs
    with the failure as evidence.
    The detector also names silent-corruption shapes (`mapped_field_emptied`
    → `SCHEMA_RENAME`, `money_scale_shift` → `SEMANTIC_VALUE_DRIFT`,
