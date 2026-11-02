@@ -2,7 +2,38 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-01): **REQ-078** (REQ-066..077 done; the real beacon freeze waits for it). Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-02): **REQ-078**, then **REQ-080** (REQ-066..077 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
+
+### REQ-080 — A renamed field reaches the model as evidence; a misleading new name expects a question (2026-11-02)
+Status: OPEN
+Found in the owner keyed rehearsal on `fd2c8388` (round 6603643, instances 0 and 5: atlas `rename`,
+`departure_date` -> `reservationStatus` / `checkinDate`). Atlas served `endDate: ""` plus the new key holding exactly the
+departure dates, e.g. `{"startDate": "2026-11-03", "endDate": "", "checkinDate": "2026-11-06"}`. Every engine arm
+escalated "Which vendor field should Reservation.departure_date map to now that $.endDate is empty 100%?" without ever
+being shown the new key. The question was not a judgment over the evidence; the evidence was missing. Three defects:
+1. **Simulators keep the old key after a rename.** `simulators/atlaspms/app.py` `to_wire_reservation` (~265-266) always
+   emits `endDate` (empty when the record no longer carries `departure_date`); a real vendor rename removes the old key.
+   `guestName` in the same function already does it right (emitted only when present). Fix every renameable field in
+   every vendor serializer (atlas, harbor, meridian, legacystay, fias-pabx where a rename applies) so a renamed field
+   vanishes from the wire and only the new key is served.
+2. **New wire keys are reported only when a mapped key is missing.** `src/autobridge/drift/signals.py` (~695-697)
+   `continue`s when no covered key is missing, so a mapped key that is present but empty in every record, alongside a
+   genuinely new key, produces no `keys_changed` signal with the new keys and their samples. Report the new keys (with
+   samples) whenever a mapped field goes empty/null across the sync, not only when its key disappears.
+3. **The model's evidence never shows raw vendor records.** `build_generic_l3_evidence`
+   (`src/autobridge/repair/controller.py` ~1083-1093) samples only canonical (mapped) records, so unmapped vendor keys
+   never reach the L3 prompt. Include the new wire keys and a redacted raw vendor-record sample in the evidence, so the
+   engine sees what the frontier agent sees in `evidence.md`. Whether to patch or ask stays the model's decision.
+4. **Answer key (owner decision 2026-11-02): a rename to a misleading new name expects a question.** The generator
+   picks `new_name` from one shared `NAME_POOL` (`simulators/common/faultgen.py` ~113), so a departure date can land
+   in `checkinDate` or `reservationStatus`. When the new name does not plausibly name the field, the expected answer
+   is an escalation (one operator question), not a repair; a patch there is not credited as a correct answer. Keep
+   `repair` as the expected answer only where the new name plausibly names the same field. Decide this when the
+   instance is generated (in the generator / `verifier/beacon.py` answer key), never from engine output.
+5. Tests: a served atlas rename has no old key on the wire; the detector emits the new key with a sample when the
+   mapped field is empty in every record; the L3 prompt for a rename lists the new key and a raw record sample; the
+   answer key for a misleading rename is an escalation. Extend the REQ-078 item-4 detection sweep with these cases.
+Do not freeze, tag or commit under `experiments/beacon/`; the owner runs the keyed rehearsal after this lands.
 
 ### REQ-079 — Directive: §5 test hermeticity — full `make test` flakes with teardown DNS-guard errors on scheduler/activation tests (2026-11-02)
 Status: IN_PROGRESS (sbx1 since 2026-11-02 02:07)
