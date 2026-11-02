@@ -50,7 +50,8 @@ def _norm(name: Any) -> str:
         ("guest_name", "postedInstant", "escalate"),
         ("status", "reservationStatus", "repair"),
         ("status", "recordUpdatedAt", "escalate"),
-        ("total_amount", "netTotal", "repair"),
+        ("total_amount", "grandTotal", "repair"),
+        ("total_amount", "netTotal", "escalate"),
         ("amount", "valueTimestamp", "escalate"),
         ("business_date", "chargeMemo", "escalate"),
         ("posted_at", "memoText", "escalate"),
@@ -70,11 +71,14 @@ def test_rename_answer_key_plausible_repairs_misleading_escalates(
 
 
 def test_rename_vocabulary_partitions_the_pool() -> None:
-    """Every NAME_POOL name plausibly names a field group.
+    """Every NAME_POOL name plausibly names a field group — except the two
+    decoy names (REQ-083 B8).
 
     The money names are shared by ``total_amount`` and ``amount`` (one
-    money group under two canonical names); every other pool name has
-    exactly one owner.
+    money group under two canonical names); ``netTotal``/``totalNet`` live
+    in DECOY_POOL (a net field next to gross reads ambiguous) and are
+    owned by neither group, so they key an escalation, never a repair.
+    Every other pool name has exactly one owner.
     """
     from simulators.common import faultgen as fg
 
@@ -84,11 +88,15 @@ def test_rename_vocabulary_partitions_the_pool() -> None:
         "arrival_date", "departure_date", "business_date",
         "updated_at", "description", "posted_at",
     }
-    shared = {"grandtotal", "totalnet", "chargetotal", "amountgross", "nettotal"}
+    shared = {"grandtotal", "chargetotal", "amountgross"}
+    decoy = {"nettotal", "totalnet"}
     for name in fg.NAME_POOL:
         owners = [f for f, g in groups.items() if _norm(name) in g]
         if _norm(name) in shared:
             assert owners == ["total_amount", "amount"], (name, owners)
+        elif _norm(name) in decoy:
+            assert owners == [], (name, owners)
+            assert name in fg.DECOY_POOL or _norm(name) in {_norm(d) for d in fg.DECOY_POOL}, name
         else:
             assert len(owners) == 1, (name, owners)
 
@@ -502,7 +510,12 @@ def _rename_ctx(spec: dict[str, Any], signals: list[Any], drift_class: str = "SC
 
 
 def test_lexically_close_rename_repairs_with_matching_values() -> None:
-    """A near-identical new name with a matching sample repairs at L1."""
+    """A near-identical new name with matching values repairs at L1.
+
+    REQ-083 C14: the gate requires value agreement on MORE THAN ONE
+    sample — two new-key values each agreeing with a lost value — plus
+    the shape and lexical gates.
+    """
     from autobridge.drift.signals import DriftSignal
     from autobridge.repair.rules import rename_field as rf
 
@@ -512,7 +525,17 @@ def test_lexically_close_rename_repairs_with_matching_values() -> None:
         entity="Reservation",
         severity="medium",
         message="rename",
-        details={"entity": "Reservation", "missing": ["endDate"], "added": [{"key": "endDates", "sample": "2026-11-06", "type": "str"}]},
+        details={
+            "entity": "Reservation",
+            "missing": ["endDate"],
+            "added": [{
+                "key": "endDates",
+                "sample": "2026-11-06",
+                "samples": ["2026-11-06", "2026-11-07"],
+                "type": "str",
+            }],
+            "lost_samples": {"endDate": ["2026-11-06", "2026-11-07"]},
+        },
     )
     assert rf.precondition(_rename_ctx(_wire_spec(), [sig])) is True
 
@@ -534,7 +557,11 @@ def test_lexically_unrelated_names_decline_and_climb() -> None:
             entity="Reservation",
             severity="medium",
             message="rename",
-            details={"entity": "Reservation", "missing": ["endDate"], "added": [{"key": new_key, "sample": sample, "type": "str"}]},
+            details={
+                "entity": "Reservation",
+                "missing": ["endDate"],
+                "added": [{"key": new_key, "sample": sample, "type": "str"}],
+            },
         )
         return _rename_ctx(_wire_spec(), [sig])
 
@@ -543,6 +570,60 @@ def test_lexically_unrelated_names_decline_and_climb() -> None:
     assert rf.precondition(_ctx("checkOutTs")) is False
     # A distant name does not repair even when the sample pairs by value.
     assert rf.precondition(_ctx("guestIdentifier", sample="2026-11-06")) is False
+
+
+def test_single_shaped_sample_declines_without_multi_sample_agreement() -> None:
+    """REQ-083 C14: one shaped sample is not enough — the gate needs
+    value agreement on more than one sample, otherwise it climbs."""
+    from autobridge.drift.signals import DriftSignal
+    from autobridge.repair.rules import rename_field as rf
+
+    sig = DriftSignal(
+        kind="keys_changed",
+        operation="list_reservations",
+        entity="Reservation",
+        severity="medium",
+        message="rename",
+        details={
+            "entity": "Reservation",
+            "missing": ["endDate"],
+            "added": [{
+                "key": "endDates",
+                "sample": "2026-11-06",
+                "samples": ["2026-11-06"],
+                "type": "str",
+            }],
+            "lost_samples": {"endDate": ["2026-11-06", "2026-11-07"]},
+        },
+    )
+    assert rf.precondition(_rename_ctx(_wire_spec(), [sig])) is False
+
+
+def test_disagreeing_values_decline_despite_lexical_closeness() -> None:
+    """REQ-083 C14: new values that match no lost value decline, even
+    with two samples and a lexically close name."""
+    from autobridge.drift.signals import DriftSignal
+    from autobridge.repair.rules import rename_field as rf
+
+    sig = DriftSignal(
+        kind="keys_changed",
+        operation="list_reservations",
+        entity="Reservation",
+        severity="medium",
+        message="rename",
+        details={
+            "entity": "Reservation",
+            "missing": ["endDate"],
+            "added": [{
+                "key": "endDates",
+                "sample": "confirmed",
+                "samples": ["confirmed", "cancelled"],
+                "type": "str",
+            }],
+            "lost_samples": {"endDate": ["2026-11-06", "2026-11-07"]},
+        },
+    )
+    assert rf.precondition(_rename_ctx(_wire_spec(), [sig])) is False
 
 
 def test_distant_delta_rename_declines_close_delta_fires() -> None:
@@ -701,3 +782,71 @@ def _seed_for(inst: dict[str, Any], vendor: str) -> str:
             ):
                 return (hexs * 32)[:64]
     raise AssertionError(f"seed not found for {inst}")
+
+
+def test_l3_evidence_pairs_vanished_and_new_values() -> None:
+    """REQ-083 C14: the L3 evidence shows the vanished key's last-good
+    values next to the new key's values (from the stored baseline), so
+    the model judges old and new together, never the new name alone."""
+    from autobridge.drift.signals import DriftSignal
+    from autobridge.repair.controller import build_generic_l3_evidence
+
+    sig = DriftSignal(
+        kind="keys_changed",
+        operation="list_reservations",
+        entity="Reservation",
+        severity="medium",
+        message="rename",
+        details={
+            "entity": "Reservation",
+            "missing": ["endDate"],
+            "added": [{
+                "key": "checkinDate",
+                "sample": "2026-11-06",
+                "samples": ["2026-11-06", "2026-11-07"],
+                "type": "str",
+            }],
+            "lost_samples": {"endDate": ["2026-11-06", "2026-11-07"]},
+        },
+    )
+    summary = {
+        "outcome": "Complete",
+        "unmet_criteria": [],
+        "operation_results": {
+            "list_reservations": {
+                "records": [
+                    {"reservationID": "R1", "checkinDate": "2026-11-06"},
+                    {"reservationID": "R2", "checkinDate": "2026-11-07"},
+                ],
+            }
+        },
+        "canonical_records": {
+            "Reservation": [
+                {"reservation_id": "R1", "departure_date": None},
+                {"reservation_id": "R2", "departure_date": None},
+            ]
+        },
+    }
+    baseline = {
+        "Reservation": [
+            {"reservation_id": "R1", "departure_date": "2026-11-06"},
+            {"reservation_id": "R2", "departure_date": "2026-11-07"},
+        ]
+    }
+    evidence = build_generic_l3_evidence(
+        _wire_spec(), [sig], None, summary, "SCHEMA_RENAME",
+        failed_attempts=None, baseline=baseline,
+    )
+    assert evidence["new_wire_keys"], "new wire keys missing from L3 evidence"
+    entry = next(e for e in evidence["new_wire_keys"] if e["key"] == "checkinDate")
+    pair = entry.get("pairs_with")
+    assert pair, "vanished key's last-good values not paired with the new key"
+    assert pair["field"] == "departure_date", pair
+    assert pair["value_match"] is True, pair
+    assert "2026-11-06" in pair["baseline_sample"], pair
+    # Without a baseline the pairing is absent but the new key still shows.
+    plain = build_generic_l3_evidence(
+        _wire_spec(), [sig], None, summary, "SCHEMA_RENAME", failed_attempts=None
+    )
+    plain_entry = next(e for e in plain["new_wire_keys"] if e["key"] == "checkinDate")
+    assert plain_entry.get("pairs_with") is None

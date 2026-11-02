@@ -38,6 +38,54 @@ def _signal_triples(signals: list[Any]) -> list[tuple[str | None, str | None, di
     return out
 
 
+def values_agree(first: Any, second: Any) -> bool:
+    """Generic value agreement for rename pairing (REQ-083 C14).
+
+    Exact string equality, with Decimal equality for numeric-looking
+    values (``"338.65"`` vs ``Decimal("338.65")``) — no name lists, no
+    field vocabulary. ``None`` never agrees.
+    """
+    if first is None or second is None:
+        return False
+    if isinstance(first, bool) or isinstance(second, bool):
+        return first is second
+    if isinstance(first, (int, float)) or isinstance(second, (int, float)):
+        try:
+            from decimal import Decimal as _Decimal
+
+            return _Decimal(str(first)) == _Decimal(str(second))
+        except Exception:
+            return False
+    try:
+        from decimal import Decimal as _Decimal
+
+        _f, _s = str(first), str(second)
+        if _f.strip() == _s.strip():
+            return True
+        return _Decimal(_f) == _Decimal(_s)
+    except Exception:
+        return str(first) == str(second)
+
+
+def dedup_samples(values: list[Any], limit: int = 5) -> list[Any]:
+    """First *limit* distinct non-null values, order-preserved."""
+    seen: set[str] = set()
+    out: list[Any] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        marker = str(value)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        out.append(value)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def wire_cursor_hints(signals: list[Any]) -> list[dict[str, Any]]:
     """Wire cursor observations: one entry per contradicting operation.
 

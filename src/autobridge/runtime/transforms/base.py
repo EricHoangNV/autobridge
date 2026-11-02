@@ -45,9 +45,11 @@ def _parse_iso_date_string(value: str) -> datetime.date | None:
 
 #: REQ-081 item 4: declarative input formats for the date transforms.
 #: Fixed allow-list of strptime directives (no free code) plus the
-#: literal separators a vendor date may use. The generator's DATE_FORMATS
-#: ("%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y") are all expressible here, and
-#: every generated date format must parse with this set.
+#: literal separators a vendor date may use. Every vendor date shape the
+#: beacon draws ("%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y") is expressible here:
+#: no generated date format may use a directive outside this set.
+#: (REQ-083 C16: no generator import — the engine never names the
+#: generator's pools; the bench-side test pins the parity instead.)
 ALLOWED_DATE_INPUT_DIRECTIVES: tuple[str, ...] = ("%Y", "%m", "%d", "%H", "%M", "%S")
 ALLOWED_DATE_INPUT_LITERAL_CHARS: frozenset[str] = frozenset(
     {"-", "/", " ", ":", ".", "T"}
@@ -65,6 +67,34 @@ def is_allowed_date_input_format(fmt: Any) -> bool:
     if "%" in tmp:
         return False
     return all((ch in ALLOWED_DATE_INPUT_LITERAL_CHARS) for ch in tmp)
+
+
+def format_has_time_component(fmt: str) -> bool:
+    """True when a declarative input format carries a time component.
+
+    REQ-083 C13: a ``date_local`` / ``business_date`` input with no time
+    component (no ``%H``/``%M``/``%S``) is a calendar date — returned
+    unchanged, never timezone-converted, never cut off.
+    """
+    return any(marker in str(fmt) for marker in ("%H", "%M", "%S"))
+
+
+def parse_wire_date_only(value: str) -> datetime.date | None:
+    """Parse a date-only framed-protocol wire value (``YYMMDD``).
+
+    Returns the calendar date, or None when the value is not date-only
+    wire-shaped (datetimes with a time part go through
+    :func:`parse_wire_datetime`). Years are 2000+YY.
+    """
+    s = str(value).strip()
+    m = _WIRE_DATE_RE.match(s)
+    if not m:
+        return None
+    yy, mo, dd = (int(g) for g in m.groups())
+    try:
+        return datetime.date(2000 + yy, mo, dd)
+    except ValueError:
+        return None
 
 
 def parse_with_input_format(value: str, fmt: str) -> datetime.datetime | None:

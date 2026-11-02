@@ -159,12 +159,16 @@ def evaluate_stop(
     if "repeated_cursor" in stop_when and is_repeated_cursor(state, next_token):
         return True, "repeated_cursor", True
 
-    # page_limit guard (before implicit checks so capped loop reports page_limit)
+    # page_limit guard (before implicit checks so capped loops report page_limit)
     if state.pages_fetched >= max_pages:
         return True, "page_limit", False
 
-    # implicit guard: no next token at all
-    if next_token is None:
+    # implicit guard: no next token at all — token-driven strategies only.
+    # REQ-083 A2: offset/page advance blindly (offset+limit, page number)
+    # until the empty page; a tokenless contract is the norm there, not a
+    # stop condition. Without this, no spec patch can ever repair a
+    # tokenless offset/page vendor: the loop stops after the first page.
+    if next_token is None and state.strategy not in ("offset", "page"):
         return True, "no_next_token", False
 
     # implicit empty page when not in stop_when (safety)

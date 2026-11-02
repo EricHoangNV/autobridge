@@ -424,7 +424,7 @@ class _FiasFeed:
 _MERIDIAN_RESERVATIONS = [
     {
         "Id": "RES-1",
-        "ServiceId": "SVC-prop-001",
+        "ServiceId": "prop-001",
         "AccountId": "ACC-RES-1",
         "BookerId": "ACC-RES-1",
         "Number": "100001",
@@ -448,7 +448,7 @@ _MERIDIAN_ITEMS = [
     {
         "Id": "CHG-1",
         "AccountId": "ACC-RES-1",
-        "ServiceId": "SVC-prop-001",
+        "ServiceId": "prop-001",
         "Name": "Room charge",
         "UnitCount": 1,
         "UnitAmount": {"Currency": "USD", "NetValue": "18.18", "GrossValue": "19.99", "TaxValues": []},
@@ -457,7 +457,7 @@ _MERIDIAN_ITEMS = [
     {
         "Id": "CHG-2",
         "AccountId": "ACC-RES-1",
-        "ServiceId": "SVC-prop-001",
+        "ServiceId": "prop-001",
         "Name": "Mini-bar",
         "UnitCount": 1,
         "UnitAmount": {"Currency": "USD", "NetValue": "0.01", "GrossValue": "0.01", "TaxValues": []},

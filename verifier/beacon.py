@@ -31,12 +31,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import simulators.common.faultgen as faultgen
 from simulators.common.faultgen import GeneratorBug
-from simulators.common.generator import generate_dataset
 
 # ---------------------------------------------------------------------------
 # Answer keys (counts and hashes only, never fixture rows)
@@ -213,7 +212,7 @@ def _assert_dates_invisible(instance: dict[str, Any], dataset: dict[str, list[di
     params = instance.get("params")
     if str(instance.get("vendor")) != "meridian" or not isinstance(params, dict) or str(params.get("mode")) != "cutoff":
         raise GeneratorBug("dates no_patch is only the meridian cutoff")
-    baseline = generate_dataset(seed=int(instance["dataset_seed"]))
+    baseline = faultgen.beacon_dataset(seed=int(instance["dataset_seed"]))
     for key in ("reservations", "folios"):
         mutated_rows = dataset.get(key, [])
         base_rows = baseline.get(key, [])
@@ -346,8 +345,15 @@ def grade_arm_outcome(instance: dict[str, Any], arm: dict[str, Any]) -> tuple[bo
 
 
 def baseline_for(instance: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """Regenerate the baseline dataset an instance was built from."""
-    return generate_dataset(seed=int(instance["dataset_seed"]))
+    """Regenerate the baseline dataset an instance was built from.
+
+    REQ-083 A1/A3: the single-zone beacon oracle dataset
+    (:func:`faultgen.beacon_dataset`) — every property in the one static
+    zone the pre-drift specs carry — never ``generate_dataset`` directly.
+    The simulator's beacon serving builds from the same function, so the
+    served baseline is byte-identical to this oracle.
+    """
+    return faultgen.beacon_dataset(seed=int(instance["dataset_seed"]))
 
 
 # ---------------------------------------------------------------------------
@@ -359,8 +365,9 @@ def judge_produced_records(
     instance: dict[str, Any],
     produced: dict[str, Any],
     spec: dict[str, Any] | None = None,
+    baseline_records: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Judge arm-produced canonical records against the instance answer key.
+    """Judge arm-produced records against the instance answer key.
 
     Returns ``{"verdict", "score", "failed_checks"}`` with bounded check
     names and counts only (aggregates, never fixture rows). The records do
@@ -369,7 +376,16 @@ def judge_produced_records(
     candidate spec is supplied and the instance expects a repair, the spec
     must additionally cover the mutated contract (a correct spec always
     names what it reads, so coverage never false-fails a genuine repair).
-    Fail closed: malformed records, records for an ``escalate`` instance,
+
+    REQ-083 A3 — one judging regime for all vendors: ``baseline_records``
+    is what the pre-drift spec produces over the unfaulted simulator
+    (computed bench-side, the same serving code the arms sync against).
+    When supplied, the produced records are compared against it instead
+    of the regenerated oracle dataset — for HTTP vendors and FIAS alike.
+    This replaces the FIAS-only special case: the FIAS baseline is the
+    pre-drift spec over the unfaulted feed (one posting row), never the
+    71-row folio dataset no feed sync could reproduce. Fail closed:
+    malformed records, records for an ``escalate`` instance,
     or an uncovered contract all fail.
 
     REQ-062 item 3: a grading error is an explicit row label, never a
@@ -383,7 +399,7 @@ def judge_produced_records(
         if not isinstance(recs, list) or any(not isinstance(r, dict) for r in recs):
             raise ValueError(f"produced {key} must be a list of records")
     try:
-        return _judge_produced_records_inner(instance, produced, spec)
+        return _judge_produced_records_inner(instance, produced, spec, baseline_records)
     except ValueError:
         raise
     except Exception:
@@ -394,6 +410,7 @@ def _judge_produced_records_inner(
     instance: dict[str, Any],
     produced: dict[str, Any],
     spec: dict[str, Any] | None = None,
+    baseline_records: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from verifier.checks import (
         check_business_date,
@@ -414,6 +431,17 @@ def _judge_produced_records_inner(
         }
     baseline = baseline_for(instance)
     props = baseline.get("properties") or []
+    if baseline_records is not None:
+        # REQ-083 A3: one judging regime — the pre-drift spec over the
+        # unfaulted simulator is the comparison baseline (HTTP and FIAS
+        # alike). Validate its shape, then judge against it; properties
+        # (timezones) still come from the oracle dataset.
+        for key in ("reservations", "folios"):
+            recs = baseline_records.get(key, [])
+            if not isinstance(recs, list) or any(not isinstance(r, dict) for r in recs):
+                raise ValueError(f"baseline_records {key} must be a list of records")
+        baseline = {"reservations": list(baseline_records.get("reservations", [])),
+                    "folios": list(baseline_records.get("folios", []))}
     fails: list[dict[str, Any]] = []
     fails.extend(check_record_set_by_key(baseline, produced))  # type: ignore[arg-type]
     fails.extend(check_no_duplicates(produced))  # type: ignore[arg-type]
@@ -438,13 +466,18 @@ def _judge_produced_records_inner(
 def _check_canonical_field_coverage(
     expected: dict[str, list[dict[str, Any]]], produced: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Every canonical top-level field must be present in the produced record.
+    """Every canonical top-level field must be present with its value.
 
-    An unfixed rename serves the new name (canonical missing), an unfixed
-    nesting serves a single parent wrapper (canonicals missing) — both fail
-    here with the bounded ``field_missing`` name. Top-level only: nesting
-    is a canonical-shape breach, not a nested find. Extras are allowed, and
-    a baseline ``None`` matched by an absent key is equivalent (the wire
+    REQ-083 B5: an unfixed rename serves the new name (canonical missing),
+    an unfixed nesting serves a single parent wrapper (canonicals missing)
+    — both fail here with the bounded ``field_missing`` name. And every
+    canonical field the baseline has is value-compared (money exact,
+    dates exact, strings exact): a present-but-``None`` or otherwise
+    unequal value fails with ``field_value_mismatch`` — so an unrepaired
+    ``departure_date`` rename (new key holding the dates, mapped field
+    empty) can never pass as a repair. Top-level only: nesting is a
+    canonical-shape breach, not a nested find. Extras are allowed, and a
+    baseline ``None`` matched by an absent key is equivalent (the wire
     omits nulls) — only present values must survive.
     """
     fails: list[dict[str, Any]] = []
@@ -453,6 +486,7 @@ def _check_canonical_field_coverage(
             str(r.get(key)) for r in produced.get(label, []) if isinstance(r, dict)
         }
         missing = 0
+        valued = 0
         for rec in expected.get(label, []):
             if str(rec.get(key)) not in produced_by_id:
                 continue  # counted by record_set_mismatch, not here
@@ -460,11 +494,32 @@ def _check_canonical_field_coverage(
                 (r for r in produced.get(label, []) if isinstance(r, dict) and str(r.get(key)) == str(rec.get(key))),
                 {},
             )
-            absent = [k for k, v in rec.items() if v is not None and k not in prod]
-            missing += len(absent)
+            for k, v in rec.items():
+                if v is None:
+                    continue
+                if k not in prod:
+                    missing += 1
+                elif not _canonical_values_equal(v, prod.get(k)):
+                    valued += 1
         if missing:
             fails.append({"name": "field_missing", "count": missing})
+        if valued:
+            fails.append({"name": "field_value_mismatch", "count": valued})
     return fails
+
+
+def _canonical_values_equal(expected: Any, produced: Any) -> bool:
+    """Exact value equality for one canonical field (money/number/date/string)."""
+    if produced is None:
+        return False
+    if isinstance(expected, bool) or isinstance(produced, bool):
+        return expected is produced
+    if isinstance(expected, (int, float, Decimal)) or isinstance(produced, (int, float, Decimal)):
+        try:
+            return Decimal(str(expected)) == Decimal(str(produced))
+        except (InvalidOperation, ValueError, AttributeError):
+            return False
+    return str(expected) == str(produced)
 
 
 def check_contract_coverage(instance: dict[str, Any], spec: dict[str, Any]) -> list[dict[str, Any]]:

@@ -50,7 +50,7 @@ def _fake_one_folio(posted_utc: str) -> HttpClient:
     """One reservation + customer + folio + enterprise (America/New_York)."""
     reservation = {
         "Id": "RES-9",
-        "ServiceId": "SVC-prop-009",
+        "ServiceId": "prop-009",
         "AccountId": "ACC-RES-9",
         "Number": "900009",
         "State": "Confirmed",
@@ -69,7 +69,7 @@ def _fake_one_folio(posted_utc: str) -> HttpClient:
     folio = {
         "Id": "CHG-9",
         "AccountId": "ACC-RES-9",
-        "ServiceId": "SVC-prop-009",
+        "ServiceId": "prop-009",
         "Name": "Room charge",
         "UnitCount": 1,
         "UnitAmount": {"Currency": "USD", "NetValue": "90.91", "GrossValue": "100.00", "TaxValues": []},

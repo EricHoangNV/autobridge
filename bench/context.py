@@ -117,6 +117,9 @@ def capabilities_for_version(version: str) -> dict[str, Any]:
         "pagination_strategies": versions[version].get("pagination_strategies", []),
         "protocols": versions[version].get("protocols", []),
         "transforms": payload.get("transforms", []),
+        # REQ-083 C13: declarative transform args (input_format listed)
+        # ride the same frontier evidence every arm reads.
+        "transform_args": payload.get("transform_args", {}),
         "checks": payload.get("checks", []),
         "stop_conditions": payload.get("stop_conditions", []),
         "rules": payload.get("rules", []),

@@ -1,8 +1,8 @@
 # Grand Plaza — PABX Interface Specification (FIAS)
 
 > Interface specification for the telephone exchange (PABX) at **Grand Plaza** (`prop-001`), as provided by the
-> hotel's IT team to integration partners. The PABX speaks **FIAS** (Fidelio Interface Application Specification),
-> the long-standing hotel interface protocol. This document describes the subset this PABX implements and the
+> hotel's IT team to integration partners. The PABX speaks **FIAS** (Fictional Interface Application Specification),
+> the fictional hotel interface protocol of this demo. This document describes the subset this PABX implements and the
 > settings of this installation. Field ids and record types follow FIAS; values marked *(site setting)* are this
 > hotel's configuration and may differ at other properties.
 

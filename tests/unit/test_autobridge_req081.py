@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import datetime
 import json
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -131,17 +130,12 @@ def test_item3_apply_error_recorded_not_silent() -> None:
 def test_item4_date_input_format() -> None:
     from autobridge.runtime.transforms.base import is_allowed_date_input_format
     from autobridge.runtime.transforms.date_local import transform_date_local
-    from simulators.common.faultgen import DATE_FORMATS
 
     assert transform_date_local("10-15-2026", {"input_format": "%m-%d-%Y"}) == "2026-10-15"
     assert not is_allowed_date_input_format("%c")
     assert not is_allowed_date_input_format("rm -rf /")
-    # Every generated date format is parseable.
-    sample = datetime.date(2026, 10, 15)
-    for fmt in DATE_FORMATS:
-        rendered = sample.strftime(fmt)
-        parsed = transform_date_local(rendered, {"input_format": fmt})
-        assert parsed == "2026-10-15", fmt
+    # REQ-083 C16: the every-generated-format parity assertion lives in
+    # the bench-side test (no generator import in engine tests).
 
 
 def test_item4_spec_rejects_free_format() -> None:
@@ -173,12 +167,14 @@ def test_item5_meridian_nesting_projects_wire() -> None:
     nested = {"outer": copy.deepcopy(inner)}
     wire = to_wire_reservation(copy.deepcopy(nested))
     # Nesting applies to the projected wire, never null entity/join keys.
+    # REQ-083 B5: the served service id is the canonical property id
+    # (no SVC- namespace), so it agrees with the oracle exactly.
     assert "outer" in wire
     inner_wire = wire["outer"]
     assert inner_wire.get("Id") == "R1"
-    assert str(inner_wire.get("ServiceId")) == "SVC-P1"
+    assert str(inner_wire.get("ServiceId")) == "P1"
     assert str(inner_wire.get("AccountId")) == "ACC-R1"
-    assert str(inner_wire.get("ServiceId")) != "SVC-None"
+    assert inner_wire.get("ServiceId") is not None
 
 
 def test_item5_atlas_nesting_projects_wire() -> None:

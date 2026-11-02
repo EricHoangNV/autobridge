@@ -47,6 +47,23 @@ REGISTRY: dict[str, Any] = {
     "business_date": transform_business_date,
 }
 
+#: Declarative args per transform (REQ-083 C13: ``input_format`` listed so
+#: agents and prompts name the closed vocabulary for vendor date shapes).
+#: A patch may only use these args; anything else is rejected by spec
+#: validation. ``input_format`` takes only the allow-listed directives
+#: (``%Y %m %d %H %M %S`` + literal separators — no free code).
+TRANSFORM_ARGS: dict[str, tuple[str, ...]] = {
+    "date_local": ("tz", "format", "input_format", "naive_as"),
+    "datetime_utc": ("tz", "input_format", "naive_as"),
+    "money": ("scale", "minor_units"),
+    "enum_map": ("map", "on_unknown"),
+    "flatten": (),
+    "coalesce": ("default", "value", "fallback", "else", "values"),
+    "const": ("value",),
+    "concat": ("separator", "prefix", "suffix", "values"),
+    "business_date": ("tz", "cutoff", "cutoff_hour", "input_format", "naive_as"),
+}
+
 
 def apply_transform(
     value: Any,

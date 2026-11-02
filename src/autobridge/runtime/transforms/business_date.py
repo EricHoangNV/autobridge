@@ -15,7 +15,9 @@ from autobridge.runtime.transforms.base import (
     _parse_iso_datetime,
     _resolve_tz,
     apply_naive_tz,
+    format_has_time_component,
     is_allowed_date_input_format,
+    parse_wire_date_only,
     parse_wire_datetime,
     parse_with_input_format,
 )
@@ -35,6 +37,10 @@ def transform_business_date(
       naive_as: 'utc' (default, legacy) or 'source' for naive inputs
 
     - None → None
+    - REQ-083 C13: a date-only input — a YYYY-MM-DD string, an
+      ``input_format`` without ``%H``/``%M``/``%S``, or a date-only
+      framed-protocol wire value (``YYMMDD``) — is a calendar date:
+      returned unchanged, no timezone conversion, no cutoff.
     - date string YYYY-MM-DD → returned as-is (already business date)
     - datetime string → parse, convert to tz, apply cutoff
     - framed-protocol wire date/time (``YYMMDD[ HHMMSS]``) → property-local
@@ -68,7 +74,12 @@ def transform_business_date(
     if isinstance(_input_fmt, str) and _input_fmt and is_allowed_date_input_format(_input_fmt):
         _parsed_fmt = parse_with_input_format(s, _input_fmt)
         if _parsed_fmt is not None:
-            dt2 = apply_naive_tz(_parsed_fmt, args, context_tz)
+            if not format_has_time_component(_input_fmt):
+                # REQ-083 C13: a date-only value is a calendar date —
+                # returned unchanged: no timezone conversion, no cutoff.
+                return _parsed_fmt.date().isoformat()
+            # Time-bearing without an offset is vendor wall time.
+            dt2 = apply_naive_tz(_parsed_fmt, args, context_tz, default="source")
             tz_name2 = _resolve_tz(args.get("tz") if isinstance(args, dict) else None, context_tz)
             cutoff2 = args.get("cutoff", args.get("cutoff_hour", 4)) if isinstance(args, dict) else 4
             try:
@@ -91,6 +102,12 @@ def transform_business_date(
             return s
         except ValueError:
             pass
+
+    # Framed-protocol wire date (YYMMDD, property-local calendar date):
+    # returned unchanged (REQ-083 C13).
+    wire_date = parse_wire_date_only(s)
+    if wire_date is not None:
+        return wire_date.isoformat()
 
     wire = parse_wire_datetime(s)
     if wire is not None:

@@ -24,7 +24,7 @@ targets:
     # also match the public API publish (compose ``127.0.0.1:<public_port>:8000``
     # and ``SIM_PUBLIC_PORT=<public_port>`` in scripts/local-up.sh).
     display_name: AtlasPMS
-    api_style: "Cloudbeds-style method REST"
+    api_style: "Atlas-style method REST"
     public_port: 8105
     docs_source: simulators/docs/atlas-openapi.yaml
     suggested_credential_ref: ATLAS_API_KEY
@@ -54,7 +54,7 @@ targets:
     host_admin_port: 8117
     extra_resets: []
     display_name: MeridianPMS
-    api_style: "Mews-style POST/JSON"
+    api_style: "Meridian-style POST/JSON"
     public_port: 8116
     docs_source: simulators/docs/meridian-openapi.yaml
     suggested_credential_ref: MERIDIAN_API_KEY

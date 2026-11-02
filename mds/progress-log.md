@@ -4287,3 +4287,32 @@ Agent: opencode meta/muse-spark-1.3 (escalation). All 5 items: faithful rename s
 
 ## 2026-11-02 sbx1 REQ-081 code-done (Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Claimed REQ-081, implemented all 7 items, 12 new tests in test_autobridge_req081.py. Updated 2 guard expectations (validate_against==spec per item 3; meridian nesting SCHEMA_REMOVED per item 5 wire fix). Full gates: lint, typecheck, test (incl. UI 350) green. Status set DONE in REQUESTS.MD; owner step: keyed rehearsal on this commit.
+
+## 2026-11-02 sbx1 REQ-083 code-done (Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+**Date:** 2026-11-02
+**Ref:** REQ-083 (beacon must credit a correct answer before measuring)
+
+**What was done:**
+- Part A: single-zone NY beacon oracle + serving alignment (money backfill, legacystay quirk dropped, unfaulted-baseline pin); per-vendor preflight test + `preflight_beacon` in `run_beacon`; 28-test A2 reference-repair prover through real `sync_candidate`; verifier `baseline_records` override + bench unfaulted baseline; URL join + full credential coverage + prompt/PWD preflight checks.
+- Part B: value-comparing judge (`field_value_mismatch`, departure_date in business dates); pagination params announced in served vendor docs + frontier context, leak-audited; tz_shift removed from draw, netTotal/totalNet decoy-side only, TA/TM distinct; honest scoring (harness errors, correct_escalation, one-loss); warm cache key unified (reuse observed); per-tier token accounting; docs rewritten to match.
+- Part C: C13 date-only calendar dates + capabilities/L3-prompt/frontier evidence listing; C14 multi-sample L1 value gate + L3 old/new value pairing; C15 L2 dry-run gate; C16 generator refs removed.
+- Part D: harbor/legacystay nest projected wire; meridian format excluded from draw; fictional names everywhere (FIAS doc, demo targets, generator guest names).
+- Incidental engine fixes the REQ forced: tokenless offset/page loops now page past 1 (implicit-guard skip + repeated-page stop); meridian ServiceId no longer namespaced (canonical property_id agrees with oracle).
+
+**Key decisions:**
+- Beacon datasets all-NY (protocol.md notes it) instead of per-record spec timezones — contained in faultgen, no spec/builder work.
+- tz_shift + gross_net scaling + meridian format are patch-inexpressible in the closed set — proven inexpressible via the A2 prover rather than asserted; draw/key updated instead of extending the vocabulary (plan change).
+- Runtime implicit-guard fix + repeated-page stop: the loop must implement its documented strategies; a vendor that ignores params must terminate the loop, not hang it to max_pages.
+- B5's value comparison exposed the SVC- mismatch: fixed the sim wire (canonical ids like every other vendor) rather than special-casing the judge.
+
+**Files changed:**
+- `simulators/common/{generator,faultgen,beacon_serve,helpers}.py`, `simulators/{atlaspms,harborpms,legacystay,meridianpms}/app.py`, `simulators/docs/{fias-pabx,legacystay}.md`
+- `verifier/{beacon,app,checks}.py`, `bench/{beacon_run,reference_patch,faults,context,harness,one_shot,ablation,demo}.py`
+- `src/autobridge/{drift/signals,runtime/{checks,sync_run,interpreter,pagination,transforms/*},repair/{controller,rules/{rename_field,wire}},control/routes/capabilities}.py`, `config/prompts/l3_patch.md`, `config/demo_targets.yaml`
+- 12 new test files (beacon preflight/A2/scoring/warm/tokens/docs, C13/C15/gates, sim beacon/req083) + updated guard tests; `docs/benchmark.md`, `experiments/beacon` protocol template note
+- `tests/e2e/test_05_safety_and_semantic.py`, `tests/e2e/test_meridian_*.py` fixture updates (SVC- removal)
+
+**Notes for next iteration:**
+- Owner step: keyed rehearsal with FRONTIER_API_KEY on this commit (round 6603643 or newer), report every arm, then close REQ-083 (and REQ-078/080/081 with it).
+- Do not freeze, tag or commit under `experiments/beacon/` (owner runs the real freeze).
+- New tests must match `test_autobridge_*`/`test_simulators_*` gate patterns or CI never runs them (renamed 7 files this run).

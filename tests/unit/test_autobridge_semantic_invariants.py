@@ -38,8 +38,11 @@ def test_money_invariant_pass():
 
 
 def test_money_invariant_negative():
+    # REQ-083 A1: reservation totals are exact sums of folio lines, so a
+    # net-refund reservation legitimately totals below zero — sign never
+    # signals drift. Only scale/presence/sum gate the invariant.
     recs = [{"reservation_id": "R1", "total_amount": "-10.00"}]
-    assert check_money_invariant(recs, "total_amount") == ["money_invariant"]
+    assert check_money_invariant(recs, "total_amount") == []
 
 
 def test_money_invariant_missing_active():
@@ -124,9 +127,12 @@ def test_count_compare_to_value():
 
 
 def test_run_checks_money():
-    recs = [{"reservation_id": "R1", "total_amount": "-5.00"}]
+    recs = [{"reservation_id": "R1", "total_amount": "5.00"}]
     checks = [{"kind": "money_invariant", "field": "total_amount"}]
-    assert run_checks(recs, checks, entity_name="Reservation") == ["money_invariant"]
+    assert run_checks(recs, checks, entity_name="Reservation") == []
+    # Net refunds are valid money (REQ-083 A1).
+    recs = [{"reservation_id": "R1", "total_amount": "-5.00"}]
+    assert run_checks(recs, checks, entity_name="Reservation") == []
 
 
 def test_run_checks_business_date():
@@ -162,10 +168,10 @@ def test_run_checks_no_field_skip():
 
 
 def test_evaluate_money():
-    recs = [{"reservation_id": "R1", "total_amount": "-1.00"}]
+    recs = [{"reservation_id": "R1", "total_amount": "1.00"}]
     checks = [{"kind": "money_invariant", "field": "total_amount"}]
     fails = evaluate_entity_checks("Reservation", recs, checks)
-    assert "money_invariant" in fails
+    assert "money_invariant" not in fails
 
 
 def test_determine_outcome_money_degraded():

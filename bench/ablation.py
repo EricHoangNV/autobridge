@@ -606,6 +606,10 @@ class DerivedDiagnostics:
     # production calls (prepare_climb_inputs + build_dry_run_fault) instead
     # of climbing with no evidence. Carried through, never a case label.
     faulted_summary: Any = None
+    # REQ-083 C14: the stored baseline the engine holds (same summary
+    # shape) — the L3 rename evidence pairs vanished keys' last-good
+    # values with new keys' values.
+    baseline_summary: Any = None
 
 
 def derive_from_summaries(
@@ -663,6 +667,7 @@ def derive_from_summaries(
         classification_reason=classification.reason,
         faulted_outcome=str(faulted_summary.get("outcome", "")),
         faulted_summary=dict(faulted_summary),
+        baseline_summary=dict(baseline_summary),
     )
 
 
@@ -886,6 +891,10 @@ def run_engine_arm(
                 summary=_summary_dict,
                 sync_run_id=run_id,
                 drift_class=diag.drift_class,
+                # REQ-083 C14: the stored baseline the engine holds — the
+                # L3 rename evidence pairs vanished keys' last-good values
+                # with new keys' values.
+                baseline=getattr(diag, "baseline_summary", None),
             ) or {"evidence": None, "stages": None}
         except Exception:
             _prepared = {"evidence": None, "stages": None}
@@ -1001,6 +1010,11 @@ def run_engine_arm(
             input_tokens=total_in,
             output_tokens=total_out,
             frontier_tokens=frontier,
+            # REQ-083 B11: per-tier in/out, the same basis for every arm.
+            frontier_input=frontier_in,
+            frontier_output=frontier_out,
+            small_input=small_in,
+            small_output=small_out,
             cost_usd=cost,
             tool_calls=0,
             model_calls=calls,
@@ -1537,7 +1551,8 @@ def grade_ablation_arm(
         wrong_patch_released=wrong_release,
         correct_escalation=correct_esc,
         frontier_tokens=int(res.frontier_tokens) if res is not None else 0,
-        small_tokens=int(res.input_tokens) if res is not None else 0,
+        # REQ-083 B11: the small tier's in+out total (was: total input).
+        small_tokens=(int(res.small_input) + int(res.small_output)) if res is not None else 0,
         cost_usd=cost,
         elapsed_ms=float(res.elapsed_ms) if res is not None else 0.0,
         model=res.model if res is not None else None,

@@ -536,16 +536,21 @@ What a judge can check (all of it public):
    Metrics: verified completion rate (judged only by the verifier),
    wrong patches proposed as well as released (an unneeded patch on a
    no-change instance counts as wrong; released must be 0 for AutoBridge),
-   correct escalations, frontier tokens, estimated cost (engine model cost
-   is recorded in-memory, never left unset), wall time. The warm arm
+   correct escalations (Blocked with one operator question on an instance
+   whose key accepts a question; a no-patch Complete on a throttle is
+   verified completion, not an escalation), frontier tokens, estimated cost
+   (engine model cost is recorded in-memory, never left unset), wall time. The warm arm
    learns during the run: instances run in the frozen order, and after
    each instance a verified fix the warm arm produced is learned (the way
    an approved fix is in production) and is available to later instances;
    cold never learns. Each instance reports whether warm used a learned
    fix (rung + source instance) — a warm-vs-cold gap shows learning, not
    pre-knowledge. The frontier agent is restricted to its sandbox dir and
-   the vendor sandbox URL only (no repo, no verifier/admin ports); every
-   arm gets the same last-good sketch. Owner-accepted answers: code_list
+   the vendor sandbox URL only (no repo, no verifier/admin ports); both
+   arms get the stored last-good baseline — the frontier arms' evidence
+   shows the baseline sample next to the faulted values, clearly labelled
+   baseline vs faulted, and the engine arms compare against the same
+   stored baseline the detector uses. Owner-accepted answers: code_list
    "repair" instances accept an escalation with one question (nothing
    reveals a random new code's meaning; a guessed mapping is a wrong
    patch), and `transport_auth/token_expired` accepts an escalation.
@@ -590,8 +595,8 @@ make beacon-eval FAULTS=25
 
 Roughly: the freeze targets the first drand round at/after now + 20
 minutes; the run then attempts every instance × trial on all five arms
-(frontier calls happen on the climbable faults — of the order of one L3
-call per semantic instance per trial for the engine arms, plus whatever
+(frontier calls happen on the climbable faults — the engine climbs past
+L1 to L2/L3 whenever no deterministic rule fixes the drift, plus whatever
 the frontier arms spend). Results land in
 `experiments/beacon/<round>/` (`instances.json`, `grades.jsonl`,
 `summary.json`, `EVIDENCE.md`); anyone can re-check a published run
@@ -605,11 +610,21 @@ response sample), the same file-based bench prompts
 ablation default, enforced the same way — `Budget` for the one-shot and
 engine arms, wall clock only for the agent; `token_ceiling` 0 = no limit
 via `BENCH_TOKEN_CEILING`, per-call output cap `FRONTIER_MAX_TOKENS`
-(default 131072), wall clock 600 s via `BENCH_WALL_CLOCK`). Arms that produce a candidate spec sync it with the
+(default 131072), wall clock 600 s via `BENCH_WALL_CLOCK`). Before the
+first arm (rehearsals included) the run proves the apparatus works: the
+harness self-test syncs every vendor's pre-drift spec over its unfaulted
+simulator and requires the records judge to pass, checks the candidate
+sync wiring (vendor host + spec base path, resolvable credentials),
+renders both frontier prompts non-empty and pins the agent child's
+working directory — failing loudly otherwise. Arms that produce a candidate spec sync it with the
 real runtime against the live beacon shape; produced records are judged by
 the verifier (`/beacon/records`: canonical set, no loss/duplicates, exact
-money, property-local business dates, canonical status vocabulary, plus
-contract coverage by the spec). The reported outcome class is judged by
+money, property-local business dates, canonical status vocabulary, every
+canonical field value-compared, plus
+contract coverage by the spec). Pagination renames are announced the way
+a vendor would: the served vendor docs for the faulted round describe
+the new request parameters (the same docs every arm reads — the only
+channel that names them; the evidence and diagnostics never do). The reported outcome class is judged by
 `/beacon/grade` against the accepted set. Beacon randomness, seeds and
 descriptors are public by design; what is computed server-side, after
 arms report, is the answer key. FIAS instances carry an in-process engine
@@ -617,15 +632,19 @@ spec built from their docs (vocabulary v3, as in the demo), so engine
 arms derive and climb in-process like every other vendor: the announced
 PS layout (the same handshake the live edge agent reports) is compared
 against the spec's mapped wire ids. Framed transport has no live HTTP
-sync, so a FIAS candidate is verified in-process over the announced feed
-layout instead of `/beacon/records`. `wrong_patch_released` counts only
+sync, so a FIAS candidate syncs in-process over the announced feed
+layout — but it is judged by `/beacon/records` like every HTTP repair,
+against what the pre-drift spec produces over the unfaulted feed (one
+judging regime for all vendors). `wrong_patch_released` counts only
 rows whose patch reached a release (records verified) and then failed the
 outcome grade — each such row names the patch and the failed checks, and
 the summary total always equals the rows. A `Blocked` row names which
 step blocked (detection with no signals, the ladder with no matching
-rule, …) and why. Token accounting is per tier: frontier input/output
-never lands in `small_tokens`; per-row input / output / reasoning tokens
-are recorded and the summary adds per-arm min / median / max totals.
+rule, …) and why. Token accounting is in/out per model tier on one
+basis for every arm: rows carry `frontier_input` / `frontier_output` /
+`small_input` / `small_output` (frontier arms spend the frontier tier
+only; engine arms split small vs frontier — never a swapped total), and
+the summary adds per-arm min / median / max totals.
 The judge fails closed (`judge_error`, bounded) instead of raising, so a
 grading error is an explicit row label, never a silent 0 or an HTTP 500.
 No drift detected is not an escalation (REQ-063): when the detector

@@ -400,6 +400,11 @@ class BeaconRecordsRequest(BaseModel):
     index: int = Field(description="Instance index (vendor is index % 5)")
     records: dict[str, list[dict[str, Any]]] = Field(description="Arm-produced canonical records")
     spec: dict[str, Any] | None = Field(default=None, description="Candidate ConnectorSpec the records were synced with")
+    baseline_records: dict[str, list[dict[str, Any]]] | None = Field(
+        default=None,
+        description="REQ-083 A3: what the pre-drift spec produces over the unfaulted simulator "
+        "(bench-computed, HTTP and FIAS alike); the comparison baseline instead of the oracle dataset",
+    )
 
 
 class BeaconRecordsResponse(BaseModel):
@@ -464,7 +469,7 @@ def post_beacon_records(body: BeaconRecordsRequest) -> BeaconRecordsResponse:
 
     instance = _load_beacon_instance(body.eval_seed_hex, body.index)
     try:
-        judged = beacon_mod.judge_produced_records(instance, body.records, body.spec)
+        judged = beacon_mod.judge_produced_records(instance, body.records, body.spec, body.baseline_records)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:

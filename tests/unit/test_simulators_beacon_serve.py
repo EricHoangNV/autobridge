@@ -70,7 +70,6 @@ def test_active_instance_regenerates_deterministically(_clean_state: None) -> No
 
 
 def test_record_shape_applies_to_app_dataset(_clean_state: None) -> None:
-    from simulators.common.generator import generate_dataset
     from simulators.common.helpers import get_dataset_for_current_state
 
     target = None
@@ -83,7 +82,8 @@ def test_record_shape_applies_to_app_dataset(_clean_state: None) -> None:
     beacon_serve.set_beacon(EVAL_SEED_HEX, target)
     instance = beacon_serve.active_instance()
     assert instance is not None
-    baseline = generate_dataset(seed=int(instance["dataset_seed"]))
+    # REQ-083 A1: the served baseline is the single-zone beacon oracle.
+    baseline = faultgen.beacon_dataset(seed=int(instance["dataset_seed"]))
     served = get_dataset_for_current_state()
     expected = faultgen.apply_instance_records(baseline, instance)
     assert served == expected
@@ -91,7 +91,6 @@ def test_record_shape_applies_to_app_dataset(_clean_state: None) -> None:
 
 
 def test_behaviour_instance_leaves_records_untouched(_clean_state: None) -> None:
-    from simulators.common.generator import generate_dataset
     from simulators.common.helpers import get_dataset_for_current_state
 
     # Find a behaviour-family index on this seed (deterministic search).
@@ -105,7 +104,9 @@ def test_behaviour_instance_leaves_records_untouched(_clean_state: None) -> None
     beacon_serve.set_beacon(EVAL_SEED_HEX, target)
     instance = beacon_serve.active_instance()
     assert instance is not None
-    assert get_dataset_for_current_state() == generate_dataset(seed=int(instance["dataset_seed"]))
+    # REQ-083 A1: behaviour families leave the single-zone beacon oracle
+    # untouched.
+    assert get_dataset_for_current_state() == faultgen.beacon_dataset(seed=int(instance["dataset_seed"]))
 
 
 def test_transport_predicates_follow_beacon(_clean_state: None) -> None:

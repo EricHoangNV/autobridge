@@ -449,11 +449,22 @@ def beacon_sync_pair(
         faulted_summary = execute_sync(spec, client)
         # Clear the beacon slot for the true baseline (the dataset seed
         # stays pinned by set_beacon, so both syncs share one dataset).
+        # REQ-083 A1: the baseline half serves the single-zone beacon
+        # oracle dataset unmutated (pinned, not scenario serving), so the
+        # faulted-vs-baseline observation and the verifier's oracle agree.
         from simulators.common import state as _sim_state
 
         _sim_state.set_beacon_state(None, None)
-        baseline_summary = execute_sync(spec, client)
+        with _beacon.unfaulted_baseline(_dataset_seed_for(eval_seed_hex, index)):
+            baseline_summary = execute_sync(spec, client)
     return faulted_summary, baseline_summary
+
+
+def _dataset_seed_for(eval_seed_hex: str, index: int) -> int:
+    """Dataset seed for a beacon instance (single source: the generator)."""
+    from simulators.common import faultgen as _faultgen
+
+    return int(_faultgen.generate_instance(bytes.fromhex(eval_seed_hex.strip()), index)["dataset_seed"])
 
 
 def _meridian_fault_client(scenario_id: str, *, seed: int) -> Any:
@@ -539,13 +550,15 @@ def _meridian_fault_client(scenario_id: str, *, seed: int) -> Any:
 #: Realistic PABX posting values (mirrors the demo step-8 base row so the
 #: in-process feed carries the same wire shapes the live link sends:
 #: all-digit minor-unit amounts, date/time ids, short codes).
+#: REQ-083 B8: TM carries its own value — TA and TM sharing "1250" made
+#: two different wire ids value-identical, confusing value pairing.
 _FIAS_BASE_ROW: dict[str, str] = {
     "RN": "101",
     "P#": "000417",
     "DA": "261028",
     "TI": "231504",
     "TA": "1250",
-    "TM": "1250",
+    "TM": "1240",
     "DD": "004930",
     "DU": "000312",
     "SO": "TEL",

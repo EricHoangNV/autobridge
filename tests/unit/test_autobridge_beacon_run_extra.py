@@ -657,6 +657,11 @@ def test_placeholder_env_and_summarize_edges() -> None:
         with beacon_run._placeholder_credential_env():
             for ref in refs:
                 assert os.environ[ref] == beacon_run.BEACON_BENCH_CREDENTIAL
+            # REQ-083 A4: every vendor the engine arm can sync has a
+            # placeholder — meridian's exact demo tokens, legacystay generic.
+            assert os.environ["LEGACYSTAY_API_KEY"] == beacon_run.BEACON_BENCH_CREDENTIAL
+            assert os.environ["MERIDIAN_CLIENT_TOKEN"] == "meridian-client-token"
+            assert os.environ["MERIDIAN_ACCESS_TOKEN"] == "meridian-access-token"
         # REQ-079: restored on exit, never leaked process-globally (a leak
         # made later localhost syncs resolve for real and trip the DNS guard).
         for ref in refs:
@@ -984,7 +989,13 @@ def test_arm_outcome_maps_engine_escalation_with_question() -> None:
 
 
 def test_token_accounting_frontier_vs_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    """REQ-062 item 5: frontier input tokens never land in small_tokens."""
+    """REQ-083 B11: in/out per model tier, one basis for every arm.
+
+    Supersedes the REQ-062 item 5 swap-check: engine arms no longer
+    report total input as "small" — rows carry frontier_input /
+    frontier_output / small_input / small_output, frontier arms spend
+    the frontier tier only.
+    """
     from types import SimpleNamespace as _NS
 
     from bench.harness import HarnessConfig as _Cfg
@@ -1000,6 +1011,10 @@ def test_token_accounting_frontier_vs_engine(monkeypatch: pytest.MonkeyPatch) ->
                    input_tokens=tokens.get("input_tokens", 0),
                    output_tokens=tokens.get("output_tokens", 0),
                    reasoning_tokens=tokens.get("reasoning_tokens", 0),
+                   frontier_input=tokens.get("frontier_input", 0),
+                   frontier_output=tokens.get("frontier_output", 0),
+                   small_input=tokens.get("small_input", 0),
+                   small_output=tokens.get("small_output", 0),
                    cost_usd=None, model="m", error=None,
                    spec={"decision": "escalate", "candidate_patch": []},
                    outcome=None)
@@ -1009,16 +1024,24 @@ def test_token_accounting_frontier_vs_engine(monkeypatch: pytest.MonkeyPatch) ->
         protocol, EVAL_SEED_HEX, descriptor, 0, config=_Cfg(trials_per_scenario=1),
         runners={"frontier_oneshot": lambda _i: _arm_result(
                      "frontier_oneshot", frontier_tokens=150, input_tokens=100,
-                     output_tokens=50, reasoning_tokens=20),
+                     output_tokens=50, reasoning_tokens=20,
+                     frontier_input=100, frontier_output=50,
+                     small_input=0, small_output=0),
                  "autobridge_cold": lambda _i: _arm_result(
                      "autobridge_cold", frontier_tokens=0, input_tokens=5,
-                     output_tokens=0, reasoning_tokens=0)},
+                     output_tokens=0, reasoning_tokens=0,
+                     frontier_input=0, frontier_output=0,
+                     small_input=5, small_output=0)},
         verifier_url="http://fake-verifier")
     by_arm = {g.arm: g for g in grades}
     one_shot, cold = by_arm["frontier_oneshot"], by_arm["autobridge_cold"]
     assert (one_shot.frontier_tokens, one_shot.small_tokens) == (150, 0)
     assert (one_shot.input_tokens, one_shot.output_tokens, one_shot.reasoning_tokens) == (100, 50, 20)
+    assert (one_shot.frontier_input, one_shot.frontier_output) == (100, 50)
+    assert (one_shot.small_input, one_shot.small_output) == (0, 0)
     assert (cold.frontier_tokens, cold.small_tokens) == (0, 5)
+    assert (cold.frontier_input, cold.frontier_output) == (0, 0)
+    assert (cold.small_input, cold.small_output) == (5, 0)
     assert "frontier:" in (one_shot.grade_reason or "")
     assert "engine:" in (cold.grade_reason or "")
 

@@ -362,7 +362,9 @@ def test_beacon_resume_keeps_landed_rows(tmp_path: Any, monkeypatch: pytest.Monk
     # REQ-079: the run's placeholder credentials must not leak
     # process-globally — a leak made later localhost syncs resolve for
     # real and trip the DNS guard in whichever test ran next.
-    _refs = ("ATLAS_API_KEY", "HARBOR_API_KEY", "BENCH_API_KEY")
+    # REQ-083 A4: the placeholder set covers every vendor now.
+    _refs = ("ATLAS_API_KEY", "HARBOR_API_KEY", "BENCH_API_KEY",
+             "LEGACYSTAY_API_KEY", "MERIDIAN_CLIENT_TOKEN", "MERIDIAN_ACCESS_TOKEN")
     _saved = {ref: _os.environ.pop(ref, None) for ref in _refs}
     out_dir = tmp_path / "r"
     out_dir.mkdir()
@@ -403,6 +405,12 @@ def test_beacon_resume_keeps_landed_rows(tmp_path: Any, monkeypatch: pytest.Monk
     monkeypatch.setattr(br, "admin_urls", lambda *_a, **_k: {"atlas": "http://x"})
     monkeypatch.setattr(br, "public_urls", lambda *_a, **_k: {"atlas": "http://x"})
     monkeypatch.setattr(br, "beacon_case_for", lambda *_a, **_k: None)
+    # The harness self-test is a separate unit (test_beacon_preflight*);
+    # the resume flow under test runs after it passes.
+    monkeypatch.setattr(
+        br, "preflight_beacon",
+        lambda *_a, **_k: {"vendors": {}, "prompts": {}, "pwd_ok": True},
+    )
 
     def _fake_trial(_protocol: Any, _seed: Any, descriptor: Any, trial: Any, **_kwargs: Any) -> Any:
         from bench.beacon_run import BeaconArmGrade

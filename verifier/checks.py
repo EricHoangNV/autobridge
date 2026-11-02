@@ -108,8 +108,9 @@ def check_no_loss(
         exp_len = len(expected.get(label, []))
         prod_len = len(produced.get(label, []))
         if prod_len < exp_len:
+            # REQ-083 B9: one loss, one entry (no_loss only — the duplicate
+            # loss_detected double-counted the same loss).
             fails.append(_failed("no_loss", exp_len - prod_len, f"{label} loss: {prod_len}/{exp_len}"))
-            fails.append(_failed("loss_detected", exp_len - prod_len, f"{label} loss"))
         # Also dedup-aware loss: unique keys count
         key = "reservation_id" if label == "reservations" else "charge_id"  # noqa: SIM108
         exp_keys = {str(r[key]) for r in expected.get(label, [])}
@@ -175,10 +176,18 @@ def check_business_date(
     produced: dict[str, list[dict[str, Any]]],
     properties: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Business dates must match expected and posted_at must map correctly."""
+    """Business dates must match expected and posted_at must map correctly.
+
+    REQ-083 B5: compares arrival_date AND departure_date on reservations
+    (a renamed departure_date with an empty mapped field must fail, not
+    pass as a repair) plus folio business_date. Status, description and
+    updated_at are value-compared by the beacon coverage check.
+    """
     fails: list[dict[str, Any]] = []
     # Direct comparison of business_date field
     exp_res_map = {str(r["reservation_id"]): str(r.get("arrival_date", "")) for r in expected.get("reservations", [])}
+    # REQ-083 B5: departure dates are compared too, not just arrivals.
+    exp_dep_map = {str(r["reservation_id"]): str(r.get("departure_date", "")) for r in expected.get("reservations", [])}
     # For folios, check business_date
     exp_fol_map = {str(f["charge_id"]): str(f.get("business_date", "")) for f in expected.get("folios", [])}
 
@@ -206,6 +215,8 @@ def check_business_date(
     for rec in produced.get("reservations", []):
         rid = str(rec.get("reservation_id", ""))
         if rid in exp_res_map and str(rec.get("arrival_date", "")) != exp_res_map[rid]:
+            mismatch += 1
+        if rid in exp_dep_map and str(rec.get("departure_date", "")) != exp_dep_map[rid]:
             mismatch += 1
 
     if mismatch:

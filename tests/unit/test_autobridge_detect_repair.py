@@ -417,8 +417,12 @@ def test_none_delta_never_cached() -> None:
     assert cache.lookup("atlas", None) is None, "None delta must not populate L0"
 
     # A later, different drift must not L0-hit the unrelated cached patch.
+    # REQ-083 C14: the L1 rename gate needs value agreement on more than
+    # one sample against the stored baseline's lost values — one shaped
+    # sample is not enough, and without a baseline it climbs.
     wire = [
-        {"reservation_id": "R0001", "guest_names": "Guest 1"},
+        {"reservation_id": f"R{i:04d}", "guest_names": f"Guest {i}"}
+        for i in (1, 2, 3)
     ]
     summary = {
         "outcome": "Complete",
@@ -430,17 +434,28 @@ def test_none_delta_never_cached() -> None:
                 operation="list_reservations",
                 records=wire,
                 pages_fetched=1,
-                raw_pages=[{"success": True, "data": wire, "total": 1}],
+                raw_pages=[{"success": True, "data": wire, "total": 3}],
                 stop_reason="total_reached",
             )
         },
-        "records_observed": {"Reservation": 1},
+        "records_observed": {"Reservation": 3},
         "canonical_records": {},
         "blocked_records": {},
         "invariant_results": [],
         "checkpoint_values": {},
     }
-    signals = signals_from_sync(summary, spec=spec)
+    baseline_summary = {
+        "canonical_records": {},
+        "operation_results": {
+            "list_reservations": {
+                "records": [
+                    {"reservation_id": f"R{i:04d}", "guest_name": f"Guest {i}"}
+                    for i in (1, 2, 3)
+                ],
+            }
+        },
+    }
+    signals = signals_from_sync(summary, spec=spec, baseline_summary=baseline_summary)
     assert classify(signals).drift_class == "SCHEMA_RENAME"
     second = ctrl.handle_from_signals(spec=spec, signals=signals, fingerprint_delta=None, session=None)
     assert second.decision == "propose" and second.rule_id == "rename_field"

@@ -272,9 +272,11 @@ def test_materialize_dates_cutoff_matches_announcement() -> None:
 def test_dates_cutoff_always_manifests() -> None:
     """REQ-063 item 3: every cutoff fault moves at least one folio's
     business date (cutoff 5/6 fall outside the generator's late-posting
-    window, so without the forcing rule they are silent no-ops)."""
-    from simulators.common.generator import generate_dataset
+    window, so without the forcing rule they are silent no-ops).
 
+    REQ-083 A1: compared against the single-zone beacon oracle, so only
+    the cutoff mutation — never a zone difference — counts as a change.
+    """
     seen: dict[int, int] = {}
     for raw in _seeds(60):
         for inst in generate_instances(raw, 5):
@@ -284,7 +286,7 @@ def test_dates_cutoff_always_manifests() -> None:
             cutoff = int(params["cutoff_hour"])
             seen[cutoff] = seen.get(cutoff, 0) + 1
             mat = materialize(inst)
-            base = generate_dataset(seed=int(inst["dataset_seed"]))
+            base = faultgen.beacon_dataset(seed=int(inst["dataset_seed"]))
             changed = [
                 (b.get("business_date"), a.get("business_date"))
                 for a, b in zip(mat["dataset"]["folios"], base["folios"], strict=True)

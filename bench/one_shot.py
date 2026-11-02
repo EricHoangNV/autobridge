@@ -702,6 +702,9 @@ def run_one_shot_arm(
             output_tokens=result.usage.output_tokens,
             reasoning_tokens=reasoning,
             frontier_tokens=result.usage.total_tokens if tier == "frontier" else 0,
+            # REQ-083 B11: the one-shot arm spends the frontier tier only.
+            frontier_input=result.usage.input_tokens if tier == "frontier" else 0,
+            frontier_output=result.usage.output_tokens if tier == "frontier" else 0,
             cost_usd=result.cost_usd,
             model=result.model,
             spec=spec_payload,

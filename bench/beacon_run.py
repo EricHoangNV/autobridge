@@ -464,7 +464,9 @@ run when the resolved model differs (REQ-066).
 Metrics per arm, scenario and overall (mean + 95% interval over trials):
 verified completion rate (judged only by the verifier), wrong patches that
 reached a release (must be 0 for AutoBridge), correct escalations
-(escalated exactly when the instance says so), frontier tokens, estimated
+(Blocked with one operator question on an instance whose key accepts a
+question — a no-patch Complete is verified completion, not an
+escalation), frontier tokens, estimated
 cost, wall time.
 
 Engine-arm inputs (REQ-024 owner check on f32b4b4b, fixed): every arm gets
@@ -475,6 +477,21 @@ deterministic from the public seed) → detector → classifier → the
 engine's own hypothesis enumerator → ladder → verifier gate — with no
 case-supplied drift class, delta, hypotheses or yield count. Instance
 parameters, generator internals and answer keys never reach the arms.
+
+Oracle dataset (REQ-083 A1): every beacon dataset serves all properties
+in America/New_York — the one static zone the pre-drift specs carry —
+so an unfaulted sync agrees with the oracle on business dates. The
+records judge compares produced records against what the pre-drift spec
+produces over the unfaulted simulator (REQ-083 A3, one judging regime
+for HTTP vendors and FIAS alike).
+
+Removed from the draw (REQ-083 B7): dates/tz_shift has no hour/day
+offset arg in the closed transform set (adding one is a plan change),
+so no spec patch can express its repair — it is never drawn. Meridian
+never draws dates/format either (REQ-083 D18: a UTC-instant vendor
+serves no verbatim date field; the cutoff trap stays, keyed no_patch).
+Semantic gross_net scaling is likewise patch-inexpressible (no factor
+arg) and stays reachable via its accepted escalation.
 """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
@@ -736,6 +753,16 @@ def beacon_bench_context(
         evidence_text = _cached_evidence(spec_json, eval_seed_hex, int(descriptor["index"]), str(descriptor["vendor"]))
     except Exception as exc:
         evidence_text = f"(fault evidence unavailable: {type(exc).__name__}: {exc})"
+    # REQ-083 B6: every arm reads the served docs for the faulted round
+    # (announcing the renamed pagination params), not the static file.
+    served_docs = None
+    if str(descriptor["vendor"]) != "fias-pabx":
+        try:
+            served_docs = beacon_served_docs(
+                str(descriptor["vendor"]), eval_seed_hex, int(descriptor["index"])
+            )
+        except Exception:
+            served_docs = None
     return BenchContext(
         scenario_id=case.scenario_id,
         connector_id=case.connector_id,
@@ -744,7 +771,7 @@ def beacon_bench_context(
         capabilities_json=capabilities_json_for_version(version),
         example_vendor=_example_vendor,
         example_spec_yaml=example_yaml,
-        docs_text=vendor_docs_text(case.docs_ref),
+        docs_text=served_docs or vendor_docs_text(case.docs_ref),
         visible_tests=tuple(getattr(inputs, "visible_tests", ()) or ()),
         pre_drift_spec_yaml=spec_to_yaml(spec),
         evidence_text=evidence_text,
@@ -1020,18 +1047,52 @@ def sanity_unchanged_repairs(
     return flags
 
 
+def sync_candidate_url(candidate_spec: dict[str, Any], public_url: str) -> str:
+    """Base URL for a candidate sync: vendor host + spec base path.
+
+    REQ-083 A4: ``sync_candidate`` used the vendor public URL verbatim,
+    dropping the spec's own base path (e.g. Meridian's
+    ``/api/connector/v1``) so every candidate sync 404'd. The public URL
+    names the host; the path comes from the spec under repair.
+    """
+    from autobridge.spec.models import load_spec_from_dict
+
+    spec_obj = load_spec_from_dict(candidate_spec)
+    raw_base = str(spec_obj.source.base_url)
+    try:
+        from autobridge.runtime.http import resolve_env_placeholders as _resolve
+
+        raw_base = _resolve(raw_base)
+    except Exception:
+        pass
+    import urllib.parse as _urlparse
+
+    spec_path = _urlparse.urlsplit(raw_base).path.strip("/")
+    host = str(public_url).rstrip("/")
+    if not spec_path:
+        return host
+    return f"{host}/{spec_path}"
+
+
 def sync_candidate(
     candidate_spec: dict[str, Any],
     public_url: str,
     *,
     timeout_s: float = 30.0,
     max_total_delay_s: float = 120.0,
+    client_factory: Any | None = None,
 ) -> dict[str, Any]:
     """Sync a candidate spec against the live beacon shape (in-process).
 
     Uses the real engine runtime (``execute_sync``) with an explicit
     vendor-delay budget (AR-2-1: a hostile ``Retry-After`` cannot stall the
     run). Returns the sync summary (outcome, canonical_records, ...).
+
+    ``client_factory`` overrides the HTTP transport (tests serve the
+    vendor app in-process through it); ``None`` opens a real socket to
+    the joined vendor URL. Auth, retry and the joined base URL are
+    identical either way — the A2 reference-repair proof and the live
+    grading run the same path.
     """
     from autobridge.engine.sync_run import execute_sync
     from autobridge.runtime.http import HttpClient
@@ -1039,11 +1100,12 @@ def sync_candidate(
 
     spec_obj = load_spec_from_dict(candidate_spec)
     client = HttpClient(
-        base_url=public_url,
+        base_url=sync_candidate_url(candidate_spec, public_url),
         auth=spec_obj.source.auth,
         retry=spec_obj.source.rate_limit.retry,
         timeout_s=timeout_s,
         max_total_delay_s=max_total_delay_s,
+        client_factory=client_factory,
     )
     return execute_sync(candidate_spec, client)
 
@@ -1078,6 +1140,12 @@ class BeaconArmGrade:
     input_tokens: int = 0
     output_tokens: int = 0
     reasoning_tokens: int = 0
+    # REQ-083 B11: in/out per model tier, one basis for every arm
+    # (frontier arms spend the frontier tier only; engine arms split).
+    frontier_input: int = 0
+    frontier_output: int = 0
+    small_input: int = 0
+    small_output: int = 0
     cost_usd: float | None = None
     elapsed_ms: float = 0.0
     model: str | None = None
@@ -1234,13 +1302,29 @@ def run_instance_trial(
         elapsed_ms = (time.monotonic() - start) * 1000.0
         grade.elapsed_ms = elapsed_ms
         grade.frontier_tokens = int(getattr(result, "frontier_tokens", 0) or 0)
-        # REQ-062 item 5: ArmResult.input_tokens carries the frontier
-        # tier's input tokens for frontier arms (one-shot prompt +
-        # completion) — only engine arms spend the small tier.
+        # REQ-083 B11: in/out per model tier, one basis for every arm.
+        # Every runner reports the split (frontier arms spend the frontier
+        # tier only); rows carry the split, never a swapped total. Legacy
+        # runners without the split fall back to attributing their totals
+        # to the frontier tier for frontier arms.
         from bench.ablation import ENGINE_ARMS as _ENGINE_ARMS
 
+        grade.frontier_input = int(getattr(result, "frontier_input", 0) or 0)
+        grade.frontier_output = int(getattr(result, "frontier_output", 0) or 0)
+        grade.small_input = int(getattr(result, "small_input", 0) or 0)
+        grade.small_output = int(getattr(result, "small_output", 0) or 0)
+        if (
+            grade.frontier_input + grade.frontier_output
+            + grade.small_input + grade.small_output == 0
+            and arm not in _ENGINE_ARMS
+        ):
+            grade.frontier_input = int(getattr(result, "input_tokens", 0) or 0)
+            grade.frontier_output = int(getattr(result, "output_tokens", 0) or 0)
+        # REQ-062 item 5 (superseded by B11's split): legacy small_tokens
+        # kept for summary compatibility — engine arms report the small
+        # tier's input total here.
         if arm in _ENGINE_ARMS:
-            grade.small_tokens = int(getattr(result, "input_tokens", 0) or 0)
+            grade.small_tokens = grade.small_input
         else:
             grade.small_tokens = 0
         grade.input_tokens = int(getattr(result, "input_tokens", 0) or 0)
@@ -1426,6 +1510,9 @@ def _run_arm(
             # REQ-078 item 9: learn inputs for in-run warm learning (vendor
             # + drift class + JSON-safe delta the knowledge key derives
             # from — same key production approval learning uses).
+            # REQ-083 B10: the vendor is the spec's connector vendor (what
+            # the ladder looks up under), never the descriptor vendor —
+            # "atlas" vs "AtlasPMS" never meet in the lowercased key.
             try:
                 from autobridge.repair.knowledge import delta_to_json as _delta_to_json
             except Exception:
@@ -1447,7 +1534,7 @@ def _run_arm(
             except Exception:
                 _delta_json = None
             payload["learn_inputs"] = {
-                "vendor": vendor,
+                "vendor": _spec_vendor_for_learn(dict(case.spec), vendor),
                 "drift_class": str(getattr(diag, "drift_class", "UNKNOWN")),
                 "delta": _delta_json,
             }
@@ -1456,6 +1543,26 @@ def _run_arm(
             pass
         return result
     raise BeaconError(f"unknown arm: {arm}")
+
+
+def _spec_vendor_for_learn(spec: dict[str, Any], fallback: str) -> str:
+    """Connector vendor for knowledge keys (REQ-083 B10).
+
+    Production approval learning and the ladder lookup both key on the
+    spec's ``connector.vendor``; the beacon descriptor vendor
+    (``atlas`` vs ``AtlasPMS``) is a different string that never meets
+    it in the lowercased cache key. Falls back to the descriptor vendor
+    when the spec names none.
+    """
+    try:
+        conn = spec.get("connector", {})
+        if isinstance(conn, dict):
+            v = conn.get("vendor")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    except Exception:
+        pass
+    return str(fallback)
 
 
 def _signal_wire_counts(signals: Any) -> tuple[int, int]:
@@ -1786,6 +1893,279 @@ def _blocked_step_for(result: Any, outcome_report: dict[str, Any]) -> str | None
     return "attempt: no gradable output produced"
 
 
+#: Vendor docs endpoints serving the faulted-round announcement (REQ-083 B6).
+_BEACON_DOCS_PATHS: dict[str, str] = {
+    "atlas": "/openapi.yaml",
+    "harbor": "/_harbor_docs",
+    "legacystay": "/_legacystay_docs",
+    "meridian": "/_meridian_docs",
+}
+
+#: Cache for served faulted docs (REQ-083 B6): one entry per instance.
+_SERVED_DOCS_CACHE: dict[tuple[str, str, int], str] = {}
+
+
+def beacon_served_docs(vendor: str, eval_seed_hex: str, index: int) -> str | None:
+    """Faulted-round served docs for *vendor* (REQ-083 B6).
+
+    The vendor app's own docs endpoint with the active beacon instance —
+    the same docs every arm reads, carrying the announced pagination
+    params for a faulted round. None when unreachable (callers fall back
+    to the static docs file).
+    """
+    from bench.faults import _BEACON_VENDOR_APPS as _APPS
+
+    key = (str(vendor), str(eval_seed_hex), int(index))
+    if key in _SERVED_DOCS_CACHE:
+        return _SERVED_DOCS_CACHE[key]
+    try:
+        import importlib as _importlib
+
+        from starlette.testclient import TestClient as _TestClient
+
+        from bench.faults import fake_env as _fake_env
+        from bench.faults import isolated_sim_state as _isolated
+        from simulators.common import beacon_serve as _beacon
+
+        module_name = _APPS[str(vendor)]
+        docs_path = _BEACON_DOCS_PATHS[str(vendor)]
+        with _isolated(), _fake_env():
+            _beacon.set_beacon(eval_seed_hex, int(index))
+            app = _importlib.import_module(module_name).app
+            with _TestClient(app) as client:
+                resp = client.get(docs_path)
+            if resp.status_code != 200:
+                return None
+            text = resp.text
+    except Exception:
+        return None
+    _SERVED_DOCS_CACHE[key] = text
+    return text
+
+
+#: Cache for unfaulted baseline records (REQ-083 A3): one entry per
+#: ``(vendor, eval_seed, index, spec-sha)``; runs hold a handful.
+_BASELINE_RECORDS_CACHE: dict[tuple[str, str, int, str], dict[str, list[dict[str, Any]]]] = {}
+
+
+def unfaulted_baseline_records(
+    vendor: str,
+    eval_seed_hex: str,
+    index: int,
+    spec: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """Pre-drift spec over the unfaulted simulator (REQ-083 A1/A3).
+
+    The single comparison baseline for the one judging regime: the same
+    serving code the arms sync against, with the beacon oracle dataset
+    pinned and no instance mutation (HTTP vendors), or the unfaulted
+    feed (``fias-pabx``). Used by the A1 preflight (proving the
+    apparatus works before it measures) and posted as
+    ``baseline_records`` with every ``/beacon/records`` grade.
+    """
+    import hashlib as _hashlib
+    import json as _json
+
+    key = (str(vendor), str(eval_seed_hex), int(index),
+           _hashlib.sha256(_json.dumps(spec, sort_keys=True, default=str).encode()).hexdigest()[:16])
+    cached = _BASELINE_RECORDS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    from autobridge.engine.sync_run import execute_sync
+    from autobridge.spec.models import load_spec_from_dict
+
+    load_spec_from_dict(spec)  # fail fast on an invalid pre-drift spec
+    if vendor == "fias-pabx":
+        from bench.faults import _FIAS_BASE_ROW as _BaseRow
+        from bench.faults import _FIAS_RE as _RE
+        from bench.faults import _BeaconFiasFeed as _Feed
+
+        summary = execute_sync(
+            spec, None,
+            feed_reader=_Feed([dict(_BaseRow)], [dict(r) for r in _RE]),
+        )
+    else:
+        import importlib as _importlib
+
+        from bench.faults import _BEACON_VENDOR_APPS as _APPS
+        from bench.faults import _dataset_seed_for as _seed_for
+        from bench.faults import _testclient_http_client as _client_for
+        from bench.faults import fake_env as _fake_env
+        from bench.faults import isolated_sim_state as _isolated
+        from simulators.common import beacon_serve as _beacon
+        from simulators.common import state as _sim_state
+
+        try:
+            module_name = _APPS[str(vendor)]
+        except KeyError:
+            raise ValueError(f"no in-process beacon serving for vendor {vendor!r}") from None
+        dataset_seed = _seed_for(eval_seed_hex, int(index))
+        with _isolated(), _fake_env():
+            _sim_state.set_scenario("baseline", dataset_seed)
+            app = _importlib.import_module(module_name).app
+            client = _client_for(app, spec)
+            with _beacon.unfaulted_baseline(dataset_seed):
+                summary = execute_sync(spec, client)
+    records = canonical_to_records(summary.get("canonical_records", {}))
+    _BASELINE_RECORDS_CACHE[key] = records
+    return records
+
+
+def _preflight_repair_index(vendor: str, eval_seed_hex: str, pos: int) -> int:
+    """First repair-expected instance index for *vendor* at/after *pos*.
+
+    Round-robin vendors repeat every 5 indices; the judged preflight
+    instance must expect ``repair`` (an escalate key fails the records
+    judge by design). Fails loudly when no repair instance appears
+    within 250 indices — the seed cannot prove this vendor.
+    """
+    from simulators.common import faultgen as _faultgen
+
+    try:
+        seed = bytes.fromhex(str(eval_seed_hex).strip())
+    except (ValueError, AttributeError) as exc:
+        raise BeaconError(f"preflight: bad eval seed hex: {exc}") from exc
+    if len(seed) != 32:
+        raise BeaconError(f"preflight: eval seed must be 32 bytes, got {len(seed)}")
+    order = [v.vendor for v in load_vendors()]
+    if vendor not in order:
+        raise BeaconError(f"preflight: unknown vendor {vendor!r}")
+    step = len(order)
+    for index in range(pos, pos + step * 50, step):
+        try:
+            inst = _faultgen.generate_instance(seed, index)
+        except (ValueError, KeyError) as exc:
+            raise BeaconError(f"preflight: bad instance {index}: {exc}") from exc
+        if str(inst.get("expected", "")) == "repair":
+            return index
+    raise BeaconError(f"preflight: no repair instance for {vendor} in 50 rounds (seed cannot prove it)")
+
+
+def preflight_beacon(
+    protocol: BeaconProtocol,
+    *,
+    config: Any,
+    eval_seed_hex: str,
+    verifier_url: str | None,
+    vendors: list[BeaconVendor] | None = None,
+    public_urls_map: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Fail-loud pre-run harness self-test (REQ-083 A).
+
+    Proves the apparatus works before it measures — executed by
+    :func:`run_beacon` before the first arm, rehearsals included. For
+    every vendor in ``config/beacon_vendors.yaml``:
+
+    1. the pre-drift spec exists and the unfaulted sync runs
+       (:func:`unfaulted_baseline_records`);
+    2. the candidate-sync wiring resolves: vendor host + spec base path
+       (:func:`sync_candidate_url`) and every credential ref the spec's
+       auth needs (placeholder bench env active — a missing var fails
+       naming it, never as an arm ``http_error`` later);
+    3. the unfaulted output passes the records judge (HTTP vendors
+       against the oracle; ``fias-pabx`` against its own unfaulted
+       output — the one judging regime, wired end to end);
+
+    plus once: both frontier drivers' rendered prompts are non-empty and
+    the agent CLI child ``PWD`` equals the sandbox dir. Raises
+    :class:`BeaconError` on the first failure; returns the per-vendor
+    report on success.
+    """
+    from autobridge.runtime.auth import build_auth_headers as _build_auth
+    from autobridge.spec.models import load_spec_from_dict as _load_spec
+
+    vendor_list = list(vendors) if vendors is not None else load_vendors()
+    public = dict(public_urls_map) if public_urls_map is not None else public_urls(vendor_list)
+    report: dict[str, Any] = {
+        "vendors": {},
+        "prompts": {},
+        "pwd_ok": False,
+        "target_round": protocol.target_round,
+    }
+    for pos, entry in enumerate(vendor_list):
+        vendor = str(entry.vendor)
+        desc = {"index": pos, "vendor": vendor}
+        spec = engine_spec_for(desc, vendor_list)
+        if spec is None:
+            raise BeaconError(f"preflight: no pre-drift spec for vendor {vendor!r}")
+        try:
+            url = sync_candidate_url(spec, public.get(vendor, ""))
+        except Exception as exc:
+            raise BeaconError(f"preflight: {vendor} candidate URL unresolvable: {exc}") from exc
+        if not url:
+            raise BeaconError(f"preflight: {vendor} candidate URL is empty")
+        try:
+            spec_obj = _load_spec(spec)
+            if entry.http:
+                _build_auth(spec_obj.source.auth)
+        except Exception as exc:
+            raise BeaconError(f"preflight: {vendor} credentials unresolvable: {exc}") from exc
+        # The judged instance must expect a repair: an escalate instance
+        # fails the records judge by design (non-empty records for an
+        # escalate key), which proves nothing about the apparatus.
+        judge_index = _preflight_repair_index(vendor, eval_seed_hex, pos)
+        try:
+            baseline = unfaulted_baseline_records(vendor, eval_seed_hex, judge_index, spec)
+        except Exception as exc:
+            raise BeaconError(f"preflight: {vendor} unfaulted sync failed: {type(exc).__name__}: {exc}") from exc
+        if verifier_url:
+            payload: dict[str, Any] = {
+                "eval_seed_hex": eval_seed_hex, "index": judge_index,
+                "records": baseline, "spec": None,
+            }
+            if not entry.http:
+                # FIAS rides framed transport: the unfaulted feed output is
+                # the comparison baseline (the one judging regime).
+                payload["baseline_records"] = baseline
+            try:
+                judged = _verifier_post(verifier_url, "/beacon/records", payload)
+            except BeaconError as exc:
+                raise BeaconError(f"preflight: {vendor} judge unreachable: {exc}") from exc
+            if str(judged.get("verdict", "fail")) != "pass":
+                failed = judged.get("failed_checks", [])
+                raise BeaconError(
+                    f"preflight: {vendor} unfaulted sync fails the judge: {failed}"
+                )
+        report["vendors"][vendor] = {"url": url, "records": len(baseline.get("reservations", [])) + len(baseline.get("folios", []))}
+    # Frontier prompt wiring (A4): both drivers' rendered prompts non-empty.
+    from bench.context import messages_to_text as _to_text
+    from bench.context import render_frontier_agent_brief as _render_brief
+    from bench.context import render_frontier_oneshot_prompt as _render_one
+    from bench.harness import make_trial_inputs as _make_inputs
+
+    first = vendor_list[0]
+    desc0 = {"index": 0, "vendor": str(first.vendor)}
+    case0 = beacon_case_for(desc0, vendor_list)
+    if case0 is None:
+        raise BeaconError(f"preflight: no bench case for vendor {first.vendor!r}")
+    inputs0 = _make_inputs(config, "beacon:preflight", 1)
+    try:
+        ctx0 = beacon_bench_context(desc0, case0, inputs0, eval_seed_hex)
+        one_text = _to_text(_render_one(inputs0, ctx0)).strip()
+        brief_text = _to_text(_render_brief(inputs0, ctx0)).strip()
+    except Exception as exc:
+        raise BeaconError(f"preflight: frontier prompt render failed: {type(exc).__name__}: {exc}") from exc
+    if not one_text:
+        raise BeaconError("preflight: frontier one-shot prompt rendered empty")
+    if not brief_text:
+        raise BeaconError("preflight: frontier agent brief rendered empty")
+    report["prompts"] = {"oneshot_chars": len(one_text), "agent_chars": len(brief_text)}
+    # Agent CLI working directory (A4/REQ-078): the child PWD equals the
+    # sandbox dir, or the agent never sees its files.
+    import pathlib as _pathlib
+    import tempfile as _tempfile
+
+    from bench.baseline_coding_agent import _sandbox_env as _child_env
+
+    with _tempfile.TemporaryDirectory(prefix="beacon-preflight-") as tmpd:
+        child = _child_env(_pathlib.Path(tmpd))
+        assert child is not None
+        if child.get("PWD") != str(tmpd):
+            raise BeaconError(f"preflight: agent child PWD {child.get('PWD')!r} != sandbox dir {tmpd!r}")
+    report["pwd_ok"] = True
+    return report
+
+
 def _grade_arm_result(
     grade: BeaconArmGrade,
     descriptor: dict[str, Any],
@@ -1825,6 +2205,10 @@ def _grade_arm_result(
     records_failed: list[str] = []
     synced = False
     candidate_outcome: str | None = None
+    # REQ-083 B9: a candidate sync that fails for a harness reason is a
+    # harness error with the cause — never a wrong patch proposed and
+    # never a pass. Only the arm's own failed patch counts as proposed.
+    harness_error: str | None = None
     if candidate is not None and http_sync and public_url:
         try:
             summary = sync_candidate(candidate, public_url)
@@ -1842,7 +2226,8 @@ def _grade_arm_result(
                     f"{str(unmet[0])[:200]}"
                 )[:500]
         except Exception as exc:
-            grade.error = f"candidate sync failed: {type(exc).__name__}: {exc}"[:500]
+            harness_error = f"candidate sync failed: {type(exc).__name__}: {exc}"[:500]
+            grade.error = harness_error
     elif candidate is not None and not http_sync and vendor == "fias-pabx":
         # Framed transport has no live HTTP sync: verify the patched spec
         # in-process over the announced feed layout (same serving code the
@@ -1864,21 +2249,36 @@ def _grade_arm_result(
                 unmet = faulted_summary.get("unmet_criteria") or ["sync_not_complete"]
                 records_failed = [str(unmet[0])[:120]]
         except Exception as exc:
-            grade.error = f"fias candidate verify failed: {type(exc).__name__}: {exc}"[:500]
+            harness_error = f"fias candidate verify failed: {type(exc).__name__}: {exc}"[:500]
+            grade.error = harness_error
     if synced and records_verdict is None:
         try:
+            # REQ-083 A3: one judging regime — the pre-drift spec over the
+            # unfaulted simulator is the comparison baseline (HTTP and
+            # FIAS alike). Falls back to the oracle dataset when the
+            # baseline cannot be computed (graded, never blocked on it).
+            baseline_records: dict[str, list[dict[str, Any]]] | None = None
+            if case is not None:
+                try:
+                    baseline_records = unfaulted_baseline_records(
+                        vendor, eval_seed_hex, index, dict(case.spec)
+                    )
+                except Exception:
+                    baseline_records = None
             judged = _verifier_post(
                 verifier_url,
                 "/beacon/records",
                 {"eval_seed_hex": eval_seed_hex, "index": index,
-                 "records": records, "spec": candidate},
+                 "records": records, "spec": candidate,
+                 "baseline_records": baseline_records},
             )
             records_verdict = str(judged.get("verdict", "fail"))
             failed = judged.get("failed_checks", [])
             if isinstance(failed, list):
                 records_failed = [str(f.get("name", ""))[:120] for f in failed if isinstance(f, dict) and f.get("name")]
         except BeaconError as exc:
-            grade.error = f"records grade failed: {exc}"[:500]
+            harness_error = f"records grade failed: {exc}"[:500]
+            grade.error = harness_error
             records_verdict = "fail"
         grade.records_verdict = records_verdict
     elif not synced:
@@ -1905,23 +2305,50 @@ def _grade_arm_result(
     grade.grade_reason = f"{reason} | {attempt}" if reason else attempt
     passed = bool(graded.get("passed", False))
     records_ok = (not synced) or records_verdict == "pass"
+    accepted = graded.get("accepted", [])
+    if not isinstance(accepted, list):
+        accepted = []
     if passed and records_ok:
         grade.verified_completion = 1
-        # correct_escalation: passed without a patch on a non-repair instance
-        # is exactly escalating when the instance says so (mirror ablation).
-        if not outcome_report["patch_reached_release"]:
+        # REQ-083 B9: correct_escalation counts only a Blocked-with-question
+        # outcome on an instance whose key accepts a question. A no-patch
+        # Complete on a throttle is verified_completion, not an escalation.
+        if (
+            outcome_report["outcome"] == "Blocked"
+            and outcome_report.get("operator_question")
+            and ("degraded_question" in accepted or "escalate" in accepted)
+        ):
             grade.correct_escalation = 1
-    elif passed and not records_ok:
-        grade.correct_escalation = 0
     if outcome_report["outcome"] == "Complete" and outcome_report["patch_reached_release"] and not passed:
         grade.wrong_patch_released = 1
     # REQ-078 item 5: a candidate the records judge rejects is a wrong
     # patch proposed — counted whether it reached a release or not.
-    if candidate is not None and records_verdict == "fail":
+    # REQ-083 B9: harness failures (sync raised, verifier unreachable)
+    # never count here and never grade a patch claim as a pass.
+    if candidate is not None and records_verdict == "fail" and harness_error is None:
         grade.wrong_patch_proposed = 1
+    if candidate is not None and harness_error is not None and outcome_report["outcome"] == "Complete":
+        passed = False
+        grade.verified_completion = 0
+        grade.correct_escalation = 0
 
 
-_PLACEHOLDER_CREDENTIAL_REFS = ("ATLAS_API_KEY", "HARBOR_API_KEY", "BENCH_API_KEY")
+#: Placeholder bench credentials per credential ref (REQ-083 A4: the old
+#: tuple covered atlas/harbor/bench only, so meridian raised "Missing env
+#: var 'MERIDIAN_CLIENT_TOKEN'" — reported as ``http_error`` — and
+#: legacystay had nothing). Values are the simulators' documented demo
+#: defaults (``scripts/local-up.sh`` / ``compose.yaml`` install the same),
+#: never secrets; real env values win via ``setdefault``.
+_PLACEHOLDER_CREDENTIAL_DEFAULTS: dict[str, str] = {
+    "ATLAS_API_KEY": BEACON_BENCH_CREDENTIAL,
+    "HARBOR_API_KEY": BEACON_BENCH_CREDENTIAL,
+    "BENCH_API_KEY": BEACON_BENCH_CREDENTIAL,
+    "LEGACYSTAY_API_KEY": BEACON_BENCH_CREDENTIAL,
+    "MERIDIAN_CLIENT_TOKEN": "meridian-client-token",
+    "MERIDIAN_ACCESS_TOKEN": "meridian-access-token",
+}
+
+_PLACEHOLDER_CREDENTIAL_REFS = tuple(_PLACEHOLDER_CREDENTIAL_DEFAULTS)
 
 
 @contextlib.contextmanager
@@ -1935,9 +2362,9 @@ def _placeholder_credential_env() -> Any:
     connectors for real (DNS-guard teardown flake). Save/restore around
     the run instead; never leak into the caller's environment.
     """
-    saved = {ref: os.environ.get(ref) for ref in _PLACEHOLDER_CREDENTIAL_REFS}
-    for ref in _PLACEHOLDER_CREDENTIAL_REFS:
-        os.environ.setdefault(ref, BEACON_BENCH_CREDENTIAL)
+    saved = {ref: os.environ.get(ref) for ref in _PLACEHOLDER_CREDENTIAL_DEFAULTS}
+    for ref, default in _PLACEHOLDER_CREDENTIAL_DEFAULTS.items():
+        os.environ.setdefault(ref, default)
     try:
         yield
     finally:
@@ -2019,6 +2446,11 @@ def summarize_grades(grades: list[BeaconArmGrade]) -> dict[str, Any]:
             "input_tokens": _mean_ci95(vals(lambda g: g.input_tokens)),
             "output_tokens": _mean_ci95(vals(lambda g: g.output_tokens)),
             "reasoning_tokens": _mean_ci95(vals(lambda g: g.reasoning_tokens)),
+            # REQ-083 B11: in/out per model tier, one basis for every arm.
+            "frontier_input": _mean_ci95(vals(lambda g: g.frontier_input)),
+            "frontier_output": _mean_ci95(vals(lambda g: g.frontier_output)),
+            "small_input": _mean_ci95(vals(lambda g: g.small_input)),
+            "small_output": _mean_ci95(vals(lambda g: g.small_output)),
             "total_tokens": {**_mean_ci95(totals), **_min_med_max(totals)},
             "cost_usd": _mean_ci95([g.cost_usd or 0.0 for g in items]),
             "elapsed_ms": _mean_ci95(vals(lambda g: g.elapsed_ms)),
@@ -2191,6 +2623,15 @@ def run_beacon(
         vendors = load_vendors()
         admin = admin_urls(vendors)
         public = public_urls(vendors)
+        # REQ-083 A: harness self-test before the first arm (rehearsals
+        # included) — proves the apparatus works before it measures.
+        _preflight = preflight_beacon(
+            protocol, config=cfg, eval_seed_hex=eval_seed_hex,
+            verifier_url=verifier_url, vendors=vendors, public_urls_map=public,
+        )
+        print(f"beacon run: preflight ok ({len(_preflight['vendors'])} vendors, "
+              f"prompts one-shot={_preflight['prompts'].get('oneshot_chars', 0)}ch "
+              f"agent={_preflight['prompts'].get('agent_chars', 0)}ch, pwd ok)", flush=True)
         result = BeaconRunResult(protocol=protocol, eval_seed_hex=eval_seed_hex, randomness_hex=verified.randomness_hex)
         # Restore resumed rows (grades keep their frozen order; warm re-learns
         # from newly verified fixes — pre-resume in-run learning is not

@@ -101,19 +101,26 @@ def test_meridian_nesting_serves_parent_wrapper() -> None:
 
 
 def test_meridian_format_serves_raw_non_iso_date() -> None:
-    """A non-ISO date is observable on the wire (raw value surfaced)."""
+    """A non-ISO date is observable on the wire (raw value surfaced).
+
+    REQ-083 D18: dates/format is never drawn for meridian (a UTC-instant
+    vendor serves no verbatim date field), so the draw yields no such
+    instance — but the serializer still surfaces a raw non-ISO date
+    instead of crashing, verified directly.
+    """
     from simulators.meridianpms import app as m
 
-    seen = 0
     for inst in _instances("meridian"):
-        if inst["family"] != "dates" or inst["params"].get("mode") != "format":
-            continue
-        mut = _mutated(inst)
-        wires = [m.to_wire_reservation(r) for r in mut["reservations"]]
-        raws = [v for w in wires for v in w.values() if isinstance(v, str) and v and v[0].isdigit() and ("-" in v or "/" in v) and "T" not in v]
-        assert raws, inst["params"]
-        seen += 1
-    assert seen > 0, "expected at least one meridian format instance"
+        assert not (
+            inst["family"] == "dates" and inst["params"].get("mode") == "format"
+        ), inst["params"]
+    rec = {
+        "reservation_id": "R1", "property_id": "p1", "arrival_date": "15/10/2026",
+        "status": "confirmed",
+    }
+    wire = m.to_wire_reservation(rec)
+    assert wire.get("ScheduledStartUtc") is None
+    assert wire.get("arrival_date") == "15/10/2026"
 
 
 def test_atlas_transaction_serves_renamed_folio_key() -> None:

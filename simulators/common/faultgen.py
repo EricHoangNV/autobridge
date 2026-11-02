@@ -65,6 +65,25 @@ BEACON_LABEL = "autobridge-eval-v1"
 #: Vendors covered by one beacon run, in stable round-robin order.
 VENDORS: tuple[str, ...] = ("atlas", "harbor", "legacystay", "meridian", "fias-pabx")
 
+#: REQ-083 A1: every beacon dataset serves all properties in this one
+#: zone — the single static zone the pre-drift specs carry — so an
+#: unfaulted sync agrees with the oracle on business dates. Recorded in
+#: ``experiments/beacon/<round>/protocol.md`` by ``freeze()``.
+BEACON_TIMEZONE = "America/New_York"
+
+
+def beacon_dataset(seed: int) -> dict[str, list[dict[str, Any]]]:
+    """Baseline dataset for one beacon instance seed (single-zone oracle).
+
+    Identical to :func:`generate_dataset` except every property serves
+    :data:`BEACON_TIMEZONE`, so property-local business dates derive
+    under the same zone the pre-drift specs declare. The only beacon
+    oracle: ``materialize``, the reference solver, the verifier's
+    ``baseline_for`` and the simulator's beacon serving all build from
+    this (never from ``generate_dataset`` directly for beacon seeds).
+    """
+    return generate_dataset(seed, property_timezone_override=BEACON_TIMEZONE)
+
 #: HTTP fault families (served by the four REST vendors).
 HTTP_FAMILIES: tuple[str, ...] = (
     "rename",
@@ -210,8 +229,12 @@ DECOY_POOL: tuple[str, ...] = (
     "chargeNet",
 )
 
-#: Date-family modes.
-DATE_MODES: tuple[str, ...] = ("cutoff", "tz_shift", "format")
+#: Date-family modes. REQ-083 B7: only modes a spec patch in the closed
+#: vocabulary can express are drawn — ``tz_shift`` has no hour/day
+#: offset arg (adding one is a plan change), so it is never drawn and is
+#: recorded as removed in ``protocol.md``. The tz_shift mutation/inverse
+#: code below stays for the direct unit tests.
+DATE_MODES: tuple[str, ...] = ("cutoff", "format")
 DATE_FORMATS: tuple[str, ...] = ("%Y-%m-%d", "%d/%m/%Y", "%m-%d-%Y")
 
 #: Transport/auth fault kinds.
@@ -345,7 +368,13 @@ def _params_for(family: str, vendor: str, rng: random.Random) -> dict[str, Any]:
             return {"kind": kind, "decoy_field": rng.choice(list(DECOY_POOL))}
         return {"kind": kind, "factor": str(rng.choice(list(SEMANTIC_FACTORS)))}
     if family == "dates":
-        mode = rng.choice(list(DATE_MODES))
+        # REQ-083 D18: meridian is a UTC-instant vendor — it serves no
+        # verbatim date field a format change could land on (its derived
+        # instants null and ride verbatim only as a solvability-tuned
+        # extra), so format is never drawn for meridian; the cutoff trap
+        # stays (keyed no_patch). Recorded in protocol.md.
+        modes = [m for m in DATE_MODES if not (vendor == "meridian" and m == "format")]
+        mode = rng.choice(list(modes))
         if mode == "cutoff":
             # Only cutoffs inside the generator's 00:00-03:59 late-posting
             # window can move a business date; 5/6 never manifest, so they
@@ -353,9 +382,6 @@ def _params_for(family: str, vendor: str, rng: random.Random) -> dict[str, Any]:
             # still verifies manifestation on the instance's dataset.
             choices = [h for h in (1, 2, 3) if h != BASELINE_CUTOFF_HOUR]
             return {"mode": mode, "cutoff_hour": rng.choice(choices)}
-        if mode == "tz_shift":
-            choices = [h for h in (-3, -2, -1, 1, 2, 3)]
-            return {"mode": mode, "shift_hours": rng.choice(choices)}
         # The baseline vendor format is ISO (%Y-%m-%d): serving it back is a
         # silent no-op while the key expects a repair (REQ-063 item 3), so it
         # is never chosen.
@@ -461,12 +487,15 @@ RENAME_PLAUSIBLE: dict[str, frozenset[str]] = {
         "foliostate",
     }),
     "total_amount": frozenset({
-        "totalamount", "amount", "grandtotal", "totalnet", "chargetotal",
-        "amountgross", "nettotal",
+        # REQ-083 B8: "netTotal"/"totalNet" live in DECOY_POOL (a net field
+        # next to gross reads ambiguous, never a plausible rename) — they
+        # must not also sit here.
+        "totalamount", "amount", "grandtotal", "chargetotal",
+        "amountgross",
     }),
     "amount": frozenset({
-        "totalamount", "amount", "grandtotal", "totalnet", "chargetotal",
-        "amountgross", "nettotal",
+        "totalamount", "amount", "grandtotal", "chargetotal",
+        "amountgross",
     }),
     "arrival_date": frozenset({"arrivaldate", "checkindate", "arrivalday"}),
     "departure_date": frozenset({"departuredate", "checkoutdate", "departureday"}),
@@ -537,7 +566,7 @@ def _manifesting_cutoff(dataset_seed: int, picked: int) -> int:
     manifests (no late postings at all — vanishingly rare) the pick
     stands and the bench sanity gate catches it loudly.
     """
-    dataset = generate_dataset(seed=dataset_seed)
+    dataset = beacon_dataset(seed=dataset_seed)
     tz_map = property_timezone_map(dataset.get("properties", []))
     folios = dataset.get("folios", [])
 
@@ -863,7 +892,7 @@ def materialize(instance: dict[str, Any]) -> dict[str, Any]:
     _check_instance(instance)
     family = str(instance["family"])
     params = dict(instance["params"])
-    dataset = generate_dataset(seed=int(instance["dataset_seed"]))
+    dataset = beacon_dataset(seed=int(instance["dataset_seed"]))
     behavior: dict[str, Any] | None = None
     mutated = dataset
 
@@ -1097,7 +1126,7 @@ def inverse_canonicalize(instance: dict[str, Any], dataset: dict[str, list[dict[
         raise ValueError(f"nothing to invert for outcome {instance['expected']}")
     family = str(instance["family"])
     params = dict(instance["params"])
-    baseline = generate_dataset(seed=int(instance["dataset_seed"]))
+    baseline = beacon_dataset(seed=int(instance["dataset_seed"]))
     try:
         if family == "rename":
             recovered = _invert_rename(dataset, params)

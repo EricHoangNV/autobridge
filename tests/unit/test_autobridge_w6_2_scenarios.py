@@ -179,9 +179,10 @@ def test_money_invariant_with_expected_sum():
     # Negative for folio should be allowed
     recs3 = [{"amount": "-10.00"}, {"amount": "20.00"}]
     assert check_money_invariant(recs3, "amount", entity_name="FolioCharge") == []
-    # Negative for reservation should fail
+    # Negative for reservation is allowed too (REQ-083 A1: totals are
+    # exact folio sums, so net refunds legitimately total below zero)
     recs4 = [{"total_amount": "-10.00"}]
-    assert check_money_invariant(recs4, "total_amount", entity_name="Reservation") == ["money_invariant"]
+    assert check_money_invariant(recs4, "total_amount", entity_name="Reservation") == []
 
 
 def test_business_date_invariant_property_lookup():

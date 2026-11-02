@@ -141,15 +141,17 @@ def test_legacystay_ambiguous_date_field() -> None:
 
 
 def test_legacystay_nullable_chaos() -> None:
+    # REQ-083 A1: the vendor serves what it has — no extra nulling beyond
+    # the dataset's own (~10%) nullable fields, so an unfaulted sync
+    # agrees with the oracle. Generator nulls still flow through untouched.
     set_scenario("baseline", 42)
     client = TestClient(legacy_app)
     resps = client.get("/reservations?limit=100", headers=AUTH).json()["data"]
     null_guests = sum(1 for r in resps if r["guest_name"] is None)
-    # Deterministic extra nulling on top of the seeded 10%: a visible share is null
-    assert null_guests > len(resps) // 10, f"expected nullable chaos, got {null_guests} nulls of {len(resps)}"
+    assert 0 < null_guests <= len(resps) // 5, f"expected only dataset nulls, got {null_guests} of {len(resps)}"
     folios = client.get("/folios?limit=100", headers=AUTH).json()["data"]
     null_descs = sum(1 for f in folios if f["description"] is None)
-    assert null_descs > len(folios) // 10
+    assert 0 < null_descs <= len(folios) // 5
 
 
 def test_legacystay_baseline_throttle_every_eighth() -> None:
@@ -248,15 +250,17 @@ def test_legacystay_filter_by_property_and_reservation() -> None:
 
 def test_legacystay_transform_helpers_direct() -> None:
     from simulators.legacystay.app import (
-        _null_chaos,
         _to_legacystay_folio,
         _to_legacystay_reservation,
     )
 
-    # None stays None
-    assert _null_chaos(None, "salt") is None
-    # Deterministic: same salt same result
-    assert _null_chaos("Ada", "RES-1") == _null_chaos("Ada", "RES-1")
+    # REQ-083 A1: the vendor serves what it has — no nullable-chaos
+    # nulling, so an unfaulted sync agrees with the oracle. Generator
+    # nulls (baseline) still flow through untouched.
+    assert _to_legacystay_reservation({"reservation_id": "R1", "guest_name": None})["guest_name"] is None
+    assert _to_legacystay_reservation({"reservation_id": "R1", "guest_name": "Ada"})["guest_name"] == "Ada"
+    assert _to_legacystay_folio({"charge_id": "C1", "description": None})["description"] is None
+    assert _to_legacystay_folio({"charge_id": "C1", "description": "x"})["description"] == "x"
     # Reservation without arrival_date gets no date
     out = _to_legacystay_reservation({"reservation_id": "R1", "guest_name": "Ada"})
     assert "date" not in out

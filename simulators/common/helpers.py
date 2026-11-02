@@ -32,6 +32,18 @@ def get_dataset_for_current_state() -> dict[str, list[dict[str, Any]]]:
     scenario_id = str(state["scenario_id"])
     # Generate baseline dataset
     dataset = generate_dataset(seed=seed)
+    # REQ-083 A1/A3: unfaulted beacon baseline serving (bench grading and
+    # the A1 preflight). With no active beacon slot but a pinned baseline
+    # seed, serve the single-zone beacon oracle dataset unmutated, so the
+    # pre-drift spec's output matches the verifier's oracle exactly.
+    if state.get("beacon") is None:
+        from simulators.common import beacon_serve as _beacon_pin
+
+        _pinned = _beacon_pin.baseline_pin()
+        if _pinned is not None:
+            from simulators.common import faultgen as _beacon_fg
+
+            return _beacon_fg.beacon_dataset(_pinned)
     # REQ-025 beacon: an active beacon instance applies its record-shape
     # mutation on top of the scenario mutations (beacon and scenario modes
     # are exclusive in state, so at most one applies in practice).

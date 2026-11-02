@@ -1,7 +1,7 @@
 ---
 id: l3_patch
-version: "3"
-purpose: "Propose a JSON Patch against the connector spec for a semantic drift, or escalate with one question (L3, frontier model). v2 (REQ-067 item 3): an escalation carries the operator-approvable change whenever one concrete spec change applies the other reading, so the Approve path exists. v3 (REQ-069 item 1): states the dry-run gate fact — every check that failed in the break's sync must pass with the patched spec, all entities."
+version: "4"
+purpose: "Propose a JSON Patch against the connector spec for a semantic drift, or escalate with one question (L3, frontier model). v2 (REQ-067 item 3): an escalation carries the operator-approvable change whenever one concrete spec change applies the other reading, so the Approve path exists. v3 (REQ-069 item 1): states the dry-run gate fact — every check that failed in the break's sync must pass with the patched spec on the break's records, all entities. v4 (REQ-083 C13): names the declarative date input format — a vendor date shape is parsed with the date transforms' allow-listed input_format arg, never guessed."
 tier: frontier
 max_tokens: 131072
 inputs:
@@ -39,7 +39,11 @@ captures the other reading — then the question alone is the right
 answer. The proposal is never applied without a human's approval; a
 malformed proposal is dropped and the escalation stands on the
 question alone. Never invent a member the patchable subtree does not
-list: an unlisted path is a dropped proposal, not a guess. The dry-run
+list: an unlisted path is a dropped proposal, not a guess. A vendor date
+shape (e.g. "10-15-2026") is parsed with the date transforms'
+declarative input_format arg (allow-listed directives %Y %m %d %H %M %S
+only — a date-only value is a calendar date, returned unchanged); never
+guess a transform or an arg outside the vocabulary. The dry-run
 gate offers a patch only when every check that failed in the break's
 sync passes with the patched spec on the break's records, all
 entities: a partial fix that leaves another entity's failing check

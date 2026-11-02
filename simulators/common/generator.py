@@ -19,6 +19,7 @@ import datetime
 import hashlib
 import json
 import random
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 # ---------------------------------------------------------------------------
@@ -62,22 +63,23 @@ PROPERTY_TEMPLATES: list[dict[str, str]] = [
 # on calendar day N count to business date N-1.
 BUSINESS_CUTOFF_HOUR = 4
 
+#: Fictional guest names (REQ-083 D19 — never real people's names).
 GUEST_NAMES: list[str] = [
-    "Ada Lovelace",
-    "Grace Hopper",
-    "Alan Turing",
-    "Barbara Liskov",
-    "Donald Knuth",
-    "Margaret Hamilton",
-    "Ken Thompson",
-    "Linus Torvalds",
-    "Guido van Rossum",
-    "Yukihiro Matsumoto",
-    "Brendan Eich",
-    "Sheryl Sandberg",
-    "Tim Berners-Lee",
-    "Hedy Lamarr",
-    "Katherine Johnson",
+    "Ava Lindqvist",
+    "Bruno Marsh",
+    "Cora Delacroix",
+    "Dario Fontana",
+    "Elsa Moretti",
+    "Felix Hartmann",
+    "Greta Solberg",
+    "Hugo Ferreira",
+    "Iris Kowalski",
+    "Jonas Weber",
+    "Kira Novak",
+    "Liam O'Connor",
+    "Mira Tanaka",
+    "Nils Bergstrom",
+    "Olivia Petrova",
 ]
 
 CHARGE_DESCRIPTIONS: list[str] = [
@@ -401,6 +403,34 @@ def generate_folios(
 # ---------------------------------------------------------------------------
 
 
+def backfill_reservation_totals(
+    reservations: list[dict[str, object]],
+    folios: list[dict[str, object]],
+) -> None:
+    """Set each reservation's ``total_amount`` to the exact sum of its folio lines.
+
+    REQ-083 A1: a reservation total that equals the sum of its folio
+    charges is the only self-consistent shape — a spec that sums the
+    folio join (as the Meridian one does) then agrees with the oracle on
+    an unfaulted sync instead of failing ``money_mismatch``. Exact
+    ``Decimal`` arithmetic, formatted to 2dp like every other money
+    value; reservations with no folios keep their generated total.
+    Mutates ``reservations`` in place; deterministic (no randomness).
+    """
+    by_reservation: dict[str, Decimal] = {}
+    for folio in folios:
+        try:
+            by_reservation[str(folio["reservation_id"])] = by_reservation.get(
+                str(folio["reservation_id"]), Decimal("0")
+            ) + Decimal(str(folio["amount"]))
+        except Exception:
+            continue
+    for res in reservations:
+        total = by_reservation.get(str(res.get("reservation_id", "")))
+        if total is not None:
+            res["total_amount"] = format(total.quantize(Decimal("0.01")), "f")
+
+
 def generate_dataset(
     seed: int,
     num_properties: int = 3,
@@ -409,6 +439,7 @@ def generate_dataset(
     max_folios_per_reservation: int = 4,
     include_duplicates: bool = False,
     duplicate_rate: float = DUPLICATE_RATE,
+    property_timezone_override: str | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     """Generate a complete deterministic dataset.
 
@@ -418,11 +449,26 @@ def generate_dataset(
     (ground truth can be obtained by deduplicating on ``reservation_id``/``charge_id``).
 
     Same ``seed`` and same kwargs → byte-identical JSON (sort_keys) output.
+
+    ``property_timezone_override`` replaces every property's timezone (ids,
+    names, currencies unchanged) before reservations/folios derive from
+    them, so business dates and posted instants stay mutually consistent
+    under the override. REQ-083 A1: the beacon oracle serves every
+    property in ``America/New_York`` (the one static zone the pre-drift
+    specs carry), recorded in ``experiments/beacon/<round>/protocol.md``.
+
+    Every reservation's ``total_amount`` is the exact sum of its folio
+    ``amount`` lines (REQ-083 A1: the dataset's reservation total is the
+    sum of its folio lines, so a spec that sums the join agrees with the
+    oracle instead of failing ``money_mismatch`` on an unfaulted sync).
     """
     rng = _rng(seed)
     # Generate properties with a derived seed to keep top-level deterministic
     # Use single RNG shuffle via generate_properties(seed)
     properties = generate_properties(seed, count=num_properties)
+    if property_timezone_override is not None:
+        for prop in properties:
+            prop["timezone"] = property_timezone_override
 
     # Use domain-separated seeds for sub-generators so the overall output is
     # deterministic and also matches standalone helpers called with same seeds.
@@ -436,6 +482,8 @@ def generate_dataset(
         min_per_reservation=min_folios_per_reservation,
         max_per_reservation=max_folios_per_reservation,
     )
+    # REQ-083 A1: the reservation total is the sum of its folio lines.
+    backfill_reservation_totals(reservations, folios)
 
     if include_duplicates:
         # Use the top-level rng for duplicate insertion (deterministic given seed)

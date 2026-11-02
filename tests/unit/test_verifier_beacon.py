@@ -20,7 +20,6 @@ from simulators.common.faultgen import (
     generate_instances,
     materialize,
 )
-from simulators.common.generator import generate_dataset
 from verifier import beacon
 from verifier.beacon import (
     accepted_outcomes_for,
@@ -67,7 +66,8 @@ def test_reference_solve_repair_matches_regenerated_baseline() -> None:
                 continue
             mat = materialize(inst)
             faultgen.inverse_canonicalize(inst, mat["dataset"])
-            assert baseline_for(inst) == generate_dataset(seed=int(inst["dataset_seed"]))
+            # REQ-083 A1: the oracle is the single-zone beacon dataset
+            assert baseline_for(inst) == faultgen.beacon_dataset(seed=int(inst["dataset_seed"]))
 
 
 # ---------------------------------------------------------------------------

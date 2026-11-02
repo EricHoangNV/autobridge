@@ -680,3 +680,19 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - The fix judges the whole failing surface: touched entities ∪ entities failing under the unpatched spec on the same records, with still-failing checks named per entity so the one retry carries the exact error. Removing the failing checks (the honest "stop comparing" outcome) still passes — the gate refuses partial fixes, not removals.
 - Companion invariant: every verifier entry point (ladder judge, detect-layer gate, candidate-release baseline gate) must only ever see adopted — i.e. gate-passed — proposals, so a verifier "pass" for a partial patch becomes unreachable rather than merely unlikely.
 - **Rule:** Any pass/fail gate on a proposed change must evaluate the complete failing surface (every failed check on every entity), never just the subset the proposal touches — and every downstream judge must only receive proposals that passed it. Name the still-failing parts in the rejection; the retry is only as good as the error it carries.
+
+## 75. A pagination loop that cannot terminate on a tokenless envelope will hang a faulted sync
+
+**Context:** REQ-083 A2 reference-repair proofs for tokenless offset/page beacon contracts.
+
+- The runtime's implicit "no next token" guard stopped every tokenless page-1 sync after one page — so no spec patch could ever repair a tokenless offset/page vendor, and the beacon fault was unprovable.
+- Removing the guard outright made faulted syncs loop to `max_pages`: a vendor that ignores unknown params serves page 1 forever, and each page looked like progress.
+- The fix is a pair: skip the implicit stop only for blind-advance strategies (offset/page), *and* stop on a repeated non-empty page (the tokenless analogue of `repeated_cursor`), without double-counting the re-served page. Token-driven strategies keep the old guard.
+- **Rule:** Every blind-advance loop (offset/page, retries, polls) needs both a progress condition (empty page) *and* a non-progress tripwire (repeated page); an implicit "no token, stop" is only safe when some other guard proves the first page was complete.
+
+## 76. New unit test files must match the coverage-gate glob or CI never runs them
+
+**Context:** REQ-083 added 12 test files; 7 were named `test_beacon_*.py` / `test_bench_*.py`.
+
+- `make test` gates on `tests/unit/test_autobridge_*.py`, `test_health_*`, `test_verifier_*`, `test_simulators_*` only. Files outside those globs run locally but never in CI and never count toward coverage — the gate can pass while the new code is untested upstream.
+- **Rule:** Name every new unit test file to match one of the four gate globs (e.g. `test_autobridge_beacon_<topic>_req083.py`); verify with `git status` + the gate command before committing, not just a bare `pytest` run.

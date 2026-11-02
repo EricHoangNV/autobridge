@@ -22,6 +22,7 @@ Trust boundary: simulators-side only. Never imported by ``autobridge``.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import simulators.common.faultgen as faultgen
@@ -95,13 +96,51 @@ def apply_active_to_dataset(
     Behaviour families leave the dataset untouched (the app honors the
     behaviour contract separately). No active beacon — or a beacon for a
     different vendor — returns the dataset unchanged.
+
+    REQ-083 A1: the mutation applies to the single-zone beacon oracle
+    dataset (:func:`faultgen.beacon_dataset`), never to the caller-passed
+    one, so the served baseline is byte-identical to what the verifier
+    regenerates for this instance (answer-key alignment) — including the
+    zone the pre-drift specs declare.
     """
     instance = active_instance()
     if instance is None:
         return dataset
     if vendor is not None and str(instance["vendor"]) != vendor:
         return dataset
-    return faultgen.apply_instance_records(dataset, instance)
+    return faultgen.materialize(instance)["dataset"]
+
+
+#: In-process pin for the unfaulted beacon baseline (REQ-083 A1/A3).
+#: :func:`beacon_sync_pair`'s baseline half serves the beacon oracle
+#: dataset with no mutation; live serving never sets this (it is module
+#: state, not simulator state, so it cannot leak across processes).
+_BASELINE_DATASET_SEED: int | None = None
+
+
+def baseline_pin() -> int | None:
+    """Seed pinned for unfaulted baseline serving, or None."""
+    return _BASELINE_DATASET_SEED
+
+
+@contextlib.contextmanager
+def unfaulted_baseline(dataset_seed: int):
+    """Serve the beacon oracle dataset with no instance mutation.
+
+    The simulator apps read the baseline through
+    ``helpers.get_dataset_for_current_state``; inside this context (and
+    with no active beacon slot) they serve
+    :func:`faultgen.beacon_dataset` for ``dataset_seed`` instead of the
+    scenario dataset. Bench-only: grading and the A1 preflight compute
+    the pre-drift spec's unfaulted output through it.
+    """
+    global _BASELINE_DATASET_SEED
+    previous = _BASELINE_DATASET_SEED
+    _BASELINE_DATASET_SEED = int(dataset_seed)
+    try:
+        yield
+    finally:
+        _BASELINE_DATASET_SEED = previous
 
 
 def public_descriptor(instance: dict[str, Any]) -> dict[str, Any]:
@@ -117,6 +156,64 @@ def public_descriptor(instance: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Pagination contract serving (shared by the four REST vendors)
 # ---------------------------------------------------------------------------
+
+
+def active_pagination_contract(vendor: str | None = None) -> dict[str, Any] | None:
+    """Active beacon pagination contract for *vendor* (None when none).
+
+    Only behaviour-family pagination instances carry a contract, and only
+    for the instance's vendor.
+    """
+    behavior = active_behavior(vendor)
+    if behavior is None or str(behavior.get("family")) != "pagination":
+        return None
+    return dict(behavior)
+
+
+def pagination_docs_note(vendor: str | None = None) -> str | None:
+    """Vendor-worded pagination announcement for the served docs (REQ-083 B6).
+
+    A vendor that renames its pagination parameters documents them; the
+    beacon contract's drawn names are otherwise unobservable (the
+    simulator ignores unknown params, yet the verifier demands the exact
+    tokens). When a beacon pagination instance is active for *vendor*,
+    this returns the Markdown section the vendor's served docs carry for
+    the faulted round — the same docs every arm reads, and the only
+    channel that names the new request parameters.
+    """
+    contract = active_pagination_contract(vendor)
+    if contract is None:
+        return None
+    strategy = str(contract.get("strategy", ""))
+    request_params: list[str] = []
+    for key in ("offset_param", "limit_param", "page_param", "per_page_param",
+                "cursor_param", "cursor_leaf", "page_size_param"):
+        value = contract.get(key)
+        if isinstance(value, str) and value:
+            request_params.append(f"`{key}` = `{value}`")
+    envelope: list[str] = []
+    for key in ("items_path", "next_path"):
+        value = contract.get(key)
+        if isinstance(value, list) and value:
+            envelope.append(f"`{key}` = `{'.'.join(str(p) for p in value)}`")
+    lines = [
+        "## Pagination update",
+        "",
+        f"List endpoints now paginate with strategy `{strategy}`.",
+        "",
+    ]
+    if request_params:
+        lines.append("Send page controls with these request parameters:")
+        lines.append("")
+        lines.extend(f"- {item}" for item in request_params)
+        lines.append("")
+    if envelope:
+        lines.append("Responses nest the page here:")
+        lines.append("")
+        lines.extend(f"- {item}" for item in envelope)
+        lines.append("")
+    lines.append("Unknown pagination parameters are ignored: the client advances the first default page repeatedly.")
+    return "\n".join(lines).strip() + "\n"
 
 
 def pagination_contract() -> dict[str, Any] | None:

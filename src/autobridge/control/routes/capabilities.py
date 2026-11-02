@@ -79,6 +79,7 @@ def capabilities_payload() -> dict[str, Any]:
 
     from autobridge.repair.registry import RULE_REGISTRY  # noqa: PLC0415
     from autobridge.runtime.transforms import TRANSFORMS  # noqa: PLC0415
+    from autobridge.runtime.transforms import TRANSFORM_ARGS  # noqa: PLC0415
     from autobridge.spec import models as spec_models  # noqa: PLC0415
 
     auth_hints = get_type_hints(spec_models.AuthSpec)
@@ -140,6 +141,9 @@ def capabilities_payload() -> dict[str, Any]:
     return {
         "versions": {"v1": _version("v1"), "v2": _version("v2"), "v3": _version("v3")},
         "transforms": list(TRANSFORMS),
+        # REQ-083 C13: declarative args per transform (input_format listed
+        # so agents name the closed date vocabulary).
+        "transform_args": {name: list(args) for name, args in TRANSFORM_ARGS.items()},
         "checks": sorted(get_args(spec_models.CheckKind)),
         "stop_conditions": sorted(get_args(spec_models.StopCondition)),
         "rules": rules,

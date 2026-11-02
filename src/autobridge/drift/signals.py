@@ -648,9 +648,43 @@ def _observed_wire_keys(spec: Any, entity: str) -> set[str] | None:
     return {k for k in observed if isinstance(k, str)}
 
 
+def _lost_wire_samples(
+    baseline_operation_results: dict[str, Any] | None,
+    spec: Any,
+    entity: str,
+    wire_keys: list[str],
+) -> dict[str, list[Any]]:
+    """Baseline wire values for vanished keys (REQ-083 C14).
+
+    The vanished key's last-good values, up to 5 distinct non-null ones
+    per key, from the baseline's wire rows for the entity's operation.
+    Empty when the baseline is unavailable or the key never carried
+    values — the rename gate then declines (it climbs to the model).
+    """
+    from autobridge.repair.rules.wire import dedup_samples as _dedup  # noqa: PLC0415
+
+    out: dict[str, list[Any]] = {}
+    if not isinstance(baseline_operation_results, dict) or not isinstance(spec, dict):
+        return out
+    try:
+        _, baseline_records = _wire_records_for_entity(spec, baseline_operation_results, entity)
+    except Exception:
+        return out
+    for key in wire_keys:
+        if not isinstance(key, str) or not key:
+            continue
+        vals = _dedup(
+            [rec.get(key) for rec in baseline_records if isinstance(rec, dict) and key in rec]
+        )
+        if vals:
+            out[key] = [_wire_truncate(v) for v in vals]
+    return out
+
+
 def _observe_wire_schema(
     spec: Any,
     operation_results: dict[str, Any],
+    baseline_operation_results: dict[str, Any] | None = None,
     *,
     source_run_id: str | None = None,
 ) -> list[DriftSignal]:
@@ -734,10 +768,19 @@ def _observe_wire_schema(
                 if key in rec:
                     sample = rec[key]
                     break
+            # REQ-083 C14: several distinct values per new key (not one
+            # sample), so the rename gate can require value agreement on
+            # more than one sample.
+            from autobridge.repair.rules.wire import dedup_samples as _dedup  # noqa: PLC0415
+
+            _samples = _dedup(
+                [rec[key] for rec in wire_records if isinstance(rec, dict) and key in rec]
+            )
             added.append(
                 {
                     "key": key,
                     "sample": _wire_truncate(sample),
+                    "samples": [_wire_truncate(v) for v in _samples],
                     "type": _type_name_of(sample),
                 }
             )
@@ -762,6 +805,13 @@ def _observe_wire_schema(
                     "added": added,
                     "wire_evidence": "records",
                     **({"observed_wire_keys": sorted(observed)} if observed is not None else {}),
+                    **(
+                        {"lost_samples": _lost_wire_samples(
+                            baseline_operation_results, spec, entity, missing or dark
+                        )}
+                        if baseline_operation_results is not None
+                        else {}
+                    ),
                 },
                 source_run_id=source_run_id,
             )
@@ -1079,11 +1129,32 @@ def _observe_wire_emptied_fields(
             # candidates (genuinely new wire keys on the same rows) so
             # rename_field can pair by value when the old key stays with
             # a blank/default value.
+            # REQ-083 C14: candidate values (several samples each) and the
+            # vanished key's last-good values ride the details too, so
+            # the gate can require value agreement on more than one
+            # sample.
+            from autobridge.repair.rules.wire import dedup_samples as _dedup2  # noqa: PLC0415
+
             _row_keys: set[str] = set()
             for rec in wire_records:
                 if isinstance(rec, dict):
                     _row_keys.update(str(k) for k in rec)
             _added_candidates = sorted(_row_keys - set(covered))[:10]
+            _candidate_samples = {
+                name: [_wire_truncate(v) for v in _dedup2(
+                    [rec.get(name) for rec in wire_records if isinstance(rec, dict) and name in rec]
+                )]
+                for name in _added_candidates
+            }
+            _candidate_samples = {k: v for k, v in _candidate_samples.items() if v}
+            _, _baseline_recs = (
+                _wire_records_for_entity(spec, baseline_results, entity)
+                if baseline_results is not None
+                else (None, [])
+            )
+            _lost = _dedup2(
+                [rec.get(key) for rec in _baseline_recs if isinstance(rec, dict) and key in rec]
+            )
             signals.append(
                 DriftSignal(
                     kind="mapped_field_emptied",
@@ -1106,6 +1177,8 @@ def _observe_wire_emptied_fields(
                         "total_count": total,
                         "wire_evidence": "records",
                         "added_candidates": _added_candidates,
+                        "added_candidate_samples": _candidate_samples,
+                        "lost_samples": [_wire_truncate(v) for v in _lost],
                         **(
                             {"baseline_populated_rate": baseline_rate}
                             if baseline_rate is not None
@@ -1753,20 +1826,12 @@ def signals_from_sync(
     # HTTP error signals from operation results
     signals.extend(_extract_http_signals(operation_results, source_run_id=source_run_id))
 
-    # Wire-observed evidence (REQ-027): what the vendor actually served on
-    # the wire, derived only from raw_pages/records in operation_results.
-    # Never from scenario ids, YAML or answer keys.
-    signals.extend(
-        _observe_wire_pagination(spec, operation_results, source_run_id=source_run_id)
-    )
-    signals.extend(
-        _observe_wire_schema(spec, operation_results, source_run_id=source_run_id)
-    )
-
     # Silent-corruption evidence (REQ-064 B1): a mapped field gone dark and
     # exact power-of-ten money moves. Both derive from the spec and the
     # run's own observations; the baseline comes from *baseline_summary*
-    # when the caller holds one (bench/beacon derive path).
+    # when the caller holds one (bench/beacon derive path). Hoisted here
+    # so the wire observers below can pair values against last-good
+    # wire records (REQ-083 C14).
     baseline_canonical: dict[str, list[dict[str, Any]]] | None = None
     baseline_operation_results: dict[str, Any] | None = None
     if isinstance(baseline_summary, dict):
@@ -1780,6 +1845,21 @@ def signals_from_sync(
         baseline_ops = baseline_summary.get("operation_results")
         if isinstance(baseline_ops, dict):
             baseline_operation_results = baseline_ops
+
+    # Wire-observed evidence (REQ-027): what the vendor actually served on
+    # the wire, derived only from raw_pages/records in operation_results.
+    # Never from scenario ids, YAML or answer keys.
+    signals.extend(
+        _observe_wire_pagination(spec, operation_results, source_run_id=source_run_id)
+    )
+    signals.extend(
+        _observe_wire_schema(
+            spec,
+            operation_results,
+            baseline_operation_results,
+            source_run_id=source_run_id,
+        )
+    )
     signals.extend(
         _observe_wire_emptied_fields(
             spec,

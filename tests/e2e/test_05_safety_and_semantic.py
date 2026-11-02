@@ -170,8 +170,8 @@ def _assert_bundle_valid(bundle: EscalationBundle | dict[str, Any]) -> Escalatio
 
 def test_invariants_produce_degraded_with_named_unmet() -> None:
     """Money/business_date/count invariants → Degraded with named unmet_criteria, SEMANTIC_VALUE_DRIFT."""
-    # money
-    recs_money = [{"reservation_id": "R1", "total_amount": "-5.00", "status": "confirmed"}]
+    # money (unparseable amount; net refunds are valid money per REQ-083 A1)
+    recs_money = [{"reservation_id": "R1", "total_amount": "not-a-number", "status": "confirmed"}]
     assert check_money_invariant(recs_money, "total_amount") == ["money_invariant"]
     assert run_checks(
         recs_money,
@@ -254,9 +254,13 @@ def test_money_decimal_and_business_date_cutoff_unit() -> None:
         )
         == []
     )
-    # Negative for Reservation fails, for FolioCharge allowed
+    # Negative for Reservation is allowed (REQ-083 A1: totals are exact
+    # folio sums, so net refunds are valid money); unparseable is not.
     assert check_money_invariant(
         [{"total_amount": "-10.00"}], "total_amount", entity_name="Reservation"
+    ) == []
+    assert check_money_invariant(
+        [{"total_amount": "xx"}], "total_amount", entity_name="Reservation"
     ) == ["money_invariant"]
     assert check_money_invariant([{"amount": "-10.00"}], "amount", entity_name="FolioCharge") == []
 

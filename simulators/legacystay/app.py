@@ -87,41 +87,83 @@ def get_readyz() -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-def _null_chaos(value: str | None, salt: str) -> str | None:
-    """Deterministically null out ~1/4 of non-null values (nullable chaos).
+# ---------------------------------------------------------------------------
+# LegacyStay record transforms
+# ---------------------------------------------------------------------------
 
-    Hash-based so it is stable for a given record across requests.
+
+def _split_nesting(rec: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Unwrap beacon-nested internal records (REQ-083 D17).
+
+    Mirrors the harbor/atlas rule: project the inner record (quirks
+    intact), then re-apply the parents to the wire record.
     """
-    if value is None:
-        return None
-    h = sum(ord(c) for c in salt) % 4
-    if h == 0:
-        return None
-    return value
+    inner = rec if isinstance(rec, dict) else {}
+    parents: list[str] = []
+    for _ in range(5):
+        if not isinstance(inner, dict):
+            break
+        if any(
+            k in inner
+            for k in (
+                "reservation_id",
+                "property_id",
+                "charge_id",
+                "arrival_date",
+                "departure_date",
+                "business_date",
+                "status",
+                "guest_name",
+                "total_amount",
+                "amount",
+            )
+        ):
+            break
+        if len(inner) == 1:
+            _k, _v = next(iter(inner.items()))
+            if isinstance(_v, dict) and isinstance(_k, str) and _k:
+                parents.append(_k)
+                inner = _v
+                continue
+        break
+    return (inner if isinstance(inner, dict) else {}, parents)
+
+
+def _wrap_wire(wire: dict[str, Any], parents: list[str]) -> dict[str, Any]:
+    """Re-apply nesting parents to a projected wire record."""
+    out = wire
+    for parent in reversed(parents):
+        out = {parent: out}
+    return out
 
 
 def _to_legacystay_reservation(rec: dict[str, Any]) -> dict[str, Any]:
     """Map a canonical reservation record to LegacyStay's messy shape."""
+    # REQ-083 D17: nest the projected wire record, not the internal one.
+    _parents: list[str] = []
+    rec, _parents = _split_nesting(rec if isinstance(rec, dict) else {})
     out = dict(rec)
     # Ambiguous `date` field: duplicates arrival_date value; docs call it "the date"
     if "arrival_date" in out:
         out["date"] = out["arrival_date"]
-    # Nullable chaos: walk-ins recorded without a name (only when the source
-    # record actually carries the field — a renamed-away field stays absent).
-    if "guest_name" in out:
-        out["guest_name"] = _null_chaos(out["guest_name"], str(out.get("reservation_id", "")))
+    # REQ-083 A1: the nullable-chaos quirk is gone. Nulling names the
+    # baseline has made even the unfaulted pre-drift sync fail the
+    # records judge (``field_missing``), so no arm could ever pass a
+    # LegacyStay ``repair`` instance; the vendor serves what it has.
+    if _parents:
+        return _wrap_wire(out, _parents)
     return out
 
 
 def _to_legacystay_folio(rec: dict[str, Any]) -> dict[str, Any]:
     """Map a canonical folio record to LegacyStay's messy shape."""
+    _parents: list[str] = []
+    rec, _parents = _split_nesting(rec if isinstance(rec, dict) else {})
     out = dict(rec)
     if "business_date" in out:
         out["date"] = out["business_date"]
-    # Nullable chaos: unlabelled adjustments without a description (same
-    # renamed-away guard as reservations).
-    if "description" in out:
-        out["description"] = _null_chaos(out["description"], str(out.get("charge_id", "")))
+    if _parents:
+        return _wrap_wire(out, _parents)
     return out
 
 
@@ -324,5 +366,13 @@ def get_legacystay_docs_alias() -> PlainTextResponse:
     for fname in ("legacystay.md", "legacystay.txt"):
         cand = DOCS_DIR / fname
         if cand.is_file():
-            return PlainTextResponse(content=cand.read_text(encoding="utf-8"), media_type="text/markdown")
+            text = cand.read_text(encoding="utf-8")
+            # REQ-083 B6: the faulted round's pagination params ride the
+            # served docs — the only channel that names them.
+            from simulators.common import beacon_serve as _beacon_docs
+
+            note = _beacon_docs.pagination_docs_note("legacystay")
+            if note:
+                text = text.rstrip("\n") + "\n\n" + note
+            return PlainTextResponse(content=text, media_type="text/markdown")
     return JSONResponse(status_code=404, content={"detail": {"code": "not_found", "message": "LegacyStay docs not found"}})

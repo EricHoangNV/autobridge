@@ -403,6 +403,13 @@ class ArmResult:
     input_tokens: int = 0
     output_tokens: int = 0
     frontier_tokens: int = 0
+    # REQ-083 B11: in/out per model tier, reported the same way for every
+    # arm (frontier arms spend the frontier tier only; engine arms split
+    # small vs frontier). Totals stay in input/output_tokens.
+    frontier_input: int = 0
+    frontier_output: int = 0
+    small_input: int = 0
+    small_output: int = 0
     #: Reasoning/thinking tokens, a sub-count of output (billed as
     #: completion/output). Reported separately so the owner can pick a
     #: limit from the results (REQ-060 item 3).
@@ -963,6 +970,9 @@ def run_baseline_arm(
                 output_tokens=output_tokens,
                 reasoning_tokens=reasoning,
                 frontier_tokens=frontier,
+                # REQ-083 B11: the agent arm spends the frontier tier only.
+                frontier_input=input_tokens,
+                frontier_output=output_tokens,
                 cost_usd=cost,
                 model=actual_model,
                 tool_calls=int(getattr(result, "tool_calls", 0) or 0),

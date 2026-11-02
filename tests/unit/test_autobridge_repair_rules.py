@@ -283,7 +283,11 @@ def test_rename_field_patch_shape_via_wire_names() -> None:
 
 
 def test_rename_field_precondition_true_via_wire_signal() -> None:
-    """keys_changed wire hint (missing/added wire keys) fires the rule."""
+    """keys_changed wire hint (missing/added wire keys) fires the rule.
+
+    REQ-083 C14: the gate needs value agreement on more than one sample
+    against the lost values, plus the shape and lexical gates.
+    """
     from autobridge.repair.rules.rename_field import precondition
 
     spec = _load_spec("atlaspms")
@@ -297,7 +301,13 @@ def test_rename_field_precondition_true_via_wire_signal() -> None:
                 "details": {
                     "entity": "Reservation",
                     "missing": ["guestName"],
-                    "added": [{"key": "guestNames", "sample": "Guest 1", "type": "str"}],
+                    "added": [{
+                        "key": "guestNames",
+                        "sample": "Guest 1",
+                        "samples": ["Guest 1", "Guest 2"],
+                        "type": "str",
+                    }],
+                    "lost_samples": {"guestName": ["Guest 1", "Guest 2"]},
                 },
             }
         ],

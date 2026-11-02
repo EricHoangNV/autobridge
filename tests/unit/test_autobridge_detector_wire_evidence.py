@@ -225,10 +225,13 @@ def test_offset_to_cursor_from_wire_only() -> None:
 
 
 def test_rename_from_wire_only_on_complete_sync() -> None:
-    """Wire rename with a Complete outcome still detects + repairs.
+    """Wire rename with a Complete outcome still detects + climbs.
 
     The canonical-types fingerprint cannot show this (unmapped keys never
     reach canonical records); only the wire-schema observation carries it.
+    REQ-083 C14: without a stored baseline the L1 gate declines (no lost
+    values to agree with) and the drift climbs to the model with the new
+    key evidence — it is never an L1 auto-repair off one sample.
     """
     spec = _page_spec()
     wire = [
@@ -260,16 +263,7 @@ def test_rename_from_wire_only_on_complete_sync() -> None:
     result = RepairController().handle_from_signals(
         spec=spec, signals=signals, fingerprint_delta=_nulled_types_delta()
     )
-    assert result.decision == "propose"
-    assert result.rule_id == "rename_field"
-    _zero_usage(result)
-    assert result.candidate_patch == [
-        {
-            "op": "replace",
-            "path": "/entities/Reservation/fields/guest_name/path",
-            "value": "$.guest_names",
-        }
-    ]
+    assert result.decision == "escalate", result.decision
 
 
 def test_cursor_next_path_shift_from_wire_only() -> None:

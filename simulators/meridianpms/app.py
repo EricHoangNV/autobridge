@@ -390,7 +390,15 @@ def _wrap_wire(wire: dict[str, Any], parents: list[str]) -> dict[str, Any]:
 
 
 def service_id_for(property_id: str) -> str:
-    return f"SVC-{property_id}"
+    """Service id for a property (REQ-083 B5).
+
+    The bare canonical property id — like every other vendor's wire, the
+    served service id must equal the canonical ``property_id`` the specs
+    map it to, so an unfaulted sync agrees with the oracle exactly. The
+    old ``SVC-`` namespace carried no information (it prefixes the
+    property id verbatim) and made every canonical comparison fail.
+    """
+    return str(property_id)
 
 
 def account_id_for(reservation_id: str) -> str:
@@ -534,8 +542,11 @@ def to_wire_order_item(rec: dict[str, Any]) -> dict[str, Any]:
     # REQ-080 item 1: a renamed field vanishes from the wire (never a
     # backfilled default while the new key holds the values). Baseline
     # order is preserved: Name, UnitCount, UnitAmount, PostedUtc.
+    # REQ-083 A2: no backfilled default either — a null description serves
+    # null (the oracle holds null), so the pre-drift spec over the
+    # unfaulted simulator agrees with the oracle exactly.
     if "description" in rec:
-        wire["Name"] = description if description else "Room charge"
+        wire["Name"] = description
     wire["UnitCount"] = 1
     if "amount" in rec:
         wire["UnitAmount"] = {
@@ -696,7 +707,17 @@ def get_meridian_docs_alias() -> PlainTextResponse:
     """Alias so docs are reachable even if the static mount is shadowed."""
     cand = DOCS_DIR / "meridian-openapi.yaml"
     if cand.is_file():
-        return PlainTextResponse(content=cand.read_text(encoding="utf-8"), media_type="text/yaml")
+        text = cand.read_text(encoding="utf-8")
+        # REQ-083 B6: the faulted round's pagination params ride the
+        # served docs (as YAML comments, so the document still parses) —
+        # the only channel that names them.
+        from simulators.common import beacon_serve as _beacon_docs
+
+        note = _beacon_docs.pagination_docs_note("meridian")
+        if note:
+            commented = "\n".join(f"# {line}" if line.strip() else "#" for line in note.splitlines())
+            text = text.rstrip("\n") + "\n\n" + commented + "\n"
+        return PlainTextResponse(content=text, media_type="text/yaml")
     return JSONResponse(status_code=404, content={"detail": {"code": "not_found", "message": "Meridian docs not found"}})
 
 

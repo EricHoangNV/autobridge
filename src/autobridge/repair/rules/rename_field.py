@@ -213,6 +213,73 @@ def _delta_same_type(delta: Any | None, entity: str, old_field: str, new_field: 
     return old_field in prev and new_field in cur and prev[old_field] == cur[new_field]
 
 
+def _rename_value_samples(
+    ctx: RepairContext, entity: str, old_field: str, new_field: str
+) -> tuple[list[Any], list[Any]]:
+    """New-key samples + lost values for one inferred pairing (REQ-083 C14).
+
+    New samples come from the ``keys_changed`` added entries (several
+    values, not one) or the ``mapped_field_emptied`` candidate samples;
+    lost values are the vanished key's last-good baseline values the
+    detector attached (``lost_samples``). Empty when the evidence does
+    not carry them — the gate then declines.
+    """
+    from autobridge.repair.rules.wire import _signal_triples  # noqa: PLC0415
+
+    new_samples: list[Any] = []
+    lost: list[Any] = []
+    for _kind, _op, details in _signal_triples(ctx.signals):
+        sig_entity = details.get("entity")
+        if isinstance(sig_entity, str) and isinstance(entity, str) and sig_entity != entity:
+            continue
+        if _kind == "keys_changed":
+            for entry in details.get("added") or []:
+                if (
+                    isinstance(entry, dict)
+                    and str(entry.get("key") or "") == str(new_field)
+                ):
+                    for value in entry.get("samples") or []:
+                        if value is not None and value not in new_samples:
+                            new_samples.append(value)
+                    if entry.get("sample") is not None and entry["sample"] not in new_samples:
+                        new_samples.append(entry["sample"])
+            lost_map = details.get("lost_samples")
+            if isinstance(lost_map, dict):
+                for value in lost_map.get(old_field, []) or []:
+                    if value is not None and value not in lost:
+                        lost.append(value)
+        elif _kind == "mapped_field_emptied":
+            if details.get("wire_key") != old_field and old_field not in (
+                details.get("canonical_fields") or []
+            ):
+                continue
+            cand_samples = details.get("added_candidate_samples")
+            if isinstance(cand_samples, dict):
+                for value in cand_samples.get(new_field, []) or []:
+                    if value is not None and value not in new_samples:
+                        new_samples.append(value)
+            for value in details.get("lost_samples") or []:
+                if value is not None and value not in lost:
+                    lost.append(value)
+    return (new_samples, lost)
+
+
+def _new_samples_agree_with_lost(new_samples: list[Any], lost: list[Any]) -> bool:
+    """Value agreement on more than one sample (REQ-083 C14).
+
+    The gate fires only when at least two new-key values each agree with
+    a lost value (exact or Decimal equality, generic — no name lists).
+    Anything else declines so the drift climbs to the model.
+    """
+    from autobridge.repair.rules.wire import values_agree  # noqa: PLC0415
+
+    if len(new_samples) < 2 or not lost:
+        return False
+    return all(
+        any(values_agree(sample, old) for old in lost) for sample in new_samples
+    )
+
+
 def _wire_shape_sets(ctx: RepairContext, entity: str) -> tuple[set[str], set[str]]:
     """Old and new wire keys the signals report for one entity.
 
@@ -471,6 +538,13 @@ def precondition(ctx: RepairContext) -> bool:
         if not _sample_matches_field(
             sample, _spec_transform_names(ctx, entity, canonical_old)
         ):
+            return False
+        # REQ-083 C14: value agreement on more than one sample — the new
+        # key's values must each agree with a lost value (exact or
+        # Decimal equality, generic). A single shaped sample is not
+        # enough; anything else climbs to the model.
+        _new_samples, _lost_values = _rename_value_samples(ctx, entity, old_field, new_field)
+        if not _new_samples_agree_with_lost(_new_samples, _lost_values):
             return False
         if not _names_lexically_close(old_field, canonical_old, new_field):
             return False

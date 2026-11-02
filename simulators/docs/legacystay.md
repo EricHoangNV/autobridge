@@ -173,10 +173,9 @@ explicitly and use the typed fields (`arrival_date`, `business_date`,
 ## Nullable fields
 
 LegacyStay predates mandatory-field validation, so text columns are often null.
-`guest_name` is null for roughly a quarter of reservations (walk-ins recorded
-without a name) and `description` is null for roughly a quarter of folio
-charges (unlabelled adjustments). A correct client treats both fields as
-nullable and never assumes they are present.
+`guest_name` is null for about one reservation in ten and `description` is
+null for about one folio charge in ten. A correct client treats both fields
+as nullable and never assumes they are present.
 
 ---
 

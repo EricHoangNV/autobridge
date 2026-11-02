@@ -124,6 +124,16 @@ def _serve_openapi_json() -> JSONResponse:
         cand = DOCS_DIR / fname
         if cand.is_file():
             data = json.loads(cand.read_text(encoding="utf-8"))
+            # REQ-083 B6: the faulted round's pagination params ride the
+            # served docs (as an info extension, so the document stays a
+            # valid OpenAPI object) — the only channel that names them.
+            from simulators.common import beacon_serve as _beacon_docs
+
+            note = _beacon_docs.pagination_docs_note("atlas")
+            if note and isinstance(data, dict):
+                info = data.setdefault("info", {})
+                if isinstance(info, dict):
+                    info["x-pagination-update"] = note
             return JSONResponse(content=data)
     raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Atlas OpenAPI docs not found"})
 
@@ -133,6 +143,14 @@ def _serve_openapi_yaml() -> PlainTextResponse:
         cand = DOCS_DIR / fname
         if cand.is_file():
             text = cand.read_text(encoding="utf-8")
+            # REQ-083 B6: same announcement as JSON, as YAML comments so
+            # the document still parses.
+            from simulators.common import beacon_serve as _beacon_docs
+
+            note = _beacon_docs.pagination_docs_note("atlas")
+            if note:
+                commented = "\n".join(f"# {line}" if line.strip() else "#" for line in note.splitlines())
+                text = text.rstrip("\n") + "\n\n" + commented + "\n"
             return PlainTextResponse(content=text, media_type="text/yaml")
     raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Atlas OpenAPI docs not found"})
 

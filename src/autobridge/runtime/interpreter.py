@@ -347,6 +347,7 @@ class Interpreter:
         repeated_cursor = False
         stop_reason: str | None = None
         pages_fetched = 0
+        previous_items: list[Any] = []
 
         for _ in range(max_pages):
             page_params = build_request_params(state, pagination, base_params, limit_value)
@@ -357,6 +358,16 @@ class Interpreter:
             state.pages_fetched = pages_fetched
 
             items = _extract_items(raw, items_path)
+            # REQ-083 A2: blind-advance strategies (offset/page) must stop
+            # when the vendor stops advancing — a vendor that ignores
+            # unknown params serves the first page forever, and without
+            # this the loop runs to max_pages. A repeated non-empty page
+            # is the tokenless analogue of repeated_cursor. Break before
+            # extending so the re-served page is not double-counted.
+            if strategy in ("offset", "page") and items and items == previous_items:
+                stop_reason = "repeated_page"
+                break
+            previous_items = items
             all_records.extend(items)
 
             next_token = _extract_next_token(raw, next_path)
@@ -364,8 +375,8 @@ class Interpreter:
             # Tokenless page pagination (e.g. method-style APIs with
             # pageNumber/pageSize and a total count but no next token):
             # keep fetching while fewer records than the advertised total
-            # have arrived. A missing/unparseable total falls through to the
-            # normal guards (first page only, then implicit no_next_token).
+            # have arrived. A missing/unparseable total falls through to
+            # the normal guards (empty page, or repeated page below).
             # Reaching the advertised total is a normal, explicit stop
             # (``total_reached``), not an implicit-stop drift signal.
             if strategy == "page" and next_token is None and total_path is not None:

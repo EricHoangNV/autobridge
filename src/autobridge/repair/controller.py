@@ -674,6 +674,36 @@ class RepairController:
                         evidence=evidence,
                     ) is not None:
                         continue
+                    # REQ-083 C15: the dry-run gate runs before propose, as
+                    # the comment promises — a confident winner whose patch
+                    # fails on the break's records is dropped (traced, like
+                    # a rejected L3 proposal), never proposed.
+                    try:
+                        from autobridge.repair.dryrun import (  # noqa: PLC0415
+                            dry_run_proposal as _l2_dry_run,
+                        )
+
+                        _l2_ok, _l2_why = _l2_dry_run(
+                            validate_against if validate_against is not None else spec,
+                            [dict(op) for op in _l2_patch],
+                            dry_run_fault,
+                        )
+                    except Exception as _l2_dry_exc:
+                        _l2_ok, _l2_why = False, f"dry-run error: {_l2_dry_exc}"
+                    if not _l2_ok:
+                        trace.append(
+                            {
+                                "level": 2,
+                                "action": "l2_dry_run_rejected",
+                                "reason": (
+                                    f"L2 confident ({climb.get('l2_confidence')}); "
+                                    f"hypothesis patch rejected by dry-run: {_l2_why}"
+                                ),
+                                "drift_class": drift_class,
+                                "proposal": [dict(op) for op in _l2_patch],
+                            }
+                        )
+                        continue
                     trace.append(
                         {
                             "level": 2,
@@ -970,6 +1000,134 @@ class RepairController:
         return result, classification
 
 
+def _baseline_canonical_records(baseline: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
+    """Canonical records from a baseline (REQ-083 C14).
+
+    Accepts a canonical-records map or a sync summary carrying one.
+    Empty when the engine holds no baseline (live path without one).
+    """
+    if not isinstance(baseline, dict):
+        return {}
+    raw = baseline.get("canonical_records", baseline)
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for entity, rows in raw.items():
+        if isinstance(entity, str) and isinstance(rows, list):
+            recs = [r for r in rows if isinstance(r, dict)]
+            if recs:
+                out[entity] = recs
+    return out
+
+
+def _l3_values_agree(first: Any, second: Any) -> bool:
+    """Generic value agreement for L3 rename pairing (mirror of the rule gate)."""
+    if first is None or second is None:
+        return False
+    if isinstance(first, bool) or isinstance(second, bool):
+        return first is second
+    try:
+        from decimal import Decimal as _Decimal
+
+        _f, _s = str(first), str(second)
+        if _f.strip() == _s.strip():
+            return True
+        return _Decimal(_f) == _Decimal(_s)
+    except Exception:
+        return str(first) == str(second)
+
+
+def _vanished_mapped_fields(
+    signals: list[Any], entities: dict[str, Any]
+) -> list[dict[str, str]]:
+    """Mapped (canonical, wire key) pairs the signals report as vanished.
+
+    From ``keys_changed`` missing keys and ``mapped_field_emptied`` wire
+    keys, resolved to canonical fields through the spec's mapped paths.
+    """
+    vanished_wire: set[str] = set()
+    try:
+        for sig in signals or []:
+            details = (
+                sig.get("details") if isinstance(sig, dict) else getattr(sig, "details", None)
+            )
+            if not isinstance(details, dict):
+                continue
+            for name in details.get("missing") or []:
+                if isinstance(name, str) and name:
+                    vanished_wire.add(name)
+            wire_key = details.get("wire_key")
+            if isinstance(wire_key, str) and wire_key:
+                vanished_wire.add(wire_key)
+    except Exception:
+        return []
+    out: list[dict[str, str]] = []
+    try:
+        for entity, edef in (entities or {}).items():
+            if not isinstance(edef, dict):
+                continue
+            for fname, fdef in (edef.get("fields") or {}).items():
+                if not isinstance(fdef, dict):
+                    continue
+                path = fdef.get("path")
+                leaf = (
+                    str(path).split(".")[-1].strip("[]'\"")
+                    if isinstance(path, str) and path.startswith("$.")
+                    else None
+                )
+                if leaf and leaf in vanished_wire:
+                    out.append({"entity": str(entity), "field": str(fname), "wire_key": leaf})
+    except Exception:
+        pass
+    return out
+
+
+def _pair_new_key_with_baseline(
+    new_key: str,
+    new_sample: Any,
+    new_samples: list[Any],
+    vanished: list[dict[str, str]],
+    baseline_records: dict[str, list[dict[str, Any]]],
+    touched_entities: list[str],
+) -> dict[str, Any] | None:
+    """Pair one new wire key with a vanished field's last-good values.
+
+    Returns ``{"field", "wire_key", "baseline_sample": [...], "value_match"}``
+    for the first vanished field whose baseline values agree with the new
+    key's values, else None. Generic: value agreement only, no name lists.
+    """
+    candidates = [v for v in [new_sample, *list(new_samples or [])] if v is not None]
+    if not new_key or not candidates:
+        return None
+    for gone in vanished:
+        entity = str(gone.get("entity", ""))
+        if touched_entities and entity not in touched_entities:
+            continue
+        field = str(gone.get("field", ""))
+        rows = baseline_records.get(entity, [])
+        values: list[Any] = []
+        for rec in rows:
+            value = rec.get(field)
+            if value is not None and value not in values:
+                values.append(value)
+            if len(values) >= 3:
+                break
+        if not values:
+            continue
+        match = any(
+            _l3_values_agree(sample, old)
+            for sample in candidates
+            for old in values
+        )
+        return {
+            "field": field,
+            "wire_key": str(gone.get("wire_key", "")),
+            "baseline_sample": values,
+            "value_match": bool(match),
+        }
+    return None
+
+
 def build_generic_l3_evidence(
     spec: dict[str, Any],
     signals: list[Any],
@@ -977,6 +1135,7 @@ def build_generic_l3_evidence(
     summary: dict[str, Any] | None,
     drift_class: str,
     failed_attempts: list[dict[str, Any]] | None = None,
+    baseline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Class-neutral L3 evidence for any drift class (REQ-078 item 3).
 
@@ -986,6 +1145,13 @@ def build_generic_l3_evidence(
     sample. Allowed patch pointers derive from what the delta touches
     (entity fields, pagination strategies, check targets) instead of
     money-only members. All values are redacted data; no secrets.
+
+    REQ-083 C14: ``baseline`` is the stored baseline/last-good records
+    the engine holds (canonical records, or a summary carrying them).
+    For a rename, each new wire key is paired with the vanished key's
+    last-good values next to the new key's values — the model judges
+    the rename from old and new values together, never from the new
+    name alone.
     """
     import json as _json  # noqa: PLC0415
 
@@ -1196,17 +1362,28 @@ def build_generic_l3_evidence(
                     and str(_entry["key"]) not in _seen_keys
                 ):
                     _seen_keys.add(str(_entry["key"]))
+                    _samples = [
+                        v for v in (_entry.get("samples") or [])
+                        if v is not None
+                    ][:5]
                     new_wire_keys.append(
                         {
                             "key": str(_entry["key"]),
                             "sample": _entry.get("sample"),
+                            "samples": _samples,
                             "type": str(_entry.get("type") or "unknown"),
                         }
                     )
             for _name in _details.get("added_candidates") or []:
                 if isinstance(_name, str) and _name and _name not in _seen_keys:
                     _seen_keys.add(_name)
-                    new_wire_keys.append({"key": _name, "sample": None, "type": "unknown"})
+                    _cand_samples = [
+                        v for v in ((_details.get("added_candidate_samples") or {}).get(_name) or [])
+                        if v is not None
+                    ][:5]
+                    new_wire_keys.append(
+                        {"key": _name, "sample": None, "samples": _cand_samples, "type": "unknown"}
+                    )
         _entity = next((e for e in (changed_entities or []) if e in entities), None)
         if _entity is None and isinstance(entities, dict) and entities:
             _entity = sorted(entities)[0]
@@ -1244,6 +1421,20 @@ def build_generic_l3_evidence(
                 if _entry.get("sample") is None and _entry["key"] in _by_key:
                     _entry["sample"] = _by_key[_entry["key"]]
                     _entry["type"] = type(_by_key[_entry["key"]]).__name__
+        # REQ-083 C14: pair each new key with the vanished key's last-good
+        # values (from the stored baseline the engine holds), so the
+        # model judges old and new values together, never the new name
+        # alone. Generic value comparison, no name lists.
+        _baseline_records = _baseline_canonical_records(baseline)
+        if _baseline_records:
+            _vanished = _vanished_mapped_fields(signals, entities)
+            for _entry in new_wire_keys:
+                _pair = _pair_new_key_with_baseline(
+                    str(_entry.get("key") or ""), _entry.get("sample"),
+                    _entry.get("samples") or [], _vanished, _baseline_records,
+                    touched or changed_entities or [],
+                )
+                _entry["pairs_with"] = _pair
         sample_rows.extend(_vendor_rows)
     except Exception:
         new_wire_keys = []
@@ -1268,6 +1459,7 @@ def prepare_climb_inputs(
     summary: dict[str, Any] | None,
     sync_run_id: str | None,
     drift_class: str,
+    baseline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Derive model-climb inputs for any drift class (REQ-078 item 3).
 
@@ -1287,7 +1479,8 @@ def prepare_climb_inputs(
         diff_fingerprints = None  # type: ignore[assignment]
     _ = diff_fingerprints
     evidence = build_generic_l3_evidence(
-        spec, list(signals), None, summary, drift_class, failed_attempts=None
+        spec, list(signals), None, summary, drift_class, failed_attempts=None,
+        baseline=baseline,
     )
     return {
         "climbed": None,

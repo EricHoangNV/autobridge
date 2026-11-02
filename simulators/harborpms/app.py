@@ -96,8 +96,60 @@ def get_readyz() -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+def _split_nesting(rec: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Unwrap beacon-nested internal records (REQ-083 D17).
+
+    A nesting mutation wraps the internal record as ``{parent: {...}}``
+    (possibly several levels). The vendor projects the inner record and
+    re-applies the same parents to the wire record — as a real vendor
+    would — so quirks (H1 mapping, ``date`` dup) survive under nesting
+    and a path patch can repair it. Returns ``(inner, parents)``; a flat
+    record returns ``(rec, [])``.
+    """
+    inner = rec if isinstance(rec, dict) else {}
+    parents: list[str] = []
+    for _ in range(5):
+        if not isinstance(inner, dict):
+            break
+        if any(
+            k in inner
+            for k in (
+                "reservation_id",
+                "property_id",
+                "charge_id",
+                "arrival_date",
+                "departure_date",
+                "business_date",
+                "status",
+                "guest_name",
+                "total_amount",
+                "amount",
+            )
+        ):
+            break
+        if len(inner) == 1:
+            _k, _v = next(iter(inner.items()))
+            if isinstance(_v, dict) and isinstance(_k, str) and _k:
+                parents.append(_k)
+                inner = _v
+                continue
+        break
+    return (inner if isinstance(inner, dict) else {}, parents)
+
+
+def _wrap_wire(wire: dict[str, Any], parents: list[str]) -> dict[str, Any]:
+    """Re-apply nesting parents to a projected wire record."""
+    out = wire
+    for parent in reversed(parents):
+        out = {parent: out}
+    return out
+
+
 def _to_harbor_reservation(rec: dict[str, Any]) -> dict[str, Any]:
     """Map a canonical reservation record to Harbor's messy shape."""
+    # REQ-083 D17: nest the projected wire record, not the internal one.
+    _parents: list[str] = []
+    rec, _parents = _split_nesting(rec if isinstance(rec, dict) else {})
     out = dict(rec)
     # Opaque status: map canonical -> H1..H5 if present in map (leave fault-injected vocab alone)
     status = out.get("status")
@@ -107,15 +159,21 @@ def _to_harbor_reservation(rec: dict[str, Any]) -> dict[str, Any]:
     # Keep arrival_date canonical, add duplicate `date` for ambiguity.
     if "arrival_date" in out:
         out["date"] = out["arrival_date"]
+    if _parents:
+        return _wrap_wire(out, _parents)
     return out
 
 
 def _to_harbor_folio(rec: dict[str, Any]) -> dict[str, Any]:
     """Map a canonical folio record to Harbor's messy shape."""
+    _parents: list[str] = []
+    rec, _parents = _split_nesting(rec if isinstance(rec, dict) else {})
     out = dict(rec)
     # Folios have no status to map
     if "business_date" in out:
         out["date"] = out["business_date"]
+    if _parents:
+        return _wrap_wire(out, _parents)
     return out
 
 
@@ -334,5 +392,13 @@ def get_harbor_docs_alias() -> PlainTextResponse:
     for fname in ("harbor.md", "harborpms.md"):
         cand = DOCS_DIR / fname
         if cand.is_file():
-            return PlainTextResponse(content=cand.read_text(encoding="utf-8"), media_type="text/markdown")
+            text = cand.read_text(encoding="utf-8")
+            # REQ-083 B6: the faulted round's pagination params ride the
+            # served docs — the only channel that names them.
+            from simulators.common import beacon_serve as _beacon_docs
+
+            note = _beacon_docs.pagination_docs_note("harbor")
+            if note:
+                text = text.rstrip("\n") + "\n\n" + note
+            return PlainTextResponse(content=text, media_type="text/markdown")
     raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Harbor docs not found"})

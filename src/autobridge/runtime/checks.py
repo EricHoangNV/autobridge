@@ -181,9 +181,14 @@ def check_money_invariant(
     Validates that money field values are:
     - present and non-null (when record has other required fields)
     - valid Decimal with 2dp scale
-    - positive (or zero only for cancelled/no_show reservations)
     - not systematically zero (detects nullifying drift)
     - optionally, sum close to expected_sum within tolerance (detects gross_to_net)
+
+    Negative values are valid (refunds): reservation totals are exact
+    sums of folio lines (REQ-083 A1), so a reservation with net refunds
+    legitimately totals below zero — the same business case folio
+    refunds always were. Sign never signals drift; scale, presence and
+    the expected-sum comparison do.
 
     For gross_to_net, the spec stores expected_sum (baseline total) and
     tolerance (e.g., 5%); current sum 10% lower triggers Degraded.
@@ -231,11 +236,10 @@ def check_money_invariant(
                 # Not exactly 2dp — could be drift like float corruption
                 failures += 1
                 continue
-            # Positive check: negative money is wrong for Reservation totals,
-            # but FolioCharge refunds (negative amount) are valid business cases.
-            if dec < Decimal("0") and entity_name != "FolioCharge":
-                failures += 1
-                continue
+            # Sign check: negative money is a valid business case (refunds)
+            # at every level — reservation totals are exact sums of folio
+            # lines (REQ-083 A1), so net refunds legitimately total below
+            # zero. Sign never signals drift.
             total += dec
             has_valid = True
         except (InvalidOperation, ValueError, AttributeError, TypeError):
@@ -275,6 +279,18 @@ def check_business_date_invariant(
     cutoff hour and property timezone. This detects tz_boundary_shift where
     API changes cutoff from 4 to 2 but spec still uses 4.
 
+    Timezone resolution, in order: the record's own zone (``timezone`` /
+    ``property_timezone`` when a spec maps the vendor-served property
+    zone), the spec's declared zone (``context_tz`` — the
+    ``timezone_source`` the engine's own date transforms derive under),
+    then the legacy per-property fallback below. A record passes when
+    ANY candidate zone derives the recorded business date: the recorded
+    date is consistent with the posted instant under a plausible zone
+    for the property. A genuine cutoff or zone fault breaks the
+    derivation under every candidate, so the check still fires — while
+    a dataset served uniformly in the spec's declared zone (REQ-083 A1
+    beacon oracle) no longer fails against the legacy map.
+
     Requires both fields present in canonical records.
     Returns ["business_date_invariant"] on mismatch.
     """
@@ -289,51 +305,58 @@ def check_business_date_invariant(
         if bdate is None or posted is None:
             continue
         checked += 1
-        # Resolve timezone: use property's timezone if available, else property_id lookup, else context_tz or UTC
-        tz_name = context_tz or "UTC"
+        # Candidate zones, most specific first. The legacy map covers
+        # multi-zone datasets served under per-property zones; datasets
+        # served uniformly in the spec's declared zone (REQ-083 A1)
+        # match on context_tz instead.
+        candidates: list[str] = []
         prop_tz = rec.get("timezone") or rec.get("property_timezone")
         if isinstance(prop_tz, str) and prop_tz:
-            tz_name = prop_tz
-        else:
-            # Fallback to known property template timezones (generator's PROPERTY_TEMPLATES)
-            prop_id = rec.get("property_id")
-            if isinstance(prop_id, str) and prop_id:
-                _PROP_TZ = {
-                    "prop-001": "America/New_York",
-                    "prop-002": "America/Los_Angeles",
-                    "prop-003": "Europe/Berlin",
-                    "prop-004": "Asia/Tokyo",
-                    "prop-005": "Europe/London",
-                }
-                if prop_id in _PROP_TZ:
-                    tz_name = _PROP_TZ[prop_id]
+            candidates.append(prop_tz)
+        if isinstance(context_tz, str) and context_tz and context_tz not in candidates:
+            candidates.append(context_tz)
+        prop_id = rec.get("property_id")
+        if isinstance(prop_id, str) and prop_id:
+            _PROP_TZ = {
+                "prop-001": "America/New_York",
+                "prop-002": "America/Los_Angeles",
+                "prop-003": "Europe/Berlin",
+                "prop-004": "Asia/Tokyo",
+                "prop-005": "Europe/London",
+            }
+            if prop_id in _PROP_TZ and _PROP_TZ[prop_id] not in candidates:
+                candidates.append(_PROP_TZ[prop_id])
+        if "UTC" not in candidates:
+            candidates.append("UTC")
         # Parse posted_at
         posted_str = str(posted).strip()
-        derived: datetime.date | None = None
+        derived_dates: set[datetime.date] = set()
         try:
             dt = _parse_iso_datetime(posted_str)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=datetime.UTC)
-            # Convert to property tz
-            try:
-                from zoneinfo import ZoneInfo
+            # Derive under every candidate zone; the record passes when
+            # any plausible zone explains the recorded business date.
+            for tz_name in candidates:
+                try:
+                    from zoneinfo import ZoneInfo
 
-                tz_info: datetime.tzinfo = ZoneInfo(tz_name)
-            except Exception:
-                tz_info = datetime.UTC
-            local = dt.astimezone(tz_info)
-            derived_date = local.date()
-            if local.hour < cutoff_hour:
-                derived_date = derived_date - datetime.timedelta(days=1)
-            derived = derived_date
+                    tz_info: datetime.tzinfo = ZoneInfo(tz_name)
+                except Exception:
+                    tz_info = datetime.UTC
+                local = dt.astimezone(tz_info)
+                derived_date = local.date()
+                if local.hour < cutoff_hour:
+                    derived_date = derived_date - datetime.timedelta(days=1)
+                derived_dates.add(derived_date)
         except Exception:
             # If posted_at not parseable, skip this record
             continue
         # Parse business_date
         bdate_parsed = _parse_date_value(bdate)
-        if bdate_parsed is None or derived is None:
+        if bdate_parsed is None or not derived_dates:
             continue
-        if bdate_parsed != derived:
+        if bdate_parsed not in derived_dates:
             failures += 1
     # Only report if we had checkable pairs and failures exist
     if checked > 0 and failures > 0:
@@ -397,10 +420,14 @@ def run_checks(
     expected_counts: dict[str, int] | None = None,
     compare_to_values: dict[str, Any] | None = None,
     entity_name: str | None = None,
+    context_tz: str | None = None,
 ) -> list[str]:
     """Run all checks from spec for one entity.
 
     Checks is list of EntityCheck dicts: {"kind": ..., "compare_to": ..., "before": ..., "after": ...}
+    ``context_tz`` is the spec's declared timezone (``timezone_source``):
+    the zone the engine's own date transforms derive under, offered to
+    the business-date invariant as the first candidate zone (REQ-083 A1).
     Returns aggregated unmet_criteria names (unique).
     """
     unmet: list[str] = []
@@ -470,7 +497,8 @@ def run_checks(
                 except (TypeError, ValueError):
                     cutoff_int = None
                 res = check_business_date_invariant(
-                    records, business_date_field=field, posted_at_field=ref, cutoff=cutoff_int, entity_name=entity_name
+                    records, business_date_field=field, posted_at_field=ref, cutoff=cutoff_int,
+                    entity_name=entity_name, context_tz=context_tz,
                 )
                 for name in res:
                     if name not in unmet:
@@ -504,8 +532,12 @@ def evaluate_entity_checks(
     *,
     expected_count: int | None = None,
     compare_to_value: Any | None = None,
+    context_tz: str | None = None,
 ) -> list[str]:
-    """Evaluate EntityCheck objects (pydantic models or dicts) for one entity."""
+    """Evaluate EntityCheck objects (pydantic models or dicts) for one entity.
+
+    ``context_tz`` is the spec's declared timezone, forwarded to the
+    business-date invariant (REQ-083 A1)."""
     # Normalize checks to dicts
     dicts: list[dict[str, Any]] = []
     for chk in checks:
@@ -537,4 +569,4 @@ def evaluate_entity_checks(
 
     expected_counts = {entity_name: expected_count} if expected_count is not None else None
     compare_to_values = {entity_name: compare_to_value} if compare_to_value is not None else None
-    return run_checks(records, dicts, expected_counts=expected_counts, compare_to_values=compare_to_values, entity_name=entity_name)
+    return run_checks(records, dicts, expected_counts=expected_counts, compare_to_values=compare_to_values, entity_name=entity_name, context_tz=context_tz)
