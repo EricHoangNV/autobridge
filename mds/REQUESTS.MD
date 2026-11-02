@@ -5,7 +5,7 @@
 Owner priority (2026-11-02): **REQ-078**, then **REQ-080** (REQ-066..077 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
 
 ### REQ-080 — A renamed field reaches the model as evidence; a misleading new name expects a question (2026-11-02)
-Status: OPEN (reopened 2026-11-02 by owner on aa2a6fa7 -- the engine decides renames from a copy of the answer key's name vocabulary)
+Status: IN_PROGRESS (sbx1 since 2026-11-02 12:00 UTC)
 Owner check (2026-11-02, on `aa2a6fa7`): items 1-3 landed. Item 4 put the answer key into the engine, which is not allowed.
 `src/autobridge/repair/rules/rename_field.py` (~39-83) adds `RENAME_PLAUSIBLE_NEW_NAMES`, a hand-written vocabulary per
 canonical field, and the L1 rule declines or repairs by looking the new wire name up in it. It mirrors the generator's
