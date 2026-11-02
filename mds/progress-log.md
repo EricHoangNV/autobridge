@@ -4322,3 +4322,6 @@ Meridian nesting is reachable by patch again (customers unwrap + audit of every 
 
 ## 2026-11-02 — REQ-085 DONE (sbx1; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Engine L3 evidence now shows each field's transform steps (name + args) next to its path(s) plus the entity joins; the pointer gate allows add-arg/replace-arg (`/transform/i/args[/<arg>]`, declared args only) and join repoint members. Whole-transform replace stays allowed; unlisted paths still rejected. 5 new unit tests, full gates green (make test all green incl. UI 350; lint/typecheck green; e2e skipped — no live stack). Owner step: keyed rehearsal, then close REQ-085 (and the REQ-078/080/081/083/084 VERIFY batch with it).
+
+## 2026-11-02 — REQ-086 code-done (sbx1)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). `semantic/gross_net` re-keyed from `repair` to `degraded_question` across generator, verifier, bench prover text and docs; `_assert_semantic_scaled` replaces the Python-inverse proof; 3 new test files + 3 margin tests; full make test green (autobridge 90.01%, verifier 90.60%, simulators 90.07%, UI 350), lint/typecheck green. Owner step: keyed rehearsal, then close. Note: autobridge 90% gate is hash-seed marginal at this commit (89.99-90.01 across identical-code runs); +3 stable test lines added as margin.

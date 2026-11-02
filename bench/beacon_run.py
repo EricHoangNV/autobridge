@@ -491,7 +491,8 @@ so no spec patch can express its repair — it is never drawn. Meridian
 never draws dates/format either (REQ-083 D18: a UTC-instant vendor
 serves no verbatim date field; the cutoff trap stays, keyed no_patch).
 Semantic gross_net scaling is likewise patch-inexpressible (no factor
-arg) and stays reachable via its accepted escalation.
+arg): it is keyed degraded_question (one operator question; a guessed
+factor is a wrong patch).
 """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")

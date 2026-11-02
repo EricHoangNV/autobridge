@@ -32,7 +32,7 @@ Then mark DONE after full gates pass; the owner runs the keyed rehearsal after R
 under `experiments/beacon/`.
 
 ### REQ-086 — `semantic/gross_net` is keyed `repair` but no patch in the closed vocabulary expresses it: key it as a question (2026-11-03)
-Status: IN_PROGRESS (sbx1 since 2026-11-02 17:39)
+Status: DONE (sbx1 2026-11-02 -- all 4 items code-done: gross_net -> degraded_question in expected_for + GeneratorBug inverse guard, verifier accepted_outcomes + scaling-manifest proof, reference_patch/protocol text, fault-playbook + benchmark docs; 3 new test files + updated gross_net/decoy tests + 3 margin tests; full gates green; owner step: keyed rehearsal, then close)
 Keyed rehearsal on `fed86554` (round 6603643) stopped at the REQ-084 preflight, as designed: "no reference patch for
 repair instance 7 (legacystay/semantic {kind: gross_net, factor: 0.25}) — unreachable by any patch". The mutation
 scales `total_amount`/`amount` in place by the factor and leaves no gross source on the wire

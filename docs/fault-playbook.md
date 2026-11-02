@@ -41,7 +41,7 @@ Nothing ships without verifier pass **and** operator approval. Patches are never
 | `SCHEMA_REMOVED` | A mapped key is gone and no candidate replaces it. | `nested_path_shift` if the key moved under a parent. | Yes. | **escalate** unless the evidence shows where the data went. |
 | `SCHEMA_TYPE_CHANGE` | Type changed (string ↔ number), or a value format changed (dates). | L1 `type_coerce_string_number`. | Yes for anything else, such as a new date format. | **repair** when a closed transform expresses it, else **escalate**. |
 | `ENUM_NEW_VALUE` | Status or code values outside the mapped vocabulary. | L1 `enum_extend_requires_evidence`: extends only when docs or evidence state the mapping. | Yes. | **repair** when the mapping is documented; **escalate** for a business mapping nobody stated. Never a guessed mapping. |
-| `SEMANTIC_VALUE_DRIFT` | Value baseline broke: money scale ×0.5 / ×0.25, gross ↔ net, minor ↔ major units, business-date shift. | None (meaning is never inferred by a rule). | Always. | **repair** when the evidence settles the reading; **degraded_question** for a decoy or an unsettled meaning. |
+| `SEMANTIC_VALUE_DRIFT` | Value baseline broke: money scale ×0.5 / ×0.25, gross ↔ net, minor ↔ major units, business-date shift. | None (meaning is never inferred by a rule). | Always. | **repair** for `minor_major` (the `minor_units` transform expresses the fix); **degraded_question** for `gross_net` (no factor arg in the closed set — a guessed factor is a wrong patch), for a decoy, or for an unsettled meaning. |
 | `AUTH_EXPIRED` | 401 with an expired token. | Refresh when the spec allows it (oauth2 with `token_url`). | Should not be needed (verify, see section 6). | **no_patch** (refresh) or **escalate**. |
 | `AUTH_REVOKED` | Credential permanently rejected. | None. | **Never.** | **escalate**, no patch. |
 | `CAPABILITY_REMOVED` | Endpoint or operation gone. | None. | **Never.** | **escalate**, no patch. |
@@ -87,7 +87,8 @@ the code wins and this file is stale.
 | `pagination` | offset / page / cursor / meridian body cursor | repair | L1 pagination rule. |
 | `code_list` | new codes, all mapping-determinable | repair | L1 enum rule or model. |
 | `code_list` | one code with no determinable mapping | escalate | Model asks. |
-| `semantic` | `gross_net` / `minor_major`, factor 0.5 or 0.25 | repair | Model patch from baseline-vs-faulted evidence. |
+| `semantic` | `minor_major` (dollars served as cents), factor 100 | repair | Model patch: `minor_units: true` on the money transforms (exact /100). |
+| `semantic` | `gross_net` (amounts scaled in place by 0.5 or 0.25, no gross source on the wire) | degraded_question | Model asks one question; a guessed factor is a wrong patch (no factor arg in the closed set). |
 | `semantic` | `decoy` (a tempting net field appears, gross is intact) | degraded_question | Model asks; no patch. |
 | `dates` | `cutoff` (meridian) | no_patch | The wire never serves business dates. |
 | `dates` | `cutoff` (others) | repair | Model patch (transform args). `tz_shift` is not drawn: no transform in the closed set expresses an hour/day offset. |

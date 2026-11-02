@@ -534,7 +534,17 @@ def expected_for(family: str, params: dict[str, Any], vendor: str | None = None)
     if family == "code_list":
         return "escalate" if params.get("unknown_code") else "repair"
     if family == "semantic":
-        return "degraded_question" if params.get("kind") == "decoy" else "repair"
+        # REQ-086 (owner decision): gross_net scales the served amounts in
+        # place by the factor and leaves no gross source on the wire, and
+        # the closed transform set has no factor argument ("multiply by
+        # 1/factor" is not a spec patch) — a guessed factor is a wrong
+        # patch, so the key is degraded_question (one operator question).
+        # minor_major stays repair (minor_units: true is expressible and
+        # proven by the preflight); decoy stays degraded_question.
+        kind = params.get("kind")
+        if kind in ("decoy", "gross_net"):
+            return "degraded_question"
+        return "repair"
     if family == "dates":
         if (
             vendor == "meridian"
@@ -1203,8 +1213,8 @@ def _invert_code_list(dataset: dict[str, list[dict[str, Any]]], params: dict[str
 
 def _invert_semantic(dataset: dict[str, list[dict[str, Any]]], params: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     kind = str(params["kind"])
-    if kind == "decoy":
-        raise GeneratorBug("decoy semantic is degraded_question, not repair")
+    if kind in ("decoy", "gross_net"):
+        raise GeneratorBug(f"{kind} semantic is degraded_question, not repair")
     out = copy.deepcopy(dataset)
     for key in ("reservations", "folios"):
         fixed = []
@@ -1213,11 +1223,12 @@ def _invert_semantic(dataset: dict[str, list[dict[str, Any]]], params: dict[str,
             for mkey in ("total_amount", "amount"):
                 if isinstance(rec.get(mkey), str):
                     try:
-                        if kind == "gross_net":
-                            factor = Decimal(str(params["factor"]))
-                            rec[mkey] = format(Decimal(str(rec[mkey])) / factor, ".2f")
-                        elif kind == "minor_major":
+                        if kind == "minor_major":
                             rec[mkey] = format(Decimal(str(rec[mkey])) / 100, ".2f")
+                        else:
+                            raise GeneratorBug(f"unknown semantic kind: {kind}")
+                    except GeneratorBug:
+                        raise
                     except Exception as exc:
                         raise GeneratorBug(f"semantic inverse failed: {exc}") from exc
             fixed.append(rec)

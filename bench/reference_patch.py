@@ -3,12 +3,11 @@
 For every family keyed ``repair``, the generator's reference repair —
 expressed as a JSON Patch in the closed transform/pointer vocabulary —
 must repair the instance when applied to the pre-drift spec and synced
-through the REAL ``sync_candidate`` path. Where no spec patch can
-express the repair, the key is unreachable by patch (the function
-returns ``None``): semantic scaling has no factor arg in the closed
-transform set (the key stays reachable via its accepted escalation),
-and ``dates/tz_shift`` has no hour/day offset arg (B7 removes it from
-the draw).
+through the REAL ``sync_candidate`` path. ``gross_net`` scaling has no
+factor arg in the closed transform set, so the function returns ``None``
+for it — and it is keyed ``degraded_question`` (REQ-086), so the
+preflight never asks for it. ``dates/tz_shift`` has no hour/day offset
+arg (B7 removes it from the draw).
 
 The prover is bench-side test machinery, not the engine: it may build
 from instance parameters (the generator's own reference data) and
@@ -344,10 +343,12 @@ def _semantic_patch(instance: dict[str, Any], spec: dict[str, Any]) -> list[dict
     """minor_units repair for minor<->major faults.
 
     ``gross_net`` scaling has no factor arg in the closed transform set
-    (adding one is a plan change), so it is patch-inexpressible — the
-    key stays reachable via its accepted escalation. ``minor_major``
-    (dollars served as cents) repairs by flipping the money transforms
-    to ``minor_units: true`` (exact Decimal division by 100).
+    (adding one is a plan change), so it is patch-inexpressible — and it
+    is keyed ``degraded_question`` (REQ-086: the operator decides the
+    business meaning; a guessed factor is a wrong patch), so the
+    preflight never asks for it. ``minor_major`` (dollars served as
+    cents) repairs by flipping the money transforms to
+    ``minor_units: true`` (exact Decimal division by 100).
     """
     params = dict(instance.get("params", {}))
     if str(params.get("kind", "")) != "minor_major":

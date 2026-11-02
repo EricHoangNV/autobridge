@@ -508,6 +508,9 @@ def test_frontier_max_tokens_configurable(monkeypatch: Any) -> None:
     monkeypatch.setenv("FRONTIER_MAX_TOKENS", "nope")
     with pytest.raises(ValueError):
         frontier_max_tokens()
+    monkeypatch.setenv("FRONTIER_MAX_TOKENS", "0")
+    with pytest.raises(ValueError):
+        frontier_max_tokens()
 
 
 def test_l3_call_uses_configured_cap(tmp_path: Any, monkeypatch: Any) -> None:

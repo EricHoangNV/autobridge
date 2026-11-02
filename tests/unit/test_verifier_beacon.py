@@ -104,7 +104,16 @@ def test_accepted_outcomes_semantic_ambiguity() -> None:
             assert str(inst["expected"]) in accepted
             params = dict(inst["params"])
             if str(inst["family"]) == "semantic" and str(inst["expected"]) == "repair":
+                assert params.get("kind") == "minor_major", params
                 assert accepted == {"repair", "degraded_question"}
+            elif (
+                str(inst["family"]) == "semantic"
+                and str(inst["expected"]) == "degraded_question"
+                and params.get("kind") == "gross_net"
+            ):
+                # REQ-086: gross_net is keyed degraded_question (no
+                # factor arg) — only the question passes.
+                assert accepted == {"degraded_question"}
             elif (
                 str(inst["family"]) == "semantic"
                 and str(inst["expected"]) == "degraded_question"
@@ -185,8 +194,23 @@ def test_grade_degraded_question_pass_and_fail() -> None:
 def test_grade_decoy_accepts_complete_no_patch() -> None:
     """REQ-063 item 3: the decoy leaves the connector output correct, so
     Complete with no patch passes alongside the operator question."""
-    inst = _find(lambda i: i["expected"] == "degraded_question")
+    inst = _find(lambda i: i["expected"] == "degraded_question"
+                 and i["family"] == "semantic"
+                 and dict(i["params"]).get("kind") == "decoy")
     assert grade_arm_outcome(inst, _arm("Complete", patched=False))[0]
+    assert not grade_arm_outcome(inst, _arm("Complete", patched=True))[0]
+
+
+def test_grade_gross_net_question_only() -> None:
+    """REQ-086: a gross_net instance passes on one operator question
+    (Degraded or Blocked) and never on Complete — the output is wrong,
+    and a guessed factor is a wrong patch."""
+    inst = _find(lambda i: i["expected"] == "degraded_question"
+                 and i["family"] == "semantic"
+                 and dict(i["params"]).get("kind") == "gross_net")
+    assert grade_arm_outcome(inst, _arm("Degraded", question=True))[0]
+    assert grade_arm_outcome(inst, _arm("Blocked", question=True))[0]
+    assert not grade_arm_outcome(inst, _arm("Complete", patched=False))[0]
     assert not grade_arm_outcome(inst, _arm("Complete", patched=True))[0]
 
 

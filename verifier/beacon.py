@@ -104,6 +104,10 @@ def accepted_outcomes_for(instance: dict[str, Any]) -> set[str]:
     escalation to one operator question both pass, mirroring the standing
     ``gross_to_net`` precedent (Degraded + question).
 
+    REQ-086: ``gross_net`` no longer keys ``repair`` (no factor arg in the
+    closed vocabulary), so its expected class is ``degraded_question``
+    with only that outcome accepted. The decoy branch is unchanged.
+
     REQ-063 item 3: a semantic decoy leaves the connector output correct
     (the connector ignores the decoy field), so ``Complete`` with no patch
     is also accepted alongside ``degraded_question``.
@@ -129,6 +133,17 @@ def accepted_outcomes_for(instance: dict[str, Any]) -> set[str]:
     if str(instance["family"]) == "code_list" and expected == "repair":
         return {"repair", "escalate", "degraded_question"}
     params = instance.get("params")
+    if (
+        str(instance["family"]) == "semantic"
+        and expected == "degraded_question"
+        and isinstance(params, dict)
+        and str(params.get("kind")) == "gross_net"
+    ):
+        # REQ-086: gross_net is keyed degraded_question (no factor arg in
+        # the closed vocabulary — a guessed factor is a wrong patch), so
+        # only one operator question passes. The decoy branch below is
+        # unchanged.
+        return {"degraded_question"}
     if (
         str(instance["family"]) == "semantic"
         and expected == "degraded_question"
@@ -161,6 +176,9 @@ def reference_solve(instance: dict[str, Any]) -> str:
         faultgen.inverse_canonicalize(instance, dataset)
         return "repair"
     if expected == "degraded_question":
+        if family == "semantic" and str(params.get("kind")) == "gross_net":
+            _assert_semantic_scaled(instance, dataset)
+            return "degraded_question"
         _assert_trap_present(dataset, params)
         return "degraded_question"
     if expected == "no_patch":
@@ -175,6 +193,55 @@ def reference_solve(instance: dict[str, Any]) -> str:
     # Unreachable: materialize() validates the instance first, so an
     # unknown expected class raises ValueError before we get here.
     raise GeneratorBug(f"unknown expected class: {expected}")  # pragma: no cover
+
+
+def _assert_semantic_scaled(instance: dict[str, Any], dataset: dict[str, list[dict[str, Any]]]) -> None:
+    """The gross_net factor scaling really manifests in the served shape.
+
+    REQ-086: a ``gross_net`` instance is keyed ``degraded_question`` (the
+    operator decides the business meaning), so the recoverability proof
+    must not assert a Python inverse — it proves the mutation changed
+    what the connector reads: at least one served amount equals its
+    baseline value times the factor (exact Decimal), and no other served
+    key differs from the regenerated baseline.
+    """
+    params = dict(instance.get("params", {}))
+    try:
+        factor = Decimal(str(params["factor"]))
+    except Exception as exc:
+        raise GeneratorBug(f"gross_net needs a decimal factor: {exc}") from exc
+    baseline = faultgen.beacon_dataset(seed=int(instance["dataset_seed"]))
+    manifested = 0
+    for key in ("reservations", "folios"):
+        mutated_rows = dataset.get(key, [])
+        base_rows = baseline.get(key, [])
+        if len(mutated_rows) != len(base_rows):
+            raise GeneratorBug(f"gross_net changed row count for {key}")
+        for mutated, base in zip(mutated_rows, base_rows, strict=True):
+            if not isinstance(mutated, dict) or not isinstance(base, dict):
+                raise GeneratorBug(f"gross_net changed row shape for {key}")
+            for name in set(mutated) | set(base):
+                if name in ("total_amount", "amount"):
+                    continue
+                if mutated.get(name) != base.get(name):
+                    raise GeneratorBug(f"gross_net changes served key {name!r}")
+            for mkey in ("total_amount", "amount"):
+                mval, bval = mutated.get(mkey), base.get(mkey)
+                if mval is None and bval is None:
+                    continue
+                if not isinstance(mval, str) or not isinstance(bval, str):
+                    raise GeneratorBug(f"gross_net changed shape of {mkey!r}")
+                try:
+                    if Decimal(str(mval)) == Decimal(str(bval)) * factor:
+                        manifested += 1
+                    else:
+                        raise GeneratorBug(f"gross_net amount not scaled by {factor} in {mkey!r}")
+                except GeneratorBug:
+                    raise
+                except Exception as exc:
+                    raise GeneratorBug(f"gross_net amount unparseable in {mkey!r}: {exc}") from exc
+    if manifested == 0:  # pragma: no cover - beacon datasets always carry amounts
+        raise GeneratorBug("gross_net scaling present in no served record")
 
 
 def _assert_trap_present(dataset: dict[str, list[dict[str, Any]]], params: dict[str, Any]) -> None:

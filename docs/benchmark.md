@@ -550,10 +550,15 @@ What a judge can check (all of it public):
    arms get the stored last-good baseline — the frontier arms' evidence
    shows the baseline sample next to the faulted values, clearly labelled
    baseline vs faulted, and the engine arms compare against the same
-   stored baseline the detector uses. Owner-accepted answers: code_list
-   "repair" instances accept an escalation with one question (nothing
-   reveals a random new code's meaning; a guessed mapping is a wrong
-   patch), and `transport_auth/token_expired` accepts an escalation.
+    stored baseline the detector uses. Owner-accepted answers: code_list
+    "repair" instances accept an escalation with one question (nothing
+    reveals a random new code's meaning; a guessed mapping is a wrong
+    patch), and `transport_auth/token_expired` accepts an escalation.
+    Semantic `minor_major` keys `repair` (the `minor_units` reference
+    repair is proven by the preflight); semantic `gross_net` keys
+    `degraded_question` (no factor arg in the closed transform set — the
+    operator decides the business meaning, and a guessed factor is a
+    wrong patch).
    A meridian `dates/cutoff` fault keys `no_patch`: it recomputes folio
    `business_date` values the meridian wire never serves (money and
    instants only), so the connector output is correct and there is

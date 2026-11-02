@@ -239,7 +239,8 @@ def test_reference_fias_layout_repairs_through_sync_candidate() -> None:
 
 def test_reference_gross_net_has_no_spec_patch() -> None:
     """gross_net scaling is patch-inexpressible (no factor arg, plan-level
-    vocabulary) — the key stays reachable via its accepted escalation."""
+    vocabulary) — and keyed degraded_question (REQ-086), so the
+    preflight never asks for it."""
     import simulators.common.faultgen as faultgen
     from verifier.beacon import accepted_outcomes_for, reference_solve
 
@@ -253,14 +254,15 @@ def test_reference_gross_net_has_no_spec_patch() -> None:
             ):
                 continue
             seen += 1
+            assert str(inst["expected"]) == "degraded_question"
             vendors = beacon_run.load_vendors()
             spec = beacon_run.engine_spec_for(
                 {"index": index, "vendor": str(inst["vendor"])}, vendors
             )
             assert spec is not None
             assert refpatch.reference_patch_for(inst, spec) is None
-            assert "degraded_question" in accepted_outcomes_for(inst)
-            assert reference_solve(inst) == "repair"
+            assert accepted_outcomes_for(inst) == {"degraded_question"}
+            assert reference_solve(inst) == "degraded_question"
     assert seen > 0
 
 

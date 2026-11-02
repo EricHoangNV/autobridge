@@ -103,6 +103,7 @@ def test_loader_missing_file_fails_closed(tmp_path: pathlib.Path) -> None:
         [_entry("sim-a", 0)],
         [_entry("sim-a", 8109, extra=[{"suffix": "s"}])],
         [_entry("sim-a", 8109, extra=[{"suffix": "s", "path": "relative/path"}])],
+        [{"id": "sim-a", "aliases": [], "host_admin_port": 8109, "extra_resets": "nope"}],
         ["not-a-mapping"],
     ],
 )

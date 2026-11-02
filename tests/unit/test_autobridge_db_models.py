@@ -33,6 +33,7 @@ from autobridge.control.models import (
     EvidenceRecord,
     ImmutableReleaseError,
     ModelCall,
+    ModelCallArchive,
     RepairRun,
     SyncRun,
 )
@@ -369,6 +370,14 @@ def test_model_call_ledger_decimal_money(session: Session) -> None:
     assert isinstance(row.cost_estimate, Decimal)
     with pytest.raises(ValueError, match="tier"):
         ModelCall(run_id="x", provider="p", model="m", tier="huge")
+    with pytest.raises(ValueError, match="tier"):
+        ModelCallArchive(
+            session_id="s",
+            run_id="x",
+            provider="p",
+            model="m",
+            tier="huge",
+        )
 
 
 def test_dependency_registration(session: Session) -> None:
