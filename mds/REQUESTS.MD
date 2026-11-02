@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-02 23:30): **REQ-084 then REQ-085** (REQ-066..083 done; the real beacon freeze waits for them). One REQ per iteration: finish, gate, commit, then the next. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 00:45): **REQ-086** (REQ-066..085 done; the real beacon freeze waits for it). One REQ per iteration. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-084 — Meridian nesting is unreachable by any patch (customers endpoint ignores nesting); preflight proves the drawn repairs; L3 traces kept (2026-11-02)
 Status: DONE (sbx1 2026-11-02 -- all 3 items code-done: meridian customers unwrap + derived-endpoint audit, preflight proves every drawn repair, per-instance redacted L3 traces; 12 new tests, full gates green; owner step: keyed rehearsal after REQ-085)
@@ -30,6 +30,32 @@ only; no engine change.
    rehearsal/round directory next to `grades.jsonl`. Secrets never: key names only.
 Then mark DONE after full gates pass; the owner runs the keyed rehearsal after REQ-085. Do not freeze, tag or commit
 under `experiments/beacon/`.
+
+### REQ-086 — `semantic/gross_net` is keyed `repair` but no patch in the closed vocabulary expresses it: key it as a question (2026-11-03)
+Status: OPEN
+Keyed rehearsal on `fed86554` (round 6603643) stopped at the REQ-084 preflight, as designed: "no reference patch for
+repair instance 7 (legacystay/semantic {kind: gross_net, factor: 0.25}) — unreachable by any patch". The mutation
+scales `total_amount`/`amount` in place by the factor and leaves no gross source on the wire
+(`simulators/common/faultgen.py` ~803-813); the `money` transform has `scale` (decimal places) and `minor_units`
+(exact /100) only (`src/autobridge/runtime/transforms/money.py` ~46-50), so "multiply by 1/factor" is not a spec
+patch. Multiplying money by a factor is a business meaning the operator decides; the engine's correct end state is
+one question, which is what every engine arm did on `0f079c17`. Do not add a factor argument to `money`. One root
+cause, small scope:
+1. `expected_for` (`faultgen.py` ~536-537): `semantic` with `kind == "gross_net"` is `degraded_question`;
+   `minor_major` stays `repair` (its reference repair `minor_units: true` is expressible and proven by the
+   preflight). `accepted_outcomes_for` (`verifier/beacon.py` ~98-113) for `gross_net` accepts `degraded_question`
+   only. The decoy branch is unchanged. Update the generator's recoverability proof (~1216-1218) so it no longer
+   asserts a Python inverse for `gross_net`.
+2. `bench/reference_patch.py` `_semantic_patch`: docstring and behaviour agree with item 1 (returns None for
+   `gross_net`; the preflight never asks for it because the key is no longer `repair`).
+3. Docs: `docs/fault-playbook.md` section 4 row `semantic gross_net / minor_major` splits into `minor_major` →
+   repair and `gross_net` → degraded_question (one question; a guessed factor is a wrong patch); section 2's
+   `SEMANTIC_VALUE_DRIFT` row and `docs/benchmark.md`'s family table say the same.
+4. Tests: `expected_for` and `accepted_outcomes_for` for all three semantic kinds; the preflight over a round that
+   draws a `gross_net` instance passes without a reference patch; the existing grading tests for a question on a
+   `gross_net` instance still pass.
+Then mark DONE after full gates pass; the owner runs the keyed rehearsal. Do not freeze, tag or commit under
+`experiments/beacon/`.
 
 ### REQ-085 — The engine's model can add a transform argument or repoint a join: evidence shows transforms, pointers allow it (2026-11-02)
 Status: DONE (sbx1 2026-11-02 -- L3 evidence renders transform steps + joins; add-arg and join-repoint pass the pointer gate; 5 new tests, full gates green; owner step: keyed rehearsal, then close)
