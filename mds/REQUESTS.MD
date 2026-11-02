@@ -5,7 +5,7 @@
 Owner priority (2026-11-02): **REQ-078**, then **REQ-080** (REQ-066..077 done; the real beacon freeze waits for both). Do not start REQ-051 until the owner says so.
 
 ### REQ-080 — A renamed field reaches the model as evidence; a misleading new name expects a question (2026-11-02)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-02 03:28)
 Found in the owner keyed rehearsal on `fd2c8388` (round 6603643, instances 0 and 5: atlas `rename`,
 `departure_date` -> `reservationStatus` / `checkinDate`). Atlas served `endDate: ""` plus the new key holding exactly the
 departure dates, e.g. `{"startDate": "2026-11-03", "endDate": "", "checkinDate": "2026-11-06"}`. Every engine arm
