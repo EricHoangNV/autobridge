@@ -283,6 +283,18 @@ def _assert_terminal(
                     raise GeneratorBug("unknown code has a canonical meaning")
                 return
         raise GeneratorBug("unknown code present in no served record")
+    if family == "rename":
+        # REQ-080 item 4: a rename to a misleading new name expects a
+        # question — the mutated dataset must carry the new key holding
+        # the values while the old field is gone.
+        field = str(params.get("field", ""))
+        new_name = str(params.get("new_name", ""))
+        if not field or not new_name:
+            raise GeneratorBug("escalate rename needs field + new_name")
+        for rec in dataset.get("reservations", []) + dataset.get("folios", []):
+            if new_name in rec and field not in rec:
+                return
+        raise GeneratorBug("escalate rename trigger present in no served record")
     raise GeneratorBug(f"no escalation trigger for family: {family}")
 
 
