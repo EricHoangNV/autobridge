@@ -5,7 +5,7 @@
 Owner priority (2026-11-03 03:40): **REQ-087** (REQ-066..086 done; the real beacon freeze waits for it). One REQ per iteration. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-087 — The dry-run gate judges checks without the spec's declared zone and refuses correct date repairs (2026-11-03)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-02 20:01)
 Keyed rehearsal on `27a6858e` (round 6603643, preflight ok for 5 vendors), instance 1, harbor `dates`
 `{mode: format, date_format: "%m-%d-%Y"}`, expected repair: all three engine arms' L3 proposed `input_format:
 "%m-%d-%Y"` on the three date transforms (the same effect as the generator's reference patch), the dry-run gate
