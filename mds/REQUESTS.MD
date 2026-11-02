@@ -32,7 +32,7 @@ Then mark DONE after full gates pass; the owner runs the keyed rehearsal after R
 under `experiments/beacon/`.
 
 ### REQ-086 — `semantic/gross_net` is keyed `repair` but no patch in the closed vocabulary expresses it: key it as a question (2026-11-03)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-02 17:39)
 Keyed rehearsal on `fed86554` (round 6603643) stopped at the REQ-084 preflight, as designed: "no reference patch for
 repair instance 7 (legacystay/semantic {kind: gross_net, factor: 0.25}) — unreachable by any patch". The mutation
 scales `total_amount`/`amount` in place by the factor and leaves no gross source on the wire
