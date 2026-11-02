@@ -881,23 +881,23 @@ def run_engine_arm(
         # diagnostics; without it the L3 prompt renders "(none recorded)".
         _summary = getattr(diag, "faulted_summary", None)
         _summary_dict = _summary if isinstance(_summary, dict) else None
-        _prepared: dict[str, Any] = {"evidence": None, "stages": None}
-        try:
-            from autobridge.repair.controller import prepare_climb_inputs as _prepare_climb_inputs  # noqa: PLC0415
+        # Production does not swallow prepare_climb_inputs errors
+        # (detect_repair.py calls it unguarded); neither may the bench —
+        # a failure here must grade as this arm's error (outer handler),
+        # never silently re-mask the L3 evidence as "(none recorded)".
+        from autobridge.repair.controller import prepare_climb_inputs as _prepare_climb_inputs  # noqa: PLC0415
 
-            _prepared = _prepare_climb_inputs(
-                spec=case.spec,
-                signals=list(diag.signals or ()),
-                summary=_summary_dict,
-                sync_run_id=run_id,
-                drift_class=diag.drift_class,
-                # REQ-083 C14: the stored baseline the engine holds — the
-                # L3 rename evidence pairs vanished keys' last-good values
-                # with new keys' values.
-                baseline=getattr(diag, "baseline_summary", None),
-            ) or {"evidence": None, "stages": None}
-        except Exception:
-            _prepared = {"evidence": None, "stages": None}
+        _prepared: dict[str, Any] = _prepare_climb_inputs(
+            spec=case.spec,
+            signals=list(diag.signals or ()),
+            summary=_summary_dict,
+            sync_run_id=run_id,
+            drift_class=diag.drift_class,
+            # REQ-083 C14: the stored baseline the engine holds — the
+            # L3 rename evidence pairs vanished keys' last-good values
+            # with new keys' values.
+            baseline=getattr(diag, "baseline_summary", None),
+        ) or {"evidence": None, "stages": None}
         _dry_fault: dict[str, Any] | None = None
         try:
             from autobridge.repair.dryrun import build_dry_run_fault as _build_dry_run_fault  # noqa: PLC0415

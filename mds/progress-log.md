@@ -4352,3 +4352,26 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). `semantic/gross_ne
 
 **Notes for next iteration:**
 - Owner step: keyed rehearsal on this commit (round 6603643), then close. Do not freeze/tag/commit under `experiments/beacon/`.
+
+## [Daily Directives Audit — b773926b..b8cf15c8 (REQ-079…REQ-087)]
+**Date:** 2026-11-02
+**Ref:** DIRECTIVES §§1–8 daily audit; plan §1 standing rules
+
+**What was done:**
+- Audited 40 commits (REQ-079 hermeticity fix, REQ-080 vocabulary-free rename gate, REQ-081, REQ-083 harness self-test/judging/scoring, REQ-084, REQ-085, REQ-086, REQ-087) commit-by-commit against every DIRECTIVES section and plan §1; findings in `mds/AUDIT.md`.
+- Fixed in-audit: bench engine arm no longer swallows `prepare_climb_inputs` errors into empty L3 evidence (grades as arm error, matching production); added fault-playbook trust-boundary guard test.
+- Verified: REQ-079 flake closed (full `make test` twice, zero teardown errors), closed transform set (date `input_format` allow-list only, no money `factor`), vocabulary-free L1 rename, beacon preflight/judging/warm-key/token honesty, redacted L3 traces, shared `spec_static_tz` dry-run gate, heldout/beacon untouched, import contracts KEPT.
+
+**Key decisions:**
+- The bench prepare-error swallow was the prior audit's NOTED item; with REQ-083's honest-scoring regime it became a §8 divergence worth the small fix rather than a new REQ.
+- No new REQ filed: remaining items are owner keyed/live VERIFY steps already tracked; thin coverage margins noted in AUDIT.md.
+
+**Files changed:**
+- `bench/ablation.py` — `prepare_climb_inputs` called unguarded (outer handler grades the error)
+- `tests/unit/test_autobridge_bench_ablation.py` — `test_engine_prepare_failure_grades_as_arm_error`
+- `tests/unit/test_autobridge_trust_boundaries.py` — `test_engine_never_references_fault_playbook`
+- `mds/AUDIT.md` — this audit; `mds/progress-state.md` — refreshed
+
+**Notes for next iteration:**
+- Agent: opencode meta/muse-wonder-1.0 (escalation)
+- Owner keyed rehearsal closes REQ-078/080/081/083–087; live smoke/e2e not runnable in this sandbox (no stack up), reported not faked.

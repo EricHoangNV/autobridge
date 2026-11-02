@@ -2,13 +2,13 @@
 
 ## Current State
 
-REQ-087 code-done in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation)): dry-run gate judges under the spec's declared zone (shared spec_static_tz helper; old-check + patched passes forward context_tz); 4 new tests. Owner keyed rehearsal next.
+Daily directives audit of `b773926b..b8cf15c8` (REQ-079…REQ-087) done in sbx1 (Agent: opencode meta/muse-wonder-1.0 (escalation)): PASS with 2 in-audit fixes (bench prepare-error swallow removed, fault-playbook guard test added); no new REQ. Detail in `mds/AUDIT.md`.
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
   - REQ-001…REQ-087 all code-DONE except owner keyed/live VERIFY remainders below; REQ-051 DEFERRED by owner; REQ-082 DEFERRED until after the hackathon
   - Phase 2 (P2.S1.1…P2.S7.1) complete
-- Tests: full make test green (autobridge 90.02%, verifier 90.60%, simulators 90.07%, UI 350); lint/typecheck green; e2e not run in sandbox (no live stack; in-process coverage instead).
+- Tests: full make test green twice (autobridge 3230 @90.02%, verifier 144 @90.60%, simulators 434 @90.07%, UI 350); lint/typecheck/ui-typecheck/openapi-check green; smoke unit leg green, live leg + e2e not runnable in sandbox (no stack up).
 - Stack: down (no live stack in this sandbox by default).
 
 ## Next tasks

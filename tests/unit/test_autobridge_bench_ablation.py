@@ -214,6 +214,26 @@ def test_engine_no_signal_non_complete_still_climbs() -> None:
     assert res.spec is not None and res.spec["decision"] == "escalate"
 
 
+def test_engine_prepare_failure_grades_as_arm_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A prepare_climb_inputs failure must not silently mask L3 evidence.
+
+    Production calls it unguarded; the bench arm grades it as its own
+    error (ran=False), never as an escalation with empty evidence.
+    """
+    import autobridge.repair.controller as controller
+
+    def _boom(**_kwargs: Any) -> None:
+        raise RuntimeError("prepare exploded")
+
+    monkeypatch.setattr(controller, "prepare_climb_inputs", _boom)
+    cfg = HarnessConfig()
+    inputs = make_trial_inputs(cfg, "page_to_cursor", 0)
+    case = ablation_case_for_scenario("page_to_cursor")
+    res = run_engine_arm(inputs, case, ablation="autobridge_cold", provider=FakeProvider())
+    assert not res.ran
+    assert res.error is not None and "prepare exploded" in res.error
+
+
 def test_engine_escalation_carries_ladder_question() -> None:
     """REQ-063 item 2: the engine's L4 escalation carries the question the
     ladder wrote (open question first, else the escalation bundle)."""

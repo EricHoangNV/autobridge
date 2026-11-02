@@ -95,6 +95,18 @@ def test_simulators_never_imports_engine() -> None:
     assert not bad, f"simulators import autobridge: {bad}"
 
 
+def test_engine_never_references_fault_playbook() -> None:
+    """docs/fault-playbook.md is a test/review reference; the engine never reads it."""
+    hits: list[str] = []
+    for path in sorted(ENGINE_ROOT.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        if "fault-playbook" in text or "fault_playbook" in text:
+            hits.append(str(path.relative_to(REPO_ROOT)))
+    assert not hits, f"engine references the fault playbook: {hits}"
+
+
 def test_engine_never_references_legacystay() -> None:
     """REQ-019 item 5: LegacyStay stays unseen — no vendor-specific tuning.
 
