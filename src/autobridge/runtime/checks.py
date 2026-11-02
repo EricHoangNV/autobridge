@@ -24,6 +24,36 @@ from typing import Any
 from autobridge.runtime.transforms.base import _parse_iso_date_string, _parse_iso_datetime
 
 
+def spec_static_tz(spec: Any) -> str | None:
+    """Static zone declared by the spec's ``timezone_source`` (REQ-083 A1, REQ-087).
+
+    The engine's own date transforms derive under this zone; offering it
+    to the business-date invariant lets a dataset served uniformly in the
+    declared zone verify cleanly. ``None`` when the spec uses a
+    per-record field source or declares nothing (legacy map still applies
+    in the check).
+
+    Lives next to :func:`evaluate_entity_checks` so both the sync
+    (``engine/sync_run.py``) and the dry-run (``repair/dryrun.py``) share
+    one helper without a ``repair`` → ``engine`` import.
+    """
+    source = getattr(spec, "source", None) if not isinstance(spec, dict) else spec.get("source")
+    if source is None:
+        return None
+    tz_src = (
+        getattr(source, "timezone_source", None)
+        if not isinstance(source, dict)
+        else (source or {}).get("timezone_source")
+    )
+    if tz_src is None:
+        return None
+    kind = getattr(tz_src, "kind", None) if not isinstance(tz_src, dict) else tz_src.get("kind")
+    if kind != "static":
+        return None
+    value = getattr(tz_src, "value", None) if not isinstance(tz_src, dict) else tz_src.get("value")
+    return str(value) if isinstance(value, str) and value else None
+
+
 def _parse_date_value(value: Any) -> datetime.date | None:
     """Parse YYYY-MM-DD string or date object to date."""
     if value is None:

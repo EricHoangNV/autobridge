@@ -22,7 +22,7 @@ from typing import Any
 from autobridge.control.models import SyncRun, utcnow
 from autobridge.drift import fingerprint as _fp
 from autobridge.runtime.checkpoint import compute_checkpoint_for_operation
-from autobridge.runtime.checks import evaluate_entity_checks
+from autobridge.runtime.checks import evaluate_entity_checks, spec_static_tz
 from autobridge.runtime.http import RetryDeadlineExceeded
 from autobridge.runtime.interpreter import Interpreter, OperationResult
 from autobridge.runtime.mapping import map_records_to_entities
@@ -38,21 +38,11 @@ DEFAULT_SYNC_MAX_TOTAL_DELAY_S = 300.0
 def _spec_static_tz(spec: Any) -> str | None:
     """Static zone declared by the spec's ``timezone_source`` (REQ-083 A1).
 
-    The engine's own date transforms derive under this zone; offering it
-    to the business-date invariant lets a dataset served uniformly in the
-    declared zone verify cleanly. ``None`` when the spec uses a
-    per-record field source or declares nothing (legacy map still applies
-    in the check).
+    Thin wrapper over :func:`autobridge.runtime.checks.spec_static_tz`
+    (REQ-087: one shared helper for the sync and the dry-run). Kept for
+    backwards compatibility with existing imports.
     """
-    source = getattr(spec, "source", None) if not isinstance(spec, dict) else spec.get("source")
-    tz_src = getattr(source, "timezone_source", None) if not isinstance(source, dict) else (source or {}).get("timezone_source")
-    if tz_src is None:
-        return None
-    kind = getattr(tz_src, "kind", None) if not isinstance(tz_src, dict) else tz_src.get("kind")
-    if kind != "static":
-        return None
-    value = getattr(tz_src, "value", None) if not isinstance(tz_src, dict) else tz_src.get("value")
-    return str(value) if isinstance(value, str) and value else None
+    return spec_static_tz(spec)
 
 
 def _vocabulary_number(value: Any) -> int | None:

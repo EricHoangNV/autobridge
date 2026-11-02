@@ -443,6 +443,7 @@ def _evaluate_checks_on_records(
     records: list[dict[str, Any]],
     checks: list[dict[str, Any]],
     raw_first: dict[str, Any] | None,
+    context_tz: str | None = None,
 ) -> list[str]:
     """Unmet check kinds for one entity's checks on the break's records.
 
@@ -451,6 +452,11 @@ def _evaluate_checks_on_records(
     Best-effort like the sync's own evaluation: a checker error or an
     unresolvable compare is skipped here, never raised — the guards in
     :func:`dry_run_proposal` judge the patch's own pointers.
+
+    ``context_tz`` is the spec's static declared zone (REQ-087): the
+    same zone the sync judges under, so the old-check pass and the
+    patched-spec pass agree with the sync instead of falling back to
+    the legacy per-property map and UTC only.
     """
     from autobridge.runtime.checks import evaluate_entity_checks, looks_like_money_sum  # noqa: PLC0415
     from autobridge.runtime.interpreter import extract_jsonpath  # noqa: PLC0415
@@ -476,6 +482,7 @@ def _evaluate_checks_on_records(
             checks,
             expected_count=compare_value if isinstance(compare_value, int) else None,
             compare_to_value=compare_value,
+            context_tz=context_tz,
         )
     except Exception:
         return []
@@ -533,6 +540,9 @@ def _entities_failing_old_checks(
     old_entities = spec.get("entities") if isinstance(spec, dict) else {}
     if not isinstance(old_entities, dict):
         return failed
+    from autobridge.runtime.checks import spec_static_tz  # noqa: PLC0415
+
+    old_tz = spec_static_tz(spec)
     for entity in sorted(old_entities):
         old_ent = old_entities.get(entity)
         old_checks = old_ent.get("checks") if isinstance(old_ent, dict) else []
@@ -544,7 +554,7 @@ def _entities_failing_old_checks(
         raw_first = raw_first_pages.get(op_name) if isinstance(op_name, str) else None
         if not isinstance(raw_first, dict):
             raw_first = None
-        if _evaluate_checks_on_records(entity, records, old_checks, raw_first):
+        if _evaluate_checks_on_records(entity, records, old_checks, raw_first, old_tz):
             failed.add(entity)
     return failed
 
@@ -613,6 +623,14 @@ def dry_run_proposal(
     # Every still-failing check across the gate is named (REQ-069 item 1:
     # the retry gets the exact error — which checks still fail), so the
     # judgement collects them all instead of stopping at the first.
+    # REQ-087: judge under the spec's static declared zone, as the sync
+    # does (the patched spec's zone when it declares one, else the
+    # pre-drift spec's) — never the legacy map + UTC only.
+    from autobridge.runtime.checks import spec_static_tz as _spec_tz  # noqa: PLC0415
+
+    patched_tz = _spec_tz(patched)
+    if patched_tz is None:
+        patched_tz = _spec_tz(spec)
     still_failing: list[str] = []
     for entity in sorted(gate):
         new_ent = new_entities.get(entity)
@@ -699,6 +717,7 @@ def dry_run_proposal(
             records,
             new_checks,
             raw_first if isinstance(raw_first, dict) else None,
+            patched_tz,
         )
         for kind in unmet:
             desc = _check_desc(entity, new_checks, kind)
