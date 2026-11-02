@@ -755,7 +755,7 @@ def test_sanity_flags_silent_repair_and_spares_observed_wire(monkeypatch: pytest
     import bench.faults as _faults
 
     silent = {"index": 0, "vendor": "atlas", "family": "rename",
-              "params": {"entity": "reservation", "field": "guest_name", "new_name": "zzQ"}}
+              "params": {"entity": "reservation", "field": "guest_name", "new_name": "guestFullName"}}
     summary = {"outcome": "Complete", "unmet_criteria": [], "operation_results": {},
                "canonical_records": {"Reservation": [{"reservation_id": "R1"}]}}
     monkeypatch.setattr(_faults, "beacon_sync_pair", lambda **_: (dict(summary), dict(summary)))

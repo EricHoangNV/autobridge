@@ -385,6 +385,22 @@ def to_wire_reservation(rec: dict[str, Any], scenario_id: str = "baseline") -> d
     }
     if scenario_id == "meridian_state_renamed" and "State" in wire:
         wire["Status"] = wire.pop("State")
+    # REQ-080 item 1: a renamed field vanishes from the wire. Derived keys
+    # whose source record field is gone are dropped, never served as null
+    # placeholders while the new key (in extras) holds the values.
+    # Present-but-unparseable values still null the derived field and ride
+    # the wire verbatim as extras (REQ-078 item 8 — the dates family).
+    if "status" not in rec:
+        wire.pop("State", None)
+        wire.pop("Status", None)
+    if "arrival_date" not in rec:
+        for _drop in ("CreatedUtc", "ScheduledStartUtc", "ActualStartUtc"):
+            wire.pop(_drop, None)
+    if "departure_date" not in rec:
+        for _drop in ("ScheduledEndUtc", "ActualEndUtc"):
+            wire.pop(_drop, None)
+    if "updated_at" not in rec:
+        wire.pop("UpdatedUtc", None)
     extras = _wire_extras(rec, _RESERVATION_CONSUMED)
     # A present-but-non-ISO date was consumed above and nulled: surface the
     # raw value so the format change is observable on the wire.
@@ -450,16 +466,22 @@ def to_wire_order_item(rec: dict[str, Any]) -> dict[str, Any]:
         "Id": rec.get("charge_id"),
         "AccountId": account_id_for(str(rec.get("reservation_id"))),
         "ServiceId": service_id_for(str(rec.get("property_id"))),
-        "Name": description if description else "Room charge",
-        "UnitCount": 1,
-        "UnitAmount": {
+    }
+    # REQ-080 item 1: a renamed field vanishes from the wire (never a
+    # backfilled default while the new key holds the values). Baseline
+    # order is preserved: Name, UnitCount, UnitAmount, PostedUtc.
+    if "description" in rec:
+        wire["Name"] = description if description else "Room charge"
+    wire["UnitCount"] = 1
+    if "amount" in rec:
+        wire["UnitAmount"] = {
             "Currency": currency,
             "NetValue": net,
             "GrossValue": gross,
             "TaxValues": [{"Code": "VAT10", "Value": tax}],
-        },
-        "PostedUtc": _utc_z(posted) if posted is not None else None,
-    }
+        }
+    if "posted_at" in rec:
+        wire["PostedUtc"] = _utc_z(posted) if posted is not None else None
     extras = _wire_extras(rec, _FOLIO_CONSUMED)
     raw_posted = rec.get("posted_at")
     if isinstance(raw_posted, str) and "posted_at" not in extras and posted is None:
@@ -537,15 +559,22 @@ def customers_get_all(body: dict[str, Any]) -> Response:
     for r in dataset.get("reservations", []):
         account = account_id_for(str(r.get("reservation_id")))
         updated = _parse_iso_dt(r.get("updated_at"))
-        # A renamed-away guest_name stays absent: the customer row keeps its
-        # Id (accounts exist) but carries null names. An unparseable
-        # updated_at nulls UpdatedUtc instead of crashing (REQ-078 item 8).
-        wires.append(to_wire_customer(account, r.get("guest_name"), _utc_z(updated) if updated is not None else None))  # type: ignore[arg-type]
+        wire = to_wire_customer(account, r.get("guest_name"), _utc_z(updated) if updated is not None else None)  # type: ignore[arg-type]
+        # REQ-080 item 1: a renamed field vanishes from the wire — the
+        # customer row's derived names/instant drop when the source record
+        # no longer carries the field. Baseline nulls (field present but
+        # None) keep today's null keys.
+        if "guest_name" not in r:
+            for _drop in ("FirstName", "LastName", "Email"):
+                wire.pop(_drop, None)
+        if "updated_at" not in r:
+            wire.pop("UpdatedUtc", None)
+        wires.append(wire)
     if customer_ids is not None:
         wires = [w for w in wires if str(w["Id"]) in set(customer_ids)]
     if interval is not None:
         start, end = interval
-        wires = [w for w in wires if start <= str(w["UpdatedUtc"]) <= end]
+        wires = [w for w in wires if start <= str(w.get("UpdatedUtc")) <= end]
     page, out_cursor = _paginate_by_cursor(wires, count, cursor)
     return _json_response({"Customers": page, _cursor_leaf(scenario_id): out_cursor})
 
@@ -572,7 +601,7 @@ def order_items_get_all(body: dict[str, Any]) -> Response:
         wires = [w for w in wires if str(w["Id"]) in set(order_item_ids)]
     if interval is not None:
         start, end = interval
-        wires = [w for w in wires if start <= str(w["PostedUtc"]) <= end]
+        wires = [w for w in wires if start <= str(w.get("UpdatedUtc")) <= end]
     page, out_cursor = _paginate_by_cursor(wires, count, cursor)
     return _json_response({"OrderItems": page, _cursor_leaf(scenario_id): out_cursor})
 

@@ -437,6 +437,52 @@ def _families_for(vendor: str) -> tuple[str, ...]:
     return HTTP_FAMILIES
 
 
+def _normalize_rename_name(name: str) -> str:
+    """Lowercase alphanumeric fold for rename-plausibility comparison."""
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+#: Field-name vocabulary for renames (REQ-080 item 4): normalized fresh
+#: names that plausibly denote each renameable canonical field. A rename
+#: to a name in the field's own group keeps ``repair`` as the expected
+#: answer; a rename to a name that plausibly denotes a *different* field
+#: (e.g. a departure date landing in ``checkinDate``) is misleading — the
+#: vendor may have changed semantics, not just the label — so the
+#: expected answer is an escalation (one operator question), never a
+#: patch. Keyed by canonical record field; ``total_amount`` and
+#: ``amount`` share one money group.
+RENAME_PLAUSIBLE: dict[str, frozenset[str]] = {
+    "guest_name": frozenset({
+        "guestname", "primaryoccupant", "guestfullname", "visitorname",
+        "occupantname", "bookername",
+    }),
+    "status": frozenset({
+        "status", "reservationstatus", "bookingstate", "staystatus",
+        "foliostate",
+    }),
+    "total_amount": frozenset({
+        "totalamount", "amount", "grandtotal", "totalnet", "chargetotal",
+        "amountgross", "nettotal",
+    }),
+    "amount": frozenset({
+        "totalamount", "amount", "grandtotal", "totalnet", "chargetotal",
+        "amountgross", "nettotal",
+    }),
+    "arrival_date": frozenset({"arrivaldate", "checkindate", "arrivalday"}),
+    "departure_date": frozenset({"departuredate", "checkoutdate", "departureday"}),
+    "business_date": frozenset({"businessdate", "postingdate", "businessday"}),
+    "updated_at": frozenset({"updatedat", "lastmodified", "recordupdatedat"}),
+    "description": frozenset({
+        "description", "chargememo", "linedescription", "narrative",
+        "memotext",
+    }),
+    "posted_at": frozenset({
+        "postedat", "postedinstant", "transactiontime", "createdinstant",
+        "valuetimestamp",
+    }),
+}
+
+
 def expected_for(family: str, params: dict[str, Any], vendor: str | None = None) -> str:
     """Correct outcome class for a family + parameters (answer-key rule).
 
@@ -446,8 +492,16 @@ def expected_for(family: str, params: dict[str, Any], vendor: str | None = None)
     output is correct and ``no_patch`` is the answer (REQ-078 item 8).
     Every other vendor serves business dates, so cutoff stays ``repair``.
     """
-    if family in ("rename", "nesting", "pagination"):
+    if family in ("nesting", "pagination"):
         return "repair"
+    if family == "rename":
+        # REQ-080 item 4 (owner decision): a rename to a misleading new
+        # name — one that plausibly denotes a different field — expects a
+        # question, not a repair; a patch there is not credited.
+        field = str(params.get("field", ""))
+        new_name = _normalize_rename_name(params.get("new_name", ""))
+        plausible = RENAME_PLAUSIBLE.get(field, frozenset())
+        return "repair" if new_name in plausible else "escalate"
     if family == "code_list":
         return "escalate" if params.get("unknown_code") else "repair"
     if family == "semantic":

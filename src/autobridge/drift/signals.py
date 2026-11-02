@@ -661,6 +661,15 @@ def _observe_wire_schema(
     maps) emits nothing. Added wire keys come with truncated sample values
     so rules can propose the new path deterministically.
 
+    REQ-080 item 2: a covered key that is present but empty in every
+    record, alongside genuinely new keys, is the same rename shape as a
+    missing key (the old key stays with a blank value while the vendor
+    serves the replacement). Without this the detector stays silent and
+    the model never sees the new key. The dark keys are reported as the
+    missing set with a message naming the shape; the guard (novel keys
+    present, dark across >= ``_EMPTIED_MIN_ROWS`` rows) keeps healthy
+    baselines silent.
+
     When the entity carries a build-probe ``observed_wire_keys`` annotation,
     coverage is scoped to mappings the vendor actually served at build time
     (phantom mappings never fire), and perennial unmapped keys the probe saw
@@ -693,7 +702,29 @@ def _observe_wire_schema(
         for rec in wire_records[_WIRE_ADDED_SAMPLE_RECORDS:]:
             wire_keys.update(k for k in rec if isinstance(k, str))
         missing = sorted(k for k in effective_covered if k not in wire_keys)
-        if not missing:
+        dark: list[str] = []
+        if not missing and len(wire_records) >= _EMPTIED_MIN_ROWS:
+            # Present-but-empty across the sync (same dark thresholds as
+            # mapped_field_emptied) with genuinely new keys alongside.
+            total = len(wire_records)
+            novel_probe = wire_keys - covered if observed is None else wire_keys - covered - observed
+            if novel_probe:
+                for key in sorted(effective_covered):
+                    present = sum(
+                        1
+                        for rec in wire_records
+                        if isinstance(rec, dict) and key in rec
+                    )
+                    if present / total < _EMPTIED_PRESENT_RATE:
+                        continue
+                    empty = sum(
+                        1
+                        for rec in wire_records
+                        if isinstance(rec, dict) and _wire_value_empty(rec.get(key))
+                    )
+                    if empty / total >= _EMPTIED_EMPTY_RATE:
+                        dark.append(key)
+        if not missing and not dark:
             continue
         novel = wire_keys - covered if observed is None else wire_keys - covered - observed
         added: list[dict[str, Any]] = []
@@ -717,12 +748,17 @@ def _observe_wire_schema(
                 entity=entity,
                 severity="medium",
                 message=(
-                    f"Wire no longer carries {missing} for {entity}; "
+                    f"Wire no longer carries {missing or dark} for {entity}; "
                     f"new keys: {[a['key'] for a in added]}"
+                    + (
+                        " (old key present but empty in every record)"
+                        if dark
+                        else ""
+                    )
                 ),
                 details={
                     "entity": entity,
-                    "missing": missing,
+                    "missing": missing or dark,
                     "added": added,
                     "wire_evidence": "records",
                     **({"observed_wire_keys": sorted(observed)} if observed is not None else {}),

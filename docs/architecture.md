@@ -275,7 +275,10 @@ provenance in `classification.details["wire_evidence"]` (signal kind,
 operation, source `raw_pages` vs `records`). L1 rules read the evidence from
 `ctx.signals` (`repair/rules/wire.py`); a response leaf and a request param
 are different names, so `cursor_param` is never taken from the wire.
-Ambiguous evidence (several added keys) stays unclaimed: no guessing, the
+A rename to a name that plausibly denotes a *different* field is
+ambiguous even single↔single (REQ-080): `rename_field` declines it and
+the drift climbs to the model, whose evidence carries the new wire keys
+and a redacted raw vendor-record sample. Ambiguous evidence (several added keys) stays unclaimed: no guessing, the
 drift falls back to the previous classification and escalates.
 
 ### 4.2 Sync detects and repairs inline (REQ-027 sub-step 3, plan §2.5)

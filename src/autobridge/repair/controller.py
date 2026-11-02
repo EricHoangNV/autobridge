@@ -1080,10 +1080,30 @@ def build_generic_l3_evidence(
         pass
 
     # Faulted-records sample: first two canonical rows of a touched entity.
+    # Touched entities come from the signal details first (the delta is
+    # not always carried on this path): a reservation rename must sample
+    # reservation rows, not the alphabetically-first entity's rows.
     sample_rows: list[dict[str, Any]] = []
+    touched: list[str] = []
+    try:
+        for _sig in signals or []:
+            _d = (
+                _sig.get("details")
+                if isinstance(_sig, dict)
+                else getattr(_sig, "details", None)
+            )
+            if (
+                isinstance(_d, dict)
+                and isinstance(_d.get("entity"), str)
+                and _d["entity"] in (entities or {})
+                and _d["entity"] not in touched
+            ):
+                touched.append(_d["entity"])
+    except Exception:
+        touched = []
     try:
         canonical = summary.get("canonical_records") or {}
-        for name in (changed_entities or sorted(canonical)[:2]):
+        for name in (touched or changed_entities or sorted(canonical)[:2]):
             rows = canonical.get(name)
             if isinstance(rows, list) and rows:
                 for rec in rows[:2]:
@@ -1111,6 +1131,85 @@ def build_generic_l3_evidence(
             {k: str(v)[:200] for k, v in a.items() if k in ("level", "rule_id", "action", "reason")}
             for a in failed_attempts[-4:]
         ]
+    # REQ-080 item 3: the model's evidence shows the raw vendor records,
+    # so unmapped wire keys reach the L3 prompt (the canonical sample
+    # above never carries them). New wire keys come from the detector's
+    # keys_changed added entries (with samples) and mapped_field_emptied
+    # added candidates (samples looked up on the faulted wire below); the
+    # raw vendor-record sample is redacted the same way as the semantic
+    # path (names stay, secrets by shape only). Whether to patch or ask
+    # stays the model's decision.
+    new_wire_keys: list[dict[str, Any]] = []
+    try:
+        from autobridge.repair import semantic as _semantic  # noqa: PLC0415
+
+        _seen_keys: set[str] = set()
+        for _sig in signals or []:
+            _details = (
+                _sig.get("details")
+                if isinstance(_sig, dict)
+                else getattr(_sig, "details", None)
+            )
+            if not isinstance(_details, dict):
+                continue
+            for _entry in _details.get("added") or []:
+                if (
+                    isinstance(_entry, dict)
+                    and isinstance(_entry.get("key"), str)
+                    and str(_entry["key"]) not in _seen_keys
+                ):
+                    _seen_keys.add(str(_entry["key"]))
+                    new_wire_keys.append(
+                        {
+                            "key": str(_entry["key"]),
+                            "sample": _entry.get("sample"),
+                            "type": str(_entry.get("type") or "unknown"),
+                        }
+                    )
+            for _name in _details.get("added_candidates") or []:
+                if isinstance(_name, str) and _name and _name not in _seen_keys:
+                    _seen_keys.add(_name)
+                    new_wire_keys.append({"key": _name, "sample": None, "type": "unknown"})
+        _entity = next((e for e in (changed_entities or []) if e in entities), None)
+        if _entity is None and isinstance(entities, dict) and entities:
+            _entity = sorted(entities)[0]
+        _money: set[str] = (
+            set(_semantic.money_fields_of_spec(spec).values())
+            if isinstance(spec, dict)
+            else set()
+        )
+        # One vendor row per touched entity (up to two): a reservation
+        # rename must show a reservation wire row, not only the
+        # alphabetically-first operation's rows.
+        _vendor_entities: list[str] = []
+        for _e in (touched or changed_entities or []):
+            if _e in (entities or {}) and _e not in _vendor_entities:
+                _vendor_entities.append(_e)
+            if len(_vendor_entities) >= 2:
+                break
+        if not _vendor_entities and _entity is not None:
+            _vendor_entities = [_entity]
+        _vendor_rows: list[dict[str, Any]] = []
+        for _e in _vendor_entities:
+            _vendor_rows.extend(
+                _semantic.raw_records_of_summary(
+                    summary, money_fields=_money, limit=1, entity=_e, spec=spec
+                )
+            )
+        if _vendor_rows:
+            _by_key: dict[str, Any] = {}
+            for _row in _vendor_rows:
+                if isinstance(_row, dict):
+                    for _k, _v in _row.items():
+                        if _k not in _by_key and _v is not None:
+                            _by_key[_k] = _v
+            for _entry in new_wire_keys:
+                if _entry.get("sample") is None and _entry["key"] in _by_key:
+                    _entry["sample"] = _by_key[_entry["key"]]
+                    _entry["type"] = type(_by_key[_entry["key"]]).__name__
+        sample_rows.extend(_vendor_rows)
+    except Exception:
+        new_wire_keys = []
     return {
         "patch_target": {
             "document": "connector spec",
@@ -1119,8 +1218,9 @@ def build_generic_l3_evidence(
             "allowed_pointers": sorted(set(allowed))[:80],
         },
         "spec_subtree": subtree,
-        "raw_records": sample_rows[:4],
+        "raw_records": sample_rows[:6],
         "observed": observed,
+        "new_wire_keys": new_wire_keys,
     }
 
 

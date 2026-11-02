@@ -258,17 +258,27 @@ def to_wire_reservation(rec: dict[str, Any]) -> dict[str, Any]:
     item: dict[str, Any] = {
         "propertyID": rec.get("property_id"),
         "reservationID": rec.get("reservation_id"),
-        "dateCreated": f"{arrival} 12:00:00" if arrival else "",
-        "dateModified": date_modified,
-        "status": wire_status,
-        "guestID": guest_id_for(str(rec.get("reservation_id", ""))),
-        "startDate": arrival,
-        "endDate": str(rec.get("departure_date", "")),
-        "adults": adults,
-        "children": children,
-        "balance": _Decimal(str(rec.get("total_amount", "0"))),
-        "sourceName": "Direct",
     }
+    # REQ-080 item 1: a renamed field vanishes from the wire. Each key
+    # derived from a renameable record field is emitted only when the
+    # record still carries that field — never as an empty placeholder
+    # while the new key holds the values.
+    if "arrival_date" in rec:
+        item["dateCreated"] = f"{arrival} 12:00:00" if arrival else ""
+    if "updated_at" in rec:
+        item["dateModified"] = date_modified
+    if "status" in rec:
+        item["status"] = wire_status
+    item["guestID"] = guest_id_for(str(rec.get("reservation_id", "")))
+    if "arrival_date" in rec:
+        item["startDate"] = arrival
+    if "departure_date" in rec:
+        item["endDate"] = str(rec.get("departure_date", ""))
+    item["adults"] = adults
+    item["children"] = children
+    if "total_amount" in rec:
+        item["balance"] = _Decimal(str(rec.get("total_amount", "0")))
+    item["sourceName"] = "Direct"
     # guestName only when the record actually carries guest_name: a renamed
     # field must vanish from the wire, not show up as null.
     if "guest_name" in rec:
@@ -289,12 +299,12 @@ def to_wire_reservation(rec: dict[str, Any]) -> dict[str, Any]:
 def to_wire_reservation_detail(rec: dict[str, Any]) -> dict[str, Any]:
     """Internal reservation -> getReservation detail object."""
     item = to_wire_reservation(rec)
-    total = _Decimal(str(rec.get("total_amount", "0")))
+    total = _Decimal(str(rec.get("total_amount", "0"))) if "total_amount" in rec else None
     guest_name = str(item.get("guestName") or "")
     first, _, last = guest_name.partition(" ")
-    return {
+    detail: dict[str, Any] = {
         "propertyID": item["propertyID"],
-        "guestName": item["guestName"],
+        "reservationID": item["reservationID"],
         "guestEmail": f"{str(item['reservationID']).lower().replace('_', '-')}@example.com" if guest_name else None,
         "guestList": {
             str(item["guestID"]): {
@@ -304,28 +314,33 @@ def to_wire_reservation_detail(rec: dict[str, Any]) -> dict[str, Any]:
                 "isMainGuest": True,
             }
         },
-        "reservationID": item["reservationID"],
-        "dateCreated": item["dateCreated"],
-        "dateModified": item["dateModified"],
-        "status": item["status"],
-        "total": total,
-        "balance": total,
-        "startDate": item["startDate"],
-        "endDate": item["endDate"],
         "sourceName": "Direct",
     }
+    # Mirror the list shape (REQ-080 item 1): renameable-derived keys ride
+    # only when the list item carries them; the old key never reappears
+    # here as an empty placeholder.
+    for key in ("guestName", "dateCreated", "dateModified", "status", "startDate", "endDate", "balance"):
+        if key in item:
+            detail[key] = item[key]
+    if total is not None:
+        detail["total"] = total
+    return detail
 
 
 def to_wire_guest(rec: dict[str, Any]) -> dict[str, Any]:
     """Internal reservation -> getGuest object (primary guest)."""
-    guest_name = str(rec.get("guest_name") or "") if "guest_name" in rec else ""
-    first, _, last = guest_name.partition(" ")
-    rid = str(rec.get("reservation_id", ""))
-    return {
-        "firstName": first,
-        "lastName": last,
-        "email": f"{rid.lower().replace('_', '-')}@example.com" if guest_name else None,
-    }
+    guest: dict[str, Any] = {}
+    # REQ-080 item 1: a renamed-away guest_name vanishes from the wire.
+    if "guest_name" in rec:
+        guest_name = str(rec.get("guest_name") or "")
+        first, _, last = guest_name.partition(" ")
+        rid = str(rec.get("reservation_id", ""))
+        guest = {
+            "firstName": first,
+            "lastName": last,
+            "email": f"{rid.lower().replace('_', '-')}@example.com" if guest_name else None,
+        }
+    return guest
 
 
 def to_wire_property(prop: dict[str, Any]) -> dict[str, Any]:
@@ -347,23 +362,32 @@ def to_wire_transaction(rec: dict[str, Any]) -> dict[str, Any]:
 
     REQ-078 item 8: a beacon-renamed folio key (e.g. ``business_date`` or
     ``amount``) rides the wire under its camelCase name via
-    ``_extra_wire_fields`` — the old key keeps its blank/default value so
-    the rename is observable, and the new key is served so the ladder can
-    pair by value.
+    ``_extra_wire_fields`` so the ladder can pair by value. REQ-080
+    item 1: the old key vanishes (emitted only when the record still
+    carries the field) — a real vendor rename removes the old key.
     """
     posted = rec.get("posted_at")
-    business_date = str(rec.get("business_date", ""))
-    wire = {
+    # REQ-080 item 1: a renamed field vanishes from the wire. Each key
+    # derived from a renameable record field is emitted only when the
+    # record still carries that field — the old key never stays with a
+    # blank/default value while the new key holds the values (the
+    # REQ-078 item-8 comment claiming otherwise is superseded).
+    wire: dict[str, Any] = {
         "transactionID": rec.get("charge_id"),
         "propertyID": rec.get("property_id"),
         "reservationID": rec.get("reservation_id"),
-        "amount": _Decimal(str(rec.get("amount", "0"))),
-        "currency": rec.get("currency"),
-        "businessDate": business_date,
-        "serviceDate": business_date,
-        "transactionDateTime": ny_naive(str(posted)) if posted else "",
-        "description": rec.get("description"),
     }
+    if "amount" in rec:
+        wire["amount"] = _Decimal(str(rec.get("amount", "0")))
+    wire["currency"] = rec.get("currency")
+    if "business_date" in rec:
+        business_date = str(rec.get("business_date", ""))
+        wire["businessDate"] = business_date
+        wire["serviceDate"] = business_date
+    if "posted_at" in rec:
+        wire["transactionDateTime"] = ny_naive(str(posted)) if posted else ""
+    if "description" in rec:
+        wire["description"] = rec.get("description")
     wire.update(
         _extra_wire_fields(
             rec,

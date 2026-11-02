@@ -542,7 +542,11 @@ def test_check_instance_rejects_malformed() -> None:
     bad_outcome = dict(inst, expected="splendid")
     with pytest.raises(ValueError):
         faultgen._check_instance(bad_outcome)
-    mismatch = dict(inst, expected="escalate")
+    # REQ-080 item 4: the key is decided at generation time — flip the
+    # expected to a different valid outcome and the instance is rejected.
+    right = faultgen.expected_for(str(inst["family"]), dict(inst["params"]), str(inst.get("vendor")))
+    wrong = "escalate" if right == "repair" else "repair"
+    mismatch = dict(inst, expected=wrong)
     with pytest.raises(ValueError):
         faultgen._check_instance(mismatch)
     with pytest.raises(ValueError):
@@ -630,7 +634,12 @@ def test_inverse_defensive_branches() -> None:
                                  {"entity": "reservation", "parents": ["p"]})
     with pytest.raises(faultgen.GeneratorBug):
         faultgen.inverse_canonicalize(
-            {"vendor": "atlas", "family": "rename", "index": 0, "params": {},
+            # REQ-080 item 4: plausible rename params (key: repair) over a
+            # dataset without the new key — inversion cannot reproduce the
+            # baseline, a generator bug (not a ValueError: the instance
+            # itself is valid).
+            {"vendor": "atlas", "family": "rename", "index": 0,
+             "params": {"entity": "reservation", "field": "guest_name", "new_name": "guestFullName"},
              "seed_hex": "ab" * 32, "dataset_seed": 1, "expected": "repair"},
             {"reservations": [], "folios": [], "properties": [{"property_id": "x"}]},
         )

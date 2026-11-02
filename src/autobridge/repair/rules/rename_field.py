@@ -23,29 +23,99 @@ VERIFICATION_LEVEL = "visible"
 PRODUCES_PATCH = True
 
 
-def _rename_info(ctx: RepairContext) -> tuple[str, str, str] | None:
-    """Resolve (entity, old_field, new_field) from delta, extra or wire."""
+def _normalize_rename_name(name: Any) -> str:
+    """Lowercase alphanumeric fold for rename-plausibility comparison."""
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+#: Canonical-field name vocabulary (REQ-080): normalized wire/record
+#: names that plausibly denote each renameable canonical field. A
+#: detector-inferred pairing to a name that plausibly denotes a
+#: *different* field is ambiguous — the vendor may have changed semantics,
+#: not just the label — so the rule declines and the drift climbs to the
+#: model, which sees the new keys and raw records and decides (patch or
+#: one question). Names in no group (vendor-specific labels the
+#: vocabulary never saw) still pair at L1, as before.
+RENAME_PLAUSIBLE_NEW_NAMES: dict[str, frozenset[str]] = {
+    "guest_name": frozenset({
+        "guestname", "primaryoccupant", "guestfullname", "visitorname",
+        "occupantname", "bookername",
+    }),
+    "status": frozenset({
+        "status", "reservationstatus", "bookingstate", "staystatus",
+        "foliostate",
+    }),
+    "total_amount": frozenset({
+        "totalamount", "amount", "grandtotal", "totalnet", "chargetotal",
+        "amountgross", "nettotal",
+    }),
+    "amount": frozenset({
+        "totalamount", "amount", "grandtotal", "totalnet", "chargetotal",
+        "amountgross", "nettotal",
+    }),
+    "arrival_date": frozenset({"arrivaldate", "checkindate", "arrivalday"}),
+    "departure_date": frozenset({"departuredate", "checkoutdate", "departureday"}),
+    "business_date": frozenset({"businessdate", "postingdate", "businessday"}),
+    "updated_at": frozenset({"updatedat", "lastmodified", "recordupdatedat"}),
+    "description": frozenset({
+        "description", "chargememo", "linedescription", "narrative",
+        "memotext",
+    }),
+    "posted_at": frozenset({
+        "postedat", "postedinstant", "transactiontime", "createdinstant",
+        "valuetimestamp",
+    }),
+}
+
+
+def _names_different_field(canonical_old: str, new_field: Any) -> bool:
+    """Whether the new wire key plausibly denotes a different field.
+
+    True when the normalized new name sits in the vocabulary group of a
+    canonical field other than the resolved old one (e.g. a departure
+    date landing in ``checkinDate``). Names the vocabulary never saw
+    return False — the value-pairing stands as before.
+    """
+    norm = _normalize_rename_name(new_field)
+    own = RENAME_PLAUSIBLE_NEW_NAMES.get(canonical_old, frozenset())
+    if norm in own:
+        return False
+    return any(norm in group for group in RENAME_PLAUSIBLE_NEW_NAMES.values())
+
+
+def _rename_info(ctx: RepairContext) -> tuple[str, str, str, str] | None:
+    """Resolve (entity, old_field, new_field, source) from delta, extra or wire.
+
+    *source* is ``"delta"`` (fingerprint rename), ``"extra"`` (an explicit
+    caller-supplied rename, e.g. a vendor-announced layout change) or
+    ``"wire"`` (detector value-pairing from keys_changed /
+    mapped_field_emptied). The REQ-080 plausibility gate applies to
+    inferred pairings (delta, wire), never to an explicit caller
+    statement.
+    """
     info = _delta_rename_info(ctx.fingerprint_delta)
-    if info is None:
-        info = _extra_rename_info(ctx)
-    if info is None:
-        # Wire evidence (REQ-027): single missing + single added wire key
-        # observed on the raw records by the detector.
-        hint = wire_rename_hint(ctx.signals)
-        if hint is not None:
-            entity, old_field, new_field = hint
+    if info is not None:
+        return (*info, "delta")
+    info = _extra_rename_info(ctx)
+    if info is not None:
+        return (*info, "extra")
+    # Wire evidence (REQ-027): single missing + single added wire key
+    # observed on the raw records by the detector.
+    hint = wire_rename_hint(ctx.signals)
+    if hint is not None:
+        entity, old_field, new_field = hint
+        if entity is None:
+            # Infer from spec (canonical name or wire path top key).
+            for ent_name in ctx.spec.get("entities", {}):
+                if not isinstance(ent_name, str):
+                    continue
+                if _canonical_field_for(ctx, ent_name, old_field) is not None:
+                    entity = ent_name
+                    break
             if entity is None:
-                # Infer from spec (canonical name or wire path top key).
-                for ent_name in ctx.spec.get("entities", {}):
-                    if not isinstance(ent_name, str):
-                        continue
-                    if _canonical_field_for(ctx, ent_name, old_field) is not None:
-                        entity = ent_name
-                        break
-                if entity is None:
-                    entity = next(iter(ctx.spec.get("entities", {})), "Reservation")
-            info = (entity, old_field, new_field)
-    return info
+                entity = next(iter(ctx.spec.get("entities", {})), "Reservation")
+        return (entity, old_field, new_field, "wire")
+    return None
 
 
 def _path_top_key(path: Any) -> str | None:
@@ -238,12 +308,19 @@ def precondition(ctx: RepairContext) -> bool:
     info = _rename_info(ctx)
     if info is None:
         return False
-    entity, old_field, new_field = info
+    entity, old_field, new_field, source = info
     # Spec must contain the old field mapping (so we can patch its path).
     # The reference may be canonical (hand-built) or a wire key (live
     # detector evidence); resolve once and use the canonical name below.
     canonical_old = _canonical_field_for(ctx, entity, old_field)
     if canonical_old is None or not _spec_field_paths(ctx, entity, canonical_old):
+        return False
+    # REQ-080: an inferred pairing to a name that plausibly denotes a
+    # different field is ambiguous (misleading rename) — decline so the
+    # drift climbs to the model, which sees the new keys and raw records
+    # and asks one operator question instead of guessing. Explicit caller
+    # statements (extra) are exempt: the caller named the rename.
+    if source in ("delta", "wire") and _names_different_field(canonical_old, new_field):
         return False
     # REQ-078 item 4: an added object that contains the missing keys is a
     # path move, not a rename — refuse so nested_path_shift (or the model
@@ -267,7 +344,7 @@ def generate_patch(ctx: RepairContext) -> list[dict[str, Any]]:
     info = _rename_info(ctx)
     if info is None:
         return []
-    entity, old_field, new_field = info
+    entity, old_field, new_field, _source = info
     canonical_old = _canonical_field_for(ctx, entity, old_field)
     if canonical_old is None:
         return []

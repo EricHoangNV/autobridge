@@ -668,11 +668,21 @@ everyday knowledge: renames, nesting, pagination switches, code lists,
 semantic scaling, date shifts, transport/auth, FIAS layout/link); what
 could not be known are the *instances* (family + parameters per seed).
 
-Serving guarantee (REQ-078 item 8): every beacon record-shape mutation
-is served on the vendor wire, never a 500. Meridian parses dates
-strict-ISO: an unparseable date nulls the derived UTC fields and rides
-the wire verbatim as an extra, as do renamed keys and nesting parent
-wrappers; Atlas folio renames ride the transaction wire under their
-camelCase name while the old key keeps its blank/default value. The
-item-4 detection sweep covers these instances: none whose records
-differ from the baseline may end `Complete` with 0 signals.
+Serving guarantee (REQ-078 item 8, REQ-080 item 1): every beacon
+record-shape mutation is served on the vendor wire, never a 500.
+Meridian parses dates strict-ISO: an unparseable date nulls the derived
+UTC fields and rides the wire verbatim as an extra, as do nesting
+parent wrappers. A renamed field vanishes from the wire — every
+vendor serializer emits the old key only when the record still carries
+the field — and only the new key is served (Atlas folio renames ride
+the transaction wire under their camelCase name). The item-4 detection
+sweep covers these instances: none whose records differ from the
+baseline may end `Complete` with 0 signals.
+
+Answer key (REQ-080 item 4): a rename to a name that plausibly denotes
+the same field expects a `repair`; a rename to a misleading new name
+(one that plausibly denotes a *different* field) expects an escalation
+with one operator question — a guessed patch there is not credited.
+The L1 `rename_field` rule pairs only unambiguous renames and declines
+misleading ones, so they climb to the model, whose evidence carries the
+new wire keys and a redacted raw vendor-record sample.
