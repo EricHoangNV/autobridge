@@ -211,6 +211,24 @@ packages, images, Docker networks; the engine never imports or reads the other t
 deterministic first; success is a typed outcome, not a 200; coverage ≥ 90% per
 package; every service has `/healthz` + `/readyz`; secrets only as `credential_ref`.
 
+## Models
+
+AutoBridge uses Meta Muse models in two separate roles.
+
+**Inside the product.** The repair ladder's L2/L3 steps and every benchmark arm call
+Meta's Muse Model API (`https://api.meta.ai/v1`, OpenAI-compatible). The model is set by
+`FRONTIER_MODEL` (default `muse-spark-1.3`; `muse-spark-1.3-contributor` and
+`muse-wonder-1.0` are the other ids in `src/autobridge/config.py`); L2 uses `SMALL_MODEL`,
+which defaults to the same model. The beacon benchmark pins `muse-spark-1.3-contributor`
+for all arms. Without `FRONTIER_API_KEY` the engine makes no model call: it replays a
+recording or records the skip. No weights are bundled; nothing runs locally.
+
+**Writing the code.** The autonomous loop (`ralph-afk.sh`) ran OpenCode on Muse Spark Open
+(open weights, served on Baseten as `muse-spark-open-1026` and on Modal as
+`Muse-Spark-Open-816B-A42B`), on Muse Spark 1.3 through the Meta API, and on Muse Wonder 1.0
+for review loops. Each commit's `Co-Authored-By` trailer names the model that wrote it:
+`git log --format='%(trailers:key=Co-Authored-By,valueonly)' | sort | uniq -c` gives the counts.
+
 ## Layout
 
 ```
