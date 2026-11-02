@@ -4319,3 +4319,6 @@ Claimed REQ-081, implemented all 7 items, 12 new tests in test_autobridge_req081
 
 ## 2026-11-02 — REQ-084 DONE (sbx1; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
 Meridian nesting is reachable by patch again (customers unwrap + audit of every derived endpoint), the preflight now proves every drawn `repair` instance through the real candidate sync + judge (fails loudly), and each arm's redacted model request/response lands under `<round>/traces/`. Full gates green (autobridge 3216 @90.03%, verifier 139 @90.35%, simulators 433 @90.18%, UI 350; lint/typecheck green; e2e skipped — no live stack, in-process coverage instead). Owner step: keyed rehearsal after REQ-085 lands.
+
+## 2026-11-02 — REQ-085 DONE (sbx1; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Engine L3 evidence now shows each field's transform steps (name + args) next to its path(s) plus the entity joins; the pointer gate allows add-arg/replace-arg (`/transform/i/args[/<arg>]`, declared args only) and join repoint members. Whole-transform replace stays allowed; unlisted paths still rejected. 5 new unit tests, full gates green (make test all green incl. UI 350; lint/typecheck green; e2e skipped — no live stack). Owner step: keyed rehearsal, then close REQ-085 (and the REQ-078/080/081/083/084 VERIFY batch with it).
