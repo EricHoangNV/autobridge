@@ -5,7 +5,7 @@
 Owner priority (2026-11-03 19:12): **REQ-095 only** (the live-key product path has no automated test; REQ-066..093 done; the beacon run is done and published, round 6608718, tag `eval-freeze-6608718`). Touch only what REQ-095's items name; never touch `experiments/beacon/`. REQ-094 (beacon harness gaps), REQ-092 (AR-7-11, AR-7-12) and REQ-090 (AR-7-3..8) are DEFERRED until after the hackathon: do not start them. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-095 — The live-key product path has no automated test: deferred repair jobs failed to serialise Decimal evidence and no gate noticed (2026-11-03)
-Status: OPEN (owner 2026-11-03 19:12; the payload bug itself was hot-fixed on the host the same evening — the job parcel is made JSON-safe in `_submit_deferred_model_repair`)
+Status: IN_PROGRESS (sbx1 since 2026-11-03 12:14)
 Found while recording the demo on a freshly restarted host stack with `FRONTIER_API_KEY` set: every sync detected
 the Atlas pagination drift, then failed to queue the deferred repair job with `Object of type Decimal is not JSON
 serializable` (jobs table, JSON payload), so the drift stayed open with no repair. Since REQ-078 every repairable
