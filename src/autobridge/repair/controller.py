@@ -2483,12 +2483,42 @@ def _run_repair_climb(
             on_rung=on_rung,
             existing_repair_run_id=running_row_id,
         )
+    # The background climb ends exactly the way the inline sync climb does:
+    # dry-run gate on the break's records, then the candidate release and
+    # verifier report. Without this a deferred proposal (an L0 known fix or
+    # an L1 rule, which the live-key path now defers too, REQ-078) never got
+    # a candidate release or a verifier report — the repair page waited for
+    # a report forever and Approve had nothing to ship.
+    candidate_release_id: str | None = None
+    gate_error: str | None = None
+    _job_connector = payload.get("connector_id")
+    _job_release = payload.get("release_id")
+    if (
+        result.decision == "propose"
+        and result.candidate_patch
+        and result.repair_run_id
+        and _job_connector
+        and _job_release
+    ):
+        from autobridge.engine.detect_repair import finish_climb  # noqa: PLC0415
+
+        result, candidate_release_id, gate_error = finish_climb(
+            ctx.session,
+            spec_dict=spec,
+            result=result,
+            connector_id=str(_job_connector),
+            release_id=str(_job_release),
+            fault=payload.get("dry_run_fault") or None,
+            verifier_url=_job_verifier_url,
+        )
     # Build job result
     out: dict[str, Any] = {
         "decision": result.decision,
         "ladder_level_reached": result.ladder_level_reached,
         "rule_id": result.rule_id,
         "backoff_only": result.backoff_only,
+        "candidate_release_id": candidate_release_id,
+        "gate_error": gate_error,
     }
     if result.candidate_patch is not None:
         out["candidate_patch"] = result.candidate_patch

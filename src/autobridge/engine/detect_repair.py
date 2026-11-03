@@ -542,6 +542,46 @@ def _finalize_proposal(
         return None, f"{type(exc).__name__}: {exc}"[:500]
 
 
+def finish_climb(
+    session: Any,
+    *,
+    spec_dict: dict[str, Any],
+    result: Any,
+    connector_id: str,
+    release_id: str,
+    summary: dict[str, Any] | None = None,
+    fault: dict[str, Any] | None = None,
+    verifier_url: str | None = None,
+) -> tuple[Any, str | None, str | None]:
+    """The steps every climb runs after the ladder decides, wherever it ran.
+
+    Dry-run gate on the break's records (REQ-053 item 6), then the
+    candidate release and verifier report (REQ-030). The inline sync path
+    and the background repair job (REQ-042/REQ-078) both call this, so a
+    proposal reaches Approve the same way whether the climb ran in the
+    request or in the drain. Returns ``(result, candidate_release_id,
+    gate_error)``.
+    """
+    result, dry_error = _gate_proposal_on_fault_records(
+        session,
+        spec_dict=spec_dict,
+        summary=summary,
+        result=result,
+        fault=fault,
+    )
+    candidate_release_id, gate_error = _finalize_proposal(
+        session,
+        connector_id=connector_id,
+        release_id=release_id,
+        repair_run_id=result.repair_run_id,
+        result=result,
+        verifier_url=verifier_url,
+    )
+    if gate_error is None and dry_error is not None:
+        gate_error = dry_error
+    return result, candidate_release_id, gate_error
+
+
 def detect_and_repair_after_sync(
     session: Any,
     *,
@@ -597,22 +637,15 @@ def detect_and_repair_after_sync(
     )
     # REQ-053 item 6: judge a deterministic proposal on the break's
     # records before offering it — a failing patch never reaches Approve.
-    result, dry_error = _gate_proposal_on_fault_records(
+    result, candidate_release_id, gate_error = finish_climb(
         session,
         spec_dict=spec_dict,
-        summary=summary,
         result=result,
-    )
-    candidate_release_id, gate_error = _finalize_proposal(
-        session,
         connector_id=connector_id,
         release_id=release_id,
-        repair_run_id=result.repair_run_id,
-        result=result,
+        summary=summary,
         verifier_url=verifier_url,
     )
-    if gate_error is None and dry_error is not None:
-        gate_error = dry_error
     out: dict[str, Any] = {
         "drift_found": True,
         "outcome": opened["outcome"],
@@ -1070,8 +1103,12 @@ def _gate_proposal_on_fault_records(
     spec_dict: dict[str, Any],
     summary: dict[str, Any] | None,
     result: Any,
+    fault: dict[str, Any] | None = None,
 ) -> tuple[Any, str | None]:
     """Dry-run a deterministic proposal on the faulted records (REQ-053 item 6).
+
+    *fault* is the prebuilt dry-run parcel when the caller has no sync
+    summary (the background repair job carries the parcel the sync built).
 
     The semantic climb judges model proposals inside the ladder; the
     deterministic path proposes here, so the same judgement runs at the
@@ -1095,7 +1132,8 @@ def _gate_proposal_on_fault_records(
     )
 
     try:
-        fault = build_dry_run_fault(summary if isinstance(summary, dict) else None)
+        if fault is None:
+            fault = build_dry_run_fault(summary if isinstance(summary, dict) else None)
         ok, detail = dry_run_proposal(spec_dict, list(result.candidate_patch), fault)
         notes = field_notes_for_proposal(spec_dict, list(result.candidate_patch), fault)
     except Exception as exc:  # noqa: BLE001 — judgement failure is row data

@@ -1413,7 +1413,14 @@ def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         calls, "drift PAGINATION_CHANGE", drift_row.get("drift_class") == "PAGINATION_CHANGE",
         f"latest drift row: {drift_row}",
     )
-    repair_row = _live_latest_repair(base_url, connector_id, calls)
+    # With a live key the repair runs in the background drain (REQ-042/
+    # REQ-078), exactly as the UI sees it: wait for this drift's repair to
+    # reach a decision instead of reading whatever row exists right now.
+    repair_row = (
+        _poll_live_repair_for_drift(base_url, connector_id, str(drift_row["id"]), calls)
+        if drift_row.get("id")
+        else _live_latest_repair(base_url, connector_id, calls)
+    )
     _raw_usage = repair_row.get("model_usage")
     usage: dict[str, Any] = _raw_usage if isinstance(_raw_usage, dict) else {}
     _assert_live(
@@ -1451,7 +1458,12 @@ def _step3_live(seed: int, base_url: str, calls: list[dict[str, Any]]) -> dict[s
         )
         calls.append(_control_call(base_url, "POST", "/demo/inject-fault", {"target": "sim-atlas", "scenario_id": "page_to_cursor", "seed": seed}))
         _step_live_sync_terminal(base_url, connector_id, calls)
-        again_row = _live_latest_repair(base_url, connector_id, calls)
+        again_drift = _live_latest_drift(base_url, connector_id, calls)
+        again_row = (
+            _poll_live_repair_for_drift(base_url, connector_id, str(again_drift["id"]), calls)
+            if again_drift.get("id")
+            else _live_latest_repair(base_url, connector_id, calls)
+        )
         _raw_again_usage = again_row.get("model_usage")
         again_usage: dict[str, Any] = _raw_again_usage if isinstance(_raw_again_usage, dict) else {}
         _assert_live(
