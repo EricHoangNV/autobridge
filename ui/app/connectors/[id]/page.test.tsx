@@ -286,6 +286,33 @@ describe("ConnectorDetailPage", () => {
     expect(screen.queryByText(/No repair proposed yet/)).not.toBeInTheDocument();
   });
 
+  it("shows a running repair on open drift instead of 'No repair proposed yet'", () => {
+    const withDrift = { ...mockDetail, open_drift: [{ id: "drift-1", drift_class: "SEMANTIC_VALUE_DRIFT" }] };
+    const climbing = {
+      id: "repair-run-1",
+      drift_event_ids: ["drift-1"],
+      decision: "climbing",
+      approval: null,
+      ladder_level_reached: 0,
+      ladder_trace: [{ level: 0 }, { level: 1 }, { level: 2 }, { level: 3, model: "muse", call_started_at: new Date().toISOString() }],
+      rule_id: null,
+      model_usage: { frontier_tokens: 0, calls: 0 },
+      created_at: new Date().toISOString(),
+    };
+    mockedUseSWR.mockImplementation(((key: string | null) => ({
+      data:
+        key === "/connectors/conn-abc-123" ? withDrift : key === "/repairs" ? [climbing] : key?.endsWith("/sync-runs") ? mockSyncRuns : undefined,
+      error: undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+    })) as never);
+
+    render(<ConnectorDetailPage params={{ id: "conn-abc-123" }} />);
+    expect(screen.getByTestId("connector-running-repair")).toHaveTextContent(/Repair repair-r is running\. Working at L3/);
+    expect(screen.getByRole("link", { name: /Watch repair/ })).toHaveAttribute("href", "/repairs/repair-run-1");
+    expect(screen.queryByText(/No repair proposed yet/)).not.toBeInTheDocument();
+  });
+
   it("does not fetch /connectors/ (the list) before a Promise params resolves", () => {
     // Production passes params as a Promise: until it resolves the id is "",
     // and `/connectors/` answers with the connector list, which crashed the page.

@@ -14,7 +14,7 @@ import { SyncRunsTable } from "@/components/SyncRunsTable";
 import { DependencyList } from "@/components/DependencyList";
 import { ConnectorStateBadge } from "@/components/ConnectorStateBadge";
 import { PabxPanel } from "@/components/PabxPanel";
-import { frontierTokensOf, waitingRepairs } from "@/components/ConnectorsTable";
+import { climbingRepairs, currentRungOfTrace, frontierTokensOf, waitingRepairs } from "@/components/ConnectorsTable";
 import type {
   ConnectorDetail,
   ReleaseOut,
@@ -240,6 +240,18 @@ export default function ConnectorDetailPage({ params }: PageProps) {
     .filter((r) => r.decision === "escalate" && !r.approval)
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   const waitingRepair = waiting[0] ?? escalated[0] ?? null;
+  // A repair still climbing on open drift (REQ-043): with a live key the
+  // climb runs in the background drain and can wait on the model for a
+  // minute, so the banner must say it is running — never "No repair
+  // proposed yet" while one is in progress.
+  const runningRepair = climbingRepairs(myRepairs)[0] ?? null;
+  // Same rung rule as the Connectors list row (REQ-043).
+  const runningLevel = runningRepair
+    ? Math.max(
+        currentRungOfTrace(runningRepair.ladder_trace as Array<Record<string, unknown>>),
+        runningRepair.ladder_level_reached ?? 0,
+      )
+    : 0;
 
   // Sync-run id → open drift (+ its repair) for the fingerprint change notes.
   const repairByDriftId = new Map<string, string>();
@@ -341,6 +353,16 @@ export default function ConnectorDetailPage({ params }: PageProps) {
           </p>
           <Link className="btn" href={`/repairs/${encodeURIComponent(waitingRepair.id)}`}>
             Review repair {waitingRepair.id.slice(0, 8)}
+          </Link>
+        </div>
+      ) : runningRepair ? (
+        <div className="wait" data-testid="connector-running-repair">
+          <p>
+            <b>Repair {runningRepair.id.slice(0, 8)} is running.</b> Working at L{runningLevel} — the
+            proposal or question appears here when the climb decides.
+          </p>
+          <Link className="btn" href={`/repairs/${encodeURIComponent(runningRepair.id)}`}>
+            Watch repair {runningRepair.id.slice(0, 8)}
           </Link>
         </div>
       ) : openDrift.length ? (
