@@ -5,7 +5,7 @@
 Owner priority (2026-11-03 12:05): **REQ-091** (Architecture Review cycle 7 pre-freeze re-verification, AR-7-9 Critical; REQ-066..089 done; the real beacon freeze waits for this one). One REQ per iteration. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-091 — AR-7-9: the `frontier_agent` arm can still write inside its sandbox, and the harness reloads that sandbox and the operator's global OpenCode config as host code (2026-11-03)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-03 05:00)
 Architecture Review cycle 7 pre-freeze re-verification (`mds/FEEDBACKS.MD`, commit 2df99922, AR-7-9, Critical):
 REQ-088 denies `bash`/`webfetch`/`websearch`/`task`/`skill`/`lsp`/`external_directory`, but
 `AGENT_PERMISSION_CONFIG` (`bench/baseline_coding_agent.py` ~225-237) still allows `edit` and sets no `"*": "deny"`
