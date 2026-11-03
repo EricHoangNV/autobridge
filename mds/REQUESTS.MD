@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 13:30): **no open REQ** — the code is frozen for the final beacon run (Architecture Review cycle 7 re-verification at 3cb73fb3: PASS, READY to freeze; REQ-066..091 done). Do not change engine, bench, verifier or simulator code until the owner reopens work. REQ-092 (AR-7-11, AR-7-12) is DEFERRED until after the hackathon: do not start it. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 14:20): **REQ-093 only** (the first beacon freeze, round 6608587, was refused by the harness preflight before any scored instance: reference-patch pointer bug; REQ-066..092 done). Touch nothing outside REQ-093's items; the owner re-freezes right after it lands. REQ-092 (AR-7-11, AR-7-12) is DEFERRED until after the hackathon: do not start it. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-091 — AR-7-9: the `frontier_agent` arm can still write inside its sandbox, and the harness reloads that sandbox and the operator's global OpenCode config as host code (2026-11-03)
 Status: DONE (sbx1 2026-11-03 -- all 6 items code-done: default-deny permission config, pristine per-run CLI home, re-prompt in a fresh sandbox copy, preflight proofs, updated + 2 new tests, benchmark docs; full gates green; owner step: keyed rehearsal, then close)
@@ -43,6 +43,25 @@ loaded), small scope; the ablation `frontier_agent` arm shares the driver and is
 Then mark DONE after full gates pass; the owner runs the keyed rehearsal and checks the `frontier_agent` arm still
 answers. Do not freeze, tag or commit under `experiments/beacon/`.
 Resolution: default-deny `AGENT_PERMISSION_CONFIG` (`"*": "deny"`, only read/glob/grep allowed, edit denied — single source of truth for the sandbox `opencode.json` and `OPENCODE_PERMISSION`); child env pins `HOME` + the four `XDG_*` base dirs to a fresh empty per-run CLI home (no open `OPENCODE_*`/`XDG_*` pass-through; only explicit names in `agent_child_env_allowed_names`, provider keys still cross); every CLI invocation runs under the pristine home and the no-text re-prompt runs in a freshly written copy of the original sandbox files (same home, so `--session` continues); session rows resolve from the pristine home first; `claude`/`codex` drivers get the same pristine home; preflight asserts the permission file and the env; `docs/benchmark.md` states the new confinement.
+
+
+### REQ-093 — Reference patch writes an invalid pointer for a FIAS wire id with `#`, so the beacon preflight refused round 6608587 (2026-11-03)
+Status: OPEN
+The real beacon run for round 6608587 (freeze bcfe7224, tag `eval-freeze-6608587`) stopped in the harness self-test
+(REQ-083 A) before the first scored instance: instance 9 (fias-pabx/fias_layout, renamed `DA` → `R#`) got a reference
+patch whose rewritten pointer was `$.R#`, which `check_jsonpath` rejects (`#` is legal only in bracket form, as the
+live spec's own `$['P#']` shows). Cause: `_with_wire_id` in `bench/reference_patch.py` (~557-562) keeps the old
+pointer's shape instead of choosing the shape the new id needs. Every rehearsal round drew identifier-only names, so
+this never surfaced. Nothing was measured; the round is now public, so the owner re-freezes a new round once this
+lands. One root cause, three items:
+1. `_with_wire_id` returns `$['<id>']` whenever the new id is not a plain identifier (`[A-Za-z_][A-Za-z0-9_]*`) and
+   `$.<id>` otherwise, regardless of the old pointer's shape; `_wire_id` keeps round-tripping both forms.
+2. Test in `tests/unit/test_autobridge_beacon_reference_patch_req083.py`: a `fias_layout` instance renaming `DA` to
+   `R#` (and one renaming to a plain id) yields pointers that pass `check_jsonpath`, and the patched spec validates.
+3. Remove `experiments/beacon/6608587/protocol.md` from the tree (the tag keeps it in history; the protocol resolver
+   tolerates one unrun protocol only) and add one sentence to `docs/benchmark.md` "Beacon evaluation": round 6608587
+   was frozen, refused by preflight on this bug before any scored instance, and re-frozen under a new round.
+Then mark DONE after full gates pass. Do not freeze, tag or run the beacon; the owner does that.
 
 
 ### REQ-092 — Architecture Review cycle 7 re-verification (37b6dab6), non-blocking findings AR-7-11 and AR-7-12 (2026-11-03)
