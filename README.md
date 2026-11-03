@@ -11,9 +11,10 @@ ends `Complete | Degraded | Blocked` with the unmet criterion named.
 ## Quickstart (clean machine: Docker + `uv` + Node 22/`npm` for the UI)
 
 ```bash
+git clone https://github.com/EricHoangNV/autobridge.git && cd autobridge
 cp .env.example .env        # demo defaults run as-is; add FRONTIER_API_KEY for live L2/L3 (.env is git-ignored)
 make ui-deps                # one-time UI install (`cd ui && npm ci`; also auto-run by `make test`/`make e2e-ui`)
-make edge-sign               # pin the edge command bundle (required once you set EDGE_RELEASE_SECRET; harmless otherwise)
+make edge-sign              # pin the edge command bundle (required once you set EDGE_RELEASE_SECRET; harmless otherwise)
 make up                     # build images, start the stack, wait for every /readyz
 make smoke                  # healthz/readyz + trust-boundary network probes
 make test                   # unit, ≥90% coverage per Python package
@@ -23,6 +24,12 @@ make bench                  # dev ablation + learning curve; scorecard from the 
 make demo                   # eight demo steps through the control API (plan §6)
 make down                   # docker compose down -v
 ```
+
+No API key is needed to run the stack, the tests or the demo: without
+`FRONTIER_API_KEY` the model rungs record a labelled skip. For live L2/L3
+calls, put a Meta Muse Model API key in `FRONTIER_API_KEY` (the base URL
+and model default to `https://api.meta.ai/v1` and `muse-spark-1.3`).
+The first `make up` builds every image and takes a few minutes.
 
 With the stack up, each simulated vendor has its own documentation site, rendered live from the files
 AutoBridge reads in `simulators/docs/`:
@@ -52,8 +59,9 @@ stack runs as local processes on the same host ports (control 8101 …
 UI 8107):
 
 ```bash
+git clone https://github.com/EricHoangNV/autobridge.git && cd autobridge
 cp .env.example .env        # demo defaults run as-is; add FRONTIER_API_KEY for live L2/L3 (.env is git-ignored)
-make edge-sign               # pin the edge command bundle (required once you set EDGE_RELEASE_SECRET; harmless otherwise)
+make edge-sign              # pin the edge command bundle (required once you set EDGE_RELEASE_SECRET; harmless otherwise)
 make local-up               # start every service locally, wait for every /readyz
 open http://localhost:8107  # the UI (same-origin /api rewrite → control :8101)
 make demo                   # eight demo steps through the control API (plan §6)
@@ -61,6 +69,10 @@ make smoke                  # healthz/readyz green; Docker network probes report
 make e2e                    # live tests run against the local stack too
 make local-down             # stop everything (data kept in ./.local/autobridge.db)
 ```
+
+Known issue: `make local-down` can leave the UI server (`next-server`) on port 8107,
+so a later `make up` fails with "address already in use". Before switching to Docker,
+stop it with `pkill -f next-server` (or free port 8107).
 
 Prerequisites: Python 3.12, [`uv`](https://docs.astral.sh/uv/),
 Node 22 + npm (UI only — the stack starts without it, with a warning).
@@ -165,9 +177,9 @@ Each block is one command, then watch (deck order, `docs/demo.md`):
   No repair, no Approve.
 - **Deck 8 — Proof.** `make demo` (terminal-only, 8 steps) drives the same
   story through the control API and checks each step's evidence. Without
-  `FRONTIER_API_KEY` its L3 legs are labelled skips. Known issue: with a
-  live key, step 4's post-approve check fails (it expects the repair's
-  decision to still read `escalate`; approving records `approved`).
+  `FRONTIER_API_KEY` its L3 legs are labelled skips; with a key they
+  call Muse live (`make demo-smoke-live` is a short keyed check of the
+  live repair path; it skips without a key).
   The final benchmark is the pre-registered beacon run (`docs/benchmark.md`,
   "Beacon evaluation"): code frozen and tagged `eval-freeze-6608718`, then
   drand round 6608718 drew 25 unseen faults, one trial, five arms, the same
@@ -249,7 +261,7 @@ autobridge/
 ├── bench/           harness, ablation arms, demo / demo-seed / demo-break / demo-heal drivers, beacon run
 ├── config/          demo targets, ablation cases, beacon vendors, prompts
 ├── verifier/        own pyproject; oracle, canonical checks, hidden_cases/{dev,heldout}
-├── simulators/      own pyproject; common/ atlaspms/ harborpms/ legacystay/ meridianpms/ fias_pabx/ edgepos/ devportal/ docs/ scenarios/ (27 YAMLs)
+├── simulators/      own pyproject; common/ atlaspms/ harborpms/ legacystay/ meridianpms/ fias_pabx/ edgepos/ devportal/ docs/ scenarios/ (29 YAMLs)
 ├── generated/       connectors/<id>/reference/spec.yaml + build-report.json (committed reference specs)
 ├── ui/              Next.js 15 + TypeScript + Tailwind; lib/api (openapi-typescript client)
 ├── experiments/     preregistration.md  learning_curve.md  benchmark_runs/ (run output, not committed)

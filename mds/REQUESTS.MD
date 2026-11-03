@@ -2,7 +2,16 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 19:15): **REQ-095 → REQ-096** (the live-key product path has no automated test, then tests for the background-job finish fix 6460036e; REQ-066..093 done; the beacon run is done and published, round 6608718, tag `eval-freeze-6608718`). Touch only what REQ-095's and REQ-096's items name; never touch `experiments/beacon/`. REQ-094 (beacon harness gaps), REQ-092 (AR-7-11, AR-7-12) and REQ-090 (AR-7-3..8) are DEFERRED until after the hackathon: do not start them. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 19:15): **REQ-095 → REQ-096** (the live-key product path has no automated test, then tests for the background-job finish fix 6460036e; REQ-066..093 done; the beacon run is done and published, round 6608718, tag `eval-freeze-6608718`). Touch only what REQ-095's and REQ-096's items name; never touch `experiments/beacon/`. REQ-094 (beacon harness gaps), REQ-092 (AR-7-11, AR-7-12) and REQ-090 (AR-7-3..8) are DEFERRED until after the hackathon: do not start them. REQ-082 and REQ-097 are DEFERRED until after the hackathon: do not start them. Do not start REQ-051 until the owner says so.
+
+### REQ-097 — `make local-down` leaves the UI server running, so a following `make up` cannot bind port 8107 (2026-11-04)
+Status: DEFERRED (owner 2026-11-04: after the hackathon; the README carries a known-issue note meanwhile)
+Found by a clean-clone check of b51e808 in the sandbox: `make local-up` → `make local-down` → `make up` fails with
+`failed to bind host port 127.0.0.1:8107/tcp: address already in use`. `scripts/local-down.sh` kills only the PID in
+`.local/pids/ui.pid` (the npm wrapper); the `next-server` child it started keeps listening on 8107. Fix: start the
+UI in its own process group (or record the server PID) and stop the whole group in `local-down.sh`; afterwards no
+listener remains on any stack port. Test: after `local-up` + `local-down`, none of the stack's ports is bound. When
+fixed, drop the known-issue note under "No Docker" in README.md.
 
 ### REQ-095 — The live-key product path has no automated test: deferred repair jobs failed to serialise Decimal evidence and no gate noticed (2026-11-03)
 Status: DONE (sbx1 2026-11-03 -- all 3 items code-done: deferred-parcel regression test, make demo-smoke-live keyed smoke + docs, honest gate wording in benchmark + architecture; full gates green; owner step: keyed make demo-smoke-live, then close)
