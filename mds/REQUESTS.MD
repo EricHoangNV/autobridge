@@ -2,7 +2,47 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 09:10): **REQ-088 → REQ-089** (Architecture Review cycle 7 blockers AR-7-1 and AR-7-2; REQ-066..087 done; the real beacon freeze waits for these two). One REQ per iteration. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 12:05): **REQ-091** (Architecture Review cycle 7 pre-freeze re-verification, AR-7-9 Critical; REQ-066..089 done; the real beacon freeze waits for this one). One REQ per iteration. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+
+### REQ-091 — AR-7-9: the `frontier_agent` arm can still write inside its sandbox, and the harness reloads that sandbox and the operator's global OpenCode config as host code (2026-11-03)
+Status: OPEN
+Architecture Review cycle 7 pre-freeze re-verification (`mds/FEEDBACKS.MD`, commit 2df99922, AR-7-9, Critical):
+REQ-088 denies `bash`/`webfetch`/`websearch`/`task`/`skill`/`lsp`/`external_directory`, but
+`AGENT_PERMISSION_CONFIG` (`bench/baseline_coding_agent.py` ~225-237) still allows `edit` and sets no `"*": "deny"`
+baseline, so the agent may write any file inside its sandbox dir, including `.opencode/` plugins or tools and a
+changed `opencode.json`. OpenCode loads project plugins from the working directory at startup as host code, and the
+REQ-081 item 7 no-text re-prompt (~1181-1211) starts a second CLI in that same, possibly agent-modified, directory.
+The child env also passes the operator's real `HOME` plus every `OPENCODE_*`/`XDG_*` variable (~244-250), so the
+operator's global OpenCode config, plugins, skills and MCP servers load into the scored arm as well. The agent's
+contract needs none of this: it answers inline from the evidence bundle ("Respond with ONLY one JSON object",
+`bench/context.py` ~52) and never writes. One root cause (the arm may write, and what it or the operator wrote is
+loaded), small scope; the ablation `frontier_agent` arm shares the driver and is covered by the same change:
+1. Default-deny permissions: `AGENT_PERMISSION_CONFIG` becomes `"*": "deny"` with only `read`, `glob` and `grep`
+   allowed; `edit` is denied. Same single source of truth for the sandbox `opencode.json` and `OPENCODE_PERMISSION`.
+2. Pristine CLI home: the child env pins `HOME` and `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME`/
+   `XDG_STATE_HOME` to a fresh empty per-run directory under the harness's temp area, so no operator-global
+   OpenCode config, plugin, skill or MCP server loads. The open `OPENCODE_*` and `XDG_*` prefix pass-through goes
+   away; only an explicit, documented list of names crosses (keep `agent_child_env_allowed_names` as the one
+   definition). The pinned model's provider key variable(s) still cross, as in REQ-088. If the pinned provider needs
+   a non-secret provider block to resolve, write it into the sandbox `opencode.json` from code, never copied from
+   the operator's config.
+3. Never reload a dirtied sandbox: the no-text re-prompt (and any other second CLI invocation on the same case) runs
+   in a freshly written copy of the original sandbox files, not in the directory the first invocation ran in. The
+   session continuation (`--session <id>`) keeps working from the pristine home of item 2.
+4. Preflight (`bench/beacon_run.py` `preflight_beacon`, next to the REQ-088 proofs ~2586-2638): assert the written
+   permission file has `"*": "deny"` and `edit` denied, and the child env has no `OPENCODE_*`/`XDG_*` name outside
+   the explicit list and a `HOME` under the harness temp area (names and paths only, never values). Fail loud before
+   the first scored instance; rehearsals included. No live model call is added to preflight in this REQ.
+5. Tests: `tests/unit/test_autobridge_req081.py` ~229-320 asserts the REQ-088 config strings; update them for the
+   default-deny config, the pinned home (a parent env with `HOME`, `XDG_CONFIG_HOME` and an `OPENCODE_CONFIG` set
+   yields a child whose `HOME` is the per-run dir and which carries none of the operator values), and the re-prompt
+   running in a fresh copy (a file planted in the first sandbox dir is absent from the directory the re-prompt
+   receives). The fake-agent path still parses the inline JSON answer.
+6. `docs/benchmark.md`: state the arm's confinement as it is after this change (read-only file tools inside the
+   sandbox dir, pristine CLI home, re-prompt in a fresh copy), replacing the REQ-088 wording.
+Then mark DONE after full gates pass; the owner runs the keyed rehearsal and checks the `frontier_agent` arm still
+answers. Do not freeze, tag or commit under `experiments/beacon/`.
+
 
 ### REQ-090 — Architecture Review cycle 7, remaining findings AR-7-3..AR-7-8 (2026-11-03)
 Status: DEFERRED (owner 2026-11-03: after the hackathon; the review's blockers are REQ-088 and REQ-089)
