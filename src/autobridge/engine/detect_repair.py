@@ -453,6 +453,8 @@ def _submit_deferred_model_repair(
     every repairable drift class, not only semantic ones. Returns the
     repair job id.
     """
+    import json as _json  # noqa: PLC0415
+
     from autobridge.control.runner import get_runner  # noqa: PLC0415
     from autobridge.discovery.hypotheses import hypothesis_to_json  # noqa: PLC0415
     from autobridge.drift.signals import signal_to_json  # noqa: PLC0415
@@ -462,23 +464,27 @@ def _submit_deferred_model_repair(
     if climbed is not None:
         hyps_json.append(hypothesis_to_json(climbed))
     runner = get_runner(session)
-    return runner.submit_repair(
-        [drift_id],
-        payload_extra={
-            "drift_class": drift_class,
-            "connector_id": connector_id,
-            "release_id": release_id,
-            "scenario": None,
-            "signals_json": [signal_to_json(s) for s in (signals or [])],
-            "fingerprint_delta": delta,
-            "hypotheses_json": hyps_json,
-            "hypothesis_stages": list(prepared.get("stages") or []),
-            "l3_evidence": dict(prepared.get("evidence") or {}),
-            # REQ-053 item 6: the background climb judges L3 proposals on
-            # the break's records — no new vendor call from the job.
-            "dry_run_fault": dry_run_fault,
-        },
-    )
+    payload_extra: dict[str, Any] = {
+        "drift_class": drift_class,
+        "connector_id": connector_id,
+        "release_id": release_id,
+        "scenario": None,
+        "signals_json": [signal_to_json(s) for s in (signals or [])],
+        "fingerprint_delta": delta,
+        "hypotheses_json": hyps_json,
+        "hypothesis_stages": list(prepared.get("stages") or []),
+        "l3_evidence": dict(prepared.get("evidence") or {}),
+        # REQ-053 item 6: the background climb judges L3 proposals on
+        # the break's records — no new vendor call from the job.
+        "dry_run_fault": dry_run_fault,
+    }
+    # The job row stores this parcel as JSON. The L3 evidence carries
+    # canonical record samples (REQ-078/REQ-080), whose money values are
+    # Decimal, so the parcel is made JSON-safe here — the same round-trip
+    # the caller applies to ``fingerprint_delta`` — or the insert fails
+    # and the drift is left with no repair at all.
+    payload_extra = _json.loads(_json.dumps(payload_extra, sort_keys=True, default=str))
+    return runner.submit_repair([drift_id], payload_extra=payload_extra)
 
 
 # Backwards-compatible alias: the deferred job was semantic-only before REQ-078.
