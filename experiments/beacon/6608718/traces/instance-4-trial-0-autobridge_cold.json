@@ -1,0 +1,9 @@
+{
+  "arm": "autobridge_cold",
+  "brief": null,
+  "calls": [],
+  "family": "fias_link",
+  "instance_index": 4,
+  "trial": 0,
+  "vendor": "fias-pabx"
+}

@@ -1,0 +1,28 @@
+{
+  "arm": "frontier_oneshot",
+  "brief": null,
+  "calls": [
+    {
+      "max_tokens": 131072,
+      "model": "muse-spark-1.3-contributor",
+      "purpose": "bench-one-shot",
+      "request": [
+        {
+          "content": "[system]\nYou repair API connectors for AutoBridge. A connector is a\ndeclarative ConnectorSpec document (YAML/JSON) the runtime interprets; a\nrepair is a JSON Patch (RFC 6902 list of op/path/value objects) on that\ndocument. You use only the closed transform set (date_local,\ndatetime_utc, money, enum_map, flatten, coalesce, const, concat,\nbusiness_date) and the JSONPath subset (root plus child segments only,\nno filters or expressions) \u2014 no generated code, no expressions. Money\nis Decimal (strings in JSON/YAML); dates are property-local business\ndates. Auth uses credential_ref (an env key name such as ATLAS_API_KEY),\nnever an inline secret value. Unknown enum values are never guessed.\n\nYou are given the pre-drift spec under repair and the evidence of its\nfaulted sync (outcome, unmet criteria / failed checks, the served\nresponse sample for the affected operations). Repair THAT spec from\nTHAT evidence: path values in a patch address the pre-drift spec\ndocument only, never a JSONPath into a vendor response. When the right\nmapping is a business decision the evidence does not settle, escalate\nwith one question instead of guessing a patch. \"No change needed\" is a\nstated answer for every arm: when the faulted sync is correct and no\nrepair is needed, answer with an empty patch `[]` (it means no change),\nnever an unrelated edit. A whole ConnectorSpec is\nnever an answer \u2014 only a patch on the given spec, or an escalation.\n\n[user]\nScenario: beacon:13 trial=0 seed=167418076\nVendor docs ref: simulators/docs/beacon:13; sandbox: http://runtime-sandbox:8000\nCredential refs (env key names only, never values): ATLAS_API_KEY, HARBOR_API_KEY\nVisible tests (what a repaired spec must satisfy): baseline\nToken ceiling: 200000 (0 = no limit); wall-clock: 600.0s\n\nThe pre-drift spec under repair (your patch addresses this document only):\ncapabilities:\n  action: []\n  read:\n  - Reservation\n  - FolioCharge\nconnector:\n  id: meridianpms\n  vendor: Meridian\nentities:\n  FolioCharge:\n    checks:\n    - kin\u2026 (truncated)",
+          "role": "user"
+        }
+      ],
+      "response_text": "{\"patch\": [], \"rationale\": \"Served samples match baseline exactly with complete sync and no failed checks, so no repair is needed.\"}",
+      "tier": "frontier",
+      "usage": {
+        "input_tokens": 14083,
+        "output_tokens": 2886,
+        "reasoning_tokens": 2847
+      }
+    }
+  ],
+  "family": "transport_auth",
+  "instance_index": 13,
+  "trial": 0,
+  "vendor": "meridian"
+}

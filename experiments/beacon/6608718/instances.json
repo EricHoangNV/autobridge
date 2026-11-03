@@ -1,0 +1,274 @@
+[
+  {
+    "family": "semantic",
+    "index": 0,
+    "params": {
+      "factor": "0.25",
+      "kind": "minor_major"
+    },
+    "vendor": "atlas"
+  },
+  {
+    "family": "rename",
+    "index": 1,
+    "params": {
+      "entity": "reservation",
+      "field": "updated_at",
+      "new_name": "memoText"
+    },
+    "vendor": "harbor"
+  },
+  {
+    "family": "pagination",
+    "index": 2,
+    "params": {
+      "cursor_param": "pageToken",
+      "items_path": [
+        "items"
+      ],
+      "limit_param": "limit",
+      "next_path": [
+        "meta",
+        "continuation"
+      ],
+      "strategy": "cursor"
+    },
+    "vendor": "legacystay"
+  },
+  {
+    "family": "pagination",
+    "index": 3,
+    "params": {
+      "cursor_leaf": "continuation",
+      "page_size_param": "Count",
+      "strategy": "body_cursor"
+    },
+    "vendor": "meridian"
+  },
+  {
+    "family": "fias_link",
+    "index": 4,
+    "params": {
+      "kind": "ack_timeout",
+      "timeout_s": 10
+    },
+    "vendor": "fias-pabx"
+  },
+  {
+    "family": "code_list",
+    "index": 5,
+    "params": {
+      "mapping": {
+        "active": "checked_in",
+        "due_out": "no_show",
+        "guaranteed": "checked_in",
+        "void": "no_show"
+      },
+      "new_codes": [
+        "void",
+        "active",
+        "due_out",
+        "guaranteed"
+      ],
+      "unknown_code": null
+    },
+    "vendor": "atlas"
+  },
+  {
+    "family": "dates",
+    "index": 6,
+    "params": {
+      "cutoff_hour": 1,
+      "mode": "cutoff"
+    },
+    "vendor": "harbor"
+  },
+  {
+    "family": "rename",
+    "index": 7,
+    "params": {
+      "entity": "folio",
+      "field": "posted_at",
+      "new_name": "netTotal"
+    },
+    "vendor": "legacystay"
+  },
+  {
+    "family": "pagination",
+    "index": 8,
+    "params": {
+      "cursor_leaf": "limit",
+      "page_size_param": "Count",
+      "strategy": "body_cursor"
+    },
+    "vendor": "meridian"
+  },
+  {
+    "family": "fias_layout",
+    "index": 9,
+    "params": {
+      "added": [
+        "TM",
+        "AM"
+      ],
+      "renamed": {
+        "RN": "NT"
+      },
+      "reordered": false
+    },
+    "vendor": "fias-pabx"
+  },
+  {
+    "family": "semantic",
+    "index": 10,
+    "params": {
+      "decoy_field": "adjusted_total",
+      "kind": "decoy"
+    },
+    "vendor": "atlas"
+  },
+  {
+    "family": "nesting",
+    "index": 11,
+    "params": {
+      "depth": 1,
+      "entity": "folio",
+      "parents": [
+        "meta"
+      ]
+    },
+    "vendor": "harbor"
+  },
+  {
+    "family": "pagination",
+    "index": 12,
+    "params": {
+      "items_path": [
+        "data"
+      ],
+      "page_param": "p",
+      "per_page_param": "limit",
+      "strategy": "page"
+    },
+    "vendor": "legacystay"
+  },
+  {
+    "family": "transport_auth",
+    "index": 13,
+    "params": {
+      "kind": "retry_after",
+      "retry_after_s": 5
+    },
+    "vendor": "meridian"
+  },
+  {
+    "family": "fias_layout",
+    "index": 14,
+    "params": {
+      "added": [
+        "GX"
+      ],
+      "renamed": {
+        "DA": "RG",
+        "TA": "TX"
+      },
+      "reordered": false
+    },
+    "vendor": "fias-pabx"
+  },
+  {
+    "family": "transport_auth",
+    "index": 15,
+    "params": {
+      "kind": "retry_after",
+      "retry_after_s": 2
+    },
+    "vendor": "atlas"
+  },
+  {
+    "family": "pagination",
+    "index": 16,
+    "params": {
+      "items_path": [
+        "reservations"
+      ],
+      "limit_param": "count",
+      "offset_param": "offset",
+      "strategy": "offset"
+    },
+    "vendor": "harbor"
+  },
+  {
+    "family": "semantic",
+    "index": 17,
+    "params": {
+      "factor": "0.5",
+      "kind": "minor_major"
+    },
+    "vendor": "legacystay"
+  },
+  {
+    "family": "dates",
+    "index": 18,
+    "params": {
+      "cutoff_hour": 2,
+      "mode": "cutoff"
+    },
+    "vendor": "meridian"
+  },
+  {
+    "family": "fias_link",
+    "index": 19,
+    "params": {
+      "kind": "ack_timeout",
+      "timeout_s": 10
+    },
+    "vendor": "fias-pabx"
+  },
+  {
+    "family": "rename",
+    "index": 20,
+    "params": {
+      "entity": "folio",
+      "field": "description",
+      "new_name": "stay_status"
+    },
+    "vendor": "atlas"
+  },
+  {
+    "family": "semantic",
+    "index": 21,
+    "params": {
+      "factor": "0.25",
+      "kind": "gross_net"
+    },
+    "vendor": "harbor"
+  },
+  {
+    "family": "dates",
+    "index": 22,
+    "params": {
+      "date_format": "%m-%d-%Y",
+      "mode": "format"
+    },
+    "vendor": "legacystay"
+  },
+  {
+    "family": "semantic",
+    "index": 23,
+    "params": {
+      "decoy_field": "net_amount",
+      "kind": "decoy"
+    },
+    "vendor": "meridian"
+  },
+  {
+    "family": "fias_link",
+    "index": 24,
+    "params": {
+      "kind": "ack_timeout",
+      "timeout_s": 5
+    },
+    "vendor": "fias-pabx"
+  }
+]

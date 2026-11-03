@@ -1,0 +1,28 @@
+{
+  "arm": "frontier_oneshot",
+  "brief": null,
+  "calls": [
+    {
+      "max_tokens": 131072,
+      "model": "muse-spark-1.3-contributor",
+      "purpose": "bench-one-shot",
+      "request": [
+        {
+          "content": "[system]\nYou repair API connectors for AutoBridge. A connector is a\ndeclarative ConnectorSpec document (YAML/JSON) the runtime interprets; a\nrepair is a JSON Patch (RFC 6902 list of op/path/value objects) on that\ndocument. You use only the closed transform set (date_local,\ndatetime_utc, money, enum_map, flatten, coalesce, const, concat,\nbusiness_date) and the JSONPath subset (root plus child segments only,\nno filters or expressions) \u2014 no generated code, no expressions. Money\nis Decimal (strings in JSON/YAML); dates are property-local business\ndates. Auth uses credential_ref (an env key name such as ATLAS_API_KEY),\nnever an inline secret value. Unknown enum values are never guessed.\n\nYou are given the pre-drift spec under repair and the evidence of its\nfaulted sync (outcome, unmet criteria / failed checks, the served\nresponse sample for the affected operations). Repair THAT spec from\nTHAT evidence: path values in a patch address the pre-drift spec\ndocument only, never a JSONPath into a vendor response. When the right\nmapping is a business decision the evidence does not settle, escalate\nwith one question instead of guessing a patch. \"No change needed\" is a\nstated answer for every arm: when the faulted sync is correct and no\nrepair is needed, answer with an empty patch `[]` (it means no change),\nnever an unrelated edit. A whole ConnectorSpec is\nnever an answer \u2014 only a patch on the given spec, or an escalation.\n\n[user]\nScenario: beacon:21 trial=0 seed=87418315\nVendor docs ref: simulators/docs/beacon:21; sandbox: http://runtime-sandbox:8000\nCredential refs (env key names only, never values): ATLAS_API_KEY, HARBOR_API_KEY\nVisible tests (what a repaired spec must satisfy): baseline\nToken ceiling: 200000 (0 = no limit); wall-clock: 600.0s\n\nThe pre-drift spec under repair (your patch addresses this document only):\ncapabilities:\n  action: []\n  read:\n  - Reservation\n  - FolioCharge\nconnector:\n  id: harborpms\n  runtime_target: cloud\n  vendor: HarborPMS\nentities:\n  FolioCharge:\u2026 (truncated)",
+          "role": "user"
+        }
+      ],
+      "response_text": "{\"escalate\": \"Served amounts are ~1/4 of baseline with 4dp (e.g., 22.7925 vs 91.17) and fail money_invariant vs meta.gross_sum \u2014 should canonical amount/total_amount stay as gross requiring a business-defined gross-up rule, or be redefined to the new net values?\", \"rationale\": \"No closed transform can restore gross from quartered net values without a business-defined multiplier.\"}",
+      "tier": "frontier",
+      "usage": {
+        "input_tokens": 11816,
+        "output_tokens": 3645,
+        "reasoning_tokens": 3541
+      }
+    }
+  ],
+  "family": "semantic",
+  "instance_index": 21,
+  "trial": 0,
+  "vendor": "harbor"
+}
