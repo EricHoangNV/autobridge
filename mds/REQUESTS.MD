@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 12:05): **REQ-091** (Architecture Review cycle 7 pre-freeze re-verification, AR-7-9 Critical; REQ-066..089 done; the real beacon freeze waits for this one). One REQ per iteration. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 13:30): **no open REQ** — the code is frozen for the final beacon run (Architecture Review cycle 7 re-verification at 3cb73fb3: PASS, READY to freeze; REQ-066..091 done). Do not change engine, bench, verifier or simulator code until the owner reopens work. REQ-092 (AR-7-11, AR-7-12) is DEFERRED until after the hackathon: do not start it. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-091 — AR-7-9: the `frontier_agent` arm can still write inside its sandbox, and the harness reloads that sandbox and the operator's global OpenCode config as host code (2026-11-03)
 Status: DONE (sbx1 2026-11-03 -- all 6 items code-done: default-deny permission config, pristine per-run CLI home, re-prompt in a fresh sandbox copy, preflight proofs, updated + 2 new tests, benchmark docs; full gates green; owner step: keyed rehearsal, then close)
@@ -43,6 +43,24 @@ loaded), small scope; the ablation `frontier_agent` arm shares the driver and is
 Then mark DONE after full gates pass; the owner runs the keyed rehearsal and checks the `frontier_agent` arm still
 answers. Do not freeze, tag or commit under `experiments/beacon/`.
 Resolution: default-deny `AGENT_PERMISSION_CONFIG` (`"*": "deny"`, only read/glob/grep allowed, edit denied — single source of truth for the sandbox `opencode.json` and `OPENCODE_PERMISSION`); child env pins `HOME` + the four `XDG_*` base dirs to a fresh empty per-run CLI home (no open `OPENCODE_*`/`XDG_*` pass-through; only explicit names in `agent_child_env_allowed_names`, provider keys still cross); every CLI invocation runs under the pristine home and the no-text re-prompt runs in a freshly written copy of the original sandbox files (same home, so `--session` continues); session rows resolve from the pristine home first; `claude`/`codex` drivers get the same pristine home; preflight asserts the permission file and the env; `docs/benchmark.md` states the new confinement.
+
+
+### REQ-092 — Architecture Review cycle 7 re-verification (37b6dab6), non-blocking findings AR-7-11 and AR-7-12 (2026-11-03)
+Status: DEFERRED (owner 2026-11-03: after the hackathon; the review passed and the code is frozen for the beacon run)
+Two defence-in-depth findings from `mds/FEEDBACKS.MD` (pre-freeze re-verification after REQ-091, verdict PASS),
+kept together so neither is lost. When this REQ opens, take them one item per iteration in this order.
+1. AR-7-12 (Medium): the beacon `frontier_agent` arm takes its driver kind from the `BASELINE_DRIVER` env
+   (`bench/ablation.py` ~423-433, default `opencode`; `claude`/`codex` build tool-unrestricted commands) while
+   preflight proves only the OpenCode confinement. Beacon runs (freeze, run, rehearse) refuse any value other than
+   unset/`opencode` before preflight, and the protocol records the driver kind. Test: `BASELINE_DRIVER=claude`
+   makes the beacon preflight raise with the variable name; unset passes.
+2. AR-7-11 (Low): `_fresh_sandbox_copy` (`bench/baseline_coding_agent.py` ~385-408) copies `opencode.json` from the
+   possibly-dirtied first sandbox dir instead of re-rendering it from `AGENT_PERMISSION_CONFIG`, and
+   `write_agent_sandbox` swallows a failed config write. Re-render in the fresh copy, raise on a failed write.
+   Test: a dirtied dir with a permissive `opencode.json` plus a `plugin` key yields a fresh copy carrying the
+   harness config only.
+Both are unreachable today (`edit` is denied and `BASELINE_DRIVER` is unset in the frozen run); recorded so cycle 9
+can close them. Do not start until the owner reopens it.
 
 
 ### REQ-090 — Architecture Review cycle 7, remaining findings AR-7-3..AR-7-8 (2026-11-03)
