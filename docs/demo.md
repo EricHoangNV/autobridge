@@ -39,6 +39,15 @@ shape + word, never colour alone; the Repairs list polls every 2 s, so new
 repairs appear at the top without a reload. The presenter clicks every
 approval — nothing auto-applies, so every transition stays on screen.
 
+**Pre-recording check (REQ-095):** before recording, run
+`make demo-smoke-live` with `FRONTIER_API_KEY` set (fresh `make up` or
+`make local-up` stack). It is the only automated run of the live-key
+product path — seed, inject `page_to_cursor` on Atlas, POST the sync
+through the control API exactly as the UI does, wait for the background
+drain, assert a rule-level proposal, approve it to a release, resync
+Complete. Without the key it prints one skip line and exits 0. A red
+run means the recording path is broken: do not record until it is green.
+
 - **Deck 1 — What AutoBridge knows.** Point at `/knowledge` (top bar): each
 vocabulary row reads "no connector built on it yet", the right-hand
 column reads "Nothing learned yet", and Decisions reads "No operator

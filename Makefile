@@ -1,7 +1,7 @@
 # Coverage report style; the ralph loop sets term-missing:skip-covered for OpenCode only.
 COV_REPORT ?= term-missing
 
-.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout verify-heldout-reveal demo demo-reset demo-seed demo-break demo-heal lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles edge-sign edge-check eval-freeze bench-beacon verify-beacon beacon-eval
+.PHONY: up down local-up local-down test smoke e2e e2e-ui bench bench-heldout verify-heldout-reveal demo demo-reset demo-seed demo-break demo-heal demo-smoke-live lint typecheck lint-fix openapi openapi-check ui-typecheck ui-deps ui-e2e-deps lockfiles edge-sign edge-check eval-freeze bench-beacon verify-beacon beacon-eval
 
 # ---- Docker ----
 up: edge-check
@@ -144,6 +144,10 @@ demo-break:
 demo-heal:
 	@echo ">> demo-heal: clear injected faults without a reset (REQ-031)"
 	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_heal
+
+demo-smoke-live:
+	@echo ">> demo-smoke-live: keyed live-product-path smoke (REQ-095 item 2; skips without FRONTIER_API_KEY)"
+	. ./scripts/load_dotenv.sh && uv run python -m bench.demo_smoke_live
 
 record-frontier:
 	@echo ">> record-frontier: capture the live semantic L3 prompt (REQ-039; needs FRONTIER_API_KEY + keyed stack after the break)"

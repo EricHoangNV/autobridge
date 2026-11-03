@@ -309,6 +309,16 @@ so repeats hit L0 while a different drift does not; a `None` delta is never
 cached, so nothing is ever keyed content-free. Detection never fails the
 sync: its errors are row data on the result, not exceptions.
 
+With a live frontier key the sync never climbs inline: a repairable drift
+queues the climb as a background repair job (the deferred parcel carries
+the sync's signals, delta, L3 evidence and dry-run fault as JSON) and the
+request returns at once; the drain climbs, commits before and after each
+model call, and finishes the proposal exactly the way the inline path
+does (dry-run gate, candidate release, verifier report). That product
+path — control API → job queue → drain → ladder — is covered only by the
+keyed `make demo-smoke-live` (REQ-095); the unit/e2e gates run keyless
+(inline repairs) and the bench/beacon run the model in-process.
+
 ## 5. ConnectorSpec v1/v2/v3 (plan §2.4)
 
 A connector is a strict YAML document validated by `src/autobridge/spec/models.py`

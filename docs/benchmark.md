@@ -450,6 +450,27 @@ Steps inside `python -m bench.harness` (matched mode):
   seed produce byte-identical JSONL and that a different seed (or different
   arm outcomes) fails the check.
 
+### What each gate covers (REQ-095)
+
+Three layers, three different coverages — no layer "simulates" another
+without naming it:
+
+* `make test` / `make smoke` / `make e2e` run **offline**: no frontier
+  key, so every repair climbs inline (no job parcel) and the frontier
+  arms run on replay/fake drivers. They prove the deterministic path,
+  never the live one.
+* The dev ablation and the beacon run the model **in-process**: the
+  engine arms call `execute_sync` + `RepairController` directly — no
+  control service, no job queue, no DB round trip — and the frontier
+  calls happen inside the harness. They prove the climb, never the
+  product path that reaches it.
+* The live-key product path (control API → job queue → background
+  drain → ladder) is covered **only by the keyed `make demo-smoke-live`**
+  (one Atlas `page_to_cursor` scene: seed, inject, sync through the
+  control API exactly as the UI does, drain, rule-level proposal,
+  approve to a release). Without `FRONTIER_API_KEY` it skips; it is the
+  owner's pre-recording check, not a gate.
+
 ## Held-out split (retired)
 
 The private held-out seeds (REQ-007 / REQ-024 A, manifest
