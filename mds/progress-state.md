@@ -2,14 +2,14 @@
 
 ## Current State
 
-REQ-095 code-DONE in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation)): deferred-parcel regression test (reproduces live Decimal insert failure, pins strict-JSON round-trip + handler propose/page_to_cursor), `make demo-smoke-live` keyed smoke (skips without key; UI-identical Atlas scene with key) + pre-recording docs, honest gate wording in benchmark.md/architecture.md; full gates green. Owner step: keyed `make demo-smoke-live`, then close.
+REQ-096 DONE in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation)): reviewed 6460036e (job + inline share finish_climb, same steps/inputs, no defect, no src change), `tests/unit/test_autobridge_req096_job_finish.py` (6 tests: L1/L0 job finish with candidate + verifier report, failing-dry-run escalation + inline parity, inline/job parity, no-finalize cases, demo scene-3 poll); full gates green. No owner step left on REQ-096.
 
 - Completed:
   - P1.W1–W10 all DONE (W10.3 codeable done; owner step: confirm CI demo + record video)
-  - REQ-001…REQ-093 all code-DONE except owner keyed/live VERIFY remainders below; REQ-051 DEFERRED by owner; REQ-082 + REQ-090 DEFERRED until after the hackathon
-  - REQ-095 DONE (this run); Phase 2 (P2.S1.1…P2.S7.1) complete
-- Tests: full make test green (autobridge 3242 @90.03%, verifier 144 @90.60%, simulators 434 @90.07%, UI 351); lint/typecheck green; stack down (no containers running).
-- Stack: down (no live e2e this run; keyed smoke is the owner's pre-recording run on a fresh stack).
+  - REQ-001…REQ-096 all code-DONE except owner keyed/live VERIFY remainders below; REQ-051 DEFERRED by owner; REQ-082 + REQ-090 DEFERRED until after the hackathon
+  - REQ-095 DONE; REQ-096 DONE (this run); Phase 2 (P2.S1.1…P2.S7.1) complete
+- Tests: full make test green (autobridge 3248 @90.03%, verifier 144 @90.60%, simulators 434 @90.07%, UI 351); lint/typecheck green; stack down (no containers running).
+- Stack: down (no live e2e this run; unit-covered).
 
 ## Next tasks
 1. **REQ-095 (owner)** — keyed `make demo-smoke-live` on a fresh stack, then close.
