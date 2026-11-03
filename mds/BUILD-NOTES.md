@@ -3398,3 +3398,11 @@ and added the one prescribed sentence to `docs/benchmark.md` Beacon evaluation. 
 no model calls; no freeze/tag/run. Gates: `test_autobridge_beacon_reference_patch_req083.py` 30/30,
 full `make test` green (autobridge 3238 @90%, verifier 144 @91%, simulators 434 @90%, UI 350),
 lint (incl. import-linter contracts) + typecheck green. Owner step: re-freeze a new round, then close.
+
+### REQ-095 (sbx1 2026-11-03 — all 3 items code-done; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Live-key product path (control API → job queue → drain → ladder) now has automated coverage where none existed.
+1. `tests/unit/test_autobridge_req095_deferred_parcel.py`: Decimal canonical records + record sample (raw added-key Decimals on `new_wire_keys[].sample/samples`, the exact live shape) queue a job whose payload round-trips strict `json.dumps` and `repair_job_handler`, ending propose/page_to_cursor at L1 with 0 model calls; plus a dry-run-fault strict-JSON test. Verified the test reproduces the live `Object of type Decimal is not JSON serializable` when the hot-fix round-trip is bypassed. Hot-fix itself untouched.
+2. `bench/demo_smoke_live.py` + `make demo-smoke-live`: skips with one line, exit 0 without `FRONTIER_API_KEY` (verified via make); with the key runs one Atlas `page_to_cursor` scene exactly as the UI does (reset → build v1 → baseline sync Complete → inject → sync → drain poll → propose/page_to_cursor → approve to candidate → active release is candidate → resync Complete). Unkeyed tests pin skip + unreachable-control FAIL paths (`test_autobridge_req095_demo_smoke_live.py`, 2 tests). `docs/demo.md` "Recording from the UI" gains the pre-recording check paragraph.
+3. `docs/benchmark.md` gains "What each gate covers" (offline gates / in-process beacon / keyed smoke only for the live-key path; no layer "simulates" another unnamed); `docs/architecture.md` §4.2 names the deferred product path and its only keyed coverage.
+- Gates: targeted (req095 ×4, req042, req078-branches, trust-boundaries: 32 pass), lint + import-linter KEPT, mypy 135 files clean, full `make test` green (autobridge 3242 @90.03%, verifier 144 @90.60%, simulators 434 @90.07%, UI 351). No stack running here (no live e2e; keyed smoke is the owner's pre-recording run).
+- Owner step: keyed `make demo-smoke-live` on a fresh stack, then close REQ-095.

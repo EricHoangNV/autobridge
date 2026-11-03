@@ -4463,3 +4463,6 @@ chooses dotted vs bracket shape from the new wire id (`R#` → `$['R#']`), unuse
 regression test through the real FIAS engine spec, refused protocol removed, benchmark docs noted.
 Full gates green (autobridge 3238 @90%, verifier 144 @91%, simulators 434 @90%, UI 350/350).
 Owner step: re-freeze a new beacon round, then close.
+
+## 2026-11-03 12:40 UTC — REQ-095 code-DONE (sbx1; Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+All 3 items: (1) deferred-parcel regression test pinning the live Decimal insert failure (payload strict-JSON round-trips through `repair_job_handler` to propose/page_to_cursor, L1, 0 calls; reproduces the live error without the hot-fix round-trip); (2) `make demo-smoke-live` keyed smoke (skip-one-line exit 0 without key; one Atlas page_to_cursor scene with the key, UI-identical calls, drain poll, approve-to-release, resync Complete) + pre-recording docs; (3) honest gate wording in benchmark.md/architecture.md. Full `make test` green (autobridge 3242 @90.03%, verifier 144 @90.60%, simulators 434 @90.07%, UI 351); lint/typecheck green. Owner step: keyed `make demo-smoke-live`, then close.
