@@ -5,7 +5,7 @@
 Owner priority (2026-11-03 09:10): **REQ-088 → REQ-089** (Architecture Review cycle 7 blockers AR-7-1 and AR-7-2; REQ-066..087 done; the real beacon freeze waits for these two). One REQ per iteration. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-088 — AR-7-1: the `frontier_agent` arm's sandbox allows `bash`/`webfetch` and inherits the whole environment, so the agent can reach the answer key (2026-11-03)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-03 01:40)
 Architecture Review cycle 7 (`mds/FEEDBACKS.MD`, AR-7-1, Critical): the sandbox `opencode.json` the harness writes
 (`bench/context.py` ~438-456) grants `"bash": "allow"` and `"webfetch": "allow"`; the agent is a host subprocess
 (`bench/baseline_coding_agent.py` ~1010-1021) whose shell has the user's full filesystem and network reach, so the
