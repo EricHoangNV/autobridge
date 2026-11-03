@@ -2471,8 +2471,11 @@ def preflight_beacon(
        and the judge (REQ-084 item 2) — a meridian reservation nesting
        was never proven before, and no arm could pass it;
 
-    plus once: both frontier drivers' rendered prompts are non-empty and
-    the agent CLI child ``PWD`` equals the sandbox dir. Raises
+    plus once: both frontier drivers' rendered prompts are non-empty, the
+    agent CLI child ``PWD`` equals the sandbox dir, and the REQ-091/AR-7-9
+    confinement holds (permission file default-denies with ``edit``
+    denied; the child env carries no ``OPENCODE_*``/``XDG_*`` name outside
+    the explicit list and a ``HOME`` under the harness temp area). Raises
     :class:`BeaconError` on the first failure; returns the per-vendor
     report on success.
     """
@@ -2570,24 +2573,34 @@ def preflight_beacon(
         raise BeaconError("preflight: frontier agent brief rendered empty")
     report["prompts"] = {"oneshot_chars": len(one_text), "agent_chars": len(brief_text)}
     # Agent CLI working directory (A4/REQ-078): the child PWD equals the
-    # sandbox dir, or the agent never sees its files. REQ-088/AR-7-1: the
-    # written permission file denies shell/fetch/subagents and outside
-    # reads, and the child env is an allowlist built from scratch (name
-    # check only — values are never printed).
+    # sandbox dir, or the agent never sees its files. REQ-091/AR-7-9: the
+    # written permission file default-denies with only read/glob/grep
+    # allowed, and the child env is an allowlist built from scratch rooted
+    # at a pristine per-run CLI home — no operator HOME, no open
+    # OPENCODE_*/XDG_* pass-through (name check only — values are never
+    # printed).
     import pathlib as _pathlib
     import tempfile as _tempfile
 
     from bench.baseline_coding_agent import AGENT_PERMISSION_CONFIG as _agent_perm  # noqa: PLC0415
     from bench.baseline_coding_agent import _sandbox_env as _child_env  # noqa: PLC0415
+    from bench.baseline_coding_agent import agent_child_env_allowed_names as _allowed_names  # noqa: PLC0415
     from bench.baseline_coding_agent import agent_child_env_allows as _env_allows  # noqa: PLC0415
     from bench.baseline_coding_agent import build_agent_child_env as _build_child_env  # noqa: PLC0415
     from bench.context import write_agent_sandbox as _write_sandbox  # noqa: PLC0415
 
     with _tempfile.TemporaryDirectory(prefix="beacon-preflight-") as tmpd:
-        child = _child_env(_pathlib.Path(tmpd))
+        _cli_home = _pathlib.Path(tmpd) / "cli-home"
+        _cli_home.mkdir()
+        child = _child_env(_pathlib.Path(tmpd), cli_home=_cli_home)
         assert child is not None
         if child.get("PWD") != str(tmpd):
             raise BeaconError(f"preflight: agent child PWD {child.get('PWD')!r} != sandbox dir {tmpd!r}")
+        if child.get("HOME") != str(_cli_home):
+            raise BeaconError("preflight: agent child HOME is not the pristine per-run dir")
+        for _xdg in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
+            if not (child.get(_xdg) or "").startswith(str(_cli_home)):
+                raise BeaconError(f"preflight: agent child {_xdg} is not under the pristine per-run dir")
         try:
             _write_sandbox(ctx0, tmpd)
         except Exception as exc:
@@ -2600,15 +2613,22 @@ def preflight_beacon(
             )
         except Exception as exc:
             raise BeaconError(f"preflight: agent sandbox permission file unreadable: {exc}") from exc
-        for _denied in ("bash", "webfetch", "websearch", "external_directory"):
-            if _written_perm.get(_denied) != "deny":
-                raise BeaconError(
-                    f"preflight: agent sandbox permission {(_denied, _written_perm.get(_denied))!r} is not denied"
-                )
+        if _written_perm.get("*") != "deny":
+            raise BeaconError("preflight: agent sandbox permission file has no default deny")
+        if _written_perm.get("edit") != "deny":
+            raise BeaconError("preflight: agent sandbox permission file does not deny edit")
+        for _allowed in ("read", "glob", "grep"):
+            if _written_perm.get(_allowed) != "allow":
+                raise BeaconError(f"preflight: agent sandbox permission file does not allow {_allowed}")
+        for _denied in ("bash", "webfetch", "websearch", "task", "skill", "lsp", "external_directory"):
+            if _written_perm.get(_denied, _written_perm.get("*")) != "deny":
+                raise BeaconError(f"preflight: agent sandbox permission {_denied!r} is not denied")
         # The child env from a hostile parent: nothing outside the
-        # allowlist may cross (an unrelated secret, bench-internal
-        # endpoints, and an inherited OPENCODE_PERMISSION allow-value
-        # must all stay out; PWD stays the sandbox dir).
+        # explicit allowlist may cross (an unrelated secret, bench-internal
+        # endpoints, the operator's real HOME/XDG dirs, any other
+        # OPENCODE_*/XDG_* name, and an inherited OPENCODE_PERMISSION
+        # allow-value must all stay out; PWD stays the sandbox dir and
+        # HOME stays the pristine per-run dir).
         import os as _preflight_os  # noqa: PLC0415
 
         _hostile_parent = dict(_preflight_os.environ)
@@ -2618,18 +2638,41 @@ def preflight_beacon(
                 "SIM_ADMIN_TOKEN": "hostile-admin",
                 "AUTOBRIDGE_CONTROL_TOKEN": "hostile-control",
                 "MYSTERY_UNRELATED_SECRET": "hostile-secret",
-                "OPENCODE_PERMISSION": '{"bash":"allow","webfetch":"allow","external_directory":"allow"}',
+                "HOME": "/home/operator",
+                "XDG_CONFIG_HOME": "/home/operator/.config",
+                "XDG_DATA_HOME": "/home/operator/.local/share",
+                "XDG_CACHE_HOME": "/home/operator/.cache",
+                "OPENCODE_CONFIG": "/home/operator/.config/opencode/evil.json",
+                "OPENCODE_MODEL": "evil-model",
+                "OPENCODE_PERMISSION": '{"*":"allow","bash":"allow","edit":"allow"}',
             }
         )
-        _hostile_child = _build_child_env(_hostile_parent, _pathlib.Path(tmpd))
+        _hostile_child = _build_child_env(_hostile_parent, _pathlib.Path(tmpd), cli_home=_cli_home)
         for _key in _hostile_child:
             if not _env_allows(_key):
                 raise BeaconError(f"preflight: agent child env leaks {_key!r} outside the allowlist")
+        _explicit = _allowed_names()
+        for _key in _hostile_child:
+            if (_key.startswith("OPENCODE_") or _key.startswith("XDG_")) and _key not in _explicit:
+                raise BeaconError(f"preflight: agent child env {_key!r} outside the explicit allowlist")
         for _banned in ("VERIFIER_URL", "SIM_ADMIN_TOKEN", "AUTOBRIDGE_CONTROL_TOKEN", "MYSTERY_UNRELATED_SECRET"):
             if _banned in _hostile_child:
                 raise BeaconError(f"preflight: agent child env leaks {_banned!r}")
         if _hostile_child.get("PWD") != str(tmpd):
             raise BeaconError("preflight: agent child PWD != sandbox dir under a hostile parent")
+        if _hostile_child.get("HOME") != str(_cli_home):
+            raise BeaconError("preflight: agent child HOME != pristine per-run dir under a hostile parent")
+        _operator_values = {
+            "/home/operator",
+            "/home/operator/.config",
+            "/home/operator/.local/share",
+            "/home/operator/.cache",
+            "/home/operator/.config/opencode/evil.json",
+            "evil-model",
+        }
+        for _key, _val in _hostile_child.items():
+            if _val in _operator_values:
+                raise BeaconError(f"preflight: agent child env carries an operator value at {_key!r}")
         try:
             _child_perm = _json.loads(_hostile_child.get("OPENCODE_PERMISSION", "{}"))
         except Exception as exc:

@@ -540,23 +540,29 @@ What a judge can check (all of it public):
    whose key accepts a question; a no-patch Complete on a throttle is
    verified completion, not an escalation), frontier tokens, estimated cost
    (engine model cost is recorded in-memory, never left unset), wall time. The warm arm
-   learns during the run: instances run in the frozen order, and after
-   each instance a verified fix the warm arm produced is learned (the way
-   an approved fix is in production) and is available to later instances;
-   cold never learns. Each instance reports whether warm used a learned
-   fix (rung + source instance) — a warm-vs-cold gap shows learning, not
-   pre-knowledge. The frontier agent is confined to file tools inside its
-   sandbox dir (read/glob/grep/edit; no shell, no fetch, no subagents,
-   no outside-directory reads — `opencode.json` denies `bash`,
-   `webfetch`, `websearch`, `task`, `skill`, `lsp` and
-   `external_directory`) with an allowlisted child env built from scratch
-   (`PATH`/`HOME`/`TMPDIR`/locale plus the CLI's own `OPENCODE_*`/`XDG_*`
-   settings and the frontier provider's key variables; `PWD` pinned to
-   the sandbox dir and `OPENCODE_PERMISSION` set to the same deny config
-   so an inherited value can never loosen it). Nothing else crosses — no
-   repo checkout, no generator/verifier sources, no verifier/admin ports;
-   the preflight proves the permission file and the allowlist before the
-   first scored instance, rehearsals included; both
+    learns during the run: instances run in the frozen order, and after
+    each instance a verified fix the warm arm produced is learned (the way
+    an approved fix is in production) and is available to later instances;
+    cold never learns. Each instance reports whether warm used a learned
+    fix (rung + source instance) — a warm-vs-cold gap shows learning, not
+    pre-knowledge. The frontier agent is confined to read-only file tools
+    inside its sandbox dir (read/glob/grep allowed, edit denied, everything
+    else under a `"*": "deny"` baseline — no shell, no fetch, no subagents,
+    no file writes, no outside-directory reads) with an allowlisted child
+    env built from scratch: only the fixed OS names (`PATH`/`TMPDIR`/
+    locale) plus the frontier provider's key variables cross; `HOME` and
+    the `XDG_*` base directories are pinned to a fresh empty per-run CLI
+    home (so no operator-global OpenCode config, plugin, skill or MCP
+    server loads — no open `OPENCODE_*`/`XDG_*` pass-through); `PWD` is
+    pinned to the sandbox dir and `OPENCODE_PERMISSION` is set to the same
+    default-deny config so an inherited value can never loosen it. The
+    no-text re-prompt runs in a freshly written copy of the original
+    sandbox files (same pristine CLI home, so the session continues),
+    never in the directory the first invocation may have modified — nothing
+    the agent wrote is ever reloaded as host code. Nothing else crosses — no
+    repo checkout, no generator/verifier sources, no verifier/admin ports;
+    the preflight proves the permission file and the allowlist before the
+    first scored instance, rehearsals included; both
    arms get the stored last-good baseline — the frontier arms' evidence
    shows the baseline sample next to the faulted values, clearly labelled
    baseline vs faulted, and the engine arms compare against the same

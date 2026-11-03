@@ -33,12 +33,10 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 from autobridge.llm.provider import Usage
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Result
@@ -213,48 +211,52 @@ class ClaudeCliError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-#: Sandbox permission config for the frontier-agent arm (REQ-088/AR-7-1).
-#: Single source of truth: written to the sandbox dir's ``opencode.json``
-#: by :func:`bench.context.write_agent_sandbox` and exported to the agent
-#: child as ``OPENCODE_PERMISSION`` so an inherited value can never loosen
-#: it. The agent answers inline from the evidence bundle in its sandbox
-#: dir — no file write outside it, no shell and no fetch are part of the
-#: contract — so ``bash``/``webfetch``/``websearch``/``task``/``skill``/
-#: ``lsp`` and ``external_directory`` are denied; ``read``/``glob``/
-#: ``grep``/``edit`` stay allowed inside the sandbox dir.
+#: Sandbox permission config for the frontier-agent arm (REQ-091/AR-7-9).
+#: Default-deny single source of truth: written to the sandbox dir's
+#: ``opencode.json`` by :func:`bench.context.write_agent_sandbox` and
+#: exported to the agent child as ``OPENCODE_PERMISSION`` so an inherited
+#: value can never loosen it. The agent answers inline from the evidence
+#: bundle in its sandbox dir — no file write anywhere is part of the
+#: contract — so only ``read``/``glob``/``grep`` stay allowed inside the
+#: sandbox dir; ``edit`` is denied outright and everything else falls
+#: under the ``"*"`` deny baseline (no shell, no fetch, no subagents, no
+#: outside-directory reads). Denying (not asking) also means a tool call
+#: never ends in a silent headless "ask" rejection with no final answer.
 AGENT_PERMISSION_CONFIG: dict[str, str] = {
-    "bash": "deny",
-    "edit": "allow",
-    "external_directory": "deny",
+    "*": "deny",
+    "edit": "deny",
     "glob": "allow",
     "grep": "allow",
-    "lsp": "deny",
     "read": "allow",
-    "skill": "deny",
-    "task": "deny",
-    "webfetch": "deny",
-    "websearch": "deny",
 }
 
-#: Fixed env names that cross into an agent CLI child (REQ-088/AR-7-1):
-#: what the OS/CLI needs to run (``PATH`` to resolve the binary, ``HOME``
-#: for the CLI's own config and auth store, ``TMPDIR`` for temp files,
-#: locale/terminal). ``PWD`` is set separately to the sandbox dir and
-#: ``OPENCODE_PERMISSION`` to :data:`AGENT_PERMISSION_CONFIG`.
-_AGENT_CHILD_ENV_FIXED: frozenset[str] = frozenset({"HOME", "LANG", "PATH", "TERM", "TMPDIR"})
+#: XDG base-directory names pinned to the pristine CLI home
+#: (REQ-091/AR-7-9): the child never inherits the operator's values for
+#: these — they point at subdirectories of the per-run dir instead, so no
+#: operator-global OpenCode config, plugin, skill or MCP server loads.
+_AGENT_PRISTINE_XDG_VARS: tuple[str, str, str, str] = (
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+)
 
-#: Parent-env prefixes that cross (REQ-088/AR-7-1): ``XDG_*`` locates the
-#: CLI's config/auth store; ``OPENCODE_*`` carries the CLI's own settings.
-#: ``OPENCODE_PERMISSION`` is set explicitly afterwards, so an inherited
-#: allow-value can never loosen the deny config above.
-_AGENT_CHILD_ENV_PREFIXES: tuple[str, ...] = ("OPENCODE_", "XDG_")
+#: Fixed env names that cross into an agent CLI child (REQ-091/AR-7-9):
+#: what the OS/CLI needs to run (``PATH`` to resolve the binary,
+#: ``TMPDIR`` for temp files, locale/terminal). ``HOME`` and the XDG
+#: base-directory variables never cross from the parent — they are pinned
+#: to the pristine per-run CLI home (see :func:`build_agent_child_env`).
+#: ``PWD`` is set separately to the sandbox dir and ``OPENCODE_PERMISSION``
+#: to :data:`AGENT_PERMISSION_CONFIG`.
+_AGENT_CHILD_ENV_FIXED: frozenset[str] = frozenset({"LANG", "PATH", "TERM", "TMPDIR"})
 
 #: Frontier-provider key variables, by pinned-model provider prefix
-#: (REQ-088/AR-7-1): the CLI reads its own provider's key for the pinned
-#: model (``META_MODEL_API_KEY`` for ``meta/...``, etc.). The harness's
-#: own frontier key (``FRONTIER_API_KEY``) always crosses — it is the
-#: designated frontier-tier key, same sensitivity class, and the default
-#: when the provider is unknown.
+#: (REQ-088/AR-7-1, kept by REQ-091/AR-7-9): the CLI reads its own
+#: provider's key for the pinned model (``META_MODEL_API_KEY`` for
+#: ``meta/...``, etc.). The harness's own frontier key
+#: (``FRONTIER_API_KEY``) always crosses — it is the designated
+#: frontier-tier key, same sensitivity class, and the default when the
+#: provider is unknown.
 _AGENT_PROVIDER_KEY_VARS: dict[str, tuple[str, ...]] = {
     "meta": ("META_MODEL_API_KEY",),
     "baseten": ("BASETEN_API_KEY",),
@@ -266,13 +268,20 @@ _AGENT_DEFAULT_KEY_VARS: tuple[str, ...] = ("ANTHROPIC_API_KEY", "FRONTIER_API_K
 
 
 def agent_child_env_allowed_names(model: str | None = None) -> frozenset[str]:
-    """Env names an agent CLI child may carry for *model* (REQ-088/AR-7-1).
+    """Env names an agent CLI child may carry for *model* (REQ-091/AR-7-9).
 
-    The fixed set, the ``OPENCODE_PERMISSION`` override, the provider key
-    variables for the pinned model's provider, plus the ``OPENCODE_`` /
-    ``XDG_`` prefixes (checked with :func:`agent_child_env_allows`).
+    One explicit definition — no prefix pass-through: the fixed OS names,
+    ``HOME`` plus the four XDG base-directory variables (pinned to the
+    pristine per-run CLI home, never inherited), the ``OPENCODE_PERMISSION``
+    override, and the provider key variables for the pinned model's
+    provider. Anything else — any other ``OPENCODE_*``/``XDG_*`` name, any
+    bench-internal endpoint, any simulator credential — stays out.
     """
-    names = set(_AGENT_CHILD_ENV_FIXED) | {"PWD", "OPENCODE_PERMISSION"}
+    names = (
+        set(_AGENT_CHILD_ENV_FIXED)
+        | {"HOME", "PWD", "OPENCODE_PERMISSION"}
+        | set(_AGENT_PRISTINE_XDG_VARS)
+    )
     provider = (model or "").split("/")[0].strip().lower() if model and "/" in model else ""
     names.update(_AGENT_PROVIDER_KEY_VARS.get(provider, _AGENT_DEFAULT_KEY_VARS))
     names.add("FRONTIER_API_KEY")
@@ -280,10 +289,57 @@ def agent_child_env_allowed_names(model: str | None = None) -> frozenset[str]:
 
 
 def agent_child_env_allows(name: str, model: str | None = None) -> bool:
-    """True when *name* may cross into an agent CLI child (REQ-088/AR-7-1)."""
-    if name in agent_child_env_allowed_names(model):
-        return True
-    return name.startswith(_AGENT_CHILD_ENV_PREFIXES)
+    """True when *name* may cross into an agent CLI child (REQ-091/AR-7-9).
+
+    Pure membership in :func:`agent_child_env_allowed_names` — there is no
+    open ``OPENCODE_*``/``XDG_*`` prefix pass-through anymore.
+    """
+    return name in agent_child_env_allowed_names(model)
+
+
+def make_pristine_cli_home(base_dir: str | Path | None = None) -> Path:
+    """Create a fresh empty per-run CLI home dir (REQ-091/AR-7-9).
+
+    Under *base_dir* (the harness's temp area) when given, else the
+    system temp dir. The agent CLI child runs with ``HOME`` and the XDG
+    base-directory variables pinned here, so the operator's global
+    OpenCode config, plugins, skills and MCP servers never load into a
+    scored arm. The caller owns cleanup.
+    """
+    import tempfile  # noqa: PLC0415
+
+    return Path(
+        tempfile.mkdtemp(
+            prefix="bench-agent-home-",
+            dir=str(base_dir) if base_dir is not None else None,
+        )
+    )
+
+
+def _pristine_home_paths(cli_home: str | Path) -> dict[str, str]:
+    """HOME + XDG base-directory paths rooted at *cli_home* (REQ-091/AR-7-9).
+
+    The XDG layout mirrors the ``HOME``-relative one (``~/.config``,
+    ``~/.local/share``, ``~/.cache``, ``~/.local/state``) so the CLI finds
+    the same empty tree whichever convention it resolves.
+    """
+    home = Path(cli_home)
+    return {
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "XDG_STATE_HOME": str(home / ".local" / "state"),
+    }
+
+
+def pristine_session_db_path(cli_home: str | Path) -> str:
+    """Session DB path for a CLI that ran under pristine home (REQ-091/AR-7-9).
+
+    ``~/.local/share/opencode/opencode.db`` resolved against *cli_home* —
+    identical under the pinned ``HOME`` and the pinned ``XDG_DATA_HOME``.
+    """
+    return str(Path(cli_home) / ".local" / "share" / "opencode" / "opencode.db")
 
 
 def build_agent_child_env(
@@ -291,21 +347,28 @@ def build_agent_child_env(
     cwd: Path,
     *,
     model: str | None = None,
+    cli_home: str | Path,
 ) -> dict[str, str]:
     """Build an allowlisted child env from *parent* for an agent CLI.
 
-    REQ-088/AR-7-1: from scratch, not a scrubbed copy. Only the fixed
-    names, the ``OPENCODE_``/``XDG_`` prefixes and the frontier provider's
-    key variables cross; ``PWD`` is pinned to the sandbox dir (REQ-078:
-    the CLI takes its working directory from the inherited ``PWD``) and
-    ``OPENCODE_PERMISSION`` is set explicitly to
-    :data:`AGENT_PERMISSION_CONFIG` so an inherited value can never loosen
-    it. Nothing else crosses — no verifier/admin/control URLs, no
-    simulator credential refs, no unrelated secrets.
+    REQ-091/AR-7-9: from scratch, not a scrubbed copy. Only the explicit
+    names in :func:`agent_child_env_allowed_names` may cross — the fixed
+    OS names plus the frontier provider's key variables. ``HOME`` and the
+    XDG base-directory variables never cross from the parent: they are
+    pinned to *cli_home* (a fresh empty per-run dir from
+    :func:`make_pristine_cli_home`), so no operator-global OpenCode
+    config, plugin, skill or MCP server loads. ``PWD`` is pinned to the
+    sandbox dir (REQ-078: the CLI takes its working directory from the
+    inherited ``PWD``) and ``OPENCODE_PERMISSION`` is set explicitly to
+    :data:`AGENT_PERMISSION_CONFIG` so an inherited value can never
+    loosen it. Nothing else crosses — no verifier/admin/control URLs, no
+    simulator credential refs, no unrelated secrets, no other
+    ``OPENCODE_*``/``XDG_*`` names.
     """
     child: dict[str, str] = {}
+    pinned = {"PWD", "OPENCODE_PERMISSION", "HOME", *_AGENT_PRISTINE_XDG_VARS}
     for name in agent_child_env_allowed_names(model):
-        if name in ("PWD", "OPENCODE_PERMISSION"):
+        if name in pinned:
             continue
         try:
             value = parent.get(name)
@@ -313,24 +376,44 @@ def build_agent_child_env(
             value = None
         if value is not None:
             child[name] = str(value)
-    try:
-        parent_names = list(parent.keys())
-    except Exception:
-        parent_names = []
-    for name in parent_names:
-        if name in child or name in ("PWD", "OPENCODE_PERMISSION"):
-            continue
-        if name.startswith(_AGENT_CHILD_ENV_PREFIXES):
-            try:
-                child[name] = str(parent[name])
-            except Exception:
-                continue
+    child.update(_pristine_home_paths(cli_home))
     child["PWD"] = str(cwd)
     child["OPENCODE_PERMISSION"] = json.dumps(AGENT_PERMISSION_CONFIG, sort_keys=True)
     return child
 
 
-def _sandbox_env(cwd: Path | None, model: str | None = None) -> dict[str, str] | None:
+def _fresh_sandbox_copy(src: Path) -> Path:
+    """Fresh copy of the harness-written sandbox files (REQ-091/AR-7-9).
+
+    Copies only the known sandbox bundle (:data:`bench.context.SANDBOX_FILES`
+    plus the harness-written ``opencode.json``) out of *src* into a new
+    temp dir. Anything the first CLI invocation wrote inside the sandbox
+    dir — a planted ``.opencode/`` plugin, a changed ``opencode.json``,
+    any other file — stays behind, so a second CLI invocation never
+    reloads agent-modified host code as its project config.
+    """
+    import shutil  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    from bench.context import SANDBOX_FILES  # noqa: PLC0415 (lazy: no import cycle)
+
+    fresh = Path(tempfile.mkdtemp(prefix="bench-agent-reprompt-"))
+    for name in list(SANDBOX_FILES) + ["opencode.json"]:
+        candidate = src / name
+        try:
+            if candidate.is_file():
+                shutil.copy2(candidate, fresh / name)
+        except Exception:
+            continue
+    return fresh
+
+
+def _sandbox_env(
+    cwd: Path | None,
+    model: str | None = None,
+    *,
+    cli_home: str | Path,
+) -> dict[str, str] | None:
     """Child environment for an agent CLI spawned with *cwd*.
 
     REQ-078 (reopened 2026-11-02): agent CLIs take their working
@@ -338,14 +421,16 @@ def _sandbox_env(cwd: Path | None, model: str | None = None) -> dict[str, str] |
     parent ``PWD`` lands the agent session in the repo instead of its
     sandbox dir, so the agent never sees its files. Pin ``PWD`` to the
     sandbox dir the harness wrote the shared context files to.
-    REQ-088/AR-7-1: the env is an allowlist built from scratch (see
-    :func:`build_agent_child_env`) — no verifier/admin/control URLs, no
-    simulator credentials, no unrelated secrets cross.
+    REQ-091/AR-7-9: the env is an allowlist built from scratch (see
+    :func:`build_agent_child_env`) rooted at the pristine per-run CLI
+    home *cli_home* — no verifier/admin/control URLs, no simulator
+    credentials, no unrelated secrets, no operator-global OpenCode
+    config cross.
     ``None`` (no sandbox dir) means inherit the parent environment.
     """
     if cwd is None:
         return None
-    return build_agent_child_env(os.environ, cwd, model=model)
+    return build_agent_child_env(os.environ, cwd, model=model, cli_home=cli_home)
 
 
 class ClaudeCodeDriver:
@@ -385,10 +470,15 @@ class ClaudeCodeDriver:
         timeout_s: float | None = None,
     ) -> ClaudeCliResult:
         """Execute ``claude -p`` with *prompt* and return parsed result."""
+        import shutil as _shutil  # noqa: PLC0415
+
         cmd = self._build_command(prompt)
         t = timeout_s if timeout_s is not None else self.timeout_s
         self.calls.append({"cmd": cmd, "prompt": prompt, "cwd": str(cwd) if cwd else None})
         start = time.monotonic()
+        # REQ-091/AR-7-9: same pristine per-run CLI home as the opencode
+        # driver — never the operator's real home.
+        cli_home = make_pristine_cli_home()
         try:
             proc = subprocess.run(
                 cmd,
@@ -398,9 +488,9 @@ class ClaudeCodeDriver:
                 # Never inherit stdin (REQ-061 item 2: same hang class as opencode).
                 stdin=subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
-                # REQ-078: pin PWD to the sandbox dir; REQ-088: allowlisted
-                # child env (helper docstring).
-                env=_sandbox_env(cwd, model=self.model),
+                # REQ-078: pin PWD to the sandbox dir; REQ-091: allowlisted
+                # child env rooted at the pristine CLI home (helper docstring).
+                env=_sandbox_env(cwd, model=self.model, cli_home=cli_home),
             )
         except subprocess.TimeoutExpired as e:
             raise ClaudeCliError(
@@ -413,6 +503,9 @@ class ClaudeCodeDriver:
                 f"claude CLI not found: {self.cli_path!r}",
                 stderr=str(e),
             ) from e
+        finally:
+            with contextlib.suppress(Exception):
+                _shutil.rmtree(cli_home, ignore_errors=True)
 
         elapsed = (time.monotonic() - start) * 1000.0
         if proc.returncode != 0:
@@ -607,10 +700,15 @@ class CodexCliDriver:
         timeout_s: float | None = None,
     ) -> ClaudeCliResult:
         """Execute ``codex exec --json`` with *prompt*."""
+        import shutil as _shutil  # noqa: PLC0415
+
         cmd = self._build_command(prompt)
         t = timeout_s if timeout_s is not None else self.timeout_s
         self.calls.append({"cmd": cmd, "prompt": prompt, "cwd": str(cwd) if cwd else None})
         start = time.monotonic()
+        # REQ-091/AR-7-9: same pristine per-run CLI home as the opencode
+        # driver — never the operator's real home.
+        cli_home = make_pristine_cli_home()
         try:
             proc = subprocess.run(
                 cmd,
@@ -620,9 +718,9 @@ class CodexCliDriver:
                 # Never inherit stdin (REQ-061 item 2: same hang class as opencode).
                 stdin=subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
-                # REQ-078: pin PWD to the sandbox dir; REQ-088: allowlisted
-                # child env (helper docstring).
-                env=_sandbox_env(cwd, model=self.model),
+                # REQ-078: pin PWD to the sandbox dir; REQ-091: allowlisted
+                # child env rooted at the pristine CLI home (helper docstring).
+                env=_sandbox_env(cwd, model=self.model, cli_home=cli_home),
             )
         except subprocess.TimeoutExpired as e:
             raise CodexCliError(
@@ -637,6 +735,9 @@ class CodexCliDriver:
                 "fallback: use BaselineLLMDriver via LLMProvider (plan §9)",
                 stderr=str(e),
             ) from e
+        finally:
+            with contextlib.suppress(Exception):
+                _shutil.rmtree(cli_home, ignore_errors=True)
 
         elapsed = (time.monotonic() - start) * 1000.0
         if proc.returncode != 0:
@@ -1086,20 +1187,23 @@ class OpenCodeCliDriver:
         to its sandbox dir and the vendor sandbox URL only. The run
         requires *cwd* (the sandbox dir the harness wrote the shared
         context files to — never the repo); the child environment is an
-        allowlist built from scratch (REQ-088/AR-7-1: fixed OS names plus
-        ``OPENCODE_``/``XDG_`` settings and the frontier provider's key
-        variables; ``PWD`` pinned to the sandbox dir and
-        ``OPENCODE_PERMISSION`` set to the sandbox deny config), so the
-        agent cannot regenerate the instance from the committed
-        protocol, read generator/verifier sources, or reach the
-        unauthenticated ``/beacon/records`` endpoint as an oracle — it has
-        no shell, no fetch and no file access outside its sandbox dir.
-        Equal information holds both ways: the prompt + sandbox
-        files are the agent's whole world, exactly the engine's equal
-        inputs.
+        allowlist built from scratch (REQ-091/AR-7-9: fixed OS names plus
+        the frontier provider's key variables only — no open
+        ``OPENCODE_*``/``XDG_*`` pass-through; ``HOME`` and the XDG base
+        directories pinned to a fresh empty per-run CLI home, ``PWD``
+        pinned to the sandbox dir, ``OPENCODE_PERMISSION`` set to the
+        default-deny config), so the agent cannot regenerate the instance
+        from the committed protocol, read generator/verifier sources,
+        reach the unauthenticated ``/beacon/records`` endpoint as an
+        oracle, write a project plugin it then reloads, or inherit the
+        operator's global OpenCode config — it answers inline from the
+        evidence bundle and never writes. Equal information holds both
+        ways: the prompt + sandbox files are the agent's whole world,
+        exactly the engine's equal inputs.
         """
         import dataclasses as _dataclasses  # noqa: PLC0415
         import os as _os  # noqa: PLC0415
+        import shutil as _shutil  # noqa: PLC0415
 
         if cwd is None:
             raise OpenCodeCliError(
@@ -1110,7 +1214,80 @@ class OpenCodeCliDriver:
         t = timeout_s if timeout_s is not None else self.timeout_s
         self.calls.append({"cmd": cmd, "prompt": prompt, "cwd": str(cwd) if cwd else None})
         start = time.monotonic()
-        child_env = build_agent_child_env(_os.environ, cwd, model=self.model)
+        # REQ-091/AR-7-9 item 2: fresh empty per-run CLI home — the child
+        # HOME/XDG_* point here, never at the operator's real home.
+        # Cleaned up best-effort at the end (the session row is resolved
+        # before that, and the grades carry the outcome).
+        cli_home = make_pristine_cli_home()
+        try:
+            return self._run_in_home(
+                cmd,
+                cwd,
+                cli_home,
+                t,
+                start,
+                _os=_os,
+                _dataclasses=_dataclasses,
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                _shutil.rmtree(cli_home, ignore_errors=True)
+
+    def _session_db_candidates(self, cli_home: Path) -> list[str]:
+        """Session DB paths to try, pristine home first (REQ-091/AR-7-9)."""
+        candidates = [pristine_session_db_path(cli_home)]
+        fallback = self.session_db_path or opencode_session_db_path()
+        if fallback not in candidates:
+            candidates.append(fallback)
+        return candidates
+
+    def _apply_session_row(
+        self,
+        result: ClaudeCliResult,
+        session_id: str,
+        cli_home: Path,
+        _dataclasses: Any,
+    ) -> ClaudeCliResult:
+        """Resolve model/totals from the CLI's own session row (REQ-060 item 4).
+
+        The stream never names the model and undercounts multi-step runs.
+        The row is read from the pristine per-run CLI home the child ran
+        under (falling back to the configured/default path); keyed by the
+        stream's session id, so a foreign row can never attach.
+        """
+        for db_path in self._session_db_candidates(cli_home):
+            resolved = resolve_opencode_session(session_id, db_path=db_path)
+            if resolved is None:
+                continue
+            usage = result.usage
+            if resolved.get("model"):
+                result = _dataclasses.replace(result, model=str(resolved["model"]))
+            if (resolved.get("input_tokens", 0) or 0) + (resolved.get("output_tokens", 0) or 0) > 0:
+                usage = Usage(
+                    input_tokens=int(resolved.get("input_tokens", 0) or 0),
+                    output_tokens=int(resolved.get("output_tokens", 0) or 0),
+                    reasoning_tokens=int(resolved.get("reasoning_tokens", 0) or 0),
+                )
+                result = _dataclasses.replace(result, usage=usage)
+            if resolved.get("cost_usd") is not None:
+                result = _dataclasses.replace(result, cost_usd=resolved["cost_usd"])
+            return result
+        return result
+
+    def _run_in_home(
+        self,
+        cmd: list[str],
+        cwd: Path,
+        cli_home: Path,
+        t: float,
+        start: float,
+        *,
+        _os: Any,
+        _dataclasses: Any,
+    ) -> ClaudeCliResult:
+        import shutil as _shutil_inner  # noqa: PLC0415
+
+        child_env = build_agent_child_env(_os.environ, cwd, model=self.model, cli_home=cli_home)
         try:
             proc = subprocess.run(
                 cmd,
@@ -1155,29 +1332,16 @@ class OpenCodeCliDriver:
                 stdout=proc.stdout,
             )
         result = parse_opencode_output(proc.stdout)
-        # REQ-060 item 4: resolve the model actually used (and the run
-        # totals) from the CLI's own session row; the stream never names
-        # the model and undercounts multi-step runs.
         if result.session_id:
-            resolved = resolve_opencode_session(result.session_id, db_path=self.session_db_path)
-            if resolved is not None:
-                usage = result.usage
-                if resolved.get("model"):
-                    result = _dataclasses.replace(result, model=str(resolved["model"]))
-                if (resolved.get("input_tokens", 0) or 0) + (resolved.get("output_tokens", 0) or 0) > 0:
-                    usage = Usage(
-                        input_tokens=int(resolved.get("input_tokens", 0) or 0),
-                        output_tokens=int(resolved.get("output_tokens", 0) or 0),
-                        reasoning_tokens=int(resolved.get("reasoning_tokens", 0) or 0),
-                    )
-                    result = _dataclasses.replace(result, usage=usage)
-                if resolved.get("cost_usd") is not None:
-                    result = _dataclasses.replace(result, cost_usd=resolved["cost_usd"])
+            result = self._apply_session_row(result, result.session_id, cli_home, _dataclasses)
         result.exit_code = proc.returncode
         result.duration_ms = elapsed
-        # REQ-081 item 7: the stream may end on a tool step with no final
-        # text (a headless auto-rejected bash call) — re-prompt once in the
-        # same session for the final answer instead of scoring no_output.
+        # REQ-081 item 7 / REQ-091 item 3: the stream may end on a tool
+        # step with no final text — re-prompt once in the same session
+        # for the final answer instead of scoring no_output. The re-prompt
+        # runs in a freshly written copy of the original sandbox files
+        # (same pristine CLI home, so ``--session`` still continues), never
+        # in the directory the first invocation may have modified.
         if not result.text.strip() and result.session_id:
             try:
                 _re_cmd = list(cmd)
@@ -1200,18 +1364,32 @@ class OpenCodeCliDriver:
                     + _re_cmd[_run_idx + 1 :]
                 )
                 _re_cmd = _re_cmd[:-1] + [_re_prompt] if _re_cmd else [_re_prompt]
-                _re_proc = subprocess.run(
-                    _re_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=t,
-                    stdin=subprocess.DEVNULL,
-                    cwd=str(cwd),
-                    env=child_env,
-                )
+                _re_cwd = _fresh_sandbox_copy(Path(str(cwd)))
+                try:
+                    _re_env = build_agent_child_env(
+                        _os.environ, _re_cwd, model=self.model, cli_home=cli_home
+                    )
+                    _re_proc = subprocess.run(
+                        _re_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=t,
+                        stdin=subprocess.DEVNULL,
+                        cwd=str(_re_cwd),
+                        env=_re_env,
+                    )
+                finally:
+                    # The fresh copy served one re-prompt; remove it
+                    # best-effort (the grades carry the outcome).
+                    with contextlib.suppress(Exception):
+                        _shutil_inner.rmtree(_re_cwd, ignore_errors=True)
                 if _re_proc.returncode == 0:
                     _re_result = parse_opencode_output(_re_proc.stdout)
                     if _re_result.text.strip():
+                        if _re_result.session_id:
+                            _re_result = self._apply_session_row(
+                                _re_result, _re_result.session_id, cli_home, _dataclasses
+                            )
                         # Merge usage: keep the max counters from both runs.
                         try:
                             _in = max(

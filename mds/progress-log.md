@@ -4427,3 +4427,32 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). `semantic/gross_ne
 - Live proof done in-sandbox (stack up → smoke/demo/test_06 → down; no containers left): smoke full pass incl. new checks; empty-token warning + set-token line both observed live; relay operator 401/200; `make demo` 8/8 unkeyed; UI journey 7/8 (1 failure = pre-existing demo-state: newest repair is the question-only escalation, no `verifier-checks-line` by design — unrelated to this change); UI-proxy inject-fault/reset → 200 (middleware injection proven), stack reset to blank and taken down.
 - One transient `make test` failure in an intermediate run (uncaptured test name) with all-green runs before and after; suite is order-sensitive in general (pytest-randomly) — see LEARNINGS.MD #77.
 - Owner step: none codeable left. Next: owner picks VERIFY items or reopens REQ-090 after the hackathon.
+
+## REQ-091 — AR-7-9: frontier_agent default-deny, pristine CLI home, fresh-copy re-prompt
+**Date:** 2026-11-03
+**Ref:** REQUESTS.MD REQ-091 / FEEDBACKS.MD Architecture Review cycle 7 (AR-7-9, Critical)
+
+**What was done:**
+- `AGENT_PERMISSION_CONFIG` is now default-deny (`"*": "deny"`, read/glob/grep allowed, edit denied); single source of truth for sandbox `opencode.json` and `OPENCODE_PERMISSION`.
+- Child env pins `HOME` + four `XDG_*` base dirs to a fresh empty per-run CLI home; open `OPENCODE_*`/`XDG_*` prefix pass-through removed; `agent_child_env_allowed_names` is the one explicit definition; provider keys still cross.
+- No-text re-prompt runs in a freshly written copy of the original sandbox files under the same pristine home (`--session` continues); session rows resolve from the pristine home first; `claude`/`codex` drivers get the same treatment.
+- Preflight asserts the permission file and the env (default-deny, edit denied, no operator values, HOME under harness temp area); benchmark docs rewritten.
+- Tests: updated permission/env tests, extended re-prompt fresh-copy test, new fake-agent inline-JSON test.
+
+**Key decisions:**
+- Explicit `"edit": "deny"` alongside `"*"`: names the revoked tool so the preflight assertion is literal and survives a config-reader that only checks named tools.
+- No provider block written into the sandbox `opencode.json`: `meta` is in OpenCode's catalog, keyed by env, and `-m` is always passed — copying endpoint config from the operator's files would violate the same boundary this REQ closes.
+- XDG layout mirrors `~/.config`, `~/.local/share`, `~/.cache`, `~/.local/state` so HOME-based and XDG-based session-DB lookups land on the same path.
+- Required (not optional) `cli_home` on the env builders so no caller can silently fall back to the operator HOME.
+
+**Files changed:**
+- `bench/baseline_coding_agent.py` — default-deny config, pristine-home helpers, fresh-copy helper, driver rewire (opencode/claude/codex), session-DB resolution order.
+- `bench/beacon_run.py` — preflight assertions for item 4.
+- `bench/context.py` — sandbox opencode.json comment updated (config flows automatically).
+- `tests/unit/test_autobridge_req081.py` — updated + extended + 1 new test.
+- `docs/benchmark.md` — confinement paragraph rewritten.
+- `mds/REQUESTS.MD` — REQ-091 marked DONE with Resolution.
+
+**Notes for next iteration:**
+- Owner runs the keyed rehearsal and checks the `frontier_agent` arm still answers (live proof that `meta/` resolves under the pristine home with only the env key).
+- One full-suite-only UI import flake seen on the first `make test` (`aria-query` require in `app/repairs/[id]/page.test.tsx`); green standalone and on full UI rerun; no UI files in this diff.

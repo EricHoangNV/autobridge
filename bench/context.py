@@ -429,15 +429,14 @@ def write_agent_sandbox(context: BenchContext, dest: str | pathlib.Path) -> list
             raise RuntimeError(f"bench sandbox file escapes its directory: {name!r}")
         target.write_text(files[name], encoding="utf-8")
         written.append(name)
-    # REQ-081 item 7 / REQ-088: explicit opencode permission config in the
-    # sandbox dir (project config, picked up because cwd is the sandbox
-    # dir). The agent answers inline from the evidence bundle — no shell,
-    # no fetch and no file access outside the sandbox dir are part of the
-    # contract — so everything but the in-sandbox file tools is denied
-    # (single source of truth: AGENT_PERMISSION_CONFIG, also exported as
-    # OPENCODE_PERMISSION so an inherited value can never loosen it).
-    # Denying (not asking) also means a tool call never ends in a silent
-    # headless "ask" rejection with no final answer.
+    # REQ-091 item 1 / AR-7-9: explicit default-deny opencode permission
+    # config in the sandbox dir (project config, picked up because cwd is
+    # the sandbox dir). The agent answers inline from the evidence bundle
+    # and never writes — so only read/glob/grep are allowed and edit is
+    # denied outright (single source of truth: AGENT_PERMISSION_CONFIG,
+    # also exported as OPENCODE_PERMISSION so an inherited value can never
+    # loosen it). Denying (not asking) also means a tool call never ends
+    # in a silent headless "ask" rejection with no final answer.
     try:
         from bench.baseline_coding_agent import AGENT_PERMISSION_CONFIG
 

@@ -707,3 +707,13 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 - Fixed at the source: `fileConfig(config.config_file_name, disable_existing_loggers=False)` in `alembic/env.py`; the ini's own root/sqlalchemy/alembic logger config still applies. Verified with a throwaway snitch plugin that reported False→True transitions, then 6/6 fixed-seed subset runs plus green full suites.
 
 **Rule:** Never let a migration, fixture, or script call bare `fileConfig`/`dictConfig` with logger-disabling defaults in a test process — pass `disable_existing_loggers=False`, or one suite's schema setup will silently deafen every other test's log capture.
+
+## 78. A sandboxed agent's second invocation reloads whatever the first wrote — confine with default-deny, a pristine home, and fresh copies
+
+**Context:** REQ-091 (AR-7-9, Critical), 2026-11-03 — the `frontier_agent` arm could write inside its sandbox (edit allowed, no `"*"` deny), the harness reloaded that same directory for the no-text re-prompt, and the child inherited the operator's real `HOME` plus every `OPENCODE_*`/`XDG_*` variable, so operator-global plugins/skills/MCP servers loaded into the scored arm.
+
+- Allowing `edit` while denying shell/fetch is not confinement: OpenCode loads project plugins from the working directory at startup as host code, so a written `.opencode/` plugin or changed `opencode.json` becomes code execution on the next invocation in the same directory.
+- Prefix pass-through (`OPENCODE_*`, `XDG_*`) is an allowlist hole shaped like convenience: any current or future variable in those namespaces crosses, including the global config locations. An explicit name list plus pinning `HOME`/XDG dirs to a fresh empty per-run dir closes it without breaking provider-key auth (explicit key names still cross; a catalog provider needs no config block copied from the operator).
+- The session continuation (`--session`) lives in the CLI home, not the cwd — so the re-prompt can run in a freshly written copy of the original files (only the harness-known bundle) under the same pristine home and still continue the session, while nothing the agent wrote is ever reloaded.
+
+- **Rule:** Any harness that scores an agent CLI must default-deny file writes, run every invocation under a fresh empty `HOME`/XDG tree, and run every second invocation in a freshly written copy of the original inputs — never in the directory a previous invocation touched.

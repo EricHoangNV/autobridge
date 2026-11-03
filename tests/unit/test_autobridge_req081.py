@@ -247,55 +247,77 @@ def test_item7_sandbox_writes_permission_config(tmp_path: Path) -> None:
     assert cfg_path.is_file()
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     perm = cfg.get("permission", {})
-    # REQ-088/AR-7-1: no shell, no fetch, no subagents, no outside reads.
+    # REQ-091/AR-7-9: default-deny — only read/glob/grep allowed, edit denied.
     assert perm == dict(AGENT_PERMISSION_CONFIG)
-    for denied in ("bash", "webfetch", "websearch", "task", "skill", "lsp", "external_directory"):
-        assert perm.get(denied) == "deny", denied
-    for allowed in ("read", "glob", "grep", "edit"):
+    assert perm.get("*") == "deny"
+    assert perm.get("edit") == "deny"
+    for allowed in ("read", "glob", "grep"):
         assert perm.get(allowed) == "allow", allowed
+    for denied in ("bash", "webfetch", "websearch", "task", "skill", "lsp", "external_directory"):
+        assert perm.get(denied, perm.get("*")) == "deny", denied
 
 
-def test_req088_agent_child_env_allowlist(
+def test_req091_agent_child_env_pristine_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """REQ-088/AR-7-1: the agent child env is an allowlist from scratch.
+    """REQ-091/AR-7-9: the agent child env is rooted at a pristine per-run home.
 
-    A parent seeded with bench-internal endpoints, simulator credential
-    refs, an unrelated secret and a loosening OPENCODE_PERMISSION
-    produces a child env with none of them; PWD is the sandbox dir,
-    OPENCODE_PERMISSION is the sandbox deny config, every surviving name
-    is allowlisted, and only the frontier provider's key variables cross.
+    A parent seeded with an operator HOME, XDG dirs, OPENCODE_* names, a
+    loosening OPENCODE_PERMISSION, bench-internal endpoints, simulator
+    credential refs and an unrelated secret produces a child env whose
+    HOME and XDG base directories are the per-run dir (carrying none of
+    the operator values), PWD is the sandbox dir, OPENCODE_PERMISSION is
+    the default-deny config, every surviving name is explicitly allowed,
+    and only the frontier provider's key variables cross.
     """
     from bench.baseline_coding_agent import (
         AGENT_PERMISSION_CONFIG,
         _sandbox_env,
+        agent_child_env_allowed_names,
         agent_child_env_allows,
         build_agent_child_env,
+        make_pristine_cli_home,
     )
 
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
+    cli_home = make_pristine_cli_home(base_dir=tmp_path)
     hostile = {
         "VERIFIER_URL": "http://verifier-hostile:9999",
         "SIM_ADMIN_TOKEN": "hostile-admin",
         "AUTOBRIDGE_CONTROL_TOKEN": "hostile-control",
         "ATLAS_API_KEY": "hostile-atlas",
         "MYSTERY_UNRELATED_SECRET": "hostile-secret",
-        "OPENCODE_PERMISSION": '{"bash":"allow","webfetch":"allow","external_directory":"allow"}',
+        "HOME": "/home/operator",
+        "XDG_CONFIG_HOME": "/home/operator/.config",
+        "XDG_DATA_HOME": "/home/operator/.local/share",
+        "XDG_CACHE_HOME": "/home/operator/.cache",
+        "OPENCODE_CONFIG": "/home/operator/.config/opencode/evil.json",
+        "OPENCODE_MODEL": "evil-model",
+        "OPENCODE_PERMISSION": '{"*":"allow","bash":"allow","edit":"allow"}',
         "FRONTIER_API_KEY": "frontier-key",
         "META_MODEL_API_KEY": "meta-key",
         "PATH": "/usr/bin:/bin",
-        "HOME": "/home/tester",
     }
-    child = build_agent_child_env(hostile, sandbox, model="meta/muse-spark-1.3")
+    child = build_agent_child_env(hostile, sandbox, model="meta/muse-spark-1.3", cli_home=cli_home)
     for banned in (
         "VERIFIER_URL",
         "SIM_ADMIN_TOKEN",
         "AUTOBRIDGE_CONTROL_TOKEN",
         "ATLAS_API_KEY",
         "MYSTERY_UNRELATED_SECRET",
+        "OPENCODE_CONFIG",
+        "OPENCODE_MODEL",
     ):
         assert banned not in child, banned
+    # The pristine per-run dir is the CLI home — none of the operator values.
+    assert child["HOME"] == str(cli_home)
+    assert child["HOME"].startswith(str(tmp_path))
+    for xdg in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
+        assert child[xdg].startswith(str(cli_home)), xdg
+    for value in child.values():
+        assert "/home/operator" not in value
+        assert value != "evil-model"
     assert child["PWD"] == str(sandbox)
     assert json.loads(child["OPENCODE_PERMISSION"]) == dict(AGENT_PERMISSION_CONFIG)
     for name in child:
@@ -304,18 +326,32 @@ def test_req088_agent_child_env_allowlist(
     assert child["FRONTIER_API_KEY"] == "frontier-key"
     assert child["META_MODEL_API_KEY"] == "meta-key"
     # Unknown providers get the default frontier keys, never bench secrets.
-    assert build_agent_child_env(hostile, sandbox, model=None)["FRONTIER_API_KEY"] == "frontier-key"
-    assert "MYSTERY_UNRELATED_SECRET" not in build_agent_child_env(hostile, sandbox, model=None)
+    assert (
+        build_agent_child_env(hostile, sandbox, model=None, cli_home=cli_home)["FRONTIER_API_KEY"]
+        == "frontier-key"
+    )
+    assert "MYSTERY_UNRELATED_SECRET" not in build_agent_child_env(
+        hostile, sandbox, model=None, cli_home=cli_home
+    )
+    # No open prefix pass-through: an OPENCODE_*/XDG_* name outside the
+    # explicit list never crosses, even when the parent sets it.
+    assert "OPENCODE_MODEL" not in agent_child_env_allowed_names("meta/muse-spark-1.3")
+    assert not agent_child_env_allows("OPENCODE_MODEL", model="meta/muse-spark-1.3")
+    assert not agent_child_env_allows("XDG_RUNTIME_DIR", model="meta/muse-spark-1.3")
     # The os.environ-backed helper honors the same allowlist.
     monkeypatch.setenv("MYSTERY_UNRELATED_SECRET", "hostile-secret")
     monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setenv("HOME", "/home/operator")
+    monkeypatch.setenv("OPENCODE_MODEL", "evil-model")
     monkeypatch.setenv(
         "OPENCODE_PERMISSION",
-        '{"bash":"allow","webfetch":"allow","external_directory":"allow"}',
+        '{"*":"allow","bash":"allow","edit":"allow"}',
     )
-    via_environ = _sandbox_env(sandbox)
+    via_environ = _sandbox_env(sandbox, cli_home=cli_home)
     assert via_environ is not None
     assert "MYSTERY_UNRELATED_SECRET" not in via_environ
+    assert "OPENCODE_MODEL" not in via_environ
+    assert via_environ["HOME"] == str(cli_home)
     assert via_environ["PWD"] == str(sandbox)
     assert json.loads(via_environ["OPENCODE_PERMISSION"]) == dict(AGENT_PERMISSION_CONFIG)
 
@@ -357,6 +393,7 @@ def test_item3_grade_records_apply_error() -> None:
 
 
 def test_item7_reprompts_once_on_empty_tool_end(tmp_path: Path) -> None:
+    import os as _os
     import subprocess as _subprocess
 
     from bench.baseline_coding_agent import OpenCodeCliDriver
@@ -369,13 +406,27 @@ def test_item7_reprompts_once_on_empty_tool_end(tmp_path: Path) -> None:
         {"type": "session", "session_id": "sess-123"}
     )
     calls: list[list[str]] = []
+    envs: list[dict[str, str]] = []
+    cwds: list[str] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object):  # type: ignore[no-untyped-def]
         calls.append(list(cmd))
+        env = _kwargs.get("env")
+        assert isinstance(env, dict)
+        envs.append(dict(env))
+        cwd = _kwargs.get("cwd")
+        assert isinstance(cwd, str)
+        cwds.append(cwd)
         out = first_stdout if len(calls) == 1 else second_stdout
         return SimpleNamespace(returncode=0, stdout=out, stderr="")
 
     import bench.baseline_coding_agent as _mod
+
+    # REQ-091 item 3: the agent dirties the sandbox during the first run —
+    # the re-prompt must not reload it.
+    (tmp_path / ".opencode").mkdir()
+    (tmp_path / ".opencode" / "evil-plugin.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "planted.txt").write_text("agent wrote this", encoding="utf-8")
 
     _orig_run = _subprocess.run
     _orig_resolve = _mod.resolve_opencode_session
@@ -389,3 +440,28 @@ def test_item7_reprompts_once_on_empty_tool_end(tmp_path: Path) -> None:
     assert res.text.strip() != ""
     assert len(calls) == 2
     assert "--session" in calls[1] and "sess-123" in calls[1]
+    # The re-prompt runs in a freshly written copy, not the dirtied dir —
+    # same pristine CLI home (so --session continues), none of the
+    # agent-planted files.
+    assert cwds[0] == str(tmp_path)
+    assert cwds[1] != str(tmp_path)
+    assert envs[0]["HOME"] == envs[1]["HOME"]
+    assert envs[1]["HOME"] not in (str(tmp_path), _os.environ.get("HOME", ""))
+    assert envs[1]["PWD"] == cwds[1]
+    import pathlib as _pathlib
+
+    fresh = _pathlib.Path(cwds[1])
+    assert not (fresh / "planted.txt").exists()
+    assert not (fresh / ".opencode" / "evil-plugin.json").exists()
+
+
+def test_req091_fake_agent_path_parses_inline_json() -> None:
+    """REQ-091 item 5: the fake-agent path still parses the inline JSON answer."""
+    from bench.baseline_coding_agent import FakeOpenCodeDriver
+    from bench.repair_answer import parse_repair_answer
+
+    answer = '{"patch": [{"op": "replace", "path": "/entities/E/fields/f/path", "value": "$.g"}]}'
+    driver = FakeOpenCodeDriver(responses={"repair it": answer})
+    res = driver.run("repair it")
+    assert res.text.strip() == answer
+    assert parse_repair_answer(res.text)["kind"] == "patch"
