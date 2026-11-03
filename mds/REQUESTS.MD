@@ -2,10 +2,10 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 17:40): **no open REQ** — the beacon run is done and published (round 6608718, tag `eval-freeze-6608718`, `experiments/beacon/6608718/`; REQ-066..093 done). Do not change engine, bench, verifier or simulator code and never touch `experiments/beacon/` until the owner reopens work. REQ-095 (live-key product path: keyed demo smoke + deferred-job test), REQ-094 (beacon harness gaps), REQ-092 (AR-7-11, AR-7-12) and REQ-090 (AR-7-3..8) are DEFERRED until after the hackathon: do not start them. REQ-092 (AR-7-11, AR-7-12) is DEFERRED until after the hackathon: do not start it. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 19:12): **REQ-095 only** (the live-key product path has no automated test; REQ-066..093 done; the beacon run is done and published, round 6608718, tag `eval-freeze-6608718`). Touch only what REQ-095's items name; never touch `experiments/beacon/`. REQ-094 (beacon harness gaps), REQ-092 (AR-7-11, AR-7-12) and REQ-090 (AR-7-3..8) are DEFERRED until after the hackathon: do not start them. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-095 — The live-key product path has no automated test: deferred repair jobs failed to serialise Decimal evidence and no gate noticed (2026-11-03)
-Status: DEFERRED (owner 2026-11-03: after the hackathon; the payload bug itself was hot-fixed on the host the same evening — the job parcel is made JSON-safe in `_submit_deferred_model_repair`)
+Status: OPEN (owner 2026-11-03 19:12; the payload bug itself was hot-fixed on the host the same evening — the job parcel is made JSON-safe in `_submit_deferred_model_repair`)
 Found while recording the demo on a freshly restarted host stack with `FRONTIER_API_KEY` set: every sync detected
 the Atlas pagination drift, then failed to queue the deferred repair job with `Object of type Decimal is not JSON
 serializable` (jobs table, JSON payload), so the drift stayed open with no repair. Since REQ-078 every repairable
@@ -17,15 +17,16 @@ before REQ-078 landed. Three items, one per iteration:
 1. Unit test for the deferred parcel: `_submit_deferred_model_repair` with a sync summary whose canonical records
    carry `Decimal` amounts and whose evidence includes the record sample must queue a job whose payload round-trips
    through `json.dumps` and `repair_job_handler` (the hot-fix stays; the test pins it).
-2. A keyed demo smoke, `make demo-smoke-live` (or a step of `make smoke` that runs only when `FRONTIER_API_KEY` is
-   set and skips loudly otherwise): seed, inject `page_to_cursor` on Atlas, POST the sync through the control API
+2. A keyed demo smoke, `make demo-smoke-live`, which is optional: when `FRONTIER_API_KEY` is set it runs with the
+   key; when it is not set it prints one skip line and exits 0 — a missing key never fails a test or a gate. With the key:
+   seed, inject `page_to_cursor` on Atlas, POST the sync through the control API
    exactly as the UI does, wait for the background drain, assert a repair row exists with a rule-level proposal and
    that approve reaches a release. One scene, a handful of model calls. Documented as the owner's pre-recording
    check and part of the daily review's checklist.
 3. Honest wording in `docs/benchmark.md` and `docs/architecture.md`: the gates run offline/replay, the beacon
    runs the model in-process, and the live-key product path (control API → job queue → drain → ladder) is covered
    by the keyed demo smoke only. No "simulates real" claim without naming the layer.
-Do not start until the owner reopens it.
+Then mark DONE after full gates pass.
 
 
 ### REQ-094 — Beacon harness gaps surfaced by the real run (round 6608718): ungradable LegacyStay candidates, invisible faults, zero-record syncs read Complete, eval script wait loop (2026-11-03)
