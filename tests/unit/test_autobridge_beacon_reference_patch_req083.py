@@ -237,6 +237,58 @@ def test_reference_fias_layout_repairs_through_sync_candidate() -> None:
     assert judged["verdict"] == "pass", judged["failed_checks"]
 
 
+def test_reference_fias_layout_hash_id_yields_valid_pointers() -> None:
+    """REQ-093: round 6608587 drew ``DA`` → ``R#`` and the preflight
+    refused the reference patch: ``_with_wire_id`` kept the old
+    dotted shape and emitted ``$.R#``, which ``check_jsonpath``
+    rejects (``#`` is legal only in bracket form, as the live spec's
+    own ``$['P#']`` shows). The rewrite must choose the shape the
+    new id needs; a plain-id rename keeps dotted form. Both patched
+    specs validate (``apply_patch`` validates the result)."""
+    import copy
+
+    from autobridge.spec.models import check_jsonpath
+    from autobridge.spec.patch import apply_patch
+
+    vendors = beacon_run.load_vendors()
+    spec = beacon_run.engine_spec_for({"index": 9, "vendor": "fias-pabx"}, vendors)
+    assert spec is not None
+
+    def patched_for(new_id: str) -> tuple[list, dict]:
+        inst = {
+            "index": 9, "vendor": "fias-pabx", "family": "fias_layout",
+            "params": {"renamed": {"DA": new_id}}, "expected": "repair",
+        }
+        patch = refpatch.reference_patch_for(inst, copy.deepcopy(spec))
+        assert patch, f"no reference patch for DA -> {new_id}"
+        return patch, apply_patch(copy.deepcopy(spec), list(patch))
+
+    def rewritten_pointers(patch: list) -> list[str]:
+        out: list[str] = []
+        for op in patch:
+            value = op.get("value")
+            if isinstance(value, str):
+                out.append(value)
+            elif isinstance(value, list):
+                out.extend(v for v in value if isinstance(v, str))
+        return out
+
+    # The round-6608587 rename: bracket form, valid JSONPath, valid spec.
+    patch, _ = patched_for("R#")
+    pointers = rewritten_pointers(patch)
+    assert "$['R#']" in pointers, pointers
+    assert not any(p == "$.R#" for p in pointers), pointers
+    for pointer in pointers:
+        check_jsonpath(pointer)
+
+    # A plain-id rename keeps dotted form, valid JSONPath, valid spec.
+    patch, _ = patched_for("TM")
+    pointers = rewritten_pointers(patch)
+    assert "$.TM" in pointers, pointers
+    for pointer in pointers:
+        check_jsonpath(pointer)
+
+
 def test_reference_gross_net_has_no_spec_patch() -> None:
     """gross_net scaling is patch-inexpressible (no factor arg, plan-level
     vocabulary) — and keyed degraded_question (REQ-086), so the

@@ -479,7 +479,11 @@ Status: only rehearsals on past rounds have run. The real freeze has not
 happened — there is no `eval-freeze-<round>` tag, no
 `experiments/beacon/<round>/protocol.md` and no
 `experiments/beacon/<round>/` result yet — so there are no beacon
-results to report. The list below is what a judge can check once it has.
+results to report. Round 6608587 was frozen, refused by the harness
+preflight on a reference-patch pointer bug (`$.R#` for a FIAS wire id
+containing `#`, REQ-093) before any scored instance, and re-frozen
+under a new round (the `eval-freeze-6608587` tag keeps the refused
+freeze in history). The list below is what a judge can check once it has.
 
 What a judge can check (all of it public):
 

@@ -19,9 +19,15 @@ verifier's records judge passes.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 ENTITY_FOR = {"reservation": "Reservation", "folio": "FolioCharge"}
+
+#: A wire id usable in dotted JSONPath form (``$.TA``). Anything else —
+#: e.g. a FIAS id containing ``#`` such as ``R#`` — needs bracket form
+#: (``$['R#']``), the shape the live FIAS spec itself uses (``$['P#']``).
+_PLAIN_WIRE_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _entity_key(instance: dict[str, Any]) -> str:
@@ -555,12 +561,13 @@ def _wire_id(pointer: str) -> str:
     return str(pointer).strip().lstrip("$").lstrip(".").strip("[]'\"")
 
 
-def _with_wire_id(pointer: str, new_id: str) -> str:
-    """Rewrite a field pointer to a new wire id, keeping its shape."""
-    raw = str(pointer).strip()
-    if raw.startswith("$["):
-        return f"$['{new_id}']"
-    return f"$.{new_id}"
+def _with_wire_id(new_id: str) -> str:
+    """Render a field pointer for a wire id, choosing the shape the
+    new id needs: dotted (``$.<id>``) for a plain identifier, bracket
+    (``$['<id>']``) otherwise (e.g. a FIAS id containing ``#``)."""
+    if _PLAIN_WIRE_ID_RE.match(new_id):
+        return f"$.{new_id}"
+    return f"$['{new_id}']"
 
 
 def _fias_layout_patch(instance: dict[str, Any], spec: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -585,7 +592,7 @@ def _fias_layout_patch(instance: dict[str, Any], spec: dict[str, Any]) -> list[d
                     "op": "replace",
                     "path": f"/entities/{ekey}/fields/{fname}/paths",
                     "value": [
-                        _with_wire_id(p, renamed[_wire_id(p)])
+                        _with_wire_id(renamed[_wire_id(p)])
                         if isinstance(p, str) and _wire_id(p) in renamed else p
                         for p in paths
                     ],
@@ -595,6 +602,6 @@ def _fias_layout_patch(instance: dict[str, Any], spec: dict[str, Any]) -> list[d
                 ops.append({
                     "op": "replace",
                     "path": f"/entities/{ekey}/fields/{fname}/path",
-                    "value": _with_wire_id(single, renamed[_wire_id(single)]),
+                    "value": _with_wire_id(renamed[_wire_id(single)]),
                 })
     return ops or None
