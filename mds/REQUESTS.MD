@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 09:10): **REQ-088 → REQ-089** (Architecture Review cycle 7 blockers AR-7-1 and AR-7-2; REQ-066..087 done; the real beacon freeze waits for these two). One REQ per iteration. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 09:10): **REQ-088 → REQ-089** (Architecture Review cycle 7 blockers AR-7-1 and AR-7-2; REQ-066..087 done; the real beacon freeze waits for these two). One REQ per iteration. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-088 — AR-7-1: the `frontier_agent` arm's sandbox allows `bash`/`webfetch` and inherits the whole environment, so the agent can reach the answer key (2026-11-03)
 Status: IN_PROGRESS (sbx1 since 2026-11-03 01:40)
@@ -61,6 +61,37 @@ a labelled demo value, not a secret), and `EDGE_TOKEN` already chains to the con
    → no value in any log line). `docs/safety-model.md` states the default: writes require the token out of the box,
    demo value labelled, loopback binding still the default.
 Then mark DONE after full gates pass. Do not freeze, tag or commit under `experiments/beacon/`.
+
+### REQ-090 — Architecture Review cycle 7, remaining findings AR-7-3..AR-7-8 (2026-11-03)
+Status: DEFERRED (owner 2026-11-03: after the hackathon; the review's blockers are REQ-088 and REQ-089)
+Six non-blocking findings from `mds/FEEDBACKS.MD` cycle 7, kept together so none is lost. Each is one root cause;
+when this REQ opens, take them one item per iteration in this order.
+1. AR-7-3 (Medium, playbook §6 known gap): unrefreshable `AUTH_EXPIRED` climbs to the frontier model
+   (`src/autobridge/repair/controller.py` ~284, ~470-531; `ladder.py` ~1504-1535). Treat a deterministic
+   `escalate` decision from the auth probe as terminal before the model gate; refreshable stays a zero-token
+   refresh. Test: unrefreshable expiry with a wired `FakeProvider` ends `escalate` with zero `ModelCall` rows.
+   DIRECTIVES §3's "no class list gates the model" gets a one-line carve-out naming this.
+2. AR-7-4 (Medium): vendor literals in engine discovery (`discovery/hypotheses.py` ~58 `_HARBOR_OPAQUE_MAP` and
+   ~762/772; `discovery/bootstrap.py` ~84-87 and ~147-150; `discovery/classifiers.py` ~713). Move the opaque map
+   and the URL/credential special cases to config keyed by the vendor table, or derive the opaque hypothesis as
+   "unknown, probe must map"; extend the no-vendor-vocabulary guard to fail on vendor literals under `discovery/`.
+   Test: a synthetic opaque-code vendor whose codes differ from Harbor's gets no Harbor mapping proposed.
+3. AR-7-5 (Medium): no aggregate model-spend ceiling; every decided repair buys a fresh per-climb budget
+   (`engine/detect_repair.py` ~1418, `controller.py` ~1832/2361/2433). Add a persisted per-connector rolling
+   budget checked before L2/L3, escalating when exhausted, surfaced in the model-usage UI. Test: N decided cycles
+   against `FakeProvider`, the (N+1)-th escalates without a `ModelCall`.
+4. AR-7-6 (Medium, playbook §6 known gap): live silent-corruption baseline is money-only
+   (`drift/value_baseline.py`). Persist a per-release date sketch beside the money sketch and emit a date-value
+   signal on shift. Test: simulator scenario serving cutoff-crossing instants under an unchanged schema raises a
+   drift event instead of `Complete`.
+5. AR-7-7 (Low): verifier `failed_checks[].details` carries up to five fixture record IDs into the engine zone
+   (`verifier/app.py` ~184-197, ~252-267; `verifier/checks.py` ~67). Replace `details` with bounded enum reasons
+   in `VerifyResponse`/`BeaconRecordsResponse` and make the leak guard fail on any marker. Test: no `RES-`/`CHG-`
+   substring in any verifier response mode.
+6. AR-7-8 (Low): 2-second list polling across the dashboard (35 `refreshInterval` sites under `ui/`, control
+   repair-drain poll `control/app.py` ~184-187). Raise list polls to 10-30 s, lean on the existing SSE run events,
+   pause on hidden tabs. Validation: requests per minute with an idle dashboard, before and after.
+Do not start until the owner reopens it.
 
 ### REQ-087 — The dry-run gate judges checks without the spec's declared zone and refuses correct date repairs (2026-11-03)
 Status: DONE (sbx1 2026-11-02 -- all 2 items code-done: shared spec_static_tz helper in runtime/checks.py used by sync_run + dryrun, context_tz forwarded in old-check + patched passes; 4 new tests, full gates green; owner step: keyed rehearsal, then close)
