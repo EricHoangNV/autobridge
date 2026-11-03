@@ -5,7 +5,7 @@
 Owner priority (2026-11-03 09:10): **REQ-088 → REQ-089** (Architecture Review cycle 7 blockers AR-7-1 and AR-7-2; REQ-066..087 done; the real beacon freeze waits for these two). One REQ per iteration. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-089 — AR-7-2: control-plane writes are open when `AUTOBRIDGE_CONTROL_TOKEN` is empty, and the shipped defaults leave it empty (2026-11-03)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-03 11:20)
 Architecture Review cycle 7 (AR-7-2, High): `require_control_token` returns immediately when the token is unset or
 empty (`src/autobridge/control/deps.py` ~51-63); Compose ships `${AUTOBRIDGE_CONTROL_TOKEN:-}` for `control`,
 `worker`, `edge-relay` and `ui` (`compose.yaml` 56, 136, 234, 410) and `scripts/local-up.sh` leaves it unset, so
