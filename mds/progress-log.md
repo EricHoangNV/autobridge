@@ -4375,3 +4375,27 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). `semantic/gross_ne
 **Notes for next iteration:**
 - Agent: opencode meta/muse-wonder-1.0 (escalation)
 - Owner keyed rehearsal closes REQ-078/080/081/083–087; live smoke/e2e not runnable in this sandbox (no stack up), reported not faked.
+
+## REQ-088 — AR-7-1: frontier_agent sandbox confinement
+**Date:** 2026-11-03
+**Ref:** mds/REQUESTS.MD REQ-088 (Architecture Review cycle 7, AR-7-1 Critical)
+
+**What was done:**
+- Deny-all agent permission config (`bash/webfetch/webfetch-task/skill/lsp/external_directory` denied; `read/glob/grep/edit` allowed in sandbox dir), shared between the written `opencode.json` and the `OPENCODE_PERMISSION` child-env override
+- Child env rebuilt as an allowlist from scratch (was a denylist copy of `os.environ`); hostile-parent proof in `preflight_beacon` before the first scored instance, rehearsals included
+- Flipped the `bash == "allow"` test; added the env-allowlist test; updated `docs/benchmark.md` confinement wording
+- Full gates: `make lint`, `make typecheck`, full `make test` green (autobridge 3231 passed @90%, verifier 144 @91%, simulators 434 @90%, UI 350); targeted preflight/ablation/agent suites green
+
+**Key decisions:**
+- Provider key vars follow the pinned model (`meta/` → `META_MODEL_API_KEY`, etc.) with `FRONTIER_API_KEY` always crossing; default set keeps claude/codex env-key auth working
+- Preflight checks names only, never values, so no secret ever lands in an error message
+
+**Files changed:**
+- `bench/baseline_coding_agent.py` — confinement core (`AGENT_PERMISSION_CONFIG`, `build_agent_child_env`, drivers)
+- `bench/context.py` — sandbox writes the shared deny config
+- `bench/beacon_run.py` — preflight permission + allowlist proofs
+- `tests/unit/test_autobridge_req081.py` — flipped + new allowlist test
+- `docs/benchmark.md` — confinement wording
+
+**Notes for next iteration:**
+- Owner step: keyed rehearsal with `FRONTIER_API_KEY`, then close; next loop takes REQ-089 (AR-7-2)

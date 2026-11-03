@@ -429,27 +429,21 @@ def write_agent_sandbox(context: BenchContext, dest: str | pathlib.Path) -> list
             raise RuntimeError(f"bench sandbox file escapes its directory: {name!r}")
         target.write_text(files[name], encoding="utf-8")
         written.append(name)
-    # REQ-081 item 7: explicit opencode permission config in the sandbox
-    # dir (project config, picked up because cwd is the sandbox dir). Deny
-    # what the agent may not use (outside reads, subagents, search, skills)
-    # and allow the sandbox tools — so a tool call never ends in a silent
+    # REQ-081 item 7 / REQ-088: explicit opencode permission config in the
+    # sandbox dir (project config, picked up because cwd is the sandbox
+    # dir). The agent answers inline from the evidence bundle — no shell,
+    # no fetch and no file access outside the sandbox dir are part of the
+    # contract — so everything but the in-sandbox file tools is denied
+    # (single source of truth: AGENT_PERMISSION_CONFIG, also exported as
+    # OPENCODE_PERMISSION so an inherited value can never loosen it).
+    # Denying (not asking) also means a tool call never ends in a silent
     # headless "ask" rejection with no final answer.
     try:
+        from bench.baseline_coding_agent import AGENT_PERMISSION_CONFIG
+
         _opencode_cfg = {
             "$schema": "https://opencode.ai/config.json",
-            "permission": {
-                "external_directory": "deny",
-                "task": "deny",
-                "websearch": "deny",
-                "skill": "deny",
-                "lsp": "deny",
-                "read": "allow",
-                "glob": "allow",
-                "grep": "allow",
-                "bash": "allow",
-                "edit": "allow",
-                "webfetch": "allow",
-            },
+            "permission": dict(AGENT_PERMISSION_CONFIG),
         }
         (dest_path / "opencode.json").write_text(
             json.dumps(_opencode_cfg, indent=2, sort_keys=True), encoding="utf-8"

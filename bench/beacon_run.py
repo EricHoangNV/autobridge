@@ -2570,17 +2570,72 @@ def preflight_beacon(
         raise BeaconError("preflight: frontier agent brief rendered empty")
     report["prompts"] = {"oneshot_chars": len(one_text), "agent_chars": len(brief_text)}
     # Agent CLI working directory (A4/REQ-078): the child PWD equals the
-    # sandbox dir, or the agent never sees its files.
+    # sandbox dir, or the agent never sees its files. REQ-088/AR-7-1: the
+    # written permission file denies shell/fetch/subagents and outside
+    # reads, and the child env is an allowlist built from scratch (name
+    # check only — values are never printed).
     import pathlib as _pathlib
     import tempfile as _tempfile
 
-    from bench.baseline_coding_agent import _sandbox_env as _child_env
+    from bench.baseline_coding_agent import AGENT_PERMISSION_CONFIG as _agent_perm  # noqa: PLC0415
+    from bench.baseline_coding_agent import _sandbox_env as _child_env  # noqa: PLC0415
+    from bench.baseline_coding_agent import agent_child_env_allows as _env_allows  # noqa: PLC0415
+    from bench.baseline_coding_agent import build_agent_child_env as _build_child_env  # noqa: PLC0415
+    from bench.context import write_agent_sandbox as _write_sandbox  # noqa: PLC0415
 
     with _tempfile.TemporaryDirectory(prefix="beacon-preflight-") as tmpd:
         child = _child_env(_pathlib.Path(tmpd))
         assert child is not None
         if child.get("PWD") != str(tmpd):
             raise BeaconError(f"preflight: agent child PWD {child.get('PWD')!r} != sandbox dir {tmpd!r}")
+        try:
+            _write_sandbox(ctx0, tmpd)
+        except Exception as exc:
+            raise BeaconError(f"preflight: agent sandbox write failed: {type(exc).__name__}: {exc}") from exc
+        import json as _json  # noqa: PLC0415
+
+        try:
+            _written_perm = _json.loads((_pathlib.Path(tmpd) / "opencode.json").read_text(encoding="utf-8")).get(
+                "permission", {}
+            )
+        except Exception as exc:
+            raise BeaconError(f"preflight: agent sandbox permission file unreadable: {exc}") from exc
+        for _denied in ("bash", "webfetch", "websearch", "external_directory"):
+            if _written_perm.get(_denied) != "deny":
+                raise BeaconError(
+                    f"preflight: agent sandbox permission {(_denied, _written_perm.get(_denied))!r} is not denied"
+                )
+        # The child env from a hostile parent: nothing outside the
+        # allowlist may cross (an unrelated secret, bench-internal
+        # endpoints, and an inherited OPENCODE_PERMISSION allow-value
+        # must all stay out; PWD stays the sandbox dir).
+        import os as _preflight_os  # noqa: PLC0415
+
+        _hostile_parent = dict(_preflight_os.environ)
+        _hostile_parent.update(
+            {
+                "VERIFIER_URL": "http://verifier-hostile:9999",
+                "SIM_ADMIN_TOKEN": "hostile-admin",
+                "AUTOBRIDGE_CONTROL_TOKEN": "hostile-control",
+                "MYSTERY_UNRELATED_SECRET": "hostile-secret",
+                "OPENCODE_PERMISSION": '{"bash":"allow","webfetch":"allow","external_directory":"allow"}',
+            }
+        )
+        _hostile_child = _build_child_env(_hostile_parent, _pathlib.Path(tmpd))
+        for _key in _hostile_child:
+            if not _env_allows(_key):
+                raise BeaconError(f"preflight: agent child env leaks {_key!r} outside the allowlist")
+        for _banned in ("VERIFIER_URL", "SIM_ADMIN_TOKEN", "AUTOBRIDGE_CONTROL_TOKEN", "MYSTERY_UNRELATED_SECRET"):
+            if _banned in _hostile_child:
+                raise BeaconError(f"preflight: agent child env leaks {_banned!r}")
+        if _hostile_child.get("PWD") != str(tmpd):
+            raise BeaconError("preflight: agent child PWD != sandbox dir under a hostile parent")
+        try:
+            _child_perm = _json.loads(_hostile_child.get("OPENCODE_PERMISSION", "{}"))
+        except Exception as exc:
+            raise BeaconError(f"preflight: agent child OPENCODE_PERMISSION unparsable: {exc}") from exc
+        if _child_perm != dict(_agent_perm):
+            raise BeaconError("preflight: agent child OPENCODE_PERMISSION != sandbox deny config")
     report["pwd_ok"] = True
     return report
 

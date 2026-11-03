@@ -545,8 +545,18 @@ What a judge can check (all of it public):
    an approved fix is in production) and is available to later instances;
    cold never learns. Each instance reports whether warm used a learned
    fix (rung + source instance) — a warm-vs-cold gap shows learning, not
-   pre-knowledge. The frontier agent is restricted to its sandbox dir and
-   the vendor sandbox URL only (no repo, no verifier/admin ports); both
+   pre-knowledge. The frontier agent is confined to file tools inside its
+   sandbox dir (read/glob/grep/edit; no shell, no fetch, no subagents,
+   no outside-directory reads — `opencode.json` denies `bash`,
+   `webfetch`, `websearch`, `task`, `skill`, `lsp` and
+   `external_directory`) with an allowlisted child env built from scratch
+   (`PATH`/`HOME`/`TMPDIR`/locale plus the CLI's own `OPENCODE_*`/`XDG_*`
+   settings and the frontier provider's key variables; `PWD` pinned to
+   the sandbox dir and `OPENCODE_PERMISSION` set to the same deny config
+   so an inherited value can never loosen it). Nothing else crosses — no
+   repo checkout, no generator/verifier sources, no verifier/admin ports;
+   the preflight proves the permission file and the allowlist before the
+   first scored instance, rehearsals included; both
    arms get the stored last-good baseline — the frontier arms' evidence
    shows the baseline sample next to the faulted values, clearly labelled
    baseline vs faulted, and the engine arms compare against the same

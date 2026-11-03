@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
+
 
 def _legacystay_like_spec_no_money() -> dict:
     return {
@@ -224,6 +226,7 @@ def test_item6_generic_evidence_renders_paths() -> None:
 
 
 def test_item7_sandbox_writes_permission_config(tmp_path: Path) -> None:
+    from bench.baseline_coding_agent import AGENT_PERMISSION_CONFIG
     from bench.context import BenchContext, write_agent_sandbox
 
     ctx = BenchContext(
@@ -244,9 +247,77 @@ def test_item7_sandbox_writes_permission_config(tmp_path: Path) -> None:
     assert cfg_path.is_file()
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     perm = cfg.get("permission", {})
-    assert perm.get("external_directory") == "deny"
-    assert perm.get("task") == "deny"
-    assert perm.get("bash") == "allow"
+    # REQ-088/AR-7-1: no shell, no fetch, no subagents, no outside reads.
+    assert perm == dict(AGENT_PERMISSION_CONFIG)
+    for denied in ("bash", "webfetch", "websearch", "task", "skill", "lsp", "external_directory"):
+        assert perm.get(denied) == "deny", denied
+    for allowed in ("read", "glob", "grep", "edit"):
+        assert perm.get(allowed) == "allow", allowed
+
+
+def test_req088_agent_child_env_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-088/AR-7-1: the agent child env is an allowlist from scratch.
+
+    A parent seeded with bench-internal endpoints, simulator credential
+    refs, an unrelated secret and a loosening OPENCODE_PERMISSION
+    produces a child env with none of them; PWD is the sandbox dir,
+    OPENCODE_PERMISSION is the sandbox deny config, every surviving name
+    is allowlisted, and only the frontier provider's key variables cross.
+    """
+    from bench.baseline_coding_agent import (
+        AGENT_PERMISSION_CONFIG,
+        _sandbox_env,
+        agent_child_env_allows,
+        build_agent_child_env,
+    )
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    hostile = {
+        "VERIFIER_URL": "http://verifier-hostile:9999",
+        "SIM_ADMIN_TOKEN": "hostile-admin",
+        "AUTOBRIDGE_CONTROL_TOKEN": "hostile-control",
+        "ATLAS_API_KEY": "hostile-atlas",
+        "MYSTERY_UNRELATED_SECRET": "hostile-secret",
+        "OPENCODE_PERMISSION": '{"bash":"allow","webfetch":"allow","external_directory":"allow"}',
+        "FRONTIER_API_KEY": "frontier-key",
+        "META_MODEL_API_KEY": "meta-key",
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/home/tester",
+    }
+    child = build_agent_child_env(hostile, sandbox, model="meta/muse-spark-1.3")
+    for banned in (
+        "VERIFIER_URL",
+        "SIM_ADMIN_TOKEN",
+        "AUTOBRIDGE_CONTROL_TOKEN",
+        "ATLAS_API_KEY",
+        "MYSTERY_UNRELATED_SECRET",
+    ):
+        assert banned not in child, banned
+    assert child["PWD"] == str(sandbox)
+    assert json.loads(child["OPENCODE_PERMISSION"]) == dict(AGENT_PERMISSION_CONFIG)
+    for name in child:
+        assert agent_child_env_allows(name, model="meta/muse-spark-1.3"), name
+    # The frontier keys the CLI reads for the pinned model cross.
+    assert child["FRONTIER_API_KEY"] == "frontier-key"
+    assert child["META_MODEL_API_KEY"] == "meta-key"
+    # Unknown providers get the default frontier keys, never bench secrets.
+    assert build_agent_child_env(hostile, sandbox, model=None)["FRONTIER_API_KEY"] == "frontier-key"
+    assert "MYSTERY_UNRELATED_SECRET" not in build_agent_child_env(hostile, sandbox, model=None)
+    # The os.environ-backed helper honors the same allowlist.
+    monkeypatch.setenv("MYSTERY_UNRELATED_SECRET", "hostile-secret")
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setenv(
+        "OPENCODE_PERMISSION",
+        '{"bash":"allow","webfetch":"allow","external_directory":"allow"}',
+    )
+    via_environ = _sandbox_env(sandbox)
+    assert via_environ is not None
+    assert "MYSTERY_UNRELATED_SECRET" not in via_environ
+    assert via_environ["PWD"] == str(sandbox)
+    assert json.loads(via_environ["OPENCODE_PERMISSION"]) == dict(AGENT_PERMISSION_CONFIG)
 
 
 def test_item4_business_datetime_input_format() -> None:

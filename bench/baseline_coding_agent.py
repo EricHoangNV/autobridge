@@ -213,7 +213,124 @@ class ClaudeCliError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _sandbox_env(cwd: Path | None) -> dict[str, str] | None:
+#: Sandbox permission config for the frontier-agent arm (REQ-088/AR-7-1).
+#: Single source of truth: written to the sandbox dir's ``opencode.json``
+#: by :func:`bench.context.write_agent_sandbox` and exported to the agent
+#: child as ``OPENCODE_PERMISSION`` so an inherited value can never loosen
+#: it. The agent answers inline from the evidence bundle in its sandbox
+#: dir — no file write outside it, no shell and no fetch are part of the
+#: contract — so ``bash``/``webfetch``/``websearch``/``task``/``skill``/
+#: ``lsp`` and ``external_directory`` are denied; ``read``/``glob``/
+#: ``grep``/``edit`` stay allowed inside the sandbox dir.
+AGENT_PERMISSION_CONFIG: dict[str, str] = {
+    "bash": "deny",
+    "edit": "allow",
+    "external_directory": "deny",
+    "glob": "allow",
+    "grep": "allow",
+    "lsp": "deny",
+    "read": "allow",
+    "skill": "deny",
+    "task": "deny",
+    "webfetch": "deny",
+    "websearch": "deny",
+}
+
+#: Fixed env names that cross into an agent CLI child (REQ-088/AR-7-1):
+#: what the OS/CLI needs to run (``PATH`` to resolve the binary, ``HOME``
+#: for the CLI's own config and auth store, ``TMPDIR`` for temp files,
+#: locale/terminal). ``PWD`` is set separately to the sandbox dir and
+#: ``OPENCODE_PERMISSION`` to :data:`AGENT_PERMISSION_CONFIG`.
+_AGENT_CHILD_ENV_FIXED: frozenset[str] = frozenset({"HOME", "LANG", "PATH", "TERM", "TMPDIR"})
+
+#: Parent-env prefixes that cross (REQ-088/AR-7-1): ``XDG_*`` locates the
+#: CLI's config/auth store; ``OPENCODE_*`` carries the CLI's own settings.
+#: ``OPENCODE_PERMISSION`` is set explicitly afterwards, so an inherited
+#: allow-value can never loosen the deny config above.
+_AGENT_CHILD_ENV_PREFIXES: tuple[str, ...] = ("OPENCODE_", "XDG_")
+
+#: Frontier-provider key variables, by pinned-model provider prefix
+#: (REQ-088/AR-7-1): the CLI reads its own provider's key for the pinned
+#: model (``META_MODEL_API_KEY`` for ``meta/...``, etc.). The harness's
+#: own frontier key (``FRONTIER_API_KEY``) always crosses — it is the
+#: designated frontier-tier key, same sensitivity class, and the default
+#: when the provider is unknown.
+_AGENT_PROVIDER_KEY_VARS: dict[str, tuple[str, ...]] = {
+    "meta": ("META_MODEL_API_KEY",),
+    "baseten": ("BASETEN_API_KEY",),
+    "modal": ("MODAL_BASE_URL", "MODAL_PROXY_TOKEN"),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+}
+_AGENT_DEFAULT_KEY_VARS: tuple[str, ...] = ("ANTHROPIC_API_KEY", "FRONTIER_API_KEY", "OPENAI_API_KEY")
+
+
+def agent_child_env_allowed_names(model: str | None = None) -> frozenset[str]:
+    """Env names an agent CLI child may carry for *model* (REQ-088/AR-7-1).
+
+    The fixed set, the ``OPENCODE_PERMISSION`` override, the provider key
+    variables for the pinned model's provider, plus the ``OPENCODE_`` /
+    ``XDG_`` prefixes (checked with :func:`agent_child_env_allows`).
+    """
+    names = set(_AGENT_CHILD_ENV_FIXED) | {"PWD", "OPENCODE_PERMISSION"}
+    provider = (model or "").split("/")[0].strip().lower() if model and "/" in model else ""
+    names.update(_AGENT_PROVIDER_KEY_VARS.get(provider, _AGENT_DEFAULT_KEY_VARS))
+    names.add("FRONTIER_API_KEY")
+    return frozenset(names)
+
+
+def agent_child_env_allows(name: str, model: str | None = None) -> bool:
+    """True when *name* may cross into an agent CLI child (REQ-088/AR-7-1)."""
+    if name in agent_child_env_allowed_names(model):
+        return True
+    return name.startswith(_AGENT_CHILD_ENV_PREFIXES)
+
+
+def build_agent_child_env(
+    parent: Any,
+    cwd: Path,
+    *,
+    model: str | None = None,
+) -> dict[str, str]:
+    """Build an allowlisted child env from *parent* for an agent CLI.
+
+    REQ-088/AR-7-1: from scratch, not a scrubbed copy. Only the fixed
+    names, the ``OPENCODE_``/``XDG_`` prefixes and the frontier provider's
+    key variables cross; ``PWD`` is pinned to the sandbox dir (REQ-078:
+    the CLI takes its working directory from the inherited ``PWD``) and
+    ``OPENCODE_PERMISSION`` is set explicitly to
+    :data:`AGENT_PERMISSION_CONFIG` so an inherited value can never loosen
+    it. Nothing else crosses — no verifier/admin/control URLs, no
+    simulator credential refs, no unrelated secrets.
+    """
+    child: dict[str, str] = {}
+    for name in agent_child_env_allowed_names(model):
+        if name in ("PWD", "OPENCODE_PERMISSION"):
+            continue
+        try:
+            value = parent.get(name)
+        except Exception:
+            value = None
+        if value is not None:
+            child[name] = str(value)
+    try:
+        parent_names = list(parent.keys())
+    except Exception:
+        parent_names = []
+    for name in parent_names:
+        if name in child or name in ("PWD", "OPENCODE_PERMISSION"):
+            continue
+        if name.startswith(_AGENT_CHILD_ENV_PREFIXES):
+            try:
+                child[name] = str(parent[name])
+            except Exception:
+                continue
+    child["PWD"] = str(cwd)
+    child["OPENCODE_PERMISSION"] = json.dumps(AGENT_PERMISSION_CONFIG, sort_keys=True)
+    return child
+
+
+def _sandbox_env(cwd: Path | None, model: str | None = None) -> dict[str, str] | None:
     """Child environment for an agent CLI spawned with *cwd*.
 
     REQ-078 (reopened 2026-11-02): agent CLIs take their working
@@ -221,13 +338,14 @@ def _sandbox_env(cwd: Path | None) -> dict[str, str] | None:
     parent ``PWD`` lands the agent session in the repo instead of its
     sandbox dir, so the agent never sees its files. Pin ``PWD`` to the
     sandbox dir the harness wrote the shared context files to.
+    REQ-088/AR-7-1: the env is an allowlist built from scratch (see
+    :func:`build_agent_child_env`) — no verifier/admin/control URLs, no
+    simulator credentials, no unrelated secrets cross.
     ``None`` (no sandbox dir) means inherit the parent environment.
     """
     if cwd is None:
         return None
-    child_env = dict(os.environ)
-    child_env["PWD"] = str(cwd)
-    return child_env
+    return build_agent_child_env(os.environ, cwd, model=model)
 
 
 class ClaudeCodeDriver:
@@ -280,8 +398,9 @@ class ClaudeCodeDriver:
                 # Never inherit stdin (REQ-061 item 2: same hang class as opencode).
                 stdin=subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
-                # REQ-078: pin PWD to the sandbox dir (helper docstring).
-                env=_sandbox_env(cwd),
+                # REQ-078: pin PWD to the sandbox dir; REQ-088: allowlisted
+                # child env (helper docstring).
+                env=_sandbox_env(cwd, model=self.model),
             )
         except subprocess.TimeoutExpired as e:
             raise ClaudeCliError(
@@ -501,8 +620,9 @@ class CodexCliDriver:
                 # Never inherit stdin (REQ-061 item 2: same hang class as opencode).
                 stdin=subprocess.DEVNULL,
                 cwd=str(cwd) if cwd else None,
-                # REQ-078: pin PWD to the sandbox dir (helper docstring).
-                env=_sandbox_env(cwd),
+                # REQ-078: pin PWD to the sandbox dir; REQ-088: allowlisted
+                # child env (helper docstring).
+                env=_sandbox_env(cwd, model=self.model),
             )
         except subprocess.TimeoutExpired as e:
             raise CodexCliError(
@@ -965,13 +1085,16 @@ class OpenCodeCliDriver:
         REQ-078 item 6 (frontier-agent isolation): the agent is restricted
         to its sandbox dir and the vendor sandbox URL only. The run
         requires *cwd* (the sandbox dir the harness wrote the shared
-        context files to — never the repo); the child environment is
-        scrubbed of bench-internal endpoints (verifier/admin/control
-        URLs, held-out paths, API keys beyond the frontier key the model
-        call itself needs) so the agent cannot regenerate the instance
-        from the committed protocol, read generator/verifier sources, or
-        use the unauthenticated ``/beacon/records`` endpoint as an
-        oracle. Equal information holds both ways: the prompt + sandbox
+        context files to — never the repo); the child environment is an
+        allowlist built from scratch (REQ-088/AR-7-1: fixed OS names plus
+        ``OPENCODE_``/``XDG_`` settings and the frontier provider's key
+        variables; ``PWD`` pinned to the sandbox dir and
+        ``OPENCODE_PERMISSION`` set to the sandbox deny config), so the
+        agent cannot regenerate the instance from the committed
+        protocol, read generator/verifier sources, or reach the
+        unauthenticated ``/beacon/records`` endpoint as an oracle — it has
+        no shell, no fetch and no file access outside its sandbox dir.
+        Equal information holds both ways: the prompt + sandbox
         files are the agent's whole world, exactly the engine's equal
         inputs.
         """
@@ -987,26 +1110,7 @@ class OpenCodeCliDriver:
         t = timeout_s if timeout_s is not None else self.timeout_s
         self.calls.append({"cmd": cmd, "prompt": prompt, "cwd": str(cwd) if cwd else None})
         start = time.monotonic()
-        child_env = dict(_os.environ)
-        for _scrub in (
-            "VERIFIER_URL",
-            "CONTROL_URL",
-            "AUTOBRIDGE_CONTROL_URL",
-            "HELDOUT_DIR",
-            "ADMIN_TOKEN",
-            "BEACON_ADMIN_TOKEN",
-            "ATLAS_API_KEY",
-            "HARBOR_API_KEY",
-            "MERIDIAN_API_KEY",
-            "PABX_AGENT_KEY",
-            "BENCH_API_KEY",
-            "ANTHROPIC_API_KEY",
-        ):
-            child_env.pop(_scrub, None)
-        # REQ-078 (reopened 2026-11-02): opencode takes its working
-        # directory from the inherited PWD, not the process cwd — pin it
-        # to the sandbox dir so the agent session lands in its sandbox.
-        child_env["PWD"] = str(cwd)
+        child_env = build_agent_child_env(_os.environ, cwd, model=self.model)
         try:
             proc = subprocess.run(
                 cmd,
