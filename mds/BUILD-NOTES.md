@@ -3380,3 +3380,21 @@ All 6 items code-done:
 6. `docs/benchmark.md` confinement paragraph rewritten to the post-change truth.
 
 Gates: `make lint` green (incl. import-linter), `make typecheck` (mypy 134 files) green, `make test` python green (autobridge 3237 @ 90.01%, verifier 144 @ 90.60%, simulators 434 @ 90.07%); UI 350/350 on rerun — one full-suite-only import failure of `app/repairs/[id]/page.test.tsx` (`aria-query` require) on the first `make test` run, green standalone (53/53) and green on the full UI rerun; untouched by this diff (no UI files changed), same flake class as REQ-076. E2E not run (no stack up in sandbox; change is bench-harness-only, covered by W1 fakes + the end-to-end `preflight_beacon` unit test with live judge). Owner step: keyed rehearsal, check the `frontier_agent` arm still answers.
+
+### REQ-093 — Reference patch chooses pointer shape from the new wire id (sbx1 2026-11-03)
+Agent: opencode meta/muse-spark-1.3-contributor (escalation). All 3 items code-done:
+`_with_wire_id` (`bench/reference_patch.py`) kept the old pointer's shape, so the round-6608587
+draw `DA` → `R#` emitted `$.R#`, which `check_jsonpath` rejects (`#` legal only in bracket form,
+as the live FIAS spec's own `$['P#']` shows) and the beacon preflight refused before any scored
+instance. It now renders `$['<id>']` whenever the new id is not `[A-Za-z_][A-Za-z0-9_]*` and
+`$.<id>` otherwise; the now-unused old-pointer parameter was removed (ruff ARG001) and the two
+`_fias_layout_patch` call sites updated; `_wire_id` already round-trips both forms, unchanged.
+New test `test_reference_fias_layout_hash_id_yields_valid_pointers` (in
+`test_autobridge_beacon_reference_patch_req083.py`) drives `reference_patch_for` with the real
+FIAS engine spec for `DA`→`R#` (bracket form, `$.R#` absent) and `DA`→`TM` (dotted form), asserting
+every rewritten pointer passes `check_jsonpath` and `apply_patch` validates the patched spec.
+Removed `experiments/beacon/6608587/protocol.md` (tag `eval-freeze-6608587` keeps it in history)
+and added the one prescribed sentence to `docs/benchmark.md` Beacon evaluation. No engine change;
+no model calls; no freeze/tag/run. Gates: `test_autobridge_beacon_reference_patch_req083.py` 30/30,
+full `make test` green (autobridge 3238 @90%, verifier 144 @91%, simulators 434 @90%, UI 350),
+lint (incl. import-linter contracts) + typecheck green. Owner step: re-freeze a new round, then close.

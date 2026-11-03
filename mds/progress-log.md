@@ -4456,3 +4456,10 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). `semantic/gross_ne
 **Notes for next iteration:**
 - Owner runs the keyed rehearsal and checks the `frontier_agent` arm still answers (live proof that `meta/` resolves under the pristine home with only the env key).
 - One full-suite-only UI import flake seen on the first `make test` (`aria-query` require in `app/repairs/[id]/page.test.tsx`); green standalone and on full UI rerun; no UI files in this diff.
+
+## 2026-11-03 — REQ-093 DONE in sbx1 (Agent: opencode meta/muse-spark-1.3-contributor (escalation))
+Reference-patch pointer bug that refused the round-6608587 beacon freeze fixed: `_with_wire_id`
+chooses dotted vs bracket shape from the new wire id (`R#` → `$['R#']`), unused param removed,
+regression test through the real FIAS engine spec, refused protocol removed, benchmark docs noted.
+Full gates green (autobridge 3238 @90%, verifier 144 @91%, simulators 434 @90%, UI 350/350).
+Owner step: re-freeze a new beacon round, then close.

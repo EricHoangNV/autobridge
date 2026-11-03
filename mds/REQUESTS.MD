@@ -46,7 +46,7 @@ Resolution: default-deny `AGENT_PERMISSION_CONFIG` (`"*": "deny"`, only read/glo
 
 
 ### REQ-093 — Reference patch writes an invalid pointer for a FIAS wire id with `#`, so the beacon preflight refused round 6608587 (2026-11-03)
-Status: IN_PROGRESS (sbx1 since 2026-11-03 14:30 UTC)
+Status: DONE (sbx1 2026-11-03 -- all 3 items code-done: shape-from-new-id fix + regression test + protocol removal + docs sentence; full gates green; owner step: re-freeze a new round, then close)
 The real beacon run for round 6608587 (freeze bcfe7224, tag `eval-freeze-6608587`) stopped in the harness self-test
 (REQ-083 A) before the first scored instance: instance 9 (fias-pabx/fias_layout, renamed `DA` → `R#`) got a reference
 patch whose rewritten pointer was `$.R#`, which `check_jsonpath` rejects (`#` is legal only in bracket form, as the
