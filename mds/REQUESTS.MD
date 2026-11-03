@@ -2,7 +2,7 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 19:12): **REQ-095 only** (the live-key product path has no automated test; REQ-066..093 done; the beacon run is done and published, round 6608718, tag `eval-freeze-6608718`). Touch only what REQ-095's items name; never touch `experiments/beacon/`. REQ-094 (beacon harness gaps), REQ-092 (AR-7-11, AR-7-12) and REQ-090 (AR-7-3..8) are DEFERRED until after the hackathon: do not start them. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 19:15): **REQ-095 → REQ-096** (the live-key product path has no automated test, then tests for the background-job finish fix 6460036e; REQ-066..093 done; the beacon run is done and published, round 6608718, tag `eval-freeze-6608718`). Touch only what REQ-095's and REQ-096's items name; never touch `experiments/beacon/`. REQ-094 (beacon harness gaps), REQ-092 (AR-7-11, AR-7-12) and REQ-090 (AR-7-3..8) are DEFERRED until after the hackathon: do not start them. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
 ### REQ-095 — The live-key product path has no automated test: deferred repair jobs failed to serialise Decimal evidence and no gate noticed (2026-11-03)
 Status: IN_PROGRESS (sbx1 since 2026-11-03 12:14)
@@ -26,6 +26,33 @@ before REQ-078 landed. Three items, one per iteration:
 3. Honest wording in `docs/benchmark.md` and `docs/architecture.md`: the gates run offline/replay, the beacon
    runs the model in-process, and the live-key product path (control API → job queue → drain → ladder) is covered
    by the keyed demo smoke only. No "simulates real" claim without naming the layer.
+Then mark DONE after full gates pass.
+
+
+### REQ-096 — Review commit 6460036e and pin it with unit tests: the background repair job must finish a proposal exactly as the inline sync does (2026-11-03)
+Status: OPEN
+Commit 6460036e (owner host fix, 2026-11-03) added `finish_climb` in `src/autobridge/engine/detect_repair.py` (dry-run
+gate → candidate release → verifier report) and calls it from both the inline sync (`detect_and_repair_after_sync`)
+and the background repair job (`_run_repair_climb` in `src/autobridge/repair/controller.py`). Before it, a deferred
+L0/L1 proposal never got a candidate release or a verifier report: the repair page waited forever and Approve had
+nothing to ship. It also made demo scene 3 (`bench/demo.py`) poll for the drift's repair instead of reading the
+newest row. The fix was verified live (`make demo` 8/8 with the key) but has no unit test. Three items:
+1. Review the commit: read the diff (`git show 6460036e`) and confirm the job path and the inline path now run the
+   same post-climb steps with the same inputs. Record what you find in `mds/BUILD-NOTES.md`. If you find a defect
+   that is small and inside these three files, fix it in this REQ; if it is larger, describe it there and stop.
+2. Unit tests for the job path (new `tests/unit/test_autobridge_req096_job_finish.py`), each against a real session
+   and a fake verifier, no live model call:
+   a. a deferred job whose climb resolves at L1 (`page_to_cursor`) ends with a candidate release, the repair row's
+      `verifier_report_id` set, and `candidate_release_id` in the job result;
+   b. the same for an L0 knowledge hit (warm cache), which takes the job path the same way;
+   c. a deferred L1 proposal that fails the dry-run gate on the parcel's `dry_run_fault` becomes the question-only
+      escalation with no candidate release and no patch offered, exactly as the inline path does;
+   d. parity: the same faulted sync summary through `detect_and_repair_after_sync` (inline) and through the job
+      handler gives the same decision, rule, rung and candidate patch;
+   e. escalate and climbing results are not finalized (no candidate release), and a payload missing
+      `connector_id` or `release_id` skips finalize without raising.
+3. A test for demo scene 3's wait: with the repair row landing after a delay, the step's repair read returns the
+   drift's terminal row (not `{}` and not an older row), using a stubbed control API.
 Then mark DONE after full gates pass.
 
 
