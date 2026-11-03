@@ -4399,3 +4399,31 @@ Agent: opencode meta/muse-spark-1.3-contributor (escalation). `semantic/gross_ne
 
 **Notes for next iteration:**
 - Owner step: keyed rehearsal with `FRONTIER_API_KEY`, then close; next loop takes REQ-089 (AR-7-2)
+
+## REQ-089 — AR-7-2 control-token default (code-DONE)
+**Date:** 2026-11-03
+**Ref:** REQUESTS.MD REQ-089; Code Review Cycle 7 AR-7-2 (High) in mds/FEEDBACKS.MD
+
+**What was done:**
+- Labelled demo default `control-demo-token` for `AUTOBRIDGE_CONTROL_TOKEN` in `compose.yaml` (control, worker, edge-relay, ui — one value), `scripts/local-up.sh`, `.env.example`; explicit values always win (`:-` semantics). `EDGE_TOKEN` inner fallback tracks the same default in both files so the PABX drain stays consistent; verified via `docker compose config` with `--env-file /dev/null` (4x control-demo-token, 2x EDGE_TOKEN match) and shell resolution checks.
+- `log_control_token_status()` in `src/autobridge/control/app.py`, called first in `lifespan`: empty token → loud `*** ... OPEN ... ***` warning; set token → `requires AUTOBRIDGE_CONTROL_TOKEN` info line (name only, never the value).
+- `scripts/smoke.sh`: unauthenticated `POST /demo/scheduler/pause` → 401; authenticated pause → 200 + resume → 200 (nest-safe, side-effect free). Runs in both local and Compose modes.
+- 5 new unit tests in `tests/unit/test_autobridge_control_token.py`: warning path (empty → OPEN warning; set → name present, value absent) + defaults-pinning (compose 4 services, EDGE chain, local-up, .env.example).
+- `docs/safety-model.md`: control-token paragraph (default, demo label, loopback still default, smoke reference). `.env.example` BIND_HOST warning updated (no longer "unauthenticated").
+- Drive-by hermeticity fix: `alembic/env.py` `fileConfig(..., disable_existing_loggers=False)` — ini-driven upgrades muted every logger process-wide, flaking the new tests (see LEARNINGS.MD #77).
+
+**Key decisions:**
+- Demo default (not generated secret) per REQ text, mirroring `sim-admin-dev-token`; code semantics unchanged (empty still = open) so bare-`uvicorn` and unit-test behavior is untouched.
+- No code default in `get_control_token()` — defaults live in compose/local-up/.env.example only, per REQ item 1.
+- pause/resume for the smoke write-route probe: only nest-safe side-effect-free write pair; approve/inject-fault would mutate state.
+- No FEEDBACKS.MD edit: verdict lines belong to the auditor's next cycle (REQ-029 precedent).
+
+**Files changed:**
+- `compose.yaml`, `scripts/local-up.sh`, `.env.example`, `scripts/smoke.sh`
+- `src/autobridge/control/app.py`, `alembic/env.py`, `tests/unit/test_autobridge_control_token.py`, `docs/safety-model.md`
+- `mds/LEARNINGS.MD` (#77), `mds/REQUESTS.MD` (REQ-089 → resolved), `mds/progress-state.md`
+
+**Notes for next iteration:**
+- Live proof done in-sandbox (stack up → smoke/demo/test_06 → down; no containers left): smoke full pass incl. new checks; empty-token warning + set-token line both observed live; relay operator 401/200; `make demo` 8/8 unkeyed; UI journey 7/8 (1 failure = pre-existing demo-state: newest repair is the question-only escalation, no `verifier-checks-line` by design — unrelated to this change); UI-proxy inject-fault/reset → 200 (middleware injection proven), stack reset to blank and taken down.
+- One transient `make test` failure in an intermediate run (uncaptured test name) with all-green runs before and after; suite is order-sensitive in general (pytest-randomly) — see LEARNINGS.MD #77.
+- Owner step: none codeable left. Next: owner picks VERIFY items or reopens REQ-090 after the hackathon.

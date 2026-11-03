@@ -4,32 +4,6 @@
 
 Owner priority (2026-11-03 09:10): **REQ-088 → REQ-089** (Architecture Review cycle 7 blockers AR-7-1 and AR-7-2; REQ-066..087 done; the real beacon freeze waits for these two). One REQ per iteration. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
 
-### REQ-089 — AR-7-2: control-plane writes are open when `AUTOBRIDGE_CONTROL_TOKEN` is empty, and the shipped defaults leave it empty (2026-11-03)
-Status: IN_PROGRESS (sbx1 since 2026-11-03 11:20)
-Architecture Review cycle 7 (AR-7-2, High): `require_control_token` returns immediately when the token is unset or
-empty (`src/autobridge/control/deps.py` ~51-63); Compose ships `${AUTOBRIDGE_CONTROL_TOKEN:-}` for `control`,
-`worker`, `edge-relay` and `ui` (`compose.yaml` 56, 136, 234, 410) and `scripts/local-up.sh` leaves it unset, so
-every state-changing route (approve, reject, rollback, inject-fault, connector create/build/sync) is open by
-default, with no startup warning. The review's claim that the UI cannot send the token is not correct:
-`ui/middleware.ts` injects `Authorization: Bearer` on write methods when the UI container has the token, which
-narrows the fix to the defaults and the warning. The `SIM_ADMIN_TOKEN` pattern already exists (`sim-admin-dev-token`,
-a labelled demo value, not a secret), and `EDGE_TOKEN` already chains to the control token. Small scope:
-1. A labelled demo default for the control token everywhere the simulator token has one: `compose.yaml` (all four
-   services, one value), `scripts/local-up.sh`, and any `.env.example`/README line that lists the demo defaults.
-   An explicit value always wins. The default must not be a real credential and must never be committed as one.
-2. `src/autobridge/control/app.py` `lifespan` (~67): when the effective token is empty, log one loud warning at
-   startup that control-plane writes are open; when set, log that writes require the token (name only, never the
-   value).
-3. Prove every in-repo caller of a write route works with the default set, because the token is an existing
-   feature they already handle: `make smoke` and `make demo` on a fresh clone, `tests/e2e/test_06_ui_journey.spec.ts`
-   (UI approve through the middleware), the CLI, the edge relay drain and `bench/demo*.py`. Add to the smoke an
-   unauthenticated `POST` to one write route (approve or inject-fault) asserting 401, and an authenticated one
-   asserting success.
-4. Tests: `tests/unit/test_autobridge_control_token.py` covers the warning path (empty → warning text present; set
-   → no value in any log line). `docs/safety-model.md` states the default: writes require the token out of the box,
-   demo value labelled, loopback binding still the default.
-Then mark DONE after full gates pass. Do not freeze, tag or commit under `experiments/beacon/`.
-
 ### REQ-090 — Architecture Review cycle 7, remaining findings AR-7-3..AR-7-8 (2026-11-03)
 Status: DEFERRED (owner 2026-11-03: after the hackathon; the review's blockers are REQ-088 and REQ-089)
 Six non-blocking findings from `mds/FEEDBACKS.MD` cycle 7, kept together so none is lost. Each is one root cause;
@@ -1879,6 +1853,33 @@ Constraint: the REQ-007 held-out files and `SHA256SUMS` stay untouched; `make be
 ---
 
 ## Resolved Requests (reference only)
+
+### REQ-089 — AR-7-2: control-plane writes are open when `AUTOBRIDGE_CONTROL_TOKEN` is empty, and the shipped defaults leave it empty (2026-11-03)
+Status: DONE (sbx1 2026-11-03 -- all 4 items code-done: control-demo-token default in compose/local-up/.env.example + EDGE_TOKEN chain, lifespan warning/info lines, smoke 401/200 checks, warning+defaults unit tests + safety-model docs; full gates + live stack green; owner step: none codeable left)
+Architecture Review cycle 7 (AR-7-2, High): `require_control_token` returns immediately when the token is unset or
+empty (`src/autobridge/control/deps.py` ~51-63); Compose ships `${AUTOBRIDGE_CONTROL_TOKEN:-}` for `control`,
+`worker`, `edge-relay` and `ui` (`compose.yaml` 56, 136, 234, 410) and `scripts/local-up.sh` leaves it unset, so
+every state-changing route (approve, reject, rollback, inject-fault, connector create/build/sync) is open by
+default, with no startup warning. The review's claim that the UI cannot send the token is not correct:
+`ui/middleware.ts` injects `Authorization: Bearer` on write methods when the UI container has the token, which
+narrows the fix to the defaults and the warning. The `SIM_ADMIN_TOKEN` pattern already exists (`sim-admin-dev-token`,
+a labelled demo value, not a secret), and `EDGE_TOKEN` already chains to the control token. Small scope:
+1. A labelled demo default for the control token everywhere the simulator token has one: `compose.yaml` (all four
+   services, one value), `scripts/local-up.sh`, and any `.env.example`/README line that lists the demo defaults.
+   An explicit value always wins. The default must not be a real credential and must never be committed as one.
+2. `src/autobridge/control/app.py` `lifespan` (~67): when the effective token is empty, log one loud warning at
+   startup that control-plane writes are open; when set, log that writes require the token (name only, never the
+   value).
+3. Prove every in-repo caller of a write route works with the default set, because the token is an existing
+   feature they already handle: `make smoke` and `make demo` on a fresh clone, `tests/e2e/test_06_ui_journey.spec.ts`
+   (UI approve through the middleware), the CLI, the edge relay drain and `bench/demo*.py`. Add to the smoke an
+   unauthenticated `POST` to one write route (approve or inject-fault) asserting 401, and an authenticated one
+   asserting success.
+4. Tests: `tests/unit/test_autobridge_control_token.py` covers the warning path (empty → warning text present; set
+   → no value in any log line). `docs/safety-model.md` states the default: writes require the token out of the box,
+   demo value labelled, loopback binding still the default.
+Then mark DONE after full gates pass. Do not freeze, tag or commit under `experiments/beacon/`.
+Resolution: control-plane writes require AUTOBRIDGE_CONTROL_TOKEN out of the box (labelled demo default control-demo-token, explicit value wins); startup logs posture; smoke + full live stack verified.
 
 ### REQ-088 — AR-7-1: the `frontier_agent` arm's sandbox allows `bash`/`webfetch` and inherits the whole environment, so the agent can reach the answer key (2026-11-03)
 Status: DONE (sbx1 2026-11-03 -- all 4 items code-done: deny-all permission config shared between sandbox file + OPENCODE_PERMISSION env, allowlist child env from scratch, preflight permission+allowlist proofs, flipped/added tests + docs; full gates green; owner step: keyed rehearsal, then close)

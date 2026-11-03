@@ -696,3 +696,14 @@ Distilled insights from code reviews, security reviews, product reviews and debu
 
 - `make test` gates on `tests/unit/test_autobridge_*.py`, `test_health_*`, `test_verifier_*`, `test_simulators_*` only. Files outside those globs run locally but never in CI and never count toward coverage — the gate can pass while the new code is untested upstream.
 - **Rule:** Name every new unit test file to match one of the four gate globs (e.g. `test_autobridge_beacon_<topic>_req083.py`); verify with `git status` + the gate command before committing, not just a bare `pytest` run.
+---
+
+## 77. Alembic's env.py fileConfig mutes every logger in the process
+
+**Context:** REQ-089 (AR-7-2) debugging session, 2026-11-03 — two new caplog-based unit tests failed only under full-suite ordering.
+
+- The failures were order-dependent AND flaky across identical seeds: `caplog.records` came back empty because `logging.getLogger("autobridge.control").disabled` was `True`.
+- Poisoner: any test that runs a real ini-driven Alembic upgrade (`command.upgrade(Config("alembic.ini"))`, e.g. `test_migration_0002_job_queue`). `alembic/env.py` called `logging.config.fileConfig(...)`, whose default `disable_existing_loggers=True` sets `disabled=True` on every pre-existing logger for the rest of the process. The startup migrator (`ensure_migrated`) builds a programmatic `Config` with no file name, so production was never affected — only tests that load `alembic.ini`.
+- Fixed at the source: `fileConfig(config.config_file_name, disable_existing_loggers=False)` in `alembic/env.py`; the ini's own root/sqlalchemy/alembic logger config still applies. Verified with a throwaway snitch plugin that reported False→True transitions, then 6/6 fixed-seed subset runs plus green full suites.
+
+**Rule:** Never let a migration, fixture, or script call bare `fileConfig`/`dictConfig` with logger-disabling defaults in a test process — pass `disable_existing_loggers=False`, or one suite's schema setup will silently deafen every other test's log capture.
