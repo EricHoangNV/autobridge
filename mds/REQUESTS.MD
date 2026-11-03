@@ -2,7 +2,36 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 14:20): **REQ-093 only** (the first beacon freeze, round 6608587, was refused by the harness preflight before any scored instance: reference-patch pointer bug; REQ-066..092 done). Touch nothing outside REQ-093's items; the owner re-freezes right after it lands. REQ-092 (AR-7-11, AR-7-12) is DEFERRED until after the hackathon: do not start it. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 17:40): **no open REQ** — the beacon run is done and published (round 6608718, tag `eval-freeze-6608718`, `experiments/beacon/6608718/`; REQ-066..093 done). Do not change engine, bench, verifier or simulator code and never touch `experiments/beacon/` until the owner reopens work. REQ-094 (beacon harness gaps), REQ-092 (AR-7-11, AR-7-12) and REQ-090 (AR-7-3..8) are DEFERRED until after the hackathon: do not start them. REQ-092 (AR-7-11, AR-7-12) is DEFERRED until after the hackathon: do not start it. REQ-090 (AR-7-3..8) is DEFERRED until after the hackathon: do not start it. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+
+### REQ-094 — Beacon harness gaps surfaced by the real run (round 6608718): ungradable LegacyStay candidates, invisible faults, zero-record syncs read Complete, eval script wait loop (2026-11-03)
+Status: DEFERRED (owner 2026-11-03: after the hackathon; the published result stands as scored, with these gaps recorded on its evidence page)
+Four harness defects found by the published beacon run (`experiments/beacon/6608718/EVIDENCE.md`, analysis in the
+owner's notes). None changes the no-release claim; together they hide up to five correct fixes per arm. When this
+REQ opens, take them one item per iteration in this order; never touch `experiments/beacon/6608718/`.
+1. Grader candidate syncs lack vendor base URLs: `bench/faults.py` installs `_FAKE_ENV_DEFAULTS` (incl.
+   `LEGACYSTAY_BASE_URL`, `MERIDIAN_BASE_URL`) for served syncs, but the grading path only installs
+   `_PLACEHOLDER_CREDENTIAL_DEFAULTS` (`bench/beacon_run.py` ~2859) and relies on the process env, which carries
+   `ATLAS_BASE_URL`/`HARBOR_BASE_URL` only. 18 of 125 grades errored `candidate sync failed: KeyError: Missing env
+   var for placeholder ${LEGACYSTAY_BASE_URL}` (instances 2, 7, 12, 17, 22). Install the same vendor URL/credential
+   defaults for candidate syncs as for served syncs (one definition), and make preflight run one candidate sync per
+   vendor so a missing placeholder fails before the first scored instance. Test: a candidate sync for every vendor in
+   `config/beacon_vendors` resolves with an empty env.
+2. Fault visibility is not proven: preflight shows the reference patch applies and syncs Complete, not that the
+   faulted sync differs from baseline. Meridian body-cursor faults on a one-page dataset (instances 3, 8: cursor
+   leaf renamed, 30 reservations under `count_value` 100) are invisible, yet keyed `repair`. Preflight asserts
+   faulted != baseline (records, failed checks or unmet criteria) for every `repair` instance and fails loud
+   otherwise; the simulators' pagination faults serve datasets larger than one page, or such instances are keyed
+   `no_patch`. Test: a one-page body-cursor rename is refused by preflight (or keyed no_patch) rather than scored.
+3. A sync that yields zero records against a non-empty baseline reports `Complete` with no unmet criteria
+   (instances 2 and 16: 0 reservations after 30). The engine's own outcome must not read Complete there (a
+   `no_records` unmet criterion or equivalent), and the frontier evidence bundle must show the record counts
+   against baseline. Test: served wire with an empty items path ends non-Complete and the bundle names the drop.
+4. `scripts/beacon-eval.sh` wait loop: `beacon_client verify` prints its pre-publication failure (`HTTP 425`) to
+   stdout, so `LATEST` is non-empty and the loop breaks immediately; the run step then refuses. Check the exit code,
+   not the output. Also document that a detached run dies when the local sandbox stops (run attached).
+Do not start until the owner reopens it.
+
 
 ### REQ-091 — AR-7-9: the `frontier_agent` arm can still write inside its sandbox, and the harness reloads that sandbox and the operator's global OpenCode config as host code (2026-11-03)
 Status: DONE (sbx1 2026-11-03 -- all 6 items code-done: default-deny permission config, pristine per-run CLI home, re-prompt in a fresh sandbox copy, preflight proofs, updated + 2 new tests, benchmark docs; full gates green; owner step: keyed rehearsal, then close)

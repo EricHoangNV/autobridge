@@ -475,15 +475,32 @@ public random value (a League of Entropy drand round) that did not exist
 when the code froze. Commit-then-reveal with public randomness — we could
 not have prepared for the test even if we wanted to.
 
-Status: only rehearsals on past rounds have run. The real freeze has not
-happened — there is no `eval-freeze-<round>` tag, no
-`experiments/beacon/<round>/protocol.md` and no
-`experiments/beacon/<round>/` result yet — so there are no beacon
-results to report. Round 6608587 was frozen, refused by the harness
-preflight on a reference-patch pointer bug (`$.R#` for a FIAS wire id
-containing `#`, REQ-093) before any scored instance, and re-frozen
-under a new round (the `eval-freeze-6608587` tag keeps the refused
-freeze in history). The list below is what a judge can check once it has.
+Status: the real run has happened. Round 6608587 was frozen first,
+refused by the harness preflight on a reference-patch pointer bug
+(`$.R#` for a FIAS wire id containing `#`, REQ-093) before any scored
+instance, and re-frozen as round 6608718 (the `eval-freeze-6608587` tag
+keeps the refused freeze in history). Round 6608718: freeze commit
+9f968178 (tag `eval-freeze-6608718`) pushed at 07:36 UTC on 2026-11-03,
+round published at 07:56 UTC, 25 faults, 1 trial, five arms, pinned
+model `muse-spark-1.3-contributor`. Results in `experiments/beacon/6608718/`
+(`EVIDENCE.md`, `grades.jsonl`, `summary.json`, `traces/`); verify with
+`make verify-beacon ROUND=6608718`. As scored: correct outcomes
+frontier_oneshot 15/25, frontier_agent 15/25, engine_no_knowledge 15/25,
+autobridge_cold 13/25, autobridge_warm 14/25; zero wrong patches released
+on any arm (wrong proposals held at the operator gate: 2, 2, 2, 4, 3);
+frontier tokens per fault 16.3k, 27.5k, 6.2k, 6.6k, 6.2k; the engine arms
+resolved 8 of 25 with no model call. Paired differences against cold all
+span zero at n=25. Per family: pagination 0/5 and rename 0/3 on every arm,
+semantic 5/5 on the engine arms vs 4/5 frontier, dates 1/3 engine vs 2/3
+frontier.
+
+Two harness gaps surfaced by the run are recorded on the evidence page
+and were not corrected after the fact (REQ-094, deferred): the grader's
+candidate sync lacked `LEGACYSTAY_BASE_URL`, so 18 of 125 grades
+(instances 2, 7, 12, 17, 22, every arm that proposed a patch) errored and
+count as misses; and the two Meridian body-cursor faults (instances 3,
+8) were invisible on a one-page dataset, so every arm honestly saw no
+drift. The list below is what a judge can check.
 
 What a judge can check (all of it public):
 

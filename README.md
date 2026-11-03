@@ -168,9 +168,18 @@ Each block is one command, then watch (deck order, `docs/demo.md`):
   `FRONTIER_API_KEY` its L3 legs are labelled skips. Known issue: with a
   live key, step 4's post-approve check fails (it expects the repair's
   decision to still read `escalate`; approving records `approved`).
-  No benchmark results are committed: the final benchmark is the beacon
-  run (`docs/benchmark.md`, "Beacon evaluation"), which has only been
-  rehearsed so far.
+  The final benchmark is the pre-registered beacon run (`docs/benchmark.md`,
+  "Beacon evaluation"): code frozen and tagged `eval-freeze-6608718`, then
+  drand round 6608718 drew 25 unseen faults, one trial, five arms, the same
+  Muse model (`muse-spark-1.3-contributor`) on every arm. Result, as scored:
+  frontier one-shot 15/25, frontier coding agent 15/25, AutoBridge with no
+  rules or learning 15/25, AutoBridge cold 13/25, AutoBridge warm 14/25
+  correct outcomes; zero wrong patches released by any arm; AutoBridge
+  resolved 8 of 25 with no model call and used about a quarter of the
+  agent's frontier tokens per fault. On unseen faults the engine matched
+  the agent, it did not out-fix it. Evidence, per-instance grades and two
+  known harness caveats: `experiments/beacon/6608718/EVIDENCE.md`;
+  re-check with `make verify-beacon ROUND=6608718`.
 
 Retakes: `make demo-heal` clears injected faults without a reset;
 `make demo-reset && make demo-seed` restores the blank opening frame
