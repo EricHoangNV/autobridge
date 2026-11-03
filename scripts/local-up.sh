@@ -77,12 +77,18 @@ export MERIDIAN_ACCESS_TOKEN="${MERIDIAN_ACCESS_TOKEN:-meridian-access-token}"
 # an explicit value (.env / shell) always wins. Simulator demo value, not
 # a secret — never a real credential.
 export SIM_ADMIN_TOKEN="${SIM_ADMIN_TOKEN:-sim-admin-dev-token}"
+# REQ-089 (AR-7-2): control-plane writes require the token out of the
+# box. Ship the labelled demo value by default so a fresh clone never runs
+# with open writes; an explicit value (.env / shell) always wins. Demo
+# value, not a secret — set a random one before exposing the stack beyond
+# localhost; never a real credential.
+export AUTOBRIDGE_CONTROL_TOKEN="${AUTOBRIDGE_CONTROL_TOKEN:-control-demo-token}"
 # REQ-031: the PABX edge release drains the edge relay through the relay's
-# operator endpoints, which expect AUTOBRIDGE_CONTROL_TOKEN (open when it
-# is unset). EDGE_TOKEN must carry that same value when a control token is
-# set, or any non-empty demo value otherwise; an explicit EDGE_TOKEN
+# operator endpoints, which expect AUTOBRIDGE_CONTROL_TOKEN. EDGE_TOKEN
+# must carry that same value when a control token is set, otherwise both
+# fall back to the REQ-089 control demo default; an explicit EDGE_TOKEN
 # always wins. Simulator demo value, not a secret.
-export EDGE_TOKEN="${EDGE_TOKEN:-${AUTOBRIDGE_CONTROL_TOKEN:-sim-demo-key}}"
+export EDGE_TOKEN="${EDGE_TOKEN:-${AUTOBRIDGE_CONTROL_TOKEN:-control-demo-token}}"
 # REQ-030 item 1: the sync scheduler ticks every active connector on this
 # cadence (unset/empty/0 disables it). Demo value, not a secret.
 export AUTOBRIDGE_SYNC_INTERVAL_S="${AUTOBRIDGE_SYNC_INTERVAL_S:-10}"
@@ -113,7 +119,7 @@ echo "   DB: $DATABASE_URL"
 echo "   NOTE: local mode: no network isolation — Docker vendor-net / verifier-net /"
 echo "   admin-net / edge-net separation is NOT enforced here (all loopback). The engine"
 echo "   still never imports verifier/ or simulators/; admin writes need"
-echo "   SIM_ADMIN_TOKEN (demo default, override in .env). See docs/safety-model.md."
+echo "   SIM_ADMIN_TOKEN + AUTOBRIDGE_CONTROL_TOKEN (demo defaults, override in .env). See docs/safety-model.md."
 
 cd "$REPO_ROOT"
 start_svc control 8101 uv run uvicorn autobridge.control.app:app --host 127.0.0.1 --port 8101

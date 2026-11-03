@@ -64,8 +64,39 @@ def reclaim_orphaned_jobs() -> int:
     return runner.reclaim_orphaned()
 
 
+def log_control_token_status() -> None:
+    """Log whether control-plane writes require the token (REQ-089, AR-7-2).
+
+    Empty token: one loud warning that writes are open. Set token: one
+    line naming the env var only — the token value never appears in logs.
+    """
+    import logging  # noqa: PLC0415
+
+    from autobridge.control.deps import (  # noqa: PLC0415
+        CONTROL_TOKEN_ENV_VAR,
+        get_control_token,
+    )
+
+    if not get_control_token():
+        logging.getLogger("autobridge.control").warning(
+            "*** %s is empty: control-plane writes are OPEN "
+            "(anyone who can reach control can approve/release/inject "
+            "faults). Set a token before exposing the stack beyond "
+            "localhost. ***",
+            CONTROL_TOKEN_ENV_VAR,
+        )
+    else:
+        logging.getLogger("autobridge.control").info(
+            "control-plane writes require %s", CONTROL_TOKEN_ENV_VAR
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # REQ-089 (AR-7-2): say loudly whether control-plane writes are gated.
+    # The shipped defaults (compose.yaml, local-up.sh) set a labelled demo
+    # token, so an empty token here means someone runs outside them.
+    log_control_token_status()
     # Migrate on startup (REQ-021 owner check): create_all never adds
     # columns, so a database file kept across runs goes stale and endpoints
     # 500. Upgrade-to-head handles fresh, stale and current databases;

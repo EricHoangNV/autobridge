@@ -35,6 +35,21 @@ for entry in $SERVICES; do
   echo "  ok $name (:$port)"
 done
 
+echo ">> smoke: control-plane writes require AUTOBRIDGE_CONTROL_TOKEN (REQ-089)"
+# The shipped default (compose.yaml, local-up.sh, .env.example) sets the
+# labelled demo token, so a fresh clone gates writes out of the box; an
+# explicit value in the shell always wins, resolved exactly like the stack.
+CONTROL_TOKEN="${AUTOBRIDGE_CONTROL_TOKEN:-control-demo-token}"
+code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "http://localhost:8101/demo/scheduler/pause" -H 'Content-Type: application/json' -d '{"owner":"smoke"}' || true)"
+[ "$code" = "401" ] || fail "unauthenticated POST /demo/scheduler/pause -> HTTP $code (want 401)"
+echo "  ok unauthenticated control write rejected (HTTP 401)"
+code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "http://localhost:8101/demo/scheduler/pause" -H 'Content-Type: application/json' -H "Authorization: Bearer $CONTROL_TOKEN" -d '{"owner":"smoke"}' || true)"
+[ "$code" = "200" ] || fail "authenticated POST /demo/scheduler/pause -> HTTP $code (want 200; export AUTOBRIDGE_CONTROL_TOKEN when the stack uses an explicit token)"
+echo "  ok authenticated control write accepted (HTTP 200)"
+code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "http://localhost:8101/demo/scheduler/resume" -H 'Content-Type: application/json' -H "Authorization: Bearer $CONTROL_TOKEN" -d '{"owner":"smoke"}' || true)"
+[ "$code" = "200" ] || fail "authenticated POST /demo/scheduler/resume -> HTTP $code (want 200)"
+echo "  ok scheduler pause released (HTTP 200)"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # REQ-037: local-vs-Compose is decided by the validated marker

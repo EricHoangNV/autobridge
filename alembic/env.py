@@ -18,7 +18,13 @@ from autobridge.control.models import Base, default_database_url
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: a migration run must never mute the
+    # process's existing loggers (REQ-089: the stdlib fileConfig default
+    # True sets disabled=True on every logger, e.g. autobridge.control,
+    # so any later caplog-based test — and any already-running handler —
+    # goes deaf for the rest of the process). The ini's own root /
+    # sqlalchemy / alembic logger config still applies.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # A programmatic Config (startup migrator, tests) may already carry the URL:
 # keep it. An ini-loaded Config keeps the historical behavior: DATABASE_URL

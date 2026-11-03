@@ -203,6 +203,18 @@ distinguishes that rejection from "no route" and fails only when an
 unauthorized admin access is accepted. The host and `control` (admin-net)
 proxy send both headers.
 
+Control-plane writes are authorized by `AUTOBRIDGE_CONTROL_TOKEN`
+(`Authorization: Bearer`, constant-time compare; REQ-012). Writes require
+the token out of the box: the shipped default is the labelled demo value
+`control-demo-token` (REQ-089 — `compose.yaml` on all four services,
+`scripts/local-up.sh`, `.env.example`; an explicit value always wins),
+and control logs one loud warning at startup when the token is empty
+(writes open) versus one line naming the variable when set (never the
+value). Loopback binding is still the default (`AUTOBRIDGE_BIND_HOST`
+unset → `127.0.0.1`); set a random token before exposing the stack beyond
+localhost. `make smoke` asserts an unauthenticated control write gets 401
+and an authenticated one succeeds.
+
 ## 6. Response schema and leakage guard
 
 The verifier's response schema is bounded:
