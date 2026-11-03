@@ -30,7 +30,7 @@ Then mark DONE after full gates pass.
 
 
 ### REQ-096 — Review commit 6460036e and pin it with unit tests: the background repair job must finish a proposal exactly as the inline sync does (2026-11-03)
-Status: OPEN
+Status: IN_PROGRESS (sbx1 since 2026-11-03 12:55)
 Commit 6460036e (owner host fix, 2026-11-03) added `finish_climb` in `src/autobridge/engine/detect_repair.py` (dry-run
 gate → candidate release → verifier report) and calls it from both the inline sync (`detect_and_repair_after_sync`)
 and the background repair job (`_run_repair_climb` in `src/autobridge/repair/controller.py`). Before it, a deferred
