@@ -2,7 +2,65 @@
 
 ## Open Requests (read this section only)
 
-Owner priority (2026-11-03 03:40): **REQ-087** (REQ-066..086 done; the real beacon freeze waits for it). One REQ per iteration. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+Owner priority (2026-11-03 09:10): **REQ-088 → REQ-089** (Architecture Review cycle 7 blockers AR-7-1 and AR-7-2; REQ-066..087 done; the real beacon freeze waits for these two). One REQ per iteration. REQ-082 is DEFERRED until after the hackathon: do not start it. Do not start REQ-051 until the owner says so.
+
+### REQ-088 — AR-7-1: the `frontier_agent` arm's sandbox allows `bash`/`webfetch` and inherits the whole environment, so the agent can reach the answer key (2026-11-03)
+Status: OPEN
+Architecture Review cycle 7 (`mds/FEEDBACKS.MD`, AR-7-1, Critical): the sandbox `opencode.json` the harness writes
+(`bench/context.py` ~438-456) grants `"bash": "allow"` and `"webfetch": "allow"`; the agent is a host subprocess
+(`bench/baseline_coding_agent.py` ~1010-1021) whose shell has the user's full filesystem and network reach, so the
+repo checkout, `simulators/common/faultgen.py`, `verifier/`, `docs/fault-playbook.md` and the verifier's
+`/beacon/records` are one command away. The child env (~990-1005) is a denylist copy of `os.environ`, so any other
+secret and any inherited `OPENCODE_PERMISSION` (the ralph loop exports one that allows `bash`, `webfetch` and
+`external_directory`) ride along. The agent's task needs none of this: the brief is answered inline ("Respond with
+ONLY one JSON object", `bench/context.py` ~52) from the evidence bundle in the sandbox dir, and no file write, shell
+or fetch is part of the contract. The persisted agent traces record no tool calls, so past rehearsal scores cannot
+be audited either way. One root cause (the arm is confined by file-tool permissions only), small scope, the ablation
+`frontier_agent` arm shares the driver and is covered by the same change:
+1. `opencode.json` in the sandbox dir denies `bash`, `webfetch`, `websearch`, `task`, `skill`, `lsp` and
+   `external_directory`; `read`, `glob`, `grep`, `edit` stay allowed inside the sandbox dir. The child env becomes
+   an allowlist built from scratch, not a scrubbed copy: `PATH`, `HOME`, `PWD` (the sandbox dir), `TMPDIR`, `LANG`,
+   `TERM`, the `XDG_*`/`OPENCODE_*` variables the CLI needs for its own config and auth store, and the frontier
+   provider's key variable(s) the CLI reads for the pinned model; `OPENCODE_PERMISSION` is set explicitly to the
+   same deny config so an inherited value can never loosen it. Nothing else crosses.
+2. Preflight (`bench/beacon_run.py` `preflight_beacon`, next to the agent child `PWD` proof ~2572-2583): assert the
+   written permission file denies `bash`/`webfetch`/`websearch`/`external_directory` and the child env contains no
+   variable outside the allowlist (name check only, values never printed), before the first scored instance;
+   rehearsals included. Fail loud with the offending key name or permission.
+3. Tests: `tests/unit/test_autobridge_req081.py` ~249 currently asserts `bash == "allow"` — flip it; add the env
+   allowlist test (an environment seeded with `VERIFIER_URL`, `SIM_ADMIN_TOKEN`, `AUTOBRIDGE_CONTROL_TOKEN`,
+   `OPENCODE_PERMISSION` and an unrelated secret produces a child env with none of them and `PWD` = sandbox dir);
+   the fake-agent path still parses the inline JSON answer.
+4. `docs/benchmark.md`: state the arm's confinement as it is after this change (file tools inside the sandbox dir,
+   no shell, no fetch, allowlisted env), replacing the current isolation wording.
+Then mark DONE after full gates pass; the owner runs the keyed rehearsal. Do not freeze, tag or commit under
+`experiments/beacon/`.
+
+### REQ-089 — AR-7-2: control-plane writes are open when `AUTOBRIDGE_CONTROL_TOKEN` is empty, and the shipped defaults leave it empty (2026-11-03)
+Status: OPEN
+Architecture Review cycle 7 (AR-7-2, High): `require_control_token` returns immediately when the token is unset or
+empty (`src/autobridge/control/deps.py` ~51-63); Compose ships `${AUTOBRIDGE_CONTROL_TOKEN:-}` for `control`,
+`worker`, `edge-relay` and `ui` (`compose.yaml` 56, 136, 234, 410) and `scripts/local-up.sh` leaves it unset, so
+every state-changing route (approve, reject, rollback, inject-fault, connector create/build/sync) is open by
+default, with no startup warning. The review's claim that the UI cannot send the token is not correct:
+`ui/middleware.ts` injects `Authorization: Bearer` on write methods when the UI container has the token, which
+narrows the fix to the defaults and the warning. The `SIM_ADMIN_TOKEN` pattern already exists (`sim-admin-dev-token`,
+a labelled demo value, not a secret), and `EDGE_TOKEN` already chains to the control token. Small scope:
+1. A labelled demo default for the control token everywhere the simulator token has one: `compose.yaml` (all four
+   services, one value), `scripts/local-up.sh`, and any `.env.example`/README line that lists the demo defaults.
+   An explicit value always wins. The default must not be a real credential and must never be committed as one.
+2. `src/autobridge/control/app.py` `lifespan` (~67): when the effective token is empty, log one loud warning at
+   startup that control-plane writes are open; when set, log that writes require the token (name only, never the
+   value).
+3. Prove every in-repo caller of a write route works with the default set, because the token is an existing
+   feature they already handle: `make smoke` and `make demo` on a fresh clone, `tests/e2e/test_06_ui_journey.spec.ts`
+   (UI approve through the middleware), the CLI, the edge relay drain and `bench/demo*.py`. Add to the smoke an
+   unauthenticated `POST` to one write route (approve or inject-fault) asserting 401, and an authenticated one
+   asserting success.
+4. Tests: `tests/unit/test_autobridge_control_token.py` covers the warning path (empty → warning text present; set
+   → no value in any log line). `docs/safety-model.md` states the default: writes require the token out of the box,
+   demo value labelled, loopback binding still the default.
+Then mark DONE after full gates pass. Do not freeze, tag or commit under `experiments/beacon/`.
 
 ### REQ-087 — The dry-run gate judges checks without the spec's declared zone and refuses correct date repairs (2026-11-03)
 Status: DONE (sbx1 2026-11-02 -- all 2 items code-done: shared spec_static_tz helper in runtime/checks.py used by sync_run + dryrun, context_tz forwarded in old-check + patched passes; 4 new tests, full gates green; owner step: keyed rehearsal, then close)
